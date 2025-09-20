@@ -1,0 +1,75 @@
+name: PR Force Settle
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure jq
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y jq
+      - name: Rebase, then merge green PRs (2 passes)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          attempt_settle() {
+            echo "Listing open PRs for $REPO"
+            gh api -H "Accept: application/vnd.github+json" repos/$REPO/pulls --paginate > pulls.json
+            if ! jq -e . pulls.json >/dev/null 2>&1; then
+              echo "No PRs or failed to list."; return 0
+            fi
+            jq -r '.[].number' pulls.json | while read pr; do
+              echo "Evaluating PR #$pr"
+              gh pr view "$pr" -R "$REPO" --json number,title,isDraft,isCrossRepository,mergeStateStatus,mergeable,mergeableState,headRefOid,headRefName,baseRefName > pr.json || { echo "Failed to fetch PR #$pr"; continue; }
+              draft=$(jq -r '.isDraft' pr.json)
+              cross=$(jq -r '.isCrossRepository' pr.json)
+              ms=$(jq -r '.mergeStateStatus' pr.json)
+              headSha=$(jq -r '.headRefOid' pr.json)
+              headRef=$(jq -r '.headRefName' pr.json)
+              baseRef=$(jq -r '.baseRefName' pr.json)
+              if [ "$draft" = "true" ]; then
+                echo "Attempting to mark PR #$pr ready for review..."
+                gh pr ready "$pr" -R "$REPO" >/dev/null 2>&1 || { echo "Still draft; skipping."; continue; }
+              fi
+              if gh pr update "$pr" -R "$REPO" --merge >/dev/null 2>&1; then
+                echo "Updated #$pr from base $baseRef";
+              fi
+              if [ -n "$headSha" ] && [ "$headSha" != "null" ]; then
+                state=$(gh api repos/$REPO/commits/$headSha/status --jq '.state' || echo "unknown")
+                pending=$(gh api repos/$REPO/commits/$headSha/check-runs -H "Accept: application/vnd.github+json" --jq '[.check_runs[] | select(.status!="completed")] | length' || echo 0)
+                failing=$(gh api repos/$REPO/commits/$headSha/check-runs -H "Accept: application/vnd.github+json" --jq '[.check_runs[] | select(.conclusion and (.conclusion!="success" and .conclusion!="neutral" and .conclusion!="skipped"))] | length' || echo 0)
+                if [ "$pending" = "0" ] && [ "$failing" = "0" ] && [ "$state" != "failure" ]; then
+                  if gh pr merge "$pr" -R "$REPO" --auto --squash --delete-branch; then
+                    echo "Auto-merge scheduled for #$pr";
+                  elif gh pr merge "$pr" -R "$REPO" --squash --delete-branch; then
+                    echo "Merged #$pr (squash + delete-branch)";
+                  elif gh pr merge "$pr" -R "$REPO" --squash; then
+                    echo "Merged #$pr (squash, kept branch)";
+                  elif gh pr merge "$pr" -R "$REPO" --merge; then
+                    echo "Merged #$pr (merge commit)";
+                  elif gh pr merge "$pr" -R "$REPO"; then
+                    echo "Merged #$pr (default method)";
+                  else
+                    echo "Merge failed for #$pr (likely protection/policy).";
+                  fi
+                else
+                  echo "#${pr} not ready: state=$state pending=$pending failing=$failing mergeState=$ms";
+                fi
+              fi
+            done
+          }
+          attempt_settle
+          echo "Sleeping before second pass..."; sleep 15
+          attempt_settle

@@ -1,0 +1,31 @@
+name: Central Branch Protection
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure required status checks on main
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "GH_TOKEN not set; skipping branch protection update (best-effort)."
+            exit 0
+          fi
+          owner="${OWNER}"
+          repo="${REPO}"
+          data='{"required_status_checks":{"strict":true,"contexts":["CI Smoke (Assert)","Central E2E Smoke"]},"enforce_admins":false,"required_pull_request_reviews":{"required_approving_review_count":0},"restrictions":null}'
+          curl -fsSL -X PUT \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d "${data}" \
+            "https://api.github.com/repos/${owner}/${repo}/branches/main/protection" || true

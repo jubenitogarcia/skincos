@@ -1,0 +1,73 @@
+name: "SKINCOS AI – Auto-Improve"
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ai-improve-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  trigger-ai-improvement:
+    name: Trigger AI improvement after integration
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Summarize recent changes
+        id: summary
+        run: |
+          echo "CHANGES<<EOF" >> $GITHUB_ENV
+          git --no-pager log -1 --pretty=format:"%h %s" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          git --no-pager diff --name-only HEAD~1..HEAD >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Open issue to request automated improvements
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "AI improvement task – ${{ github.sha }}"
+          content-filepath: .github/ai-improve-template.md
+          labels: enhancement, ai, automation
+        continue-on-error: true
+
+      - name: Fallback – create issue inline if template missing
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TITLE="AI improvement task – ${{ github.sha }}"
+          BODY_HEADER=$'Please run the AI improvement cycle on the repository.\n\nContext:\n- Event: ${{ github.event_name }}\n- Actor: ${{ github.actor }}\n- Branch/Ref: ${{ github.ref }}\n- Recent changes:\n'
+          BODY="$BODY_HEADER$(printf "%s" "$CHANGES")"
+          LABELS='["enhancement","ai","automation"]'
+          gh api -X POST \
+            -H "Accept: application/vnd.github+json" \
+            repos/$REPO/issues \
+            -f title="$TITLE" \
+            -f body="$BODY" \
+            -f labels="$LABELS" || true
+        continue-on-error: true
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          message: |
+            🤖 An automated AI improvement task was requested. See issues for details.
+        continue-on-error: true

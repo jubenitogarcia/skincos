@@ -1,0 +1,69 @@
+Corrija o comportamento do botão “Acessar” na interface dos canais WhatsApp, garantindo que o redirecionamento leve o usuário diretamente ao dashboard específico e funcional da conta/canal WhatsApp selecionado — e não ao painel geral do CRM ou a qualquer rota incorreta.
+
+---
+
+🧭 **Comportamento Esperado:**
+
+- Ao clicar em “Acessar”, o usuário deve ser levado diretamente ao **dashboard completo do WhatsApp** da conta/canal selecionado.
+- Esse dashboard precisa exibir corretamente:
+  - Botões de ação
+  - Contatos
+  - Histórico de conversas
+  - Envio de mensagens
+  - Logs e configurações específicas daquele canal
+
+---
+
+❌ **Problemas Atuais Identificados:**
+
+- O botão “Acessar” está redirecionando para o **painel central do CRM**, em vez do dashboard individual do WhatsApp.
+- Está ocorrendo um **loop de redirecionamento**, impedindo o carregamento correto da interface do WhatsApp.
+- O conteúdo da instância WhatsApp não está sendo exibido como deveria.
+
+---
+
+🔍 **Ações Necessárias para Correção:**
+
+1. **Revisar e corrigir a rota de destino acionada pelo botão "Acessar":**
+   - Verifique se a rota atual usada pelo botão (ex: `/`, `/dashboard`, `/crm`) está incorreta.
+   - Substitua pelo endpoint que realmente corresponde ao dashboard da instância/canal WhatsApp.
+     - Exemplo de rotas corretas possíveis:
+       - `/whatsapp/canal/1`
+       - `/account/3001/dashboard`
+       - `/canal1/dashboard`
+   - A URL deve ser dinâmica, baseada no canal selecionado.
+
+2. **Verifique o backend/orquestrador:**
+   - Confirme que, ao acessar o canal pela rota correta, o backend realmente serve a aplicação do WhatsApp (não o CRM principal).
+   - Se necessário, corrija o proxy, roteamento ou apontamento de arquivos estáticos da instância do canal.
+
+3. **Investigue middlewares ou autenticações globais:**
+   - Avalie se há **rotas protegidas ou fallback genérico** (ex: redirecionamento automático para `/` ou `/crm`) que estão interferindo.
+   - Remova qualquer lógica que redirecione o usuário automaticamente para a home ao acessar rotas de instância do WhatsApp.
+   - Garanta que a autenticação (se houver) valide corretamente e permita acesso direto ao dashboard do canal.
+
+4. **Elimine qualquer loop de redirecionamento:**
+   - Inspecione a lógica do frontend e backend que pode estar causando reload ou fallback contínuo.
+   - Verifique especialmente se:
+     - A rota requisitada realmente existe e está servindo conteúdo
+     - O frontend da instância WhatsApp está devidamente construído e montado
+     - Não há redirects automáticos baseados em `window.location.replace()` ou erros de SPA
+
+5. **Testes Obrigatórios:**
+   - Acesse **cada canal conectado** usando o botão “Acessar”.
+   - Verifique que **em todos os casos**:
+     - O dashboard correto do WhatsApp é exibido (com histórico, mensagens, botões, etc.)
+     - Nenhum redirecionamento incorreto acontece
+     - O CRM geral **não** aparece nesse fluxo
+     - Não há loops nem tela em branco
+
+---
+
+🟢 **Finalização e Validação:**
+
+- Realize todos os testes descritos.
+- Corrija eventuais falhas por canal.
+- Confirme que todas as instâncias apontam corretamente para o dashboard da conta conectada.
+- Envie prints, rotas finais ou confirmações para validação final.
+
+Só finalize essa tarefa após o redirecionamento funcionar corretamente **para todos os canais conectados**, com exibição completa e estável do dashboard WhatsApp correspondente.

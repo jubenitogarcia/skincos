@@ -1,0 +1,76 @@
+name: PR Maintainer Auto-Merge
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-merge green PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Listing open PRs for $REPO"
+          gh api -H "Accept: application/vnd.github+json" repos/$REPO/pulls --paginate > pulls.json
+          if ! jq -e . pulls.json >/dev/null 2>&1; then
+            echo "No PRs or failed to list."; exit 0
+          fi
+          jq -r '.[].number' pulls.json | while read pr; do
+            echo "Evaluating PR #$pr"
+            gh pr view "$pr" -R "$REPO" --json number,isDraft,isCrossRepository,mergeStateStatus,headRefOid,headRefName,baseRefName,mergeable,mergeableState > pr.json || { echo "Failed to fetch PR #$pr"; continue; }
+            draft=$(jq -r '.isDraft' pr.json)
+            cross=$(jq -r '.isCrossRepository' pr.json)
+            ms=$(jq -r '.mergeStateStatus' pr.json)
+            headSha=$(jq -r '.headRefOid' pr.json)
+            headRef=$(jq -r '.headRefName' pr.json)
+            baseRef=$(jq -r '.baseRefName' pr.json)
+            mstate=$(jq -r '.mergeableState // ""' pr.json)
+            reason=""
+            if [ "$draft" = "true" ]; then
+              echo "Attempting to mark PR #$pr ready for review..."
+              if gh pr ready "$pr" -R "$REPO" >/dev/null 2>&1; then
+                echo "Marked #$pr ready."
+              else
+                echo "Could not mark #$pr ready; proceeding to next PR."; gh pr comment "$pr" -R "$REPO" -b "PR Maintainer: skipping (draft, unable to mark ready)." || true; continue;
+              fi
+            fi
+            if [ -z "$headSha" ] || [ "$headSha" = "null" ]; then
+              echo "No head SHA for #$pr"; gh pr comment "$pr" -R "$REPO" -b "PR Maintainer: skipping (missing head SHA)." || true; continue;
+            fi
+            # Aggregate commit status
+            state=$(gh api repos/$REPO/commits/$headSha/status --jq '.state' || echo "unknown")
+            if [ "$state" = "failure" ]; then
+              echo "Checks failing for #$pr"; gh pr comment "$pr" -R "$REPO" -b "PR Maintainer: skipping (checks failing)." || true; continue;
+            fi
+            # Verify all check runs are completed and acceptable
+            notok=$(gh api repos/$REPO/commits/$headSha/check-runs -H "Accept: application/vnd.github+json" --jq '[.check_runs[] | select(.status!="completed" or (.conclusion and (.conclusion!="success" and .conclusion!="neutral" and .conclusion!="skipped")))] | length' || echo 1)
+            if [ "$notok" != "0" ]; then
+              echo "Pending/failed checks for #$pr"; gh pr comment "$pr" -R "$REPO" -b "PR Maintainer: skipping (checks pending/failed)." || true; continue;
+            fi
+            echo "Merge state: $ms | head=$headRef base=$baseRef"
+            # Attempt merge with multiple fallbacks (auto -> squash -> merge) and handle delete-branch failures gracefully
+            if gh pr merge "$pr" -R "$REPO" --auto --squash --delete-branch; then
+              echo "Auto-merge scheduled for #$pr"
+            elif gh pr merge "$pr" -R "$REPO" --squash --delete-branch; then
+              echo "Merged #$pr (squash + delete-branch)"
+            elif gh pr merge "$pr" -R "$REPO" --squash; then
+              echo "Merged #$pr (squash, kept branch)"
+            elif gh pr merge "$pr" -R "$REPO" --merge; then
+              echo "Merged #$pr (merge commit)"
+            elif gh pr merge "$pr" -R "$REPO"; then
+              echo "Merged #$pr (default method)"
+            else
+              echo "Merge failed or not allowed for #$pr"; gh pr comment "$pr" -R "$REPO" -b "PR Maintainer: merge attempt failed (likely branch protection, review requirements, or repo policy)." || true
+            fi
+          done

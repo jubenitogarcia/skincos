@@ -1,0 +1,13 @@
+# constraints.txt - pin explicit versions for previously unpinned packages
+# Generated to accompany requirements.txt
+fastapi==0.115.0
+uvicorn==0.35.0
+httpx==0.28.1
+cloudinary==1.44.1
+six==1.17.0
+certifi==2025.7.14
+pathspec==0.12.1
+psutil==7.0.0
+# requests/urllib3 kept ranged in requirements; could also pin here if desired
+# requests==2.32.3
+# urllib3==2.2.3

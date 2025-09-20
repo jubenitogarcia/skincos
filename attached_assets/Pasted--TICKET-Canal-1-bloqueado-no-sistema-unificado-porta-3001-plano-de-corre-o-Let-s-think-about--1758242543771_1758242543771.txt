@@ -1,0 +1,103 @@
+[TICKET] Canal 1 bloqueado no sistema unificado (porta 3001) + plano de correção
+
+Let's think about this differently.
+Temos um erro sintomático na base do novo padrão REST único e precisamos destravar o Canal 1 imediatamente.
+
+Resumo do problema
+- Mensagem de erro ao iniciar Canal 1:
+  "Channel 1 is disabled and cannot be started: Port managed by WhatsApp Unified System."
+- Dashboard em http://localhost:3001 permanece "Disconnected" + "Initializing" (sem progresso/QR/erro claro).
+- Canais 2+ parecem OK no padrão unificado, mas o Canal 1 não inicia.
+
+Here's what I'm really asking:
+- Quero o Canal 1 rodando 100% no novo padrão **porta 3001 + /whatsapp/1** (start/QR/status/send/webhook), sem bloqueios artificiais.
+
+Break this down for me — plano de ação (passo a passo)
+
+1) Config/Licenciamento/Flags
+- Verifique se o Canal 1 está realmente habilitado:
+  - ACTIVE_CHANNELS inclui "1"? (ex.: ACTIVE_CHANNELS="1,2,3")
+  - Existe alguma lista de bloqueio? (ex.: DISABLED_CHANNELS, BLACKLIST_CHANNELS)
+  - Variáveis de licença não estão negando o 1? (ex.: LICENSED_CHANNELS, PLAN_MIN_CHANNEL=1)
+- Garanta que o ChannelManager não trate o canal 1 como “reservado/legacy”:
+  - Remova qualquer regra “special case” que marque o 1 como managed/locked.
+  - API esperada:
+    - GET  /whatsapp/1/status
+    - GET  /whatsapp/1/qr
+    - POST /whatsapp/1/start
+    - POST /whatsapp/1/restart
+    - POST /whatsapp/1/send
+- Cheque o storage de sessão do canal 1:
+  - Diretório isolado: ./sessions/channel-1 (permissões ok, sem lockfile)
+  - Limpe artefatos antigos se necessário (após backup).
+
+2) Porta, processo e legado
+- What am I not seeing here?
+  - Há algum processo remanescente na 3001 (ou 3003) segurando socket ou estado?
+  - A camada de orquestração (PM2/forever/Docker/Replit runner) está subindo dois apps?
+- Ação:
+  - Confirme que **tudo** roda só em 3001 (3003 apenas se houver redirect temporário).
+  - Se existir redirect de 3003→3001, valide que não interfira na rota /whatsapp/1.
+  - Healthcheck único em 3001 (/health, /whatsapp/1/health).
+
+3) Roteamento/Inicialização (Express + ChannelManager)
+- Valide o encadeamento:
+  app.use('/whatsapp/:account', whatsappChannelRouter)
+- Garanta start dinâmico para o 1:
+  - channelManager.addChannel(1) não deve retornar “disabled/managed”.
+  - channelManager.start(1) deve acionar sessão, pareamento, QR e eventos.
+- Promessas/eventos:
+  - “Initializing” deve trocar para “QR_READY”, “CONNECTED” ou “ERROR” (com motivo).
+  - Se falhar, retornar payload de erro claro (ex.: { code, reason, hint }).
+
+4) Estados do Dashboard (UX esperada)
+- Nunca ficar preso em “Initializing”. Sempre mostrar:
+  - “QR Code pronto” (com refresh) OU
+  - “Conectado” (número/alias/uptime) OU
+  - “Erro” (mensagem acionável + botão Retry/Restart)
+- Botões:
+  - Refresh: refaz GET /whatsapp/1/status
+  - Restart: POST /whatsapp/1/restart
+  - Test Message: POST /whatsapp/1/send (payload de teste)
+- Telemetria mínima no UI:
+  - Último evento (timestamp), tentativas de reconexão, próxima ação sugerida.
+
+5) Smoke tests (curl)
+- Executar e anexar logs de retorno (esperado: HTTP 200 e payload coerente):
+  curl -sS http://localhost:3001/whatsapp/1/status
+  curl -sS http://localhost:3001/whatsapp/1/qr
+  curl -sS -X POST http://localhost:3001/whatsapp/1/start
+  curl -sS -X POST http://localhost:3001/whatsapp/1/restart
+  curl -sS -X POST http://localhost:3001/whatsapp/1/send -H "Content-Type: application/json" -d '{"to":"+5511999999999","text":"ping"}'
+
+6) Logs que preciso ver
+- No start do 1: “channel=1 state=starting”, “sessionPath=…”, “license=ok”, “enabled=true”
+- Em caso de bloqueio: “reason=disabledFlag” OU “reason=legacyLock” OU “reason=portConflict”
+- Em QR: “QR_READY channel=1” com ttl/attempt
+- Em sucesso: “CONNECTED channel=1 waid=…”
+- Em erro: stack + hint (ex.: “delete ./sessions/channel-1 and retry”)
+
+7) Hotfix sugerido (se for flag/config)
+- Se existir lógica como:
+  const disabled = DISABLED_CHANNELS.has(1) || LEGACY_RESERVED.has(1)
+  => Remover canal 1 dessas estruturas.
+- Se ACTIVE_CHANNELS estiver vazio:
+  - Definir ACTIVE_CHANNELS="1"
+- Garantir isEnabled(1) === true:
+  if (!channelManager.isEnabled(1)) channelManager.enable(1)
+
+Critérios de aceite (Definition of Done)
+- Canal 1 inicia e conecta via REST em 3001:
+  - QR aparece (quando não autenticado) e some ao conectar
+  - status alterna corretamente (INITIALIZING→QR_READY/CONNECTED/ERROR)
+  - envio/recebimento de mensagens funcional
+- Dashboard mostra estado real (sem loop eterno de “Initializing”)
+- Logs anexados + prints do dashboard (canal 1) usando EXCLUSIVAMENTE 3001
+- Nenhuma dependência ativa em 3003
+- Doc atualizada: operação única em 3001 + /whatsapp/{account}
+
+What would you do in my shoes?
+- Eu validaria flags de licença e listas de bloqueio primeiro, depois limparia sessão do canal 1, confirmaria roteamento e dispararia os smoke tests acima. Se falhar, inspecionaria logs de inicialização e conflitos de porta/processo.
+
+What else should I know?
+- O Canal 1 não pode ter tratamento “especial” que impeça start no novo modelo — isso mascara defeitos e quebra o onboarding de clientes (primeira licença).

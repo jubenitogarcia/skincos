@@ -1,0 +1,69 @@
+name: Central Validators - Lockfiles & Engines
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '8 2 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no submodules)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Initialize submodules with GH_TOKEN
+        run: |
+          set -euxo pipefail
+          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
+            echo "::error::GH_TOKEN secret is required to fetch private submodules"; exit 1;
+          fi
+          git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Node version checks
+        run: |
+          set -euxo pipefail
+          echo "Checking package.json engines and lockfiles..."
+          mapfile -t PKGS < <(git ls-files | grep -E '(^|/)package.json$')
+          for p in "${PKGS[@]}"; do
+            dir=$(dirname "$p")
+            echo "- $p"
+            if [ -f "$dir/pnpm-lock.yaml" ] || [ -f "$dir/package-lock.json" ] || [ -f "$dir/yarn.lock" ]; then
+              :
+            else
+              echo "::warning::No lockfile next to $p" >&2
+            fi
+            if jq -e '.engines' "$p" >/dev/null 2>&1; then
+              node -e "const e=require('$p').engines||{}; const v=e.node; if(v){const semver=require('semver'); if(!semver.validRange(v)){process.exit(1)}}" || { echo "::error::Invalid engines.node in $p"; exit 1; }
+            fi
+          done
+
+      - name: Python projects checks
+        run: |
+          set -euxo pipefail
+          echo "Checking Python manifests..."
+          # Ensure lock/constraints files present when requirements.txt exists
+          mapfile -t REQS < <(git ls-files | grep -E '(^|/)requirements\.txt$')
+          for r in "${REQS[@]}"; do
+            dir=$(dirname "$r")
+            if [ -f "$dir/requirements.lock" ] || [ -f "$dir/requirements-frozen.txt" ] || grep -qiE '==|~=' "$r"; then
+              :
+            else
+              echo "::warning::Unpinned requirements in $r" >&2
+            fi
+          done
+
+      - name: PNPM workspace sanity (if used)
+        run: |
+          set -euo pipefail
+          command -v pnpm >/dev/null 2>&1 || npm i -g pnpm@9 >/dev/null 2>&1
+          if [ -f pnpm-workspace.yaml ]; then pnpm -v && echo "pnpm workspace detected"; fi

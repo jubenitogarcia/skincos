@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Enhanced Module - SKINCOS AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+        
+        .status-bar {
+            background: white;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status {
+            padding: 0.75rem 1.5rem;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        
+        .status.ready { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        .status.loading { background: #fff3cd; color: #856404; }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 1.5rem;
+            font-size: 1.5rem;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 0.5rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #555;
+            font-weight: 600;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .tab.active {
+            color: #667eea;
+        }
+        
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .chat-list,
+        .contact-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 1rem;
+        }
+        
+        .chat-item,
+        .contact-item {
+            padding: 1rem;
+            border-bottom: 1px solid #e0e0e0;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        
+        .chat-item:hover,
+        .contact-item:hover {
+            background: #f8f9fa;
+        }
+        
+        .chat-item:last-child,
+        .contact-item:last-child {
+            border-bottom: none;
+        }
+        
+        .chat-name,
+        .contact-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.25rem;
+        }
+        
+        .chat-last-message,
+        .contact-number {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .unread-badge {
+            background: #667eea;
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            float: right;
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .media-preview {
+            margin-top: 1rem;
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .media-preview img {
+            width: 100%;
+            height: auto;
+        }
+        
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 WhatsApp Enhanced Module</h1>
+            <p>Advanced WhatsApp Integration for SKINCOS AI - Phase 1 Implementation</p>
+        </div>
+        
+        <div class="status-bar">
+            <div id="status" class="status disconnected">🔴 Disconnected</div>
+            <div>
+                <button class="btn btn-secondary" onclick="refreshStatus()">🔄 Refresh</button>
+                <button class="btn btn-secondary" onclick="restartClient()">🔄 Restart</button>
+            </div>
+        </div>
+        
+        <div class="main-grid">
+            <!-- Send Messages Card -->
+            <div class="card">
+                <h2>📤 Send Messages</h2>
+                
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('text')">Text</button>
+                    <button class="tab" onclick="switchTab('image')">Image</button>
+                    <button class="tab" onclick="switchTab('video')">Video</button>
+                    <button class="tab" onclick="switchTab('document')">Document</button>
+                    <button class="tab" onclick="switchTab('audio')">Audio</button>
+                    <button class="tab" onclick="switchTab('location')">Location</button>
+                </div>
+                
+                <div id="alert-container"></div>
+                
+                <!-- Text Tab -->
+                <div id="text-tab" class="tab-content active">
+                    <div class="form-group">
+                        <label>Phone Number (with country code):</label>
+                        <input type="text" id="text-number" placeholder="555195103563" value="555195103563">
+                    </div>
+                    <div class="form-group">
+                        <label>Message:</label>
+                        <textarea id="text-message" rows="3" placeholder="Type your message here...">Teste de mensagem de texto via Enhanced Module! 🚀</textarea>
+                    </div>
+                    <button class="btn btn-primary" onclick="sendText()">Send Text Message</button>
+                </div>
+                
+                <!-- Image Tab -->
+                <div id="image-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>Phone Number:</label>
+                        <input type="text" id="image-number" placeholder="555195103563" value="555195103563">
+                    </div>
+                    <div class="form-group">
+                        <label>Image URL:</label>
+                        <input type="text" id="image-url" placeholder="https://example.com/image.jpg" value="https://picsum.photos/400/300">
+                    </div>
+                    <div class="form-group">
+                        <label>Caption (optional):</label>
+                        <input type="text" id="image-caption" placeholder="Image caption..." value="Teste de imagem via Enhanced Module 🖼️">
+                    </div>
+                    <button class="btn btn-primary" onclick="sendImage()">Send Image</button>
+                </div>
+                
+                <!-- Video Tab -->
+                <div id="video-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>Phone Number:</label>
+                        <input type="text" id="video-number" placeholder="555195103563" value="555195103563">
+                    </div>
+                    <div class="form-group">
+                        <label>Video URL:</label>
+                        <input type="text" id="video-url" placeholder="https://example.com/video.mp4" value="https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4">
+                    </div>
+                    <div class="form-group">
+                        <label>Caption (optional):</label>
+                        <input type="text" id="video-caption" placeholder="Video caption..." value="Teste de vídeo via Enhanced Module 🎥">
+                    </div>
+                    <button class="btn btn-primary" onclick="sendVideo()">Send Video</button>
+                </div>
+                
+                <!-- Document Tab -->
+                <div id="document-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>Phone Number:</label>
+                        <input type="text" id="doc-number" placeholder="555195103563" value="555195103563">
+                    </div>
+                    <div class="form-group">
+                        <label>Document URL:</label>
+                        <input type="text" id="doc-url" placeholder="https://example.com/document.pdf" value="https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf">
+                    </div>
+                    <div class="form-group">
+                        <label>Filename (optional):</label>
+                        <input type="text" id="doc-filename" placeholder="document.pdf" value="teste-documento.pdf">
+                    </div>
+                    <div class="form-group">
+                        <label>Caption (optional):</label>
+                        <input type="text" id="doc-caption" placeholder="Document caption..." value="Teste de documento via Enhanced Module 📄">
+                    </div>
+                    <button class="btn btn-primary" onclick="sendDocument()">Send Document</button>
+                </div>
+                
+                <!-- Audio Tab -->
+                <div id="audio-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>Phone Number:</label>
+                        <input type="text" id="audio-number" placeholder="555195103563" value="555195103563">
+                    </div>
+                    <div class="form-group">
+                        <label>Audio URL:</label>
+                        <input type="text" id="audio-url" placeholder="https://example.com/audio.mp3" value="https://www.soundjay.com/misc/sounds/bell-ringing-05.wav">
+                    </div>
+                    <button class="btn btn-primary" onclick="sendAudio()">Send Audio</button>
+                </div>
+                
+                <!-- Location Tab -->
+                <div id="location-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>Phone Number:</label>
+                        <input type="text" id="location-number" placeholder="555195103563" value="555195103563">
+                    </div>
+                    <div class="form-group">
+                        <label>Latitude:</label>
+                        <input type="text" id="location-lat" placeholder="-29.6842" value="-29.6842">
+                    </div>
+                    <div class="form-group">
+                        <label>Longitude:</label>
+                        <input type="text" id="location-lng" placeholder="-51.0784" value="-51.0784">
+                    </div>
+                    <div class="form-group">
+                        <label>Description (optional):</label>
+                        <input type="text" id="location-desc" placeholder="Location description..." value="SKINCOS AI - Novo Hamburgo">
+                    </div>
+                    <button class="btn btn-primary" onclick="sendLocation()">Send Location</button>
+                </div>
+            </div>
+            
+            <!-- Chats & Contacts Card -->
+            <div class="card">
+                <h2>💬 Chats & Contacts</h2>
+                
+                <div class="tabs">
+                    <button class="tab active" onclick="switchInfoTab('chats')">Chats</button>
+                    <button class="tab" onclick="switchInfoTab('contacts')">Contacts</button>
+                    <button class="tab" onclick="switchInfoTab('messages')">Messages</button>
+                </div>
+                
+                <!-- Chats Tab -->
+                <div id="chats-info-tab" class="tab-content active">
+                    <button class="btn btn-success" onclick="loadChats()">📥 Load Chats</button>
+                    <div id="chat-list" class="chat-list" style="margin-top: 1rem;">
+                        <p style="text-align: center; color: #999;">Click "Load Chats" to view conversations</p>
+                    </div>
+                </div>
+                
+                <!-- Contacts Tab -->
+                <div id="contacts-info-tab" class="tab-content">
+                    <button class="btn btn-success" onclick="loadContacts()">📥 Load Contacts</button>
+                    <div id="contact-list" class="contact-list" style="margin-top: 1rem;">
+                        <p style="text-align: center; color: #999;">Click "Load Contacts" to view contacts</p>
+                    </div>
+                </div>
+                
+                <!-- Messages Tab -->
+                <div id="messages-info-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>Chat ID:</label>
+                        <input type="text" id="messages-chat-id" placeholder="555195103563@c.us">
+                    </div>
+                    <div class="form-group">
+                        <label>Limit:</label>
+                        <input type="number" id="messages-limit" value="20">
+                    </div>
+                    <button class="btn btn-success" onclick="loadMessages()">📥 Load Messages</button>
+                    <div id="messages-list" class="chat-list" style="margin-top: 1rem;">
+                        <p style="text-align: center; color: #999;">Enter Chat ID and click "Load Messages"</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let statusInterval;
+        
+        // Status check
+        async function fetchStatus() {
+            try {
+                const response = await fetch('api/status');
+                const data = await response.json();
+                updateStatus(data);
+            } catch (error) {
+                console.error('Error fetching status:', error);
+            }
+        }
+        
+        function updateStatus(data) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = `status ${data.status.includes('ready') ? 'ready' : data.status.includes('loading') ? 'loading' : 'disconnected'}`;
+            
+            if (data.status === 'ready') {
+                statusEl.innerHTML = `🟢 Connected - ${data.clientInfo?.pushname || 'WhatsApp'}`;
+            } else if (data.status.includes('loading')) {
+                statusEl.innerHTML = `🟡 ${data.status}`;
+            } else {
+                statusEl.innerHTML = `🔴 ${data.status}`;
+            }
+        }
+        
+        async function refreshStatus() {
+            await fetchStatus();
+        }
+        
+        async function restartClient() {
+            try {
+                const response = await fetch('api/restart');
+                const data = await response.json();
+                showAlert('success', 'Client restart initiated');
+                setTimeout(fetchStatus, 3000);
+            } catch (error) {
+                showAlert('error', 'Error restarting client');
+            }
+        }
+        
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+        }
+        
+        function switchInfoTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => {
+                if (tab.parentElement.parentElement.querySelector('#chats-info-tab')) {
+                    tab.classList.remove('active');
+                }
+            });
+            document.querySelectorAll('#chats-info-tab, #contacts-info-tab, #messages-info-tab').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            event.target.classList.add('active');
+            document.getElementById(`${tabName}-info-tab`).classList.add('active');
+        }
+        
+        // Alert helper
+        function showAlert(type, message) {
+            const alertContainer = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            alertContainer.innerHTML = '';
+            alertContainer.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+        
+        // Send functions
+        async function sendText() {
+            try {
+                const response = await fetch('api/send-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: document.getElementById('text-number').value,
+                        message: document.getElementById('text-message').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showAlert('success', '✅ Text message sent successfully!');
+                } else {
+                    showAlert('error', `❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', '❌ Error sending text message');
+            }
+        }
+        
+        async function sendImage() {
+            try {
+                const response = await fetch('api/send-media', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: document.getElementById('image-number').value,
+                        type: 'image',
+                        url: document.getElementById('image-url').value,
+                        caption: document.getElementById('image-caption').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showAlert('success', '✅ Image sent successfully!');
+                } else {
+                    showAlert('error', `❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', '❌ Error sending image');
+            }
+        }
+        
+        async function sendVideo() {
+            try {
+                const response = await fetch('api/send-media', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: document.getElementById('video-number').value,
+                        type: 'video',
+                        url: document.getElementById('video-url').value,
+                        caption: document.getElementById('video-caption').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showAlert('success', '✅ Video sent successfully!');
+                } else {
+                    showAlert('error', `❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', '❌ Error sending video');
+            }
+        }
+        
+        async function sendDocument() {
+            try {
+                const response = await fetch('api/send-media', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: document.getElementById('doc-number').value,
+                        type: 'document',
+                        url: document.getElementById('doc-url').value,
+                        caption: document.getElementById('doc-caption').value,
+                        filename: document.getElementById('doc-filename').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showAlert('success', '✅ Document sent successfully!');
+                } else {
+                    showAlert('error', `❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', '❌ Error sending document');
+            }
+        }
+        
+        async function sendAudio() {
+            try {
+                const response = await fetch('api/send-media', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: document.getElementById('audio-number').value,
+                        type: 'audio',
+                        url: document.getElementById('audio-url').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showAlert('success', '✅ Audio sent successfully!');
+                } else {
+                    showAlert('error', `❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', '❌ Error sending audio');
+            }
+        }
+        
+        async function sendLocation() {
+            try {
+                const response = await fetch('api/send-location', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: document.getElementById('location-number').value,
+                        latitude: parseFloat(document.getElementById('location-lat').value),
+                        longitude: parseFloat(document.getElementById('location-lng').value),
+                        description: document.getElementById('location-desc').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showAlert('success', '✅ Location sent successfully!');
+                } else {
+                    showAlert('error', `❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', '❌ Error sending location');
+            }
+        }
+        
+        // Load data functions
+        async function loadChats() {
+            try {
+                const response = await fetch('api/chats');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const chatList = document.getElementById('chat-list');
+                    chatList.innerHTML = '';
+                    
+                    data.chats.forEach(chat => {
+                        const chatItem = document.createElement('div');
+                        chatItem.className = 'chat-item';
+                        chatItem.innerHTML = `
+                            <div class="chat-name">${chat.name || chat.id}</div>
+                            <div class="chat-last-message">${chat.lastMessage?.body || 'No messages'}</div>
+                            ${chat.unreadCount > 0 ? `<span class="unread-badge">${chat.unreadCount}</span>` : ''}
+                        `;
+                        chatItem.onclick = () => {
+                            document.getElementById('messages-chat-id').value = chat.id;
+                            switchInfoTab('messages');
+                        };
+                        chatList.appendChild(chatItem);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading chats:', error);
+            }
+        }
+        
+        async function loadContacts() {
+            try {
+                const response = await fetch('api/contacts');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const contactList = document.getElementById('contact-list');
+                    contactList.innerHTML = '';
+                    
+                    data.contacts.forEach(contact => {
+                        if (contact.isUser && !contact.isGroup) {
+                            const contactItem = document.createElement('div');
+                            contactItem.className = 'contact-item';
+                            contactItem.innerHTML = `
+                                <div class="contact-name">${contact.pushname || contact.name || 'Unknown'}</div>
+                                <div class="contact-number">${contact.number || contact.id}</div>
+                            `;
+                            contactList.appendChild(contactItem);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+            }
+        }
+        
+        async function loadMessages() {
+            try {
+                const chatId = document.getElementById('messages-chat-id').value;
+                const limit = document.getElementById('messages-limit').value;
+                
+                const response = await fetch(`api/chats/${chatId}/messages?limit=${limit}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const messagesList = document.getElementById('messages-list');
+                    messagesList.innerHTML = '';
+                    
+                    data.messages.forEach(msg => {
+                        const msgItem = document.createElement('div');
+                        msgItem.className = 'chat-item';
+                        msgItem.innerHTML = `
+                            <div style="color: #667eea; font-size: 0.8rem;">${new Date(msg.timestamp * 1000).toLocaleString()}</div>
+                            <div>${msg.body || '[Media]'}</div>
+                        `;
+                        messagesList.appendChild(msgItem);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading messages:', error);
+            }
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            fetchStatus();
+            statusInterval = setInterval(fetchStatus, 3000);
+        });
+        
+        window.addEventListener('beforeunload', function() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        });
+    </script>
+</body>
+</html>

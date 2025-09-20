@@ -1,0 +1,44 @@
+name: AI Improve Loop Controller
+
+on:
+  workflow_run:
+    workflows: ["AI Improve Runner"]
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  requeue:
+    name: Re-dispatch Scheduler
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure jq is available
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+      - name: Check for in-flight runner
+        id: check
+        run: |
+          set -euo pipefail
+          token="${{ secrets.GITHUB_TOKEN }}"
+          repo="${{ github.repository }}"
+          base="https://api.github.com/repos/$repo/actions/workflows/ai-improve-runner.yml/runs"
+          q1=$(curl -sS -H "Authorization: Bearer $token" "$base?status=queued&per_page=1" | jq -r '.workflow_runs|length')
+          q2=$(curl -sS -H "Authorization: Bearer $token" "$base?status=in_progress&per_page=1" | jq -r '.workflow_runs|length')
+          total=$((q1 + q2))
+          echo "in_flight=$total" >> $GITHUB_OUTPUT
+      - name: Re-dispatch AI Scheduler
+        if: steps.check.outputs.in_flight == '0'
+        run: |
+          echo "No runner in flight; reading cooldownSeconds from config..."
+          cd "$GITHUB_WORKSPACE"
+          cooldown=$(jq -r '.cooldownSeconds // 10' .github/ai-runner-config.json 2>/dev/null || echo 10)
+          echo "Cooling down for ${cooldown}s before dispatch"
+          sleep "$cooldown"
+          gh workflow run -R "$GITHUB_REPOSITORY" ai-scheduler.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

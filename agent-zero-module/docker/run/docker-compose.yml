@@ -1,0 +1,16 @@
+services:
+  agent-zero:
+    container_name: agent-zero
+    build:
+      context: ../../
+      dockerfile: Dockerfile.agent-zero
+    environment:
+      WHATSAPP_BASE_URL: http://whatsapp-api:3001
+      WHATSAPP_WEBHOOK_SECRET: AGZ_SECRET_123
+      AGENT_WEBHOOK_PUBLIC_URL: https://agent-zero.seudominio.com/agent-zero/webhooks/whatsapp
+      AGENT_ZERO_PORT: 4000
+    ports:
+      - "4000:4000"  # webhook / health
+    # depends_on:
+    #   - whatsapp-api  # descomente quando serviço whatsapp-api estiver definido aqui
+    restart: unless-stopped

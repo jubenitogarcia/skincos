@@ -1,0 +1,1 @@
+module.exports = require('./packages/shared-configs/prettier.json');

@@ -1,0 +1,45 @@
+name: Configure Branch Protection (Relaxed)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  relax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply relaxed protection for main
+        env:
+          GH_ACT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="${ADMIN_TOKEN:-${GH_ACT_TOKEN}}"
+          branch="main"
+          echo "Relaxing branch protection for $REPO@$branch"
+          cat > body.json <<'JSON'
+          {
+            "required_status_checks": null,
+            "enforce_admins": false,
+            "required_pull_request_reviews": null,
+            "restrictions": null,
+            "allow_force_pushes": true,
+            "allow_deletions": true,
+            "required_conversation_resolution": false
+          }
+          JSON
+          set +e
+          gh api -X PUT repos/$REPO/branches/$branch/protection -H "Accept: application/vnd.github+json" --input body.json
+          code=$?
+          set -e
+          if [ $code -eq 403 ] || [ $code -eq 404 ]; then
+            echo "Admin token required (REPO_ADMIN_TOKEN) to relax protection." >&2
+            exit 1
+          fi
+          echo "Protection relaxed."

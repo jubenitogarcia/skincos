@@ -1,0 +1,142 @@
+{
+  "instances": [
+    {
+      "id": "wa-instance-3001",
+      "port": 3001,
+      "status": "qr_pending",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-20T19:36:36.045Z",
+      "metadata": {
+        "errorCount": 2,
+        "restartCount": 1,
+        "stoppedAt": "2025-09-18T22:09:16.439Z",
+        "explicitStart": true,
+        "autoStart": false,
+        "disabled": true,
+        "disabledReason": "Port managed by WhatsApp Unified System",
+        "note": "DISABLED - Port 3001 reserved for unified multi-channel system",
+        "startedAt": "2025-09-18T22:00:15.797Z",
+        "lastError": "Process died during startup",
+        "lastErrorAt": "2025-09-18T22:00:16.831Z",
+        "qrGeneratedAt": "2025-09-20T19:36:36.045Z",
+        "qrAttempts": 4
+      },
+      "name": "[DISABLED] Use Unified System Instead",
+      "channel": 1,
+      "qr": "2@j4hHvlVhqyd/7pdg0y5lfYNC4WlE2Rwml8qEu2ciQaFPdVrh0RW/zk0k/yM175Sb1RNUnFNskBCC6EA85aFjm4oOOdKQm6VuNPc=,/IgniqGk7IA2+SF+ivy0QGIM2FStxCKd+T93UEWO7jk=,9k2cD1mfp9yz3Fi7ezaz8tx0Q5dXZdemSNtz9UZtL28=,4DiqlVJOu34ysyiNHHjKpkvAbjXnsyjfC6Jg3oOzlK4=,1"
+    },
+    {
+      "id": "wa-instance-3002",
+      "port": 3002,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T19:28:34.962Z",
+      "metadata": {
+        "errorCount": 3,
+        "restartCount": 3,
+        "stoppedAt": "2025-09-17T19:28:34.962Z",
+        "startedAt": "2025-09-17T18:36:09.382Z",
+        "explicitStart": true
+      },
+      "name": "Canal2-Dashboard",
+      "channel": 2
+    },
+    {
+      "id": "wa-instance-3004",
+      "port": 3004,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T15:05:03.435Z",
+      "metadata": {
+        "errorCount": 0,
+        "restartCount": 4,
+        "startedAt": "2025-09-17T14:12:15.148Z",
+        "explicitStart": true,
+        "stoppedAt": "2025-09-17T14:12:12.146Z"
+      },
+      "channel": 4,
+      "name": "Test-Channel-4"
+    },
+    {
+      "id": "wa-instance-3005",
+      "port": 3005,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T15:04:04.711Z",
+      "metadata": {
+        "errorCount": 0,
+        "restartCount": 3,
+        "startedAt": "2025-09-17T14:12:22.277Z",
+        "explicitStart": true,
+        "stoppedAt": "2025-09-17T14:12:19.276Z"
+      },
+      "channel": 5,
+      "name": "Test-Channel-5"
+    },
+    {
+      "id": "wa-instance-3006",
+      "port": 3006,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T15:04:12.769Z",
+      "metadata": {
+        "errorCount": 0,
+        "restartCount": 3,
+        "startedAt": "2025-09-17T14:12:29.383Z",
+        "explicitStart": true,
+        "stoppedAt": "2025-09-17T14:12:26.384Z"
+      },
+      "channel": 6,
+      "name": "Test-Channel-6"
+    },
+    {
+      "id": "wa-instance-3007",
+      "port": 3007,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T15:04:21.227Z",
+      "metadata": {
+        "errorCount": 0,
+        "restartCount": 2,
+        "startedAt": "2025-09-17T14:12:36.529Z",
+        "explicitStart": true,
+        "stoppedAt": "2025-09-17T14:12:33.528Z"
+      },
+      "channel": 7,
+      "name": "Test-Channel-7"
+    },
+    {
+      "id": "wa-instance-3008",
+      "port": 3008,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T14:12:38.763Z",
+      "metadata": {
+        "errorCount": 0,
+        "restartCount": 1,
+        "startedAt": "2025-09-17T14:12:31.557Z",
+        "explicitStart": true,
+        "stoppedAt": "2025-09-17T14:12:33.762Z"
+      },
+      "channel": 8,
+      "name": "Test-Channel-8"
+    },
+    {
+      "id": "wa-instance-3009",
+      "port": 3009,
+      "status": "free",
+      "createdAt": "2025-09-16T23:38:40.276Z",
+      "updatedAt": "2025-09-17T15:04:28.544Z",
+      "metadata": {
+        "errorCount": 0,
+        "restartCount": 2,
+        "startedAt": "2025-09-17T14:12:48.014Z",
+        "explicitStart": true,
+        "stoppedAt": "2025-09-17T14:12:44.995Z"
+      },
+      "channel": 9,
+      "name": "Test-Channel-9"
+    }
+  ],
+  "lastUpdate": "2025-09-20T19:36:37.045Z"
+}

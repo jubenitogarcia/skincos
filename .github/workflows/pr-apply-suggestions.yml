@@ -1,0 +1,63 @@
+name: PR Apply Suggestions
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '*/30 * * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Ensure deps
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y jq
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Fetch scripts
+        run: |
+          git ls-files scripts || true
+      - name: Apply Copilot suggestions on open PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api repos/$REPO/pulls --paginate -q '.[].number' > prs.txt || true
+          if [ ! -s prs.txt ]; then echo "No open PRs"; exit 0; fi
+          while read -r pr; do
+            echo "Processing PR #$pr"
+            # PR metadata
+            gh pr view "$pr" -R "$REPO" --json isCrossRepository,headRefName > pr.json || { echo "Skip: cannot view PR #$pr"; continue; }
+            cross=$(jq -r '.isCrossRepository' pr.json)
+            headRef=$(jq -r '.headRefName' pr.json)
+            if [ "$cross" = "true" ]; then echo "Skip cross-repo PR #$pr"; continue; fi
+            # Gather review comments with suggestions
+            gh api repos/$REPO/pulls/$pr/comments --paginate > comments.json || { echo "No comments"; continue; }
+            count=$(jq '[ .[] | select(.body | contains("```suggestion")) ] | length' comments.json)
+            if [ "$count" = "0" ]; then echo "No suggestions for #$pr"; continue; fi
+            echo "Found $count suggestions for #$pr"
+            # Checkout PR head branch
+            git fetch origin "$headRef":"$headRef" || true
+            git checkout "$headRef"
+            node scripts/apply-suggestions.js comments.json | tee /tmp/apply.out
+            edits=$(grep -oE 'applied_edits=[0-9]+' /tmp/apply.out | cut -d= -f2 || echo 0)
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: apply Copilot suggested changes"
+              git push origin "$headRef"
+              echo "Pushed suggestions for #$pr"
+            else
+              echo "No changes to commit for #$pr (applied_edits=$edits)"
+            fi
+          done < prs.txt

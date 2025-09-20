@@ -1,0 +1,127 @@
+[TICKET] QR do Canal 1 falha com 401 — padronizar autenticação CRM ⇄ Unified (porta 3001)
+
+Sintoma atual
+- Start OK → unified responde { status: "qr_received" }.
+- Ao buscar o QR: 401 "AUTH_REQUIRED" em /whatsapp/1/qr (e /api/qr).
+- Hint da API: "Send X-API-Key header with valid API key, or enable NO_AUTH=true for development".
+- Também há alerta de sessão LEGACY por compatibilidade.
+
+Here's what I'm really asking:
+→ Quero o QR renderizado no dashboard (Canal 1), com autenticação consistente e sem 401.
+
+What am I not seeing here?
+- CRM/Orchestrator não envia a credencial esperada (X-API-Key) para o Unified.
+- Proxy/rewrite pode estar removendo Authorization/custom headers.
+- Env vars de auth desalinhadas entre CRM e Unified.
+- Rota /qr protegida por middleware sem exceção de dev (NO_AUTH=false).
+- Flag de "legacy session" ativada por fallback — OK temporário, mas deve ser removida.
+
+Ação imediata (fix objetivo)
+1) Unificar segredos (ENV)
+   # Unified (3001)
+   UNIFIED_API_KEY=unified-dev-key
+   NO_AUTH=false           # true só em dev, se preferir bypass
+
+   # CRM/Orchestrator
+   CRM_UNIFIED_API_KEY=unified-dev-key
+   UNIFIED_BASE_URL=http://localhost:3001
+
+2) Middleware de auth no Unified (aceitar X-API-Key OU NO_AUTH)
+   // unified/auth.js
+   function requireUnifiedAuth(req, res, next) {
+     if (process.env.NO_AUTH === 'true') return next();
+     const key = req.get('X-API-Key') || '';
+     const expected = process.env.UNIFIED_API_KEY || '';
+     if (expected && key === expected) return next();
+     return res.status(401).json({
+       code: 'AUTH_REQUIRED',
+       hint: 'Send X-API-Key header with valid API key, or enable NO_AUTH=true'
+     });
+   }
+
+   // server.js (rotas antes de static/SPAs)
+   app.use('/whatsapp/:account', requireUnifiedAuth, whatsappChannelRouter);
+
+3) Cliente do Orchestrator deve enviar sempre X-API-Key
+   // orchestrator/unifiedClient.js
+   const axios = require('axios');
+   const client = axios.create({
+     baseURL: process.env.UNIFIED_BASE_URL,
+     timeout: 15000,
+     headers: { 'X-API-Key': process.env.CRM_UNIFIED_API_KEY }
+   });
+   async function getQR(id){ return (await client.get(`/whatsapp/${id}/qr`)).data; }
+
+4) Proxy/Rewrites: preservar headers
+   // Node http-proxy-middleware
+   createProxyMiddleware({
+     target: process.env.UNIFIED_BASE_URL,
+     changeOrigin: true,
+     preserveHeaderKeyCase: true,
+     onProxyReq: (pReq) => {
+       if (process.env.CRM_UNIFIED_API_KEY)
+         pReq.setHeader('X-API-Key', process.env.CRM_UNIFIED_API_KEY);
+     }
+   });
+
+5) Teste manual (esperado 200)
+   curl -i http://localhost:3001/whatsapp/1/qr \
+     -H "X-API-Key: unified-dev-key"
+
+   # (opcional dev)
+   NO_AUTH=true node server.js
+   curl -i http://localhost:3001/whatsapp/1/qr   # deve retornar 200 sem header
+
+6) Sessão LEGACY
+   - Remover "useLegacySession" após estabilizar QR e conexão no novo fluxo.
+   - Garantir storage isolado: ./sessions/channel-1 (sem lock).
+
+Definition of Done
+- GET /whatsapp/1/qr retorna 200 (payload com QR) quando status=qr_received.
+- Dashboard exibe o QR e conecta; depois status = CONNECTED.
+- Nenhum 401 nos logs do Orchestrator para rotas /whatsapp/1/*.
+- Doc atualizada: contrato de auth (X-API-Key) e variáveis envolvidas.
+- Flag/alerta de sessão LEGACY desativada no caminho feliz.
+
+Please confirm:
+- Qual middleware/ENV impedia a autenticação do /qr.
+- Trecho de código atualizado (Unified auth + Orchestrator client).
+- Evidências: curl 200 + print do QR no dashboard.
+```
+
+---
+
+### 🔧 Extras úteis (se precisar colar direto no projeto)
+
+**Axios/fetch no Orchestrator**
+
+```js
+const UNIFIED = process.env.UNIFIED_BASE_URL || 'http://localhost:3001';
+const KEY = process.env.CRM_UNIFIED_API_KEY;
+
+export async function unifiedGet(path){
+  const r = await fetch(`${UNIFIED}${path}`, { headers: { 'X-API-Key': KEY }});
+  if (!r.ok) throw new Error(`Unified ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+```
+
+**cURL de sanidade**
+
+```bash
+curl -sS http://localhost:3001/whatsapp/1/status -H 'X-API-Key: unified-dev-key' | jq .
+curl -sS http://localhost:3001/whatsapp/1/qr     -H 'X-API-Key: unified-dev-key' | jq .
+```
+
+---
+
+**What would you do in my shoes?**
+
+1. Habilitar NO\_AUTH=true no Unified só para isolar: se o QR vier 200, foco no header.
+2. Reativar auth e garantir que o Orchestrator envia `X-API-Key` (logar headers de entrada no Unified durante o teste).
+3. Fixar o proxy para não remover headers e registrar DoD.
+
+**What else should I know?**
+
+* Evite usar `SESSION_SECRET`, `JWT_SECRET` etc. para S2S; **API Key dedicada** é o caminho simples e rotacionável.
+* Se algum consumo for do **browser** (5000 → 3001), CORS/cookies entram na jogada; para **server-to-server**, `X-API-Key` evita essas dores.

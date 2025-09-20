@@ -1,0 +1,13 @@
+{
+    "watch": [
+        "src/api"
+    ],
+    "ext": "js,mjs,cjs,json",
+    "ignore": [
+        "node_modules"
+    ],
+    "delay": "300",
+    "env": {
+        "PORT": "3100"
+    }
+}

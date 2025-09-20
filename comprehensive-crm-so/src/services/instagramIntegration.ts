@@ -1,0 +1,159 @@
+// Stub de integração com Instagram Graph API
+// Substitua as funções abaixo por chamadas reais usando fetch ao endpoint:
+// https://graph.facebook.com/v20.0/{ig_business_account_id}/...
+// Necessário: access_token com permissões instagram_basic, instagram_manage_messages, instagram_manage_insights
+
+export interface InstagramUserProfile {
+    id: string
+    username: string
+    name?: string
+    profilePic?: string
+}
+
+export interface InstagramDMMessage {
+    id: string
+    from: string
+    to: string
+    text: string
+    timestamp: string
+    direction: 'in' | 'out'
+}
+
+// ---------------- REAL API HELPERS ----------------
+const GRAPH_BASE = 'https://graph.facebook.com/v20.0'
+
+interface GraphError { error: { message: string, type: string, code: number } }
+
+async function graphGet<T>(path: string, params: Record<string, any>, token: string): Promise<T> {
+    const qs = new URLSearchParams({ ...Object.fromEntries(Object.entries(params).filter(([_, v]) => v !== undefined && v !== null)), access_token: token })
+    const url = `${GRAPH_BASE}/${path}?${qs.toString()}`
+    const res = await fetch(url)
+    const json = await res.json()
+    if (!res.ok) throw new Error((json as GraphError).error?.message || 'Erro API Graph')
+    return json as T
+}
+
+async function graphPost<T>(path: string, body: Record<string, any>, token: string): Promise<T> {
+    const form = new URLSearchParams({ ...Object.fromEntries(Object.entries(body).filter(([_, v]) => v !== undefined && v !== null)), access_token: token })
+    const res = await fetch(`${GRAPH_BASE}/${path}`, { method: 'POST', body: form })
+    const json = await res.json()
+    if (!res.ok) throw new Error((json as GraphError).error?.message || 'Erro API Graph')
+    return json as T
+}
+
+// ---------------- HIGH LEVEL FUNCTIONS ----------------
+
+export async function fetchRecentCommentLeads(igBusinessAccountId?: string, token?: string): Promise<InstagramUserProfile[]> {
+    if (!igBusinessAccountId || !token) {
+        // fallback mock
+        return [
+            { id: 'ig_u_101', username: 'lead_potencial', name: 'Lead Potencial' },
+            { id: 'ig_u_102', username: 'clinica_estetica', name: 'Clínica Estética' }
+        ]
+    }
+    // Example: fetch recent media then comments
+    try {
+        const media: any = await graphGet(`${igBusinessAccountId}/media`, { fields: 'id,caption,comments.limit(10){id,text,username,user{id,username,profile_picture_url}}', limit: 5 }, token)
+        const profilesMap: Record<string, InstagramUserProfile> = {}
+        for (const item of media.data || []) {
+            const comments = item.comments?.data || []
+            for (const c of comments) {
+                if (c.user) {
+                    profilesMap[c.user.id] = {
+                        id: c.user.id,
+                        username: c.user.username,
+                        name: c.user.username,
+                        profilePic: c.user.profile_picture_url
+                    }
+                }
+            }
+        }
+        return Object.values(profilesMap)
+    } catch (e) {
+        console.warn('Erro fetchRecentCommentLeads Graph, usando mock', e)
+        return [
+            { id: 'ig_u_101', username: 'lead_potencial', name: 'Lead Potencial' }
+        ]
+    }
+}
+
+export async function fetchRecentDMConversations(igBusinessAccountId?: string, token?: string): Promise<Record<string, InstagramDMMessage[]>> {
+    if (!igBusinessAccountId || !token) {
+        return {
+            ig_u_101: [
+                { id: 'm1', from: 'ig_u_101', to: 'me', text: 'Olá, queria saber valores de harmonização.', timestamp: new Date().toISOString(), direction: 'in' }
+            ]
+        }
+    }
+    // NOTE: Instagram Messaging API requires setting up webhooks; direct fetch of conversation history is limited.
+    // Placeholder: return empty set to avoid misleading data.
+    return {}
+}
+
+export async function sendDirectMessage(userId: string, text: string, fromBizUserId?: string, token?: string): Promise<InstagramDMMessage> {
+    if (token && fromBizUserId) {
+        try {
+            await graphPost(`${fromBizUserId}/messages`, { recipient: userId, message: text }, token)
+        } catch (e) {
+            console.warn('Erro ao enviar DM (Graph). Fallback local.', e)
+        }
+    }
+    return {
+        id: 'local_' + Date.now(),
+        from: fromBizUserId || 'me',
+        to: userId,
+        text,
+        timestamp: new Date().toISOString(),
+        direction: 'out'
+    }
+}
+
+export async function fetchInstagramAccountMetrics(igBusinessAccountId: string, token: string) {
+    try {
+        const fields = 'followers_count,media_count'
+        const data = await graphGet(`${igBusinessAccountId}`, { fields }, token)
+        return data
+    } catch (e) {
+        throw e
+    }
+}
+
+export function mapInstagramProfileToLead(user: InstagramUserProfile) {
+    const nameParts = (user.name || user.username).split(' ')
+    const firstName = nameParts[0]
+    const lastName = nameParts.slice(1).join(' ') || 'Instagram'
+    return {
+        title: 'Mr',
+        firstName,
+        lastName,
+        company: 'Instagram',
+        jobTitle: '',
+        email: `${user.username}@instagram.local`,
+        phone: '',
+        website: `https://instagram.com/${user.username}`,
+        address: { street: '', city: '', state: '', zipCode: '', country: 'Brasil' },
+        leadSource: 'social-media',
+        leadStatus: 'new',
+        priority: 'medium',
+        estimatedValue: 0,
+        probability: 10,
+        expectedCloseDate: '',
+        assignedTo: 'user-1',
+        tags: ['instagram'],
+        notes: 'Gerado via integração Instagram',
+        customFields: {},
+        activities: [],
+        score: 0
+    }
+}
+
+// Exchange short-lived token for long-lived using local proxy (server/mockWebhookServer.ts)
+export async function exchangeForLongLivedToken(shortLivedToken: string, appId: string, appSecret: string, proxyBase = 'http://localhost:7070') {
+    const res = await fetch(`${proxyBase}/api/token/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shortLivedToken, appId, appSecret })
+    })
+    if (!res.ok) throw new Error('Falha ao trocar token')
+    return res.json()
+}

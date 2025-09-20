@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>AI Improvement Knowledge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root {
+            --ok: #12b886;
+            --fail: #e03131;
+            --muted: #6b7280;
+            --bg: #0b1020;
+            --panel: #121a2b;
+            --panel-2: #17233a;
+            --text: #e5e7eb;
+            --accent: #8b5cf6;
+            --border: #22314f;
+        }
+
+        html,
+        body {
+            height: 100%;
+        }
+
+        body {
+            margin: 0;
+            padding: 16px;
+            font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 22px;
+        }
+
+        .sub {
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .card {
+            background: linear-gradient(180deg, var(--panel), var(--panel-2));
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+        }
+
+        .card h3 {
+            margin: 0 0 6px;
+            font-size: 13px;
+            color: var(--muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+
+        .card .value {
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .okc {
+            color: var(--ok);
+        }
+
+        .failc {
+            color: var(--fail);
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin: 14px 0;
+        }
+
+        .toolbar input,
+        .toolbar select {
+            background: #0f172a;
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+
+        .toolbar label {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #0f172a;
+            border: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text);
+        }
+
+        .badge-ok {
+            color: var(--ok);
+            font-weight: 700;
+        }
+
+        .badge-fail {
+            color: var(--fail);
+            font-weight: 700;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        thead th {
+            position: sticky;
+            top: 0;
+            background: #0f1628;
+            text-align: left;
+            font-size: 12px;
+            color: var(--muted);
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+        }
+
+        tbody td {
+            border-top: 1px solid var(--border);
+            padding: 10px;
+            font-size: 13px;
+        }
+
+        tbody tr:hover {
+            background: rgba(139, 92, 246, 0.08);
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .right {
+            text-align: right;
+        }
+
+        .small {
+            font-size: 12px;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 260px 1fr;
+            gap: 16px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+        }
+
+        .panel h2 {
+            margin: 0 0 8px;
+            font-size: 14px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+
+        .legend {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .d-ok {
+            background: var(--ok);
+        }
+
+        .d-fail {
+            background: var(--fail);
+        }
+
+        .footer {
+            margin-top: 18px;
+            color: var(--muted);
+        }
+
+        a {
+            color: #7aa2ff;
+        }
+
+        .btn {
+            background: #1e293b;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 8px 10px;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            filter: brightness(1.1);
+        }
+    </style>
+</head>
+
+<body>
+    <h1>AI Improvement Knowledge</h1>
+    <div class="sub">Resumo dos últimos runs registrados em <code>db.json</code> — filtre, ordene e explore.</div>
+
+    <div class="grid" id="summary">
+        <div class="card">
+            <h3>Total</h3>
+            <div class="value" id="s-total">0</div>
+        </div>
+        <div class="card">
+            <h3>Sucesso</h3>
+            <div class="value okc" id="s-ok">0</div>
+        </div>
+        <div class="card">
+            <h3>Falhas</h3>
+            <div class="value failc" id="s-fail">0</div>
+        </div>
+        <div class="card">
+            <h3>Duração média</h3>
+            <div class="value" id="s-avg">–</div>
+        </div>
+    </div>
+
+    <div class="layout" style="margin-top:14px;">
+        <div class="panel">
+            <h2>Visão Rápida</h2>
+            <canvas id="chart" width="240" height="240" style="max-width:100%;"></canvas>
+            <div class="legend small" style="margin-top:8px;">
+                <span class="dot d-ok"></span> Sucesso
+                <span class="dot d-fail" style="margin-left:10px;"></span> Falha
+            </div>
+            <div class="footer small" id="meta">–</div>
+        </div>
+        <div class="panel">
+            <div class="toolbar">
+                <input id="q" placeholder="Buscar por título/issue/branch..." />
+                <select id="status">
+                    <option value="all">Status: todos</option>
+                    <option value="ok">Apenas sucesso</option>
+                    <option value="fail">Apenas falhas</option>
+                </select>
+                <select id="label">
+                    <option value="">Label: todas</option>
+                </select>
+                <select id="window">
+                    <option value="50">Últimos 50</option>
+                    <option value="100">Últimos 100</option>
+                    <option value="all">Todos</option>
+                </select>
+                <label class="small"><input type="checkbox" id="autoref" /> Auto-refresh</label>
+                <button class="btn small" id="refresh">Atualizar</button>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th data-k="at">Quando ⬍</th>
+                        <th data-k="issue">Issue</th>
+                        <th data-k="labels">Labels</th>
+                        <th data-k="pr">PR</th>
+                        <th data-k="branch">Branch</th>
+                        <th data-k="ok">OK</th>
+                        <th class="right" data-k="durationMs">Duração</th>
+                        <th data-k="topFailureName">Top Failure</th>
+                    </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const $ = (s) => document.querySelector(s);
+        let sortKey = 'at';
+        let sortDir = 'desc';
+        let DATA = [];
+
+        function fmtDur(ms) { if (!ms) return ''; const s = Math.round(ms / 1000); return s + 's'; }
+        function badge(ok) { return ok ? '✅' : '❌'; }
+
+        function computeStats(arr) {
+            const total = arr.length;
+            const oks = arr.filter(e => e.ok).length;
+            const fails = total - oks;
+            const avg = arr.reduce((a, e) => a + (e.durationMs || 0), 0) / (total || 1);
+            return { total, oks, fails, avg };
+        }
+
+        function drawDonut(okCount, failCount) {
+            const c = document.getElementById('chart');
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            const total = Math.max(1, okCount + failCount);
+            const cx = c.width / 2, cy = c.height / 2, r = Math.min(cx, cy) - 6;
+            let start = -Math.PI / 2;
+            const parts = [{ v: okCount, color: getComputedStyle(document.documentElement).getPropertyValue('--ok') }, { v: failCount, color: getComputedStyle(document.documentElement).getPropertyValue('--fail') }];
+            parts.forEach(p => {
+                const ang = (p.v / total) * Math.PI * 2;
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, start, start + ang); ctx.closePath(); ctx.fillStyle = p.color; ctx.fill();
+                start += ang;
+            });
+            // cutout
+            ctx.beginPath(); ctx.arc(cx, cy, r * 0.6, 0, Math.PI * 2); ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel'); ctx.fill();
+            // text
+            ctx.fillStyle = '#e5e7eb'; ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const perc = Math.round((okCount / total) * 100);
+            ctx.fillText(perc + '% OK', cx, cy);
+        }
+
+        function uniqueLabels(data) {
+            const set = new Set();
+            data.forEach(e => (e.issue?.labels || []).forEach(l => set.add(l)));
+            return Array.from(set).sort();
+        }
+
+        function applyFilters(data) {
+            const q = $('#q').value.toLowerCase().trim();
+            const st = $('#status').value;
+            const lab = $('#label').value;
+            const win = $('#window').value;
+            let arr = data.slice();
+            if (win !== 'all') arr = arr.slice(-Number(win));
+            arr = arr.filter(e => {
+                const hay = `${e.issue?.title || ''} ${e.branch || ''} #${e.issue?.number || ''}`.toLowerCase();
+                if (q && !hay.includes(q)) return false;
+                if (st === 'ok' && !e.ok) return false;
+                if (st === 'fail' && e.ok) return false;
+                if (lab) {
+                    const labels = e.issue?.labels || [];
+                    if (!labels.includes(lab)) return false;
+                }
+                return true;
+            });
+            arr.sort((a, b) => {
+                const dir = (sortDir === 'asc' ? 1 : -1);
+                const va = (sortKey === 'issue') ? (a.issue?.number || 0) : (sortKey === 'labels') ? (a.issue?.labels?.join(',') || '') : a[sortKey];
+                const vb = (sortKey === 'issue') ? (b.issue?.number || 0) : (sortKey === 'labels') ? (b.issue?.labels?.join(',') || '') : b[sortKey];
+                if (va == null && vb != null) return 1;
+                if (vb == null && va != null) return -1;
+                if (typeof va === 'string' && typeof vb === 'string') return dir * va.localeCompare(vb);
+                return dir * ((va || 0) - (vb || 0));
+            });
+            // Only reverse if sorting by timestamp (e.g., 'at')
+            if (sortKey === 'at') {
+                return arr.reverse(); // default newest first after sort on timestamps
+            }
+            return arr;
+        }
+
+        function render(arr) {
+            const rows = document.getElementById('rows');
+            rows.innerHTML = '';
+            arr.forEach(e => {
+                const tr = document.createElement('tr');
+                const when = new Date(e.at || Date.now());
+                const issue = e.issue ? `#${e.issue.number} – ${e.issue.title}` : '';
+                const labels = (e.issue?.labels || []).map(l => `<span class="chip">${l}</span>`).join(' ');
+                const pr = e.pr ? `<a href="${e.pr.url}" target="_blank">#${e.pr.number}</a>` : '';
+                const ok = badge(e.ok);
+                const duration = fmtDur(e.durationMs);
+                const top = e.topFailureName || '';
+                tr.innerHTML = `<td class="small">${when.toLocaleString()}</td><td>${issue}</td><td>${labels}</td><td>${pr}</td><td class="small">${e.branch || ''}</td><td>${ok}</td><td class="right small">${duration}</td><td class="small">${top}</td>`;
+                tr.style.cursor = 'pointer';
+                tr.title = 'Clique para abrir o PR (quando existir)';
+                tr.addEventListener('click', () => { if (e.pr && e.pr.url) window.open(e.pr.url, '_blank'); });
+                rows.appendChild(tr);
+            });
+            const stats = computeStats(arr);
+            document.getElementById('s-total').textContent = String(stats.total);
+            document.getElementById('s-ok').textContent = String(stats.oks);
+            document.getElementById('s-fail').textContent = String(stats.fails);
+            document.getElementById('s-avg').textContent = stats.avg ? fmtDur(stats.avg) : '–';
+            drawDonut(stats.oks, stats.fails);
+            const last = arr[arr.length - 1];
+            document.getElementById('meta').textContent = last ? `Última atualização: ${new Date(last.at).toLocaleString()}` : 'Sem dados';
+        }
+
+        async function load() {
+            const res = await fetch('db.json', { cache: 'no-store' });
+            const data = await res.json();
+            DATA = data;
+            // hydrate label select
+            const sel = document.getElementById('label');
+            const labs = uniqueLabels(data);
+            sel.innerHTML = '<option value="">Label: todas</option>' + labs.map(l => `<option>${l}</option>`).join('');
+            update();
+        }
+
+        function update() {
+            const arr = applyFilters(DATA);
+            render(arr);
+        }
+
+        // events
+        document.getElementById('refresh').addEventListener('click', load);
+        document.getElementById('q').addEventListener('input', update);
+        document.getElementById('status').addEventListener('change', update);
+        document.getElementById('label').addEventListener('change', update);
+        document.getElementById('window').addEventListener('change', update);
+        let timer = null; document.getElementById('autoref').addEventListener('change', (e) => {
+            if (e.target.checked) { timer = setInterval(load, 15000); } else { clearInterval(timer); timer = null; }
+        let timer = null;
+        function getAutoRefreshInterval() {
+            const sel = document.getElementById('autoref-interval');
+            return Number(sel?.value) * 1000 || 30000; // default to 30s
+        }
+        function startAutoRefresh() {
+            timer = setInterval(load, getAutoRefreshInterval());
+        }
+        function stopAutoRefresh() {
+            clearInterval(timer);
+            timer = null;
+        }
+        document.getElementById('autoref').addEventListener('change', (e) => {
+            stopAutoRefresh();
+            if (e.target.checked) {
+                startAutoRefresh();
+            }
+        });
+        document.getElementById('autoref-interval').addEventListener('change', () => {
+            if (document.getElementById('autoref').checked) {
+                stopAutoRefresh();
+                startAutoRefresh();
+            }
+        });
+        document.querySelectorAll('thead th').forEach(th => {
+            th.addEventListener('click', () => { const k = th.dataset.k; if (!k) return; if (sortKey === k) { sortDir = (sortDir === 'asc' ? 'desc' : 'asc'); } else { sortKey = k; sortDir = 'desc'; } update(); });
+        });
+
+        load().catch(() => {
+            document.getElementById('rows').innerHTML = '<tr><td colspan="8" class="muted">Falha ao carregar db.json</td></tr>';
+        });
+    </script>
+</body>
+
+</html>

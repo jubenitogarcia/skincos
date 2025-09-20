@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    AGENT_LOG_LEVEL=INFO \
+    WHATSAPP_WEBHOOK_SECRET=CHANGE_ME \
+    WEBHOOK_API_KEY= \
+    AGENT_DAEMON_WEBHOOK_PORT=4000
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 4000
+
+CMD ["bash","-c","python register_webhook.py || true & python webhook_server.py & python worker.py"]

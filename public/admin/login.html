@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SKINCOS AI - Admin Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .login-container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            color: #667eea;
+        }
+
+        .title {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            margin-bottom: 20px;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .login-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .security-info {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+            text-align: left;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .security-info h4 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 480px) {
+            .login-container {
+                margin: 20px;
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">🔐</div>
+        <h1 class="title">Admin Login</h1>
+        <p class="subtitle">Acesso restrito ao painel administrativo</p>
+
+        <div id="error-message" class="error-message"></div>
+        <div id="success-message" class="success-message"></div>
+
+        <form id="login-form">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Senha</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+
+            <button type="submit" class="login-btn" id="login-btn">
+                Entrar
+            </button>
+        </form>
+
+        <div class="security-info">
+            <h4>🛡️ Segurança</h4>
+            <p>Esta área é protegida por autenticação JWT e logs de auditoria. Todas as tentativas de acesso são monitoradas.</p>
+        </div>
+
+        <a href="/" class="back-link">← Voltar ao Dashboard</a>
+    </div>
+
+    <script>
+        class AdminLogin {
+            constructor() {
+                this.form = document.getElementById('login-form');
+                this.errorDiv = document.getElementById('error-message');
+                this.successDiv = document.getElementById('success-message');
+                this.loginBtn = document.getElementById('login-btn');
+                
+                this.bindEvents();
+                this.checkExistingAuth();
+            }
+
+            bindEvents() {
+                this.form.addEventListener('submit', (e) => this.handleLogin(e));
+            }
+
+            async checkExistingAuth() {
+                // Check if user is already authenticated
+                const token = localStorage.getItem('admin_token');
+                if (token) {
+                    try {
+                        const response = await fetch('/v1/auth/me', {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.user && (data.user.role === 'admin' || data.user.role === 'super_admin')) {
+                                this.showSuccess('Já autenticado! Redirecionando...');
+                                setTimeout(() => {
+                                    window.location.href = '/admin';
+                                }, 1000);
+                                return;
+                            }
+                        }
+                    } catch (error) {
+                        // Token invalid, continue with login
+                    }
+                }
+            }
+
+            async handleLogin(e) {
+                e.preventDefault();
+                
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+
+                if (!email || !password) {
+                    this.showError('Por favor, preencha todos os campos');
+                    return;
+                }
+
+                this.setLoading(true);
+                this.hideMessages();
+
+                try {
+                    const response = await fetch('/v1/auth/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ email, password })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok && data.success) {
+                        // Check if user has admin role
+                        if (data.user.role !== 'admin' && data.user.role !== 'super_admin') {
+                            this.showError('Acesso negado: Privilégios de administrador necessários');
+                            return;
+                        }
+
+                        // Store tokens
+                        localStorage.setItem('admin_token', data.tokens.access_token);
+                        localStorage.setItem('admin_refresh_token', data.tokens.refresh_token);
+                        
+                        // Store user info
+                        localStorage.setItem('admin_user', JSON.stringify(data.user));
+
+                        this.showSuccess('Login realizado com sucesso! Redirecionando...');
+                        
+                        // Redirect after success
+                        setTimeout(() => {
+                            window.location.href = '/admin';
+                        }, 1500);
+
+                    } else {
+                        this.showError(data.details || 'Erro durante o login');
+                    }
+
+                } catch (error) {
+                    console.error('Login error:', error);
+                    this.showError('Erro de conectividade. Tente novamente.');
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            setLoading(loading) {
+                if (loading) {
+                    this.loginBtn.disabled = true;
+                    this.loginBtn.innerHTML = '<span class="loading"></span>Entrando...';
+                } else {
+                    this.loginBtn.disabled = false;
+                    this.loginBtn.innerHTML = 'Entrar';
+                }
+            }
+
+            showError(message) {
+                this.errorDiv.textContent = message;
+                this.errorDiv.style.display = 'block';
+                this.successDiv.style.display = 'none';
+            }
+
+            showSuccess(message) {
+                this.successDiv.textContent = message;
+                this.successDiv.style.display = 'block';
+                this.errorDiv.style.display = 'none';
+            }
+
+            hideMessages() {
+                this.errorDiv.style.display = 'none';
+                this.successDiv.style.display = 'none';
+            }
+        }
+
+        // Initialize login on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            new AdminLogin();
+        });
+    </script>
+</body>
+</html>

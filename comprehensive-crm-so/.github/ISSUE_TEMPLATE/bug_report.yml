@@ -1,0 +1,147 @@
+name: 🐛 Bug Report
+description: Relatar um bug ou problema no sistema CRM
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por dedicar seu tempo para relatar este bug! Por favor, forneça o máximo de detalhes possível para nos ajudar a reproduzir e corrigir o problema.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Pré-requisitos
+      description: Confirme que você verificou os seguintes itens antes de relatar o bug
+      options:
+        - label: Procurei por issues similares existentes
+          required: true
+        - label: Estou usando a versão mais recente do sistema
+          required: true
+        - label: Li a documentação relevante
+          required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Módulo Afetado
+      description: Qual módulo do CRM está apresentando o problema?
+      options:
+        - Gestão de Leads
+        - Gestão de Contatos
+        - Gestão de Negócios/Deals
+        - Gestão de Tarefas
+        - Templates de Email
+        - Relatórios e Analytics
+        - Configurações do Sistema
+        - Autenticação/Login
+        - API/Integrações
+        - Dashboard
+        - Outro (especificar na descrição)
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severidade
+      description: Qual o impacto deste bug?
+      options:
+        - Crítico - Sistema não funciona / perda de dados
+        - Alto - Funcionalidade principal quebrada
+        - Médio - Funcionalidade secundária com problema
+        - Baixo - Problema cosmético ou de usabilidade
+      default: 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrição do Bug
+      description: Uma descrição clara e concisa do problema
+      placeholder: O que aconteceu e o que você esperava que acontecesse?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para Reproduzir
+      description: Passos detalhados para reproduzir o problema
+      placeholder: |
+        1. Vá para '...'
+        2. Clique em '...'
+        3. Digite '...'
+        4. Veja o erro
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento Esperado
+      description: O que deveria acontecer
+      placeholder: Uma descrição clara do que você esperava que acontecesse
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Comportamento Atual
+      description: O que realmente aconteceu
+      placeholder: Uma descrição clara do que realmente aconteceu
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ambiente
+      description: Informações sobre o ambiente onde o bug ocorreu
+      placeholder: |
+        - OS: [ex: Windows 10, macOS Big Sur, Ubuntu 20.04]
+        - Navegador: [ex: Chrome 120, Firefox 115, Safari 17]
+        - Versão do Node.js: [ex: 18.19.0]
+        - Versão do Sistema: [ex: v1.2.3]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs/Mensagens de Erro
+      description: Cole aqui qualquer log relevante ou mensagens de erro
+      placeholder: |
+        ```
+        Cole logs ou mensagens de erro aqui
+        ```
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots/Vídeos
+      description: Se aplicável, adicione screenshots ou vídeos para demonstrar o problema
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Informações Adicionais
+      description: Qualquer contexto adicional sobre o problema
+      placeholder: |
+        - Este problema acontece consistentemente ou esporadicamente?
+        - Existem workarounds conhecidos?
+        - Quando este problema começou a ocorrer?
+        - Outras informações relevantes...
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribuição
+      description: Você gostaria de contribuir com a correção?
+      options:
+        - label: Eu gostaria de trabalhar na correção deste bug
+          required: false

@@ -1,0 +1,42 @@
+— Esta mensagem complementa a proposta já enviada. Precisamos fechar a padronização de porta/rotas e executar a migração final do legado em 3003.
+
+1) Confirmação de Padrão
+- Confirme: após migrar e validar todas as fases, TODO o sistema multi-canais WhatsApp rodará 100% na porta **3001**, usando a estrutura REST:
+  - GET/POST: /whatsapp/{account}/...
+  - {account} = canal/licença (1..N)
+- Haverá algum legado ativo em **3003**?
+  - Se **NÃO** (padrão: tudo em 3001 e 3003 apenas compatibilidade temporária), siga para a próxima etapa e passe a usar EXCLUSIVAMENTE 3001 + subrotas REST.
+
+2) Próxima Etapa
+- Transição completa p/ 3001:
+  - Backend/Express: mover todos handlers para /whatsapp/{account}/...
+  - Frontend/Dashboard: apontar todas as chamadas para porta 3001
+  - Orquestrador/DevOps/Ingress: atualizar upstreams, health-checks e rewrites
+  - Documentação: refletir padrão único (porta 3001 + rotas REST); remover ambiguidade
+- Eliminar dependências de portas múltiplas:
+  - Remover código/rotas/handlers do WhatsApp em 3003
+  - Adicionar redirecionos 301 temporários (se necessário) com prazo de remoção
+- Validar funcionamento integral:
+  - Canais licenciados (1..9, ou N): QR, sessão, reconexão, envio/recebimento, webhooks
+  - Isolamento por canal: storage/sessão/secret/env dedicados
+  - Autenticação e criptografia: invariantes mantidos
+
+3) Entregáveis de Conclusão (critérios de aceite)
+- Testes E2E por canal licenciado ativo:
+  - Abrir sessão, conectar, exibir QR, enviar mensagem, desconectar, reconectar
+- Evidências:
+  - Prints do dashboard funcional (canal 1 e demais licenciados) usando SOMENTE 3001
+  - Logs de chamadas (por canal): /whatsapp/{account}/status, /qr, /send, etc. — todas na porta 3001
+- Comunicação final:
+  - Mensagem confirmando migração 100% concluída para **single-port (3001)**, sem dependências em 3003
+
+Notas técnicas (para implementação)
+- Roteamento: app.use('/whatsapp/:account', whatsappChannelRouter)
+- Config/Licenças: ACTIVE_CHANNELS=[1,2,...]; channelManager.addChannel(k) sob licença
+- Isolamento de sessão: storage por {account} (ex.: ./sessions/channel-{account})
+- Observabilidade: métricas (CPU/RAM/latência) e health por canal em /whatsapp/{account}/health
+- Segurança: validação de {account}, rate limiting por canal, secrets segregados
+
+Só prossiga para fases pós-migração após:
+- Unificação total validada
+- Parecer explícito confirmando eliminação de duplicidade (3003 desligado)

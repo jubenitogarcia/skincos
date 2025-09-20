@@ -1,0 +1,55 @@
+{
+  "agent_config": {
+    "name": "SKINCOS AI Agent",
+    "version": "1.0.0",
+    "mode": "production",
+    "debug": false,
+    "max_iterations": 10,
+    "memory": {
+      "enabled": true,
+      "max_entries": 1000,
+      "cleanup_threshold": 0.8
+    },
+    "llm": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+      "max_tokens": 2048
+    },
+    "tools": {
+      "enabled": [
+        "response",
+        "whatsapp_integration",
+        "instagram_integration",
+        "crm_integration",
+        "search_engine",
+        "code_execution",
+        "memory_save",
+        "memory_load"
+      ]
+    },
+    "integrations": {
+      "whatsapp": {
+        "endpoint": "http://localhost:3002",
+        "enabled": true
+      },
+      "instagram": {
+        "endpoint": "http://localhost:3003",
+        "enabled": true
+      },
+      "crm": {
+        "endpoint": "http://localhost:3100",
+        "enabled": false
+      },
+      "main_system": {
+        "endpoint": "http://localhost:5000",
+        "enabled": true
+      }
+    },
+    "webhook": {
+      "port": 6800,
+      "secret": "AGENT_ZERO_WEBHOOK_SECRET",
+      "timeout": 30
+    }
+  }
+}

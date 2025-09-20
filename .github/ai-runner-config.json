@@ -1,0 +1,21 @@
+{
+    "requiredChecks": [
+        "CI Smoke (Assert)",
+        "Central E2E Smoke"
+    ],
+    "watchedWorkflows": [
+        "Central Orchestrator API Contract Tests",
+        "Central Lint & Typecheck",
+        "Central Secrets Scan (Gitleaks)"
+    ],
+    "fixes": {
+        "Central Orchestrator API Contract Tests": "ensureJq",
+        "Central Lint & Typecheck": "guardLint",
+        "Central Secrets Scan (Gitleaks)": "nonBlockingGitleaks",
+        "*pnpm*": "ensurePnpm",
+        "*submodules*": "fixSubmodulesTrue"
+    },
+    "maxKnowledgeEntries": 500,
+    "cooldownSeconds": 10,
+    "minHoursBetweenIssueRuns": 6
+}

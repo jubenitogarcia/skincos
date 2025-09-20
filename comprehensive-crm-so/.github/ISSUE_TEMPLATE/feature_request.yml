@@ -1,0 +1,188 @@
+name: ✨ Feature Request
+description: Sugerir uma nova funcionalidade ou melhoria para o sistema CRM
+title: "[FEATURE] "
+labels: ["enhancement", "needs-review"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por sugerir uma nova funcionalidade! Suas ideias nos ajudam a melhorar continuamente o sistema CRM.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Pré-requisitos
+      description: Confirme que você verificou os seguintes itens antes de solicitar a funcionalidade
+      options:
+        - label: Procurei por issues similares existentes
+          required: true
+        - label: Esta funcionalidade não existe atualmente no sistema
+          required: true
+        - label: Li a documentação para confirmar que a funcionalidade não está disponível
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Categoria da Funcionalidade
+      description: Qual área do CRM esta funcionalidade afetaria?
+      options:
+        - Gestão de Leads
+        - Gestão de Contatos
+        - Gestão de Negócios/Deals
+        - Gestão de Tarefas
+        - Templates de Email
+        - Relatórios e Analytics
+        - Configurações do Sistema
+        - Autenticação/Segurança
+        - API/Integrações
+        - Dashboard/Interface
+        - Automação/Workflows
+        - Notificações
+        - Mobile/Responsividade
+        - Performance/Otimização
+        - Outro (especificar na descrição)
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Prioridade
+      description: Qual a importância desta funcionalidade para você?
+      options:
+        - Crítica - Bloqueante para uso do sistema
+        - Alta - Muito importante para produtividade
+        - Média - Seria útil ter
+        - Baixa - Seria interessante ter
+      default: 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema/Necessidade
+      description: Qual problema esta funcionalidade resolveria?
+      placeholder: |
+        Descreva claramente:
+        - Qual situação ou problema você está enfrentando?
+        - Como isso afeta seu trabalho ou produtividade?
+        - Por que as soluções atuais não são suficientes?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solução Proposta
+      description: Descreva detalhadamente a funcionalidade que você gostaria de ver
+      placeholder: |
+        Descreva:
+        - Como a funcionalidade deveria funcionar?
+        - Onde ela se encaixaria na interface atual?
+        - Quais são os componentes principais?
+        - Como o usuário interagiria com ela?
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_stories
+    attributes:
+      label: Histórias de Usuário
+      description: Descreva cenários específicos de uso
+      placeholder: |
+        Exemplo:
+        - Como [tipo de usuário], eu quero [ação/funcionalidade] para que [benefício/objetivo]
+        - Como gestor de vendas, eu quero visualizar métricas em tempo real para tomar decisões mais rápidas
+        - Como vendedor, eu quero automatizar follow-ups para não perder oportunidades
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Critérios de Aceitação
+      description: Como saberíamos que a funcionalidade está completa e funcionando?
+      placeholder: |
+        Lista de critérios que definem quando a funcionalidade estará pronta:
+        - [ ] Usuário pode fazer X
+        - [ ] Sistema valida Y
+        - [ ] Interface mostra Z
+        - [ ] Dados são salvos corretamente
+        - [ ] Funciona em dispositivos móveis
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas Consideradas
+      description: Você considerou outras formas de resolver este problema?
+      placeholder: |
+        - Soluções alternativas que você pensou
+        - Por que elas não seriam adequadas
+        - Funcionalidades similares em outros sistemas
+
+  - type: textarea
+    id: mockups
+    attributes:
+      label: Mockups/Wireframes
+      description: Se você tem ideias visuais, pode anexar mockups ou wireframes
+      placeholder: |
+        Cole aqui links para mockups, wireframes ou desenhos da funcionalidade
+        Ou descreva visualmente como deveria ser a interface
+
+  - type: dropdown
+    id: target_users
+    attributes:
+      label: Usuários Alvo
+      description: Quem se beneficiaria mais desta funcionalidade?
+      options:
+        - Administradores do Sistema
+        - Gestores/Supervisores
+        - Vendedores/Consultores
+        - Atendimento ao Cliente
+        - Marketing
+        - Todos os usuários
+        - Desenvolvedores/Integradores
+      default: 5
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impacto nos Negócios
+      description: Como esta funcionalidade impactaria positivamente os negócios?
+      placeholder: |
+        - Economia de tempo: quanto tempo seria economizado?
+        - Aumento de produtividade: como melhoraria a eficiência?
+        - Melhoria na experiência: como beneficiaria os usuários?
+        - ROI esperado: qual retorno sobre o investimento?
+
+  - type: textarea
+    id: technical_considerations
+    attributes:
+      label: Considerações Técnicas
+      description: Há alguma consideração técnica importante?
+      placeholder: |
+        - Integrações necessárias
+        - Limitações de performance
+        - Requisitos de segurança
+        - Compatibilidade com sistemas existentes
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribuição
+      description: Você gostaria de contribuir com o desenvolvimento?
+      options:
+        - label: Eu gostaria de trabalhar no desenvolvimento desta funcionalidade
+          required: false
+        - label: Eu posso ajudar com testes e validação
+          required: false
+        - label: Eu posso ajudar com documentação
+          required: false
+        - label: Eu posso fornecer feedback durante o desenvolvimento
+          required: false

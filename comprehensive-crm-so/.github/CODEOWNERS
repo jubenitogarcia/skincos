@@ -1,0 +1,71 @@
+# Global CODEOWNERS for Comprehensive CRM
+# These owners will be requested for review when someone opens a pull request.
+
+# Default owners for everything in the repository
+# This ensures that all changes get reviewed by the core team
+* @jubenitogarcia
+
+# Documentation
+*.md @jubenitogarcia
+docs/ @jubenitogarcia
+
+# Configuration files
+*.json @jubenitogarcia
+*.js @jubenitogarcia
+*.ts @jubenitogarcia
+*.config.* @jubenitogarcia
+.github/ @jubenitogarcia
+
+# Core application source
+src/ @jubenitogarcia
+
+# Components (UI/UX critical)
+src/components/ @jubenitogarcia
+
+# Core CRM modules - require careful review
+src/components/LeadManagement.tsx @jubenitogarcia
+src/components/ContactManagement.tsx @jubenitogarcia
+src/components/DealManagement.tsx @jubenitogarcia
+src/components/RichTaskManager.tsx @jubenitogarcia
+src/components/EmailTemplatesManager.tsx @jubenitogarcia
+
+# System configurations - security critical
+src/components/SystemConfiguration.tsx @jubenitogarcia
+src/components/AdvancedSettings.tsx @jubenitogarcia
+
+# Security and infrastructure
+SECURITY.md @jubenitogarcia
+.github/workflows/ @jubenitogarcia
+
+# Package management and dependencies
+package*.json @jubenitogarcia
+pnpm-lock.yaml @jubenitogarcia
+yarn.lock @jubenitogarcia
+
+# Build and deployment configurations
+vite.config.ts @jubenitogarcia
+tailwind.config.js @jubenitogarcia
+turbo.json @jubenitogarcia
+commitlint.config.js @jubenitogarcia
+eslint.config.js @jubenitogarcia
+
+# Scripts and automation
+scripts/ @jubenitogarcia
+
+# Monorepo structure (when implemented)
+packages/ @jubenitogarcia
+apps/ @jubenitogarcia
+configs/ @jubenitogarcia
+
+# Database and data-related files
+src/data/ @jubenitogarcia
+src/lib/ @jubenitogarcia
+
+# Add additional team members as the project grows:
+# Frontend specialists
+# src/components/ui/ @frontend-team
+# Backend/API specialists  
+# src/api/ @backend-team
+# DevOps specialists
+# .github/workflows/ @devops-team
+# docs/ @documentation-team

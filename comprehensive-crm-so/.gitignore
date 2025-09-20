@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+package-lock.json
+
+# Build outputs
+dist/
+dist-ssr/
+*-dist/
+build/
+.turbo/
+*.tsbuildinfo
+.vite/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+
+# IDE files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+pids/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+.tmp/
+temp/
+tmp/
+
+# Cache
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.eslintcache
+
+# Runtime data
+*.pid
+*.seed
+*.pid.lock
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Spark specific
+**/agent-eval-report*
+packages
+.file-manifest
+.devcontainer/
+.spark-workbench-id

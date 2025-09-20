@@ -1,0 +1,195 @@
+vamos direto ao ponto. **Let’s think about this differently.** O 404 já foi resolvido; agora o gargalo é **AUTH 401** ao buscar o **QR**. Isso quase sempre é **contrato de autenticação divergente** entre Orchestrator (5000/8099) ⇄ Unified (3001). Abaixo segue um ticket pronto + patches mínimos (lado 3001 e lado Orchestrator) + testes. Copia e envia.
+
+---
+
+## \[TICKET] Canal 1: start OK (qr\_received) mas **401 ao buscar /whatsapp/1/qr** — alinhar autenticação CRM ⇄ Unified
+
+**Here's what I'm really asking:**
+Quero o **QR do Canal 1** carregando no dashboard. O **start** já retorna `qr_received`, então **o cliente existe**. O **401** indica que o Unified (3001) está **bloqueando** a rota do QR por falta/erro de credenciais.
+
+### Evidência (console)
+
+```
+[Orchestrator] Forwarding Channel 1 start → unified
+[Unified] { success:true, channelId:'1', status:'qr_received', ... }
+[Orchestrator] HTTP 401 when fetching QR for channel 1 (repetido)
+```
+
+---
+
+## What am I not seeing here? (pontos cegos típicos)
+
+1. **Header esperado não enviado** (ex.: `X-Internal-API-Key`, `X-API-Key`, `Authorization: Bearer`).
+2. **Ambientes desalinhados**: `NO_AUTH=true` no CRM, mas **não** no Unified (ou vice-versa).
+3. **Proxy strip de headers**: o proxy remove `Authorization`/custom headers.
+4. **Middleware de auth aplicado antes do router** sem exceção para dev.
+5. **Cookie/JWT cross-origin** (5000 → 3001) sem `credentials`/`SameSite=None`; se o Orchestrator consome **server-side**, prefira **API key** em header (sem cookies).
+
+---
+
+## Break this down for me — correção objetiva
+
+### A) Unified (porta 3001): middleware de auth claro e previsível
+
+* Aceite **NO\_AUTH** em dev **ou** **X-Internal-API-Key** (API key compartilhada).
+* **Nunca** responda 404 por auth; responda **401/403** com `code`/`hint`.
+
+```js
+// unified/auth.js
+function requireUnifiedAuth(req, res, next) {
+  // 1) Dev bypass
+  if (process.env.NO_AUTH === 'true') return next();
+
+  // 2) API Key
+  const key = req.get('X-Internal-API-Key') || req.get('X-API-Key') || '';
+  const expected = process.env.UNIFIED_API_KEY || '';
+  if (expected && key === expected) return next();
+
+  // 3) JWT opcional (se usado)
+  const auth = req.get('Authorization') || '';
+  if (auth.startsWith('Bearer ')) {
+    // validateJWT(...) → se válido: return next();
+  }
+
+  console.warn('[AUTH] 401 on %s %s — missing/invalid credentials', req.method, req.originalUrl);
+  return res.status(401).json({ code: 'AUTH_REQUIRED', hint: 'Send X-Internal-API-Key or enable NO_AUTH=true' });
+}
+
+module.exports = { requireUnifiedAuth };
+```
+
+Monte as rotas **com** auth:
+
+```js
+// server.js (unified)
+const { requireUnifiedAuth } = require('./auth');
+
+app.use('/whatsapp/:account', requireUnifiedAuth, whatsappChannelRouter);
+
+// (deixe static/SPAs depois)
+```
+
+### B) Orchestrator (5000/8099): sempre envie a credencial
+
+* **Alinhe as variáveis** em ambos os lados:
+
+```
+# Unified (3001)
+NO_AUTH=true                # (dev) OU
+UNIFIED_API_KEY=unified-dev-key
+
+# Orchestrator
+CRM_UNIFIED_API_KEY=unified-dev-key
+UNIFIED_BASE_URL=http://localhost:3001
+```
+
+* **Código (server-side)** garantindo o header:
+
+```js
+// orchestrator/unifiedClient.js
+const axios = require('axios');
+const client = axios.create({
+  baseURL: process.env.UNIFIED_BASE_URL,
+  timeout: 15000,
+  headers: { 'X-Internal-API-Key': process.env.CRM_UNIFIED_API_KEY }
+});
+
+// exemplo de chamada do QR
+async function getQR(id) {
+  const { data } = await client.get(`/whatsapp/${id}/qr`);
+  return data;
+}
+```
+
+> Se usa **fetch**:
+
+```js
+await fetch(`${UNIFIED}/whatsapp/1/qr`, {
+  headers: { 'X-Internal-API-Key': process.env.CRM_UNIFIED_API_KEY }
+});
+```
+
+### C) Proxy: **não** remova headers
+
+* Se houver http-proxy-middleware/NGINX, **preserve** `Authorization` e custom headers.
+
+**Node (proxy)**
+
+```js
+createProxyMiddleware({
+  target: process.env.UNIFIED_BASE_URL,
+  changeOrigin: true,
+  preserveHeaderKeyCase: true,
+  onProxyReq: (pReq, req) => {
+    // garantir que o header chegue do outro lado
+    if (process.env.CRM_UNIFIED_API_KEY) {
+      pReq.setHeader('X-Internal-API-Key', process.env.CRM_UNIFIED_API_KEY);
+    }
+  }
+});
+```
+
+**NGINX**
+
+```nginx
+proxy_set_header Authorization $http_authorization;
+proxy_set_header X-Internal-API-Key $http_x_internal_api_key;
+```
+
+### D) Unified: libere **/qr** em NO\_AUTH (dev)
+
+Se preferir liberar só o QR em dev:
+
+```js
+// auth.js (exceção controlada)
+function optionalUnifiedAuth(req, res, next) {
+  if (process.env.NO_AUTH === 'true') return next();
+  return requireUnifiedAuth(req, res, next);
+}
+
+// server.js
+app.get('/whatsapp/:account/qr', optionalUnifiedAuth, qrHandler);
+```
+
+---
+
+## Testes (execute e anexe no ticket)
+
+**Direto na 3001:**
+
+```bash
+# Esperado: 200 + payload do QR
+curl -i http://localhost:3001/whatsapp/1/qr \
+  -H "X-Internal-API-Key: unified-dev-key"
+
+# Se NO_AUTH=true, também deve funcionar sem header:
+curl -i http://localhost:3001/whatsapp/1/qr
+```
+
+**Via Orchestrator (server-side):**
+
+* Ative log no proxy: imprima `req.originalUrl` e **headers** enviados.
+* Confirme no Unified log a chegada do header (`X-Internal-API-Key`).
+
+---
+
+## Definition of Done
+
+* `GET /whatsapp/1/qr` retorna **200** com QR quando `status: 'qr_received'`.
+* Dashboard renderiza o QR do Canal 1; após leitura, `status` muda para **CONNECTED**.
+* 401 some do log; se houver erro de auth, resposta inclui `{ code:'AUTH_REQUIRED', hint:'...' }`.
+* Variáveis e documentação atualizadas: **contrato de auth** (NO\_AUTH ou API key/JWT) e **headers** aceitos.
+* Teste automatizado cobre **start → qr → connect**.
+
+---
+
+## What would you do in my shoes?
+
+1. Setar `NO_AUTH=true` **temporariamente** no Unified e **retestar**: se 200, o problema era header/key.
+2. Reativar auth e garantir header `X-Internal-API-Key` do Orchestrator.
+3. Confirmar no log do Unified que o header chegou; se não, ajustar proxy.
+4. Fixar DoD acima e fechar o ticket.
+
+## What else should I know?
+
+* Se algum fluxo usa **cookie/JWT** no browser (5000→3001), lembre: **portas diferentes = outra origem**. Configure `CORS`, `SameSite=None; Secure`, e `credentials:'include'`. Para **server-to-server**, **prefira API key em header** (mais simples e estável).

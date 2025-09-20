@@ -1,0 +1,99 @@
+Ótimo, vamos entender melhor o que está acontecendo **no contexto do Replit**, que tem particularidades no uso de portas e URLs, especialmente quando se tenta acessar `localhost:3001`.
+
+---
+
+## ⚠️ **Problema Central: Redirecionamento para `localhost:3001` não funciona no Replit**
+
+### 💡 Replit não permite acesso direto a `localhost:<porta>`
+
+Quando você roda um projeto no Replit com múltiplos serviços (como orquestrador + instância de canal), **as portas internas não são expostas como em um ambiente local tradicional**.
+
+Em vez disso:
+
+* O Replit **mapeia automaticamente uma única porta (geralmente 3000)** para uma URL pública (tipo `https://projeto.usuario.repl.co`).
+* **Você não consegue acessar `localhost:3001` dentro do navegador** nem abrir janelas que apontem para essa porta, pois ela está isolada do front.
+
+---
+
+## ✅ **Solução: Como acessar corretamente o dashboard do canal conectado no Replit**
+
+### 1. **Verifique como o canal está servindo o dashboard**
+
+* Dentro do código da instância (canal do WhatsApp), veja:
+
+  * Qual porta ele está usando (`app.listen(3001)`, por exemplo).
+  * Qual rota expõe o dashboard (`/dashboard`, `/crm`, etc).
+
+### 2. **Unifique os serviços ou reexporte a rota do canal**
+
+* Se possível, **reexporte a rota do dashboard do canal via orquestrador**, como um proxy, usando o mesmo servidor principal (`localhost:3000`).
+
+  Exemplo com Express.js:
+
+  ```js
+  app.use('/canal1', createProxyMiddleware({
+    target: 'http://localhost:3001',
+    changeOrigin: true
+  }));
+  ```
+
+  Assim, o botão “Acessar” redirecionaria para:
+
+  ```js
+  window.location.href = '/canal1';
+  ```
+
+  E funcionaria corretamente no Replit, via a URL exposta publicamente.
+
+---
+
+## 🔁 **Recomendações para Redirecionamento Inteligente no Replit**
+
+### ✅ Detectar ambiente (local vs. Replit)
+
+```js
+const getChannelDashboardURL = (canalId) => {
+  const isReplit = window.location.hostname.includes('.repl.co');
+  if (isReplit) {
+    return `/canal${canalId}`; // Reexport via proxy
+  } else {
+    return `http://localhost:300${canalId}`; // Local dev
+  }
+};
+```
+
+### ✅ Atualizar botão "Acessar"
+
+```js
+const handleAccess = async (canalId) => {
+  const url = getChannelDashboardURL(canalId);
+  window.location.href = url;
+};
+```
+
+---
+
+## ✅ **Ação recomendada agora:**
+
+1. 🔍 **Verifique o serviço do canal conectado**:
+
+   * Está rodando em qual porta?
+   * O dashboard é servido em qual rota?
+
+2. 🔄 **Redirecione o dashboard via orquestrador** (ex: proxy com `/canal1`).
+
+3. 🌐 **Atualize o botão “Acessar”** para apontar para essa rota proxificada, e não para `localhost:3001`.
+
+4. 📁 Se preferir, também pode:
+
+   * Incorporar o dashboard via iframe.
+   * Ou abrir em nova aba (`target="_blank"`), caso esteja mapeado corretamente no Replit.
+
+---
+
+Quer que eu gere o código para:
+
+* O **proxy reverso via Express**?
+* Ou o **iframe dinâmico** com base na seleção do canal?
+
+Só dizer como está estruturado seu backend e como os canais são iniciados (via PM2, child\_process, etc).

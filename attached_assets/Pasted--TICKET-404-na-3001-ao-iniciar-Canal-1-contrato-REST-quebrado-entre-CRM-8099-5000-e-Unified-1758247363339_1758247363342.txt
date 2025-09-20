@@ -1,0 +1,202 @@
+## \[TICKET] 404 na 3001 ao iniciar Canal 1 — contrato REST quebrado entre CRM (8099/5000) e Unified (3001)
+
+**Here's what I'm really asking:**
+Quero o Canal 1 operando 100% no modelo **porta 3001 + `/whatsapp/1/*`** (start, status, qr, send), sem 404 e sem “Initializing” infinito.
+
+### Sintomas (reprodutíveis)
+
+* CRM (5000) exibe: **“Unified system error: 404 Not Found”** ao **Iniciar Canal**.
+* Unified UI em **3001** permanece **Disconnected / Initializing**.
+* Orchestrator encaminha → Unified responde **404** para comandos do canal 1.
+* Painel detecta canal (ex.: `status=free, ready=false`) mas não ativa.
+
+---
+
+## What am I not seeing here? (pontos cegos prováveis)
+
+1. **Prefixo/basePath divergente**
+   Unified montou rotas sob `/api` (ou `/unified`) e o CRM chama `/whatsapp/1/start` direto → 404.
+
+2. **Ordem de middlewares / SPA catch-all**
+   `app.get('*', sendIndex)` ou `express.static` antes das rotas `/whatsapp/:account/*` → o SPA consome e devolve 404.
+
+3. **Rewrite/proxy** (8099/5000 → 3001)
+   Um rewrite está **removendo `/whatsapp`** ou alterando método (`POST`→`GET`). Clássico: `proxy_pass` com `/` no fim.
+
+4. **Registro tardio de rotas dinâmicas**
+   `createDynamicChannelRoutes(id)` só monta rotas **após** ativação/licença; “start” vira 404.
+   (O **start** deve existir mesmo sem cliente ativo.)
+
+5. **Auth que responde 404** (em vez de 401/403)
+   `requireAuth`/IP allowlist aplicando “security by obscurity” e mascarando erro como 404.
+
+---
+
+## Break this down for me — Correções (na ordem)
+
+### A) Padronize o contrato REST (rotas SEMPRE existentes)
+
+**Contrato canônico (sem prefixo oculto):**
+
+* `GET  /whatsapp/:id/status` → `{ state: 'INACTIVE|QR_READY|CONNECTED|ERROR', ... }`
+* `GET  /whatsapp/:id/qr`
+* `POST /whatsapp/:id/start`
+* `POST /whatsapp/:id/restart`
+* `POST /whatsapp/:id/send-message`
+
+> Mesmo sem licença/cliente, **essas rotas devem existir** e responder:
+>
+> * `403` → `NOT_LICENSED`
+> * `423` → `CHANNEL_DISABLED`
+> * **Nunca 404** (404 = rota não montada).
+
+### B) Monte as rotas **antes** de static/catch-all
+
+```js
+// server.js
+app.use(express.json());
+
+// 1) ROTAS DO UNIFIED — primeiro
+app.use('/whatsapp/:account', whatsappChannelRouter);
+
+// 2) Health/debug
+app.get('/health', (_,res)=>res.json({ok:true}));
+app.get('/__routes', (_,res)=>res.json(listRoutes(app)));
+
+// 3) STATIC / SPA — por último
+app.use(express.static('public'));
+app.get('*', (_,res)=>res.sendFile(path.join(__dirname,'public/index.html')));
+```
+
+**Helper pra listar rotas (debug):**
+
+```js
+function listRoutes(app){
+  const out=[];
+  app._router.stack.forEach(s=>{
+    if(s.route){
+      const methods = Object.keys(s.route.methods).join(',').toUpperCase();
+      out.push({path:s.route.path, methods});
+    }else if(s.name==='router' && s.handle.stack){
+      s.handle.stack.forEach(r=>{
+        const route=r.route;
+        if(route) {
+          const methods = Object.keys(route.methods).join(',').toUpperCase();
+          out.push({path: (s.regexp?.toString()||'') + route.path, methods});
+        }
+      });
+    }
+  });
+  return out;
+}
+```
+
+### C) Router do canal **sempre montado** (start não 404)
+
+```js
+// whatsappChannelRouter.js
+const router = require('express').Router({ mergeParams:true });
+
+router.get('/status', (req,res)=> {
+  const id = req.params.account;
+  const s = channelManager.safeStatus(id); // não lança; retorna state
+  return res.json(s);
+});
+
+router.get('/qr', async (req,res)=>{
+  const id=req.params.account;
+  const qr = await channelManager.getQR(id); // se não ativo, retorna {available:false}
+  return res.json(qr);
+});
+
+router.post('/start', async (req,res)=>{
+  const id=req.params.account;
+  const ok = await channelManager.start(id); // cria cliente se precisar
+  return res.json({ success: ok });
+});
+
+router.post('/send-message', async (req,res)=>{
+  const id=req.params.account;
+  const { to, text } = req.body;
+  const r = await channelManager.send(id,{to,text});
+  return res.json(r);
+});
+
+module.exports = router;
+```
+
+### D) Corrija o rewrite/proxy do CRM → 3001
+
+**Node http-proxy-middleware (exemplo)**
+
+```js
+app.use('/whatsapp', createProxyMiddleware({
+  target: 'http://localhost:3001',
+  changeOrigin: true,
+  xfwd: true,
+  // ⚠️ Não remova o prefixo /whatsapp
+  pathRewrite: (path) => path, 
+  onProxyReq: (proxyReq, req)=> console.log('→', req.method, req.originalUrl),
+  onProxyRes: (proxyRes, req)=> console.log('←', proxyRes.statusCode, req.originalUrl),
+}));
+```
+
+**NGINX (se houver)**
+
+```nginx
+location /whatsapp/ {
+  proxy_set_header Host $host;
+  proxy_pass http://127.0.0.1:3001; # sem barra final, mantém /whatsapp
+}
+```
+
+### E) Autenticação clara (sem mascarar 404)
+
+* Se exigir chave, responda **401/403** + `{code:'AUTH_REQUIRED'}`.
+* Não use 404 para negar acesso.
+
+---
+
+## Matriz de testes (direto na 3001 e via CRM)
+
+**Direto 3001**
+
+```bash
+curl -i http://localhost:3001/whatsapp/1/status
+curl -i -X POST http://localhost:3001/whatsapp/1/start
+curl -i http://localhost:3001/whatsapp/1/qr
+curl -i -X POST http://localhost:3001/whatsapp/1/send-message \
+  -H "Content-Type: application/json" -d '{"to":"+551199999999","text":"ping"}'
+curl -s http://localhost:3001/__routes | jq .
+```
+
+**Via Orchestrator (8099/5000 → 3001)**
+Verifique que a **URL final** preserva `/whatsapp/1/*` e que o **status ≠ 404**.
+
+---
+
+## Definition of Done (aceite)
+
+* **Nenhum 404** para `/whatsapp/1/*` (direto 3001 e via CRM).
+* `status` retorna `QR_READY` ou `CONNECTED` após `start`.
+* Unified UI em 3001 não fica mais em “Initializing”; mostra QR/Conectado ou erro com **code/hint**.
+* CRM (5000) para de exibir “Unified system error: 404 Not Found”.
+* Documentação atualizada com o **contrato REST canônico** e o **fluxo de proxy**.
+* Endpoint faltante ou prefixo errado **identificado e registrado** no changelog.
+
+---
+
+## What would you do in my shoes?
+
+1. **Logar as rotas** com `GET /__routes` e validar que `/whatsapp/:id/...` está montado **antes** do static/SPA.
+2. Rodar `curl` **direto** na 3001: se 404, o bug é no Unified; se 200, o bug é no proxy/rewrite do CRM.
+3. Fixar o proxy para **não mexer no path** e imprimir `req.originalUrl`/`target`.
+4. Garantir que `POST /start` exista **sem cliente ativo** (sem depender de “ativação prévia”).
+
+---
+
+## What else should I know?
+
+* Se o Unified usa um prefixo (ex.: `/api`), alinhe **ambos** os lados ou remova o prefixo.
+* Evite “special case” para canal 1; se não licenciado, responda 403 — **não 404**.
+* SPA fallback é o vilão comum: sempre deixe-o **por último**.

@@ -1,0 +1,46 @@
+name: AI Workflows Improver
+
+on:
+  workflow_dispatch:
+    inputs:
+      ai-endpoint:
+        description: AI endpoint (GitHub Models)
+        required: true
+      ai-token:
+        description: Token para o endpoint de IA
+        required: true
+      ai-model:
+        description: Modelo a utilizar
+        required: false
+        default: gpt-4o-mini
+  schedule:
+    - cron: '37 3 * * 1'
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Ensure pnpm
+        run: npm i -g pnpm@8
+
+      - name: Run improver
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AI_ENDPOINT: ${{ inputs.ai-endpoint }}
+          AI_TOKEN: ${{ inputs.ai-token }}
+          AI_MODEL: ${{ inputs.ai-model }}
+        run: node scripts/ai-workflows-improver.js

@@ -1,0 +1,44 @@
+Complementando a proposta de arquitetura unificada via rota `/whatsapp/{account}` enviada anteriormente, gostaria de registrar os seguintes pontos atualizados que impactam diretamente o desenvolvimento da solução:
+
+### ✅ 1. Canal 1 Deve Estar Totalmente Funcional
+
+O canal de número **1** será a primeira instância ativa no sistema, e deve estar **plenamente funcional** via dashboard, incluindo:
+
+- Geração e exibição de QR Code (`/whatsapp/1/qr`)
+- Status da sessão (`/whatsapp/1/status`)
+- Envio de mensagens (`/whatsapp/1/send`)
+- Recebimento de webhooks específicos do canal 1
+
+Essa será a base da Prova de Conceito (Fase 1) e validará toda a estrutura do sistema multi-canal.
+
+### 📈 2. Arquitetura Deve Suportar Escalabilidade Infinita (via Licença)
+
+A arquitetura já deve considerar desde agora que:
+
+- Será possível ativar **canais adicionais ilimitados** futuramente.
+- Cada canal só será ativado/liberado **mediante aquisição ou licença**.
+- A adição de novos canais será feita dinamicamente no backend, por exemplo:
+```js
+channelManager.addChannel(5) // Ativa canal 5
+````
+
+> ⚠️ Importante: O sistema não precisa ativar todos os canais desde o início, mas deve ser preparado para escalar de forma contínua conforme novas licenças forem adquiridas.
+
+### 📦 3. Requisitos Técnicos Adicionais
+
+* `ChannelManager`: Deve permitir registrar e ativar canais dinamicamente.
+* `Session Isolation`: Cada canal manterá sua própria sessão segura e isolada.
+* `Roteamento REST`: Todas as rotas seguem o padrão `/whatsapp/{account}/...`.
+* `Configuração Dinâmica`: Backend deve ler canais ativos de uma estrutura como:
+
+```js
+const activeChannels = [1, 2, 3]; // Licenciados atualmente
+```
+
+### 🔄 4. Roadmap Atualizado (Impactos)
+
+* **Fase 1 (Atual)**: Canal 1 funcional e isolado.
+* **Fase 2 (Próxima)**: Suporte para ativação de novos canais via código/licença.
+* **Fase 3 (Futuro)**: Interface de gestão para adicionar/remover canais licenciados.
+
+Solicito que essa atualização seja integrada à proposta técnica original como parte do planejamento do projeto. Posso fornecer modelos de implementação caso necessário.

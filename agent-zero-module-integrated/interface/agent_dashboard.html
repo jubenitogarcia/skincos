@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Zero - IA Central SKINCOS AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            margin-right: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            font-size: 1.5em;
+        }
+        
+        .agent-icon { background: linear-gradient(45deg, #667eea, #764ba2); color: white; }
+        .chat-icon { background: linear-gradient(45deg, #48CAE4, #023047); color: white; }
+        .integration-icon { background: linear-gradient(45deg, #06D6A0, #118AB2); color: white; }
+        .memory-icon { background: linear-gradient(45deg, #F72585, #4361EE); color: white; }
+        
+        .card h3 {
+            font-size: 1.3em;
+            color: #333;
+            margin: 0;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        
+        .status.active {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status.inactive {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .metric:last-child {
+            border-bottom: none;
+        }
+        
+        .chat-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+            border-bottom: 2px solid #f0f0f0;
+            margin-bottom: 15px;
+        }
+        
+        .message {
+            margin: 10px 0;
+            padding: 12px 18px;
+            border-radius: 18px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        
+        .message.user {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        
+        .message.agent {
+            background: #f0f0f0;
+            color: #333;
+            margin-right: auto;
+        }
+        
+        .chat-input-container {
+            display: flex;
+            gap: 10px;
+        }
+        
+        #chatInput {
+            flex: 1;
+            padding: 12px 18px;
+            border: 2px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        
+        #chatInput:focus {
+            border-color: #667eea;
+        }
+        
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+        
+        .btn.primary {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .btn.primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn.secondary {
+            background: #f8f9fa;
+            color: #333;
+            border: 2px solid #ddd;
+        }
+        
+        .btn.secondary:hover {
+            background: #e9ecef;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        
+        .integration-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .integration-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .integration-name {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .integration-url {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Agent Zero</h1>
+            <p>IA Central do Sistema SKINCOS AI</p>
+        </div>
+        
+        <div class="dashboard-grid">
+            <!-- Agent Status Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon agent-icon">🤖</div>
+                    <h3>Status do Agent</h3>
+                </div>
+                <div id="agentStatus">
+                    <div class="metric">
+                        <span>Status:</span>
+                        <span class="status inactive" id="agentStatusBadge">Carregando...</span>
+                    </div>
+                    <div class="metric">
+                        <span>Versão:</span>
+                        <span id="agentVersion">-</span>
+                    </div>
+                    <div class="metric">
+                        <span>Uptime:</span>
+                        <span id="agentUptime">-</span>
+                    </div>
+                    <button class="btn secondary" onclick="initializeAgent()">Inicializar Agent</button>
+                </div>
+            </div>
+            
+            <!-- Conversations Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon chat-icon">💬</div>
+                    <h3>Conversas Ativas</h3>
+                </div>
+                <div id="conversationsStats">
+                    <div class="metric">
+                        <span>Total de Conversas:</span>
+                        <span id="totalConversations">0</span>
+                    </div>
+                    <div class="metric">
+                        <span>Mensagens Processadas:</span>
+                        <span id="totalMessages">0</span>
+                    </div>
+                    <div class="metric">
+                        <span>Tempo Médio Resposta:</span>
+                        <span id="avgResponseTime">< 1s</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Integrations Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon integration-icon">🔗</div>
+                    <h3>Integrações</h3>
+                </div>
+                <div class="integration-grid" id="integrationsGrid">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </div>
+            
+            <!-- Memory Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon memory-icon">🧠</div>
+                    <h3>Sistema de Memória</h3>
+                </div>
+                <div id="memoryStats">
+                    <div class="metric">
+                        <span>Entradas na Memória:</span>
+                        <span id="memoryEntries">0</span>
+                    </div>
+                    <div class="metric">
+                        <span>Capacidade Usada:</span>
+                        <span id="memoryUsage">0%</span>
+                    </div>
+                    <button class="btn secondary" onclick="viewMemory()">Ver Memória</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Chat Interface -->
+        <div class="chat-container">
+            <div class="card-header">
+                <div class="card-icon chat-icon">💬</div>
+                <h3>Conversar com Agent Zero</h3>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                <div class="message agent">
+                    👋 Olá! Sou o Agent Zero, sua IA central para gerenciamento do sistema SKINCOS AI. Como posso ajudá-lo hoje?
+                </div>
+            </div>
+            
+            <div class="loading" id="chatLoading">Agent está pensando...</div>
+            
+            <div class="chat-input-container">
+                <input type="text" id="chatInput" placeholder="Digite sua mensagem..." onkeypress="handleKeyPress(event)">
+                <button class="btn primary" onclick="sendMessage()">Enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let agentConfig = {};
+        let chatHistory = [];
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAgentStatus();
+            loadConfig();
+            loadConversations();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(loadAgentStatus, 30000);
+        });
+
+        async function loadAgentStatus() {
+            try {
+                const response = await fetch('/agent-zero-api/health');
+                const data = await response.json();
+                
+                updateAgentStatus(data);
+                updateSystemStatus(data.system_status);
+            } catch (error) {
+                console.error('Error loading agent status:', error);
+                updateAgentStatus({ status: 'error', error: error.message });
+            }
+        }
+
+        function updateAgentStatus(data) {
+            const statusBadge = document.getElementById('agentStatusBadge');
+            const versionEl = document.getElementById('agentVersion');
+            const uptimeEl = document.getElementById('agentUptime');
+            
+            if (data.status === 'healthy') {
+                statusBadge.textContent = 'Ativo';
+                statusBadge.className = 'status active';
+            } else {
+                statusBadge.textContent = 'Inativo';
+                statusBadge.className = 'status inactive';
+            }
+            
+            versionEl.textContent = data.version || '1.0.0';
+            uptimeEl.textContent = data.system_status?.uptime ? 
+                `${Math.floor(data.system_status.uptime / 60)}m` : '-';
+        }
+
+        function updateSystemStatus(systemStatus) {
+            if (!systemStatus) return;
+            
+            const conversationsEl = document.getElementById('totalConversations');
+            const memoryEl = document.getElementById('memoryEntries');
+            
+            conversationsEl.textContent = systemStatus.conversations_active || 0;
+            memoryEl.textContent = systemStatus.memory_entries || 0;
+            
+            // Update integrations
+            updateIntegrations(systemStatus);
+        }
+
+        function updateIntegrations(systemStatus) {
+            const grid = document.getElementById('integrationsGrid');
+            grid.innerHTML = '';
+            
+            const integrations = [
+                { name: 'WhatsApp', status: systemStatus.whatsapp?.status, url: 'localhost:3002' },
+                { name: 'Instagram', status: systemStatus.instagram?.status, url: 'localhost:3003' },
+                { name: 'CRM', status: systemStatus.crm?.status, url: 'localhost:3100' }
+            ];
+            
+            integrations.forEach(integration => {
+                const div = document.createElement('div');
+                div.className = 'integration-item';
+                
+                const isActive = integration.status === 'healthy' || integration.status === 'ready';
+                
+                div.innerHTML = `
+                    <div>
+                        <div class="integration-name">${integration.name}</div>
+                        <div class="integration-url">${integration.url}</div>
+                    </div>
+                    <span class="status ${isActive ? 'active' : 'inactive'}">
+                        ${isActive ? 'Ativo' : 'Inativo'}
+                    </span>
+                `;
+                
+                grid.appendChild(div);
+            });
+        }
+
+        async function loadConfig() {
+            try {
+                const response = await fetch('/agent-zero-api/api/config');
+                const data = await response.json();
+                agentConfig = data.config;
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        }
+
+        async function loadConversations() {
+            try {
+                const response = await fetch('/agent-zero-api/api/conversations');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('totalMessages').textContent = 
+                        data.conversations.reduce((sum, conv) => sum + conv.message_count, 0);
+                }
+            } catch (error) {
+                console.error('Error loading conversations:', error);
+            }
+        }
+
+        async function initializeAgent() {
+            try {
+                const response = await fetch('/agent-zero-api/api/initialize', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    addMessage('agent', '✅ Agent Zero inicializado com sucesso!');
+                    loadAgentStatus();
+                } else {
+                    addMessage('agent', '❌ Erro ao inicializar: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error initializing agent:', error);
+                addMessage('agent', '❌ Erro de conexão ao inicializar agent');
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message
+            addMessage('user', message);
+            input.value = '';
+            
+            // Show loading
+            document.getElementById('chatLoading').style.display = 'block';
+            
+            try {
+                const response = await fetch('/agent-zero-api/api/message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        conversation_id: 'dashboard_chat',
+                        context: { source: 'dashboard' }
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    addMessage('agent', data.response);
+                } else {
+                    addMessage('agent', '❌ Erro: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                addMessage('agent', '❌ Erro de conexão ao enviar mensagem');
+            } finally {
+                document.getElementById('chatLoading').style.display = 'none';
+            }
+        }
+
+        function addMessage(sender, content) {
+            const messagesContainer = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            messageDiv.textContent = content;
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            chatHistory.push({ sender, content, timestamp: new Date() });
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        async function viewMemory() {
+            try {
+                const response = await fetch('/agent-zero-api/api/memory');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const memoryStr = JSON.stringify(data.memory, null, 2);
+                    addMessage('agent', `🧠 Memória do sistema:\\n\\n${memoryStr}`);
+                }
+            } catch (error) {
+                addMessage('agent', '❌ Erro ao carregar memória');
+            }
+        }
+    </script>
+</body>
+</html>

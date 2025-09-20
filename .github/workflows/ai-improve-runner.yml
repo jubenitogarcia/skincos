@@ -1,0 +1,102 @@
+name: AI Improve Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: Issue number to process
+        required: true
+        type: string
+      dry-run:
+        description: Do not push/PR, just simulate
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      ai-endpoint:
+        description: AI endpoint (GitHub Models)
+        required: false
+        type: string
+        default: ""
+      ai-token:
+        description: Token para o endpoint de IA
+        required: false
+        type: string
+        default: ""
+      ai-model:
+        description: Modelo explícito (opcional)
+        required: false
+        type: string
+        default: ""
+      ai-models-fast:
+        description: CSV de modelos fast
+        required: false
+        type: string
+        default: ""
+      ai-models-strong:
+        description: CSV de modelos strong
+        required: false
+        type: string
+        default: ""
+      ai-models-default:
+        description: CSV de modelos default
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: ai-improve-runner
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Run AI Improve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          # no cache; root has no lockfile and action errors when cache is set
+
+      - name: Install dependencies (if needed)
+        run: |
+          if [ -f package.json ]; then
+            npm ci || npm install
+          fi
+
+      - name: Ensure jq is available
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Execute runner
+        env:
+          # Prefer GH_TOKEN if provided, else fall back to the default GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          # gh CLI expects GH_TOKEN; set it to the same value to enable auto-merge
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          MAX_ATTEMPTS: "2"
+          AI_ENDPOINT: ${{ inputs.ai-endpoint }}
+          AI_TOKEN: ${{ inputs.ai-token || secrets.AI_TOKEN }}
+          AI_MODEL: ${{ inputs.ai-model }}
+          AI_MODELS_FAST: ${{ inputs.ai-models-fast }}
+          AI_MODELS_STRONG: ${{ inputs.ai-models-strong }}
+          AI_MODELS_DEFAULT: ${{ inputs.ai-models-default }}
+        run: |
+          node scripts/ai-improve-runner.js

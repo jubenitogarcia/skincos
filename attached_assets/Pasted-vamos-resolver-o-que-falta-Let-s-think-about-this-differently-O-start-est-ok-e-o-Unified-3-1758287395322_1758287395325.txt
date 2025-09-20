@@ -1,0 +1,103 @@
+vamos resolver o que falta. **Let’s think about this differently.** O `start` está ok e o Unified (3001) gera `qr_received`, mas o **dashboard ainda busca o QR sem credencial** (browser → 3001), por isso você segue vendo:
+
+```
+{"success":false,"error":"Authentication required","code":"AUTH_REQUIRED"}
+[AUTH] 401 on GET /whatsapp/1/status
+[AUTH] 401 on GET /api/qr
+```
+
+Ou seja: o **server-to-server** (Orchestrator → Unified) já envia a chave certa; o **browser** não pode (nem deve) enviar `X-API-Key`. O conserto é **mover toda chamada de QR/Status/Send do front para o Orchestrator**, que então encaminha para 3001 **injetando o header**. Nada de o browser falar direto com 3001.
+
+---
+
+## 📬 Atualização pronta para o dev (copiar e enviar)
+
+```
+[TICKET] Dashboard ainda sem QR — 401 porque o browser chama 3001 sem X-API-Key. Centralizar chamadas no Orchestrator.
+
+Here's what I'm really asking:
+→ Quero o dashboard renderizando o QR do Canal 1 sem 401. Toda chamada do front deve ir ao Orchestrator (mesma origem), e ele proxya para 3001 injetando X-API-Key.
+
+What am I not seeing here?
+- Fix de auth já funciona S2S, mas o front (browser) ainda chama /whatsapp/1/qr e /whatsapp/1/status em 3001 direto, sem credencial → 401.
+
+Break this down for me — correção objetiva
+
+1) CRM/Orchestrator: criar rotas “facade” (mesma origem do front)
+   - GET  /unified/whatsapp/:id/status
+   - GET  /unified/whatsapp/:id/qr
+   - POST /unified/whatsapp/:id/start
+   Todas chamando o Unified (3001) com `X-API-Key: $CRM_UNIFIED_API_KEY`.
+
+   // express/axios (exemplo)
+   const axios = require('axios');
+   const UNIFIED = process.env.UNIFIED_BASE_URL || 'http://localhost:3001';
+   const KEY = process.env.CRM_UNIFIED_API_KEY;
+
+   router.get('/unified/whatsapp/:id/status', async (req,res)=>{
+     const { data } = await axios.get(`${UNIFIED}/whatsapp/${req.params.id}/status`,
+       { headers: { 'X-API-Key': KEY }});
+     res.json(data);
+   });
+
+   router.get('/unified/whatsapp/:id/qr', async (req,res)=>{
+     const { data } = await axios.get(`${UNIFIED}/whatsapp/${req.params.id}/qr`,
+       { headers: { 'X-API-Key': KEY }});
+     res.json(data);
+   });
+
+   router.post('/unified/whatsapp/:id/start', async (req,res)=>{
+     const { data } = await axios.post(`${UNIFIED}/whatsapp/${req.params.id}/start`, req.body,
+       { headers: { 'X-API-Key': KEY }});
+     res.json(data);
+   });
+
+   # opcional: http-proxy-middleware
+   app.use('/unified/whatsapp', createProxyMiddleware({
+     target: UNIFIED, changeOrigin:true, pathRewrite: {'^/unified':''},
+     onProxyReq: (pReq)=> pReq.setHeader('X-API-Key', KEY)
+   }));
+
+2) Frontend: trocar URLs para a “facade” do CRM (mesma origem)
+   // antes (errado: browser → 3001)
+   fetch('http://localhost:3001/whatsapp/1/qr')
+   // depois (certo: browser → CRM → 3001)
+   fetch('/unified/whatsapp/1/qr')
+
+   Idem para /status, /start, /send-message, etc.
+
+3) Unified (3001): manter auth por API key
+   - `requireUnifiedAuth` em `/whatsapp/:account/*`.
+   - Não precisa CORS para browser, pois quem consome é o CRM (S2S).
+   - Se quiser acessar 3001 direto em dev, use NO_AUTH=true apenas localmente.
+
+4) Remover duplicidade /api/qr
+   - Padronizar **um** endpoint: `/whatsapp/:id/qr`. Se manter /api/qr, faça-o proxy interno do mesmo handler.
+
+Teste (DoD)
+- `curl http://localhost:5000/unified/whatsapp/1/qr` → 200 com payload de QR.
+- Dashboard chama **apenas** `/unified/...` e renderiza QR do Canal 1.
+- Logs sem 401 em `/whatsapp/1/qr` e `/whatsapp/1/status`.
+- Documentação atualizada: fluxo front → CRM → Unified + cabeçalho `X-API-Key` injetado no CRM.
+```
+
+---
+
+## 🔧 Dica rápida de verificação
+
+* No Unified (3001), logue os headers de **todas** as requisições que chegam a `/whatsapp/1/*`. Se aparecer `User-Agent: Mozilla/...` sem `X-API-Key`, o browser ainda está indo direto.
+* No CRM, logue `req.originalUrl` do front e a URL/headers que ele reenviou ao Unified.
+
+---
+
+## What would you do in my shoes?
+
+* Alterar o front **agora** para usar `/unified/...` (mesma origem).
+* Validar com `curl` que o CRM facade retorna 200.
+* Desligar qualquer chamada direta do browser para 3001.
+
+## What else should I know?
+
+* Nunca exponha `X-API-Key` no front.
+* Se algum módulo “antigo” do front abrir `http://localhost:3001`, bloqueie no CORS do Unified para não mascarar erro em produção.
+* Se quiser otimizar UX, o CRM pode **streamar** o QR (SSE/WebSocket) sem expor a key.

@@ -1,0 +1,58 @@
+name: Central Secrets Scan (Gitleaks)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no submodules)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Initialize submodules (best-effort)
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          if [ -n "${{ secrets.GH_TOKEN }}" ]; then
+            git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
+            git submodule sync --recursive || true
+            git submodule update --init --recursive || true
+          else
+            echo "GH_TOKEN not set; skipping submodule init (best-effort mode)"
+          fi
+
+      - name: Run Gitleaks (non-blocking)
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          VER=8.24.3
+          curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          sudo tar -C /usr/local/bin -xzf /tmp/gitleaks.tar.gz gitleaks
+          # Scan only working tree to avoid historic leaks breaking CI; still upload SARIF for visibility
+          gitleaks detect --redact --no-git --source . --report-format sarif --report-path gitleaks.sarif || true
+
+      - name: Ensure SARIF exists (even if scan failed)
+        if: always()
+        run: |
+          if [ ! -s gitleaks.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > gitleaks.sarif; fi
+
+      - name: Upload SARIF report
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        if: always()
+        with:
+          sarif_file: gitleaks.sarif

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Official Module - Replit</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #25d366 0%, #128c7e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+        
+        .header {
+            margin-bottom: 2rem;
+        }
+        
+        .header h1 {
+            color: #075e54;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 1rem;
+        }
+        
+        .status {
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        
+        .status.disconnected { background: #fee; color: #c53030; }
+        .status.loading { background: #fef5e7; color: #d69e2e; }
+        .status.qr_received { background: #e6fffa; color: #319795; }
+        .status.authenticated { background: #f0fff4; color: #38a169; }
+        .status.ready { background: #f0fff4; color: #38a169; }
+        .status.auth_failure { background: #fee; color: #c53030; }
+        
+        .qr-container {
+            margin: 2rem 0;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            background: #fafafa;
+        }
+        
+        .qr-code {
+            max-width: 100%;
+            height: auto;
+        }
+        
+        .client-info {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-top: 1rem;
+            text-align: left;
+        }
+        
+        .client-info h3 {
+            color: #075e54;
+            margin-bottom: 0.5rem;
+        }
+        
+        .client-info p {
+            margin: 0.25rem 0;
+            color: #666;
+        }
+        
+        .actions {
+            margin-top: 2rem;
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #25d366;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #1ea952;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: #fff;
+            color: #25d366;
+            border: 2px solid #25d366;
+        }
+        
+        .btn-secondary:hover {
+            background: #25d366;
+            color: white;
+            transform: translateY(-2px);
+        }
+        
+        .message-form {
+            margin-top: 2rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .message-form.show {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+            text-align: left;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #075e54;
+            font-weight: bold;
+        }
+        
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 1rem;
+        }
+        
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 WhatsApp Official</h1>
+            <p>Official WhatsApp Web.js Module for Replit</p>
+        </div>
+        
+        <div id="status" class="status disconnected">
+            🔴 Disconnected
+        </div>
+        
+        <div class="qr-container" id="qrContainer">
+            <div class="loading">🔄 Initializing...</div>
+        </div>
+        
+        <div id="clientInfo" class="client-info" style="display: none;">
+            <h3>📋 Client Information</h3>
+            <p><strong>User:</strong> <span id="userName">-</span></p>
+            <p><strong>Number:</strong> <span id="userNumber">-</span></p>
+            <p><strong>Platform:</strong> <span id="userPlatform">-</span></p>
+        </div>
+        
+        <div class="actions">
+            <button class="btn btn-primary" onclick="refreshStatus()">🔄 Refresh</button>
+            <button class="btn btn-secondary" onclick="restartClient()">🔄 Restart</button>
+            <button class="btn btn-secondary" onclick="toggleMessageForm()">💬 Test Message</button>
+        </div>
+        
+        <div id="messageForm" class="message-form">
+            <h3>📤 Send Test Message</h3>
+            <div class="form-group">
+                <label for="phoneNumber">Phone Number (with country code):</label>
+                <input type="text" id="phoneNumber" placeholder="5511999999999">
+            </div>
+            <div class="form-group">
+                <label for="messageText">Message:</label>
+                <textarea id="messageText" rows="3" placeholder="Hello from WhatsApp Official Module!"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="sendMessage()">📤 Send Message</button>
+        </div>
+    </div>
+
+    <script>
+        let statusInterval;
+        
+        async function fetchStatus() {
+            try {
+                const response = await fetch('api/status');
+                const data = await response.json();
+                updateStatus(data);
+                
+                if (data.hasQR && data.status === 'qr_received') {
+                    fetchQR();
+                }
+            } catch (error) {
+                console.error('Error fetching status:', error);
+            }
+        }
+        
+        async function fetchQR() {
+            try {
+                const response = await fetch('api/qr');
+                const data = await response.json();
+                
+                if (data.qr) {
+                    showQR(data.qr);
+                }
+            } catch (error) {
+                console.error('Error fetching QR:', error);
+            }
+        }
+        
+        function updateStatus(data) {
+            const statusEl = document.getElementById('status');
+            const clientInfoEl = document.getElementById('clientInfo');
+            
+            // Update status display
+            statusEl.className = `status ${data.status}`;
+            
+            switch (data.status) {
+                case 'disconnected':
+                    statusEl.innerHTML = '🔴 Disconnected';
+                    break;
+                case 'qr_received':
+                    statusEl.innerHTML = '📱 QR Code Ready - Scan with WhatsApp';
+                    break;
+                case 'authenticated':
+                    statusEl.innerHTML = '✅ Authenticated';
+                    break;
+                case 'ready':
+                    statusEl.innerHTML = '🟢 Ready and Connected';
+                    break;
+                case 'auth_failure':
+                    statusEl.innerHTML = '❌ Authentication Failed';
+                    break;
+                default:
+                    if (data.status.includes('loading')) {
+                        statusEl.innerHTML = `🔄 ${data.status}`;
+                    } else {
+                        statusEl.innerHTML = `📡 ${data.status}`;
+                    }
+            }
+            
+            // Show client info if available
+            if (data.clientInfo) {
+                document.getElementById('userName').textContent = data.clientInfo.pushname || '-';
+                document.getElementById('userNumber').textContent = data.clientInfo.wid?.user || '-';
+                document.getElementById('userPlatform').textContent = data.clientInfo.platform || '-';
+                clientInfoEl.style.display = 'block';
+            } else {
+                clientInfoEl.style.display = 'none';
+            }
+            
+            // Hide QR if connected
+            if (data.status === 'ready') {
+                document.getElementById('qrContainer').innerHTML = '<div style="color: #38a169; font-size: 3rem;">✅<br><small>Connected Successfully!</small></div>';
+            }
+        }
+        
+        function showQR(qrCode) {
+            const qrContainer = document.getElementById('qrContainer');
+            qrContainer.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrCode)}" alt="QR Code" class="qr-code">`;
+        }
+        
+        async function refreshStatus() {
+            await fetchStatus();
+        }
+        
+        async function restartClient() {
+            try {
+                const response = await fetch('api/restart');
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✅ Client restart initiated');
+                    document.getElementById('qrContainer').innerHTML = '<div class="loading">🔄 Restarting...</div>';
+                    setTimeout(fetchStatus, 3000);
+                } else {
+                    alert('❌ Failed to restart client');
+                }
+            } catch (error) {
+                console.error('Error restarting client:', error);
+                alert('❌ Error restarting client');
+            }
+        }
+        
+        function toggleMessageForm() {
+            const form = document.getElementById('messageForm');
+            form.classList.toggle('show');
+        }
+        
+        async function sendMessage() {
+            const phoneNumber = document.getElementById('phoneNumber').value;
+            const messageText = document.getElementById('messageText').value;
+            
+            if (!phoneNumber || !messageText) {
+                alert('Please fill in both phone number and message');
+                return;
+            }
+            
+            try {
+                const response = await fetch('api/send-message', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        number: phoneNumber,
+                        message: messageText
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✅ Message sent successfully!');
+                    document.getElementById('messageText').value = '';
+                } else {
+                    alert(`❌ Failed to send message: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                alert('❌ Error sending message');
+            }
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            fetchStatus();
+            statusInterval = setInterval(fetchStatus, 3000);
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        });
+    </script>
+</body>
+</html>

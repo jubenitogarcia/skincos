@@ -1,0 +1,51 @@
+name: AI Improve Scheduler
+
+on:
+  workflow_dispatch:
+    inputs:
+      min-hours-between-issue-runs:
+        description: Minimum hours to wait before reprocessing the same issue
+        required: false
+        default: "6"
+        type: string
+  schedule:
+    - cron: "*/30 * * * *" # every 30 minutes
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+
+concurrency:
+  group: ai-improve-scheduler
+  cancel-in-progress: false
+
+jobs:
+  schedule:
+    name: Pick next AI issue and dispatch runner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Execute scheduler
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MIN_HOURS_BETWEEN_ISSUE_RUNS: ${{ inputs.min-hours-between-issue-runs }}
+          # Forward AI configuration from repo Variables/Secrets (optional)
+          AI_ENDPOINT: ${{ vars.AI_ENDPOINT }}
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_MODELS_FAST: ${{ vars.AI_MODELS_FAST }}
+          AI_MODELS_STRONG: ${{ vars.AI_MODELS_STRONG }}
+          AI_MODELS_DEFAULT: ${{ vars.AI_MODELS_DEFAULT }}
+          AI_ASSIGNEE: ${{ vars.AI_ASSIGNEE }}
+          AI_MENTION: ${{ vars.AI_MENTION }}
+        run: |
+          node scripts/ai-scheduler.js

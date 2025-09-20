@@ -1,0 +1,59 @@
+name: PR Diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '*/20 * * * *'
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure jq
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y jq
+      - name: List open PRs and reasons
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Open PRs for $REPO"
+          gh api -H "Accept: application/vnd.github+json" repos/$REPO/pulls --paginate > pulls.json
+          if ! jq -e . pulls.json >/dev/null 2>&1; then
+            echo "No PRs or failed to list."; exit 0
+          fi
+          for pr in $(jq -r '.[].number' pulls.json); do
+            gh pr view "$pr" -R "$REPO" --json number,title,isDraft,isCrossRepository,mergeStateStatus,reviewDecision,mergeable,mergeableState,headRefOid,headRefName,baseRefName,url > pr.json || continue
+            title=$(jq -r '.title' pr.json)
+            draft=$(jq -r '.isDraft' pr.json)
+            cross=$(jq -r '.isCrossRepository' pr.json)
+            ms=$(jq -r '.mergeStateStatus' pr.json)
+            review=$(jq -r '.reviewDecision // ""' pr.json)
+            headSha=$(jq -r '.headRefOid' pr.json)
+            headRef=$(jq -r '.headRefName' pr.json)
+            baseRef=$(jq -r '.baseRefName' pr.json)
+            url=$(jq -r '.url' pr.json)
+            state=$( [ -n "$headSha" ] && gh api repos/$REPO/commits/$headSha/status --jq '.state' || echo "unknown" )
+            pending=$( [ -n "$headSha" ] && gh api repos/$REPO/commits/$headSha/check-runs -H "Accept: application/vnd.github+json" --jq '[.check_runs[] | select(.status!="completed")] | length' || echo 0 )
+            failing=$( [ -n "$headSha" ] && gh api repos/$REPO/commits/$headSha/check-runs -H "Accept: application/vnd.github+json" --jq '[.check_runs[] | select(.conclusion and (.conclusion!="success" and .conclusion!="neutral" and .conclusion!="skipped"))] | length' || echo 0 )
+            echo "#${pr} - ${title}\n  url: ${url}\n  draft: ${draft}\n  crossRepo: ${cross}\n  mergeState: ${ms}\n  reviewDecision: ${review}\n  head: ${headRef}@${headSha}\n  base: ${baseRef}\n  status.state: ${state}\n  checks.pending: ${pending}\n  checks.failing: ${failing}\n"
+            # Optional: comment once if blocked
+            reason=""
+            if [ "$draft" = "true" ]; then reason="draft"; fi
+            if [ "$cross" = "true" ]; then reason="cross-repo"; fi
+            if [ "$state" = "failure" ]; then reason="checks-failing"; fi
+            if [ "$pending" != "0" ]; then reason="checks-pending"; fi
+            if [ "$review" = "REVIEW_REQUIRED" ] || [ "$review" = "CHANGES_REQUESTED" ]; then reason="reviews-required"; fi
+            if [ -n "$reason" ]; then
+              gh pr comment "$pr" -R "$REPO" -b "PR Diagnostics: blocked=${reason}. mergeState=${ms}, status=${state}, pending=${pending}, failing=${failing}." || true
+            fi
+          done

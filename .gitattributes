@@ -1,0 +1,5 @@
+# Prefer union merge for AI-generated, append-only logs/notes to avoid conflicts
+# Existing content will be preserved; concurrent additions will be combined
+
+docs/ai-improvement-logs/*.md merge=union
+scripts/ai-runner-ci-notes/*.txt merge=union

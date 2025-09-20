@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "projects": {
+    "agent-zero-core": "apps/agent_zero_core",
+    "webui": "apps/webui",
+    "whatsapp-gateway": "apps/whatsapp-gateway", 
+    "crm": "apps/crm",
+    "broadhub": "apps/broadhub",
+    "shared-configs": "packages/shared-configs",
+    "shared-types": "packages/shared-types",
+    "shared-utils": "packages/shared-utils"
+  }
+}

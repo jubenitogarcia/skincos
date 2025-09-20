@@ -1,0 +1,9 @@
+tunnel: 6d1245d3-1ecb-4220-a64d-636d5ce259dc
+credentials-file: /Users/jubenitogarcia/.cloudflared/6d1245d3-1ecb-4220-a64d-636d5ce259dc.json
+
+ingress:
+  - hostname: a0.skincos.com.br
+    service: http://localhost:80
+  - hostname: "*.a0.skincos.com.br"
+    service: http://localhost:80
+  - service: http_status:404

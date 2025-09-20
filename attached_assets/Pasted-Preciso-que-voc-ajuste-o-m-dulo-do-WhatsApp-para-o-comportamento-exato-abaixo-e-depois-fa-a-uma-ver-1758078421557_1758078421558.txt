@@ -1,0 +1,28 @@
+Preciso que você ajuste o módulo do WhatsApp para o comportamento exato abaixo e depois faça uma verificação completa (funcional + visual + endpoints), finalizando com testes de uso real:
+
+Regras de inicialização por canal
+- Não deve existir instância “global” do WhatsApp sem canal selecionado; a instância só inicia quando clico em “Iniciar conexão” e escolho um canal na própria aba WhatsApp [1].  
+- O mapeamento de canal para porta é fixo: Canal 1→3001, Canal 2→3002, …, Canal 9→3009, sem desvios nem auto-escolha fora desse range [1].  
+- Se não houver nenhuma conta conectada, ao iniciar conexão o sistema deve subir apenas a instância do canal escolhido, exibir o QR imediatamente e refletir o status em tempo real na UI desse canal [1].  
+
+Verificações técnicas obrigatórias
+- Orquestrador: confirme que cada endpoint de status/QR/start/stop responde corretamente para as portas 3001–3009; corrija o gateway “Nenhum endpoint de status respondeu” garantindo timeout, retry e erro detalhado por canal [1].  
+- Rotas e middlewares: garanta que não há redirects indevidos nem bloqueios entre frontend e backend que impeçam a atualização de status/QR por canal, evitando race conditions e loops de loading [4][5][6].  
+- Hot reload/HMR: evite que alterações em providers/contexts quebrem o boot dos módulos; isole hooks em arquivos .ts e mantenha os componentes de contexto em .tsx para estabilizar HMR e evitar estados inconsistentes durante o pareamento [7][8].  
+- Estados e contexto: todos os consumidores de contexto devem estar dentro dos providers corretos; erros como “No QueryClient set” não podem ocorrer, especialmente em telas que exibem status/QR; valide a ordem e cobertura do QueryClientProvider e remova/dev-tools problemáticos se necessário [3][9][10].  
+
+UI/UX unificada na aba WhatsApp
+- Unifique tudo na aba principal “WhatsApp”: seleção de canal, botão “Iniciar conexão”, QR code, status por canal, ações de retry/stop, logs resumidos e sugestões de portas alternativas quando ocupadas [1].  
+- Mostre indicadores claros por canal: livre, iniciando, aguardando QR, pareado, erro, offline; cada estado deve ter ação disponível e feedback imediato [1].  
+- Em erro de porta/canal, exibir mensagem com causa e sugerir automaticamente outro canal disponível, mantendo consistência visual e sem travar o restante dos canais [1].  
+
+Testes e validação final
+- Testar para cada canal 1–9: start → QR → pareamento → mensagens de status → stop → restart; capturar prints dos estados e logs de endpoints para cada etapa [1].  
+- Testar cenários de falha: porta ocupada, timeout de QR, queda da sessão, reconexão; garantir mensagens de erro acionáveis e caminhos de recuperação [1].  
+- Confirmar que todos os botões, menus, filtros, cards e indicadores já existentes estão diagramados e acessíveis na interface final (nada “escondido” em abas paralelas) [1].  
+
+Conclusão esperada
+- Módulo WhatsApp totalmente funcional, sem carregamentos infinitos ou erros de gateway; QR aparece sem atraso após iniciar conexão no canal escolhido; endpoints de status respondem de forma consistente; UX unificada e pronta para uso [1][2][3].  
+- Entregar: lista de mudanças, prints de cada canal, evidências de resposta dos endpoints e breve guia de troubleshooting dentro do repositório.  
+
+Se houver limitações do ambiente (proxy/HMR), documente o contorno aplicado; caso devtools de terceiros causem interferência no contexto, mantenha solução interna e estável conforme boas práticas [4][2][3].

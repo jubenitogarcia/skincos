@@ -1,0 +1,19 @@
+{
+  "extends": ["./packages/shared-configs/tsconfig.base.json"],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@agent-zero/shared-configs": ["packages/shared-configs"],
+      "@agent-zero/shared-types": ["packages/shared-types"],
+      "@agent-zero/shared-utils": ["packages/shared-utils"]
+    }
+  },
+  "include": [],
+  "files": [],
+  "references": [
+    { "path": "./apps/webui" },
+    { "path": "./packages/shared-configs" },
+    { "path": "./packages/shared-types" },
+    { "path": "./packages/shared-utils" }
+  ]
+}

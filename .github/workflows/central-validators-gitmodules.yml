@@ -1,0 +1,52 @@
+name: Central Validators - .gitmodules reachability
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '33 1 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  gitmodules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no submodules)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Initialize submodules with GH_TOKEN
+        run: |
+          set -euxo pipefail
+          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
+            echo "::error::GH_TOKEN secret is required to fetch private submodules"; exit 1;
+          fi
+          git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Validate .gitmodules reachability and permissions
+        run: |
+          set -euxo pipefail
+          if [ ! -f .gitmodules ]; then echo "No .gitmodules present"; exit 0; fi
+          echo "Configured submodules:" && cat .gitmodules
+          urls=$(git config --file=.gitmodules --get-regexp url | awk '{print $2}')
+          missing=0
+          for u in $urls; do
+            echo "Checking $u"
+            if echo "$u" | grep -qiE '^git@|^ssh://'; then proto=ssh; else proto=https; fi
+            # Try without credentials just to detect existence
+            code=$(curl -s -o /dev/null -w "%{http_code}" -I "$u" || true)
+            if [ "$code" = "200" ] || [ "$code" = "301" ] || [ "$code" = "302" ] || [ "$code" = "307" ]; then
+              echo "OK: $u is reachable (code $code)"
+            else
+              echo "::warning::Unreachable or private: $u (code $code)"
+              missing=$((missing+1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "::notice::Some submodules may require authentication (private). Ensure CI has access."; exit 0; fi

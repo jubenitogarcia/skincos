@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CRM Inteligente 2025 - Solução Completa</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link href="/src/main.css" rel="stylesheet" />
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="CRM Inteligente" />
+
+    <!-- Service Worker Registration (disabled on localhost to avoid dev blank page due to stale SW cache) -->
+    <script>
+        (function () {
+            if (!('serviceWorker' in navigator)) return;
+            const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+            window.addEventListener('load', () => {
+                if (isLocalhost) {
+                    // In development: actively unregister any existing SW to prevent stale caches
+                    navigator.serviceWorker.getRegistrations?.().then(regs => {
+                        regs.forEach(r => r.unregister());
+                    }).catch(() => { /* ignore */ });
+                    return;
+                }
+                // Production-like hosts: register SW normally
+                navigator.serviceWorker.register('/sw.js')
+                    .then((registration) => {
+                        console.log('SW registered: ', registration);
+                        navigator.serviceWorker.addEventListener('message', (event) => {
+                            if (event.data && event.data.type === 'NOTIFICATION_CLICKED' && event.data.url) {
+                                window.location.href = event.data.url;
+                            }
+                        });
+                    })
+                    .catch((registrationError) => {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        })();
+    </script>
+</head>
+
+<body>
+    <div id="boot"
+        style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0b1220;color:#cbd5e1;font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+        <div style="text-align:center">
+            <div style="font-weight:700;font-size:18px;margin-bottom:6px">Carregando CRM…</div>
+            <div style="font-size:12px;opacity:.7">Se demorar, force o reload (⌘R) ou confira os logs.</div>
+        </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

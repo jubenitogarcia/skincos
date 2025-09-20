@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Teste Proxy WhatsApp</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .status { padding: 20px; margin: 20px 0; border-radius: 10px; }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        .loading { background: #fff3cd; color: #856404; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Teste de Conexão WhatsApp via Proxy</h1>
+    
+    <div id="status" class="status loading">
+        Verificando conexão...
+    </div>
+    
+    <div>
+        <button onclick="testDirect()">Testar Direto (3002)</button>
+        <button onclick="testProxy()">Testar via Proxy (5000)</button>
+        <button onclick="testProxyRelative()">Testar Proxy com Caminho Relativo</button>
+    </div>
+    
+    <pre id="result"></pre>
+    
+    <script>
+        function updateStatus(data, source) {
+            const statusDiv = document.getElementById('status');
+            const resultDiv = document.getElementById('result');
+            
+            if (data.status === 'ready' || data.status === 'authenticated') {
+                statusDiv.className = 'status connected';
+                statusDiv.innerHTML = `✅ ${source}: Conectado<br>Cliente: ${data.clientInfo?.pushname || 'N/A'}`;
+            } else if (data.status === 'qr_received') {
+                statusDiv.className = 'status loading';
+                statusDiv.innerHTML = `📱 ${source}: Aguardando QR Code`;
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.innerHTML = `❌ ${source}: Desconectado`;
+            }
+            
+            resultDiv.textContent = JSON.stringify(data, null, 2);
+        }
+        
+        async function testDirect() {
+            try {
+                const response = await fetch('http://localhost:3002/api/status');
+                const data = await response.json();
+                updateStatus(data, 'DIRETO');
+            } catch (error) {
+                document.getElementById('status').innerHTML = '❌ Erro ao testar direto: ' + error.message;
+            }
+        }
+        
+        async function testProxy() {
+            try {
+                const response = await fetch('http://localhost:5000/whatsapp/api/status');
+                const data = await response.json();
+                updateStatus(data, 'PROXY');
+            } catch (error) {
+                document.getElementById('status').innerHTML = '❌ Erro ao testar proxy: ' + error.message;
+            }
+        }
+        
+        async function testProxyRelative() {
+            // Simula o que acontece quando acessamos via /whatsapp/
+            const baseUrl = 'http://localhost:5000/whatsapp/';
+            try {
+                const response = await fetch(baseUrl + 'api/status');
+                const data = await response.json();
+                updateStatus(data, 'PROXY RELATIVO');
+            } catch (error) {
+                document.getElementById('status').innerHTML = '❌ Erro ao testar proxy relativo: ' + error.message;
+            }
+        }
+        
+        // Teste automático ao carregar
+        window.onload = () => {
+            testProxyRelative();
+        };
+    </script>
+</body>
+</html>

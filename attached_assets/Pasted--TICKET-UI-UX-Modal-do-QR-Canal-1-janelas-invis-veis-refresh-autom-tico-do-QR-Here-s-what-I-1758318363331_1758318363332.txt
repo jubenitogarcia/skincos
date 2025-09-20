@@ -1,0 +1,85 @@
+
+[TICKET UI/UX] Modal do QR (Canal 1) — janelas invisíveis + refresh automático do QR
+
+Here's what I'm really asking:
+→ Quero o modal de QR SEM sobreposições invisíveis e com o QR sempre atualizado enquanto o pareamento não ocorre.
+
+What am I not seeing here?
+- Há camadas/portais invisíveis com botões clicáveis por cima/baixo do modal (z-index/pointer-events).
+- O QR é rotativo e a tela não atualiza em tempo real, gerando QR vencido.
+
+Break this down for me — correções objetivas
+
+1) Camadas invisíveis & acessibilidade (modal)
+- Garanta **apenas um modal ativo** e remova os demais do DOM (não só `visibility:hidden`).
+- Ordem correta:
+  - `.backdrop` (z-index: 1000; `pointer-events:auto`)
+  - `.modal` (z-index: 1001; `pointer-events:auto`)
+  - Conteúdo de fundo: `pointer-events:none` quando modal aberto.
+- Não use elementos “fantasma” com botões: se estiver oculto, aplique **ambos**: `display:none` e `pointer-events:none` (ou desmonte o componente).
+- Acessibilidade:
+  - `<div role="dialog" aria-modal="true" aria-labelledby="qr-title">`
+  - **Focus trap** ao abrir; **ESC** fecha; **scroll lock** no body.
+  - Contraste de botões “Copiar/Atualizar” ≥ 4.5:1.
+
+Exemplo (CSS mínimo):
+```css
+.modal-root { position: fixed; inset:0; display:grid; place-items:center; z-index:1001; }
+.backdrop { position: fixed; inset:0; background: rgba(0,0,0,.55); z-index:1000; }
+.modal[hidden] { display:none !important; pointer-events:none !important; }
+body.modal-open { overflow:hidden; }
+.page-under-modal { pointer-events:none; }
+````
+
+2. QR sempre atualizado (ele gira rápido)
+
+* **Back-end (3001)**: expor **SSE** (ou WebSocket) por canal:
+
+```js
+// GET /whatsapp/:id/qr/stream  (SSE)
+app.get('/whatsapp/:id/qr/stream', (req,res)=>{
+  res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+  const send = (type, data)=> res.write(`event: ${type}\ndata:${JSON.stringify(data)}\n\n`);
+  const sub = channel.onQR(req.params.id, (qr, ttl)=> send('qr', { qr, ttl, at: Date.now() }));
+  const conn = channel.onState(req.params.id, (state)=> send('state', { state, at: Date.now() }));
+  const ping = setInterval(()=> res.write(':\n\n'), 15000);
+  req.on('close', ()=>{ sub.off(); conn.off(); clearInterval(ping); });
+});
+```
+
+* **Front (CRM)**: ouvir o stream e **renderizar instantaneamente** o novo QR; exibir **contador** de expiração.
+
+```js
+const es = new EventSource(`/unified/whatsapp/${id}/qr/stream`);
+es.addEventListener('qr', ev => {
+  const { qr, ttl } = JSON.parse(ev.data);
+  renderQR(qr); startCountdown(ttl);  // ttl em segundos
+});
+es.addEventListener('state', ev => {
+  const { state } = JSON.parse(ev.data);
+  if (state === 'CONNECTED') closeModal();
+});
+```
+
+* **Fallback**: se SSE indisponível, **poll** a cada 2–3s: `GET /unified/whatsapp/:id/qr`.
+* **Botão “Atualizar”** deve disparar `/unified/whatsapp/:id/start` para forçar novo QR (debounce 1–2s).
+
+3. Critérios de aceite (DoD)
+
+* Sem “janelas invisíveis”: nenhum botão clicável fora do modal; `pointer-events:none` no fundo enquanto aberto.
+* Modal sempre visível por cima (z-index correto) e legível; foco e ESC funcionando.
+* QR atualiza **automático** em ≤1s quando o back-end emite novo código (SSE) ou ≤3s (poll).
+* Exibir **tempo restante** (ex.: “QR expira em 12s”) e trocar para “Gerando novo QR…” ao expirar.
+* Ao conectar: fechar modal, status = CONNECTED, e dashboard do canal carregado.
+* Logs sem 401 nas rotas do QR/status (front chama **/unified/**; auth só S2S).
+
+What would you do in my shoes?
+
+* Habilitar SSE, trocar o front para `/unified/.../qr/stream` e remover qualquer chamada direta à 3001 no browser.
+* Adicionar `body.modal-open` + `pointer-events:none` no container de fundo.
+* Criar teste e2e: abrir modal, esperar 1 rotação de QR e validar que a imagem/versão mudou.
+
+What else should I know?
+
+* O WhatsApp troca o QR com frequência; sem push (SSE/WS) o usuário perde a janela de escaneio.
+* Em produção, mantenha auth **apenas** entre CRM ⇄ Unified; nunca exponha `X-API-Key` no browser.

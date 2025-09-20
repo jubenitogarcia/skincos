@@ -1,0 +1,15 @@
+[submodule "a0"]
+	path = a0
+	url = git@github.com:jubenitogarcia/agent-zero.git
+[submodule "comprehensive-crm-so"]
+	path = comprehensive-crm-so
+	url = git@github.com:jubenitogarcia/comprehensive-crm-so.git
+[submodule "whatsapp-gateway"]
+	path = whatsapp-gateway
+	url = git@github.com:jubenitogarcia/WhatsApp.git
+[submodule "broadhub"]
+	path = broadhub
+	url = git@github.com:jubenitogarcia/BroadHub.git
+[submodule "instagrapi"]
+	path = instagrapi
+	url = git@github.com:subzeroid/instagrapi.git
