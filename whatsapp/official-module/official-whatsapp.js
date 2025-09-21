@@ -37,20 +37,20 @@ process.on('unhandledRejection', (reason, promise) => {
 // Graceful shutdown handler
 async function gracefulShutdown(signal) {
     console.log(`🔄 Received ${signal}. Graceful shutdown initiated...`);
-    
+
     try {
         // Destroy multi-channel system if active
         if (MULTI_CHANNEL_MODE && channelManagementAPI) {
             console.log('🗑️  Destroying Channel Management API...');
             await channelManagementAPI.destroy();
         }
-        
+
         // Destroy single client if active
         if (client && clientStatus !== 'disconnected') {
             console.log('🗑️  Destroying WhatsApp client...');
             await client.destroy();
         }
-        
+
         console.log('✅ Graceful shutdown completed successfully');
         process.exit(0);
     } catch (err) {
@@ -63,7 +63,8 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Import WhatsApp Web.js from the official cloned repository
-const { Client, LocalAuth, MessageMedia, Location } = require('../whatsapp-official');
+// Adjusted path after centralization to whatsapp/official
+const { Client, LocalAuth, MessageMedia, Location } = require('../official');
 
 // Import extension handlers
 const MediaHandler = require('./extensions/media-handler');
@@ -113,7 +114,7 @@ app.use(session({
 // CORS configuration - RESTRICT TO SPECIFIC ORIGINS
 const allowedOrigins = [
     'http://localhost:3000',
-    'http://localhost:3001', 
+    'http://localhost:3001',
     'http://localhost:5000',
     'https://whatsapp.replit.app', // Replace with actual production domain
     process.env.FRONTEND_URL
@@ -123,13 +124,13 @@ app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (mobile apps, postman, etc.)
         if (!origin) return callback(null, true);
-        
-        if (allowedOrigins.indexOf(origin) !== -1 || 
-            origin.includes('replit.dev') || 
+
+        if (allowedOrigins.indexOf(origin) !== -1 ||
+            origin.includes('replit.dev') ||
             origin.includes('replit.app')) {
             return callback(null, true);
         }
-        
+
         console.warn(`⚠️ CORS: Origin ${origin} not allowed`);
         callback(new Error('Not allowed by CORS'));
     },
@@ -139,7 +140,7 @@ app.use(cors({
 }));
 
 // Body parser with size limits
-app.use(express.json({ 
+app.use(express.json({
     limit: '10mb',
     verify: (req, res, buf) => {
         req.rawBody = buf;
@@ -213,7 +214,7 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
     let status = 'ok';
     let error = null;
     const bodyString = JSON.stringify(fullPayload);
-    
+
     try {
         const signature = crypto.createHmac('sha256', webhook.secret || 'default_secret').update(bodyString).digest('hex');
         await axios.post(webhook.url, bodyString, {
@@ -231,7 +232,7 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
         status = 'error';
         error = e.message || String(e);
     }
-    
+
     const finishedAt = Date.now();
     webhookDeliveriesStore.push({
         id: crypto.randomUUID(),
@@ -245,7 +246,7 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
         durationMs: finishedAt - startedAt,
         error
     });
-    
+
     if (status === 'error' && attempt < WEBHOOK_MAX_ATTEMPTS) {
         const delay = WEBHOOK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
         setTimeout(() => {
@@ -259,14 +260,14 @@ function triggerWebhooks(eventType, payload) {
     try {
         const targets = webhooksStore.filter(w => w.active && (!w.events.length || w.events.includes(eventType)));
         if (!targets.length) return;
-        
+
         const eventId = crypto.randomUUID();
         const timestamp = new Date().toISOString();
         const fullPayload = { v: 1, event: eventType, eventId, timestamp, ...payload };
-        
+
         // Register event internally
         eventsStore.push({ id: eventId, type: eventType, timestamp, payload });
-        
+
         // Dispatch to all webhooks
         targets.forEach(w => dispatchWebhook(w, fullPayload).catch(() => { }));
     } catch (e) {
@@ -280,14 +281,14 @@ async function initializeClientWithRecovery() {
         console.log('⏳ Recovery already in progress...');
         return;
     }
-    
+
     isRecovering = true;
     retryCount++;
-    
+
     try {
         console.log(`🔄 Starting client recovery (attempt ${retryCount}/${MAX_RETRIES})...`);
         clientStatus = 'recovering';
-        
+
         // Cleanup previous client if exists
         try {
             if (client) {
@@ -299,7 +300,7 @@ async function initializeClientWithRecovery() {
         } catch (destroyError) {
             console.warn('⚠️ Error destroying previous client:', destroyError.message);
         }
-        
+
         // Clean up user data directory if it exists
         try {
             if (fs.existsSync(USER_DATA_DIR)) {
@@ -310,21 +311,21 @@ async function initializeClientWithRecovery() {
         } catch (cleanupError) {
             console.warn('⚠️ Could not clean browser data:', cleanupError.message);
         }
-        
+
         // Wait before reinitializing
         await new Promise(resolve => setTimeout(resolve, 3000));
-        
+
         // Create new client instance
         console.log('🚀 Creating new WhatsApp client...');
         client = createClient();
-        
+
         // Re-attach all event listeners
         attachEventListeners();
-        
+
         // Initialize the new client
         console.log('🔌 Initializing WhatsApp client...');
         await client.initialize();
-        
+
         // Reset retry count on successful recovery
         setTimeout(() => {
             if (clientStatus === 'ready') {
@@ -332,14 +333,14 @@ async function initializeClientWithRecovery() {
                 console.log('✅ Recovery successful! Client ready.');
             }
         }, 15000);
-        
+
     } catch (error) {
         console.error(`❌ Recovery failed (attempt ${retryCount}):`, error.message);
         console.error('Stack trace:', error.stack);
-        
+
         if (retryCount < MAX_RETRIES) {
             const delay = Math.min(10000 * Math.pow(2, retryCount - 1), 60000); // Exponential backoff, max 60s
-            console.log(`⏰ Retrying in ${delay/1000} seconds...`);
+            console.log(`⏰ Retrying in ${delay / 1000} seconds...`);
             setTimeout(() => {
                 initializeClientWithRecovery();
             }, delay);
@@ -362,7 +363,7 @@ function createClient() {
             clientId: CLIENT_ID,
             dataPath: DATA_PATH
         }),
-        puppeteer: { 
+        puppeteer: {
             headless: true,
             timeout: 300000, // 5 minutes for complex operations
             protocolTimeout: 300000, // 5 minutes for CDP operations
@@ -410,9 +411,9 @@ function createClient() {
 // Function to attach all event listeners
 function attachEventListeners() {
     if (!client) return;
-    
+
     console.log('🔗 Attaching event listeners...');
-    
+
     // Loading screen handler
     client.on('loading_screen', (percent, message) => {
         console.log('LOADING SCREEN', percent, message);
@@ -437,7 +438,7 @@ function attachEventListeners() {
     client.on('auth_failure', msg => {
         console.error('AUTHENTICATION FAILURE', msg);
         clientStatus = 'auth_failure';
-        
+
         // If auth failure due to browser crash, try to recover
         if (msg && (msg.includes('Protocol error') || msg.includes('Target closed'))) {
             console.log('🛠️ Browser crash detected during authentication. Starting recovery...');
@@ -451,16 +452,16 @@ function attachEventListeners() {
     client.on('ready', async () => {
         console.log('WhatsApp Official Module - READY');
         clientStatus = 'ready';
-        
+
         try {
             clientInfo = client.info;
             const debugWWebVersion = await client.getWWebVersion();
             console.log(`WWebVersion = ${debugWWebVersion}`);
             console.log('Client Info:', clientInfo);
-            
+
             // Setup browser listeners
             setupBrowserListeners();
-            
+
             // Initialize handlers after client is ready
             mediaHandler = new MediaHandler(client);
             chatManager = new ChatManager(client);
@@ -474,7 +475,7 @@ function attachEventListeners() {
     // Message handler
     client.on('message', async msg => {
         console.log('MESSAGE RECEIVED', msg.body);
-        
+
         // Trigger webhook for message received
         try {
             const messageData = {
@@ -488,7 +489,7 @@ function attachEventListeners() {
                 hasMedia: msg.hasMedia,
                 isGroup: msg.from.includes('@g.us')
             };
-            
+
             if (!msg.fromMe) {
                 triggerWebhooks('message_received', { message: messageData });
             } else {
@@ -497,7 +498,7 @@ function attachEventListeners() {
         } catch (e) {
             console.log('⚠️ Error triggering message webhook:', e.message);
         }
-        
+
         // Basic ping-pong for testing
         if (msg.body === '!ping') {
             msg.reply('🤖 Pong! WhatsApp Official Module is working!');
@@ -516,7 +517,7 @@ function attachEventListeners() {
         clientStatus = 'disconnected';
         currentQR = null;
         clientInfo = null;
-        
+
         // If not intentional logout and not already recovering, try to reconnect
         if (reason !== 'LOGOUT' && !isRecovering && retryCount < MAX_RETRIES) {
             console.log(`🔄 Attempting automatic reconnection (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
@@ -531,7 +532,7 @@ function attachEventListeners() {
         console.log('CHANGE STATE', state);
         clientStatus = state;
     });
-    
+
     console.log('✅ Event listeners attached successfully');
 }
 
@@ -561,7 +562,7 @@ function setupBrowserListeners() {
                     }, 3000);
                 }
             });
-            
+
             client.pupPage.on('close', () => {
                 console.warn('📄 Page closed unexpectedly');
                 if (clientStatus === 'ready') {
@@ -574,7 +575,7 @@ function setupBrowserListeners() {
                 }
             });
         }
-        
+
         if (client.pupBrowser) {
             client.pupBrowser.on('disconnected', () => {
                 console.warn('🔌 Browser disconnected unexpectedly');
@@ -588,11 +589,11 @@ function setupBrowserListeners() {
                     }, 2000);
                 }
             });
-            
+
             client.pupBrowser.on('targetcreated', (target) => {
                 console.log('🎯 New browser target created:', target.type());
             });
-            
+
             client.pupBrowser.on('targetdestroyed', (target) => {
                 console.log('🗑️ Browser target destroyed:', target.type());
             });
@@ -625,13 +626,13 @@ app.get('/', lenientRateLimit, (req, res) => {
             return;
         }
     }
-    
+
     // Caso contrário, usa index.html padrão
     res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
 // API Routes - All require authentication
-app.get('/api/status', 
+app.get('/api/status',
     moderateRateLimit,
     authenticate({ required: true }),
     (req, res) => {
@@ -644,7 +645,7 @@ app.get('/api/status',
     }
 );
 
-app.get('/api/qr', 
+app.get('/api/qr',
     moderateRateLimit,
     authenticate({ required: true }),
     async (req, res) => {
@@ -657,11 +658,11 @@ app.get('/api/qr',
                     'Accept': 'application/json'
                 }
             });
-            
+
             if (channel1Response.ok) {
                 const data = await channel1Response.json();
                 if (data.success && data.qr) {
-                    return res.json({ 
+                    return res.json({
                         qr: data.qr,
                         status: 'qr_available',
                         source: 'channel1_proxy'
@@ -671,25 +672,25 @@ app.get('/api/qr',
         } catch (err) {
             console.warn('[API] Error proxying to Channel 1:', err.message);
         }
-        
+
         // Fallback to legacy system
         if (currentQR) {
-            res.json({ 
+            res.json({
                 qr: currentQR,
                 status: 'qr_available',
-                source: 'legacy' 
+                source: 'legacy'
             });
         } else {
-            res.json({ 
+            res.json({
                 qr: null,
                 status: clientStatus || 'disconnected',
-                source: 'legacy' 
+                source: 'legacy'
             });
         }
     }
 );
 
-app.post('/api/send-message', 
+app.post('/api/send-message',
     moderateRateLimit,
     authenticate({ required: true }),
     csrfProtection(),
@@ -700,17 +701,17 @@ app.post('/api/send-message',
     async (req, res) => {
         try {
             const { number, message } = req.body;
-            
+
             if (clientStatus !== 'ready') {
                 return res.status(400).json({ error: 'Client not ready' });
             }
-            
+
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
             const result = await client.sendMessage(chatId, message);
-            
-            res.json({ 
-                success: true, 
-                messageId: result.id._serialized 
+
+            res.json({
+                success: true,
+                messageId: result.id._serialized
             });
         } catch (error) {
             console.error('Error sending message:', error);
@@ -737,18 +738,18 @@ app.get('/api/restart', async (req, res) => {
 app.post('/api/send-media', async (req, res) => {
     try {
         const { number, type, url, caption, filename } = req.body;
-        
+
         if (!number || !type || !url) {
             return res.status(400).json({ error: 'Number, type and url are required' });
         }
-        
+
         if (clientStatus !== 'ready' || !mediaHandler) {
             return res.status(400).json({ error: 'Client not ready' });
         }
-        
+
         let result;
-        
-        switch(type) {
+
+        switch (type) {
             case 'image':
                 result = await mediaHandler.sendImage(number, url, caption);
                 break;
@@ -767,7 +768,7 @@ app.post('/api/send-media', async (req, res) => {
             default:
                 return res.status(400).json({ error: 'Invalid media type' });
         }
-        
+
         res.json(result);
     } catch (error) {
         console.error('Error sending media:', error);
@@ -778,15 +779,15 @@ app.post('/api/send-media', async (req, res) => {
 app.post('/api/send-location', async (req, res) => {
     try {
         const { number, latitude, longitude, description } = req.body;
-        
+
         if (!number || !latitude || !longitude) {
             return res.status(400).json({ error: 'Number, latitude and longitude are required' });
         }
-        
+
         if (clientStatus !== 'ready' || !mediaHandler) {
             return res.status(400).json({ error: 'Client not ready' });
         }
-        
+
         const result = await mediaHandler.sendLocation(number, latitude, longitude, description);
         res.json(result);
     } catch (error) {
@@ -801,7 +802,7 @@ app.get('/api/chats', async (req, res) => {
         if (clientStatus !== 'ready' || !chatManager) {
             return res.status(400).json({ error: 'Client not ready' });
         }
-        
+
         const chats = await chatManager.getChats();
         res.json({
             success: true,
@@ -819,10 +820,10 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
         if (clientStatus !== 'ready' || !chatManager) {
             return res.status(400).json({ error: 'Client not ready' });
         }
-        
+
         const limit = parseInt(req.query.limit) || 50;
         const messages = await chatManager.getMessages(req.params.chatId, limit);
-        
+
         res.json({
             success: true,
             count: messages.length,
@@ -840,7 +841,7 @@ app.get('/api/contacts', async (req, res) => {
         if (clientStatus !== 'ready' || !contactManager) {
             return res.status(400).json({ error: 'Client not ready' });
         }
-        
+
         const contacts = await contactManager.getContacts();
         res.json({
             success: true,
@@ -861,7 +862,7 @@ app.get('/v1/chats', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chats = await client.getChats();
         const formattedChats = chats.map(chat => ({
             id: chat.id._serialized,
@@ -880,7 +881,7 @@ app.get('/v1/chats', async (req, res) => {
                 fromMe: chat.lastMessage.fromMe
             } : null
         }));
-        
+
         res.json({
             success: true,
             count: formattedChats.length,
@@ -898,14 +899,14 @@ app.get('/v1/chats/:id', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
-        
+
         if (!chat) {
             return res.status(404).json({ success: false, error: 'Chat not found' });
         }
-        
+
         const formattedChat = {
             id: chat.id._serialized,
             name: chat.name,
@@ -923,7 +924,7 @@ app.get('/v1/chats/:id', async (req, res) => {
                 fromMe: chat.lastMessage.fromMe
             } : null
         };
-        
+
         if (chat.isGroup && chat.participants) {
             formattedChat.participants = chat.participants.map(p => ({
                 id: p.id._serialized,
@@ -932,7 +933,7 @@ app.get('/v1/chats/:id', async (req, res) => {
             }));
             formattedChat.participantCount = chat.participants.length;
         }
-        
+
         res.json({
             success: true,
             chat: formattedChat
@@ -951,15 +952,15 @@ app.post('/v1/chats/:id/archive', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
         await chat.archive();
-        
-        res.json({ 
-            success: true, 
-            chatId: chat.id?._serialized || chatId, 
-            archived: true 
+
+        res.json({
+            success: true,
+            chatId: chat.id?._serialized || chatId,
+            archived: true
         });
     } catch (error) {
         console.error('Error archiving chat:', error);
@@ -972,15 +973,15 @@ app.delete('/v1/chats/:id/archive', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
         await chat.unarchive();
-        
-        res.json({ 
-            success: true, 
-            chatId: chat.id?._serialized || chatId, 
-            archived: false 
+
+        res.json({
+            success: true,
+            chatId: chat.id?._serialized || chatId,
+            archived: false
         });
     } catch (error) {
         console.error('Error unarchiving chat:', error);
@@ -994,15 +995,15 @@ app.post('/v1/chats/:id/pin', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
         const pinned = await chat.pin();
-        
-        res.json({ 
-            success: true, 
-            chatId: chat.id?._serialized || chatId, 
-            pinned: !!pinned 
+
+        res.json({
+            success: true,
+            chatId: chat.id?._serialized || chatId,
+            pinned: !!pinned
         });
     } catch (error) {
         console.error('Error pinning chat:', error);
@@ -1015,15 +1016,15 @@ app.delete('/v1/chats/:id/pin', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
         const pinned = await chat.unpin();
-        
-        res.json({ 
-            success: true, 
-            chatId: chat.id?._serialized || chatId, 
-            pinned: !!pinned 
+
+        res.json({
+            success: true,
+            chatId: chat.id?._serialized || chatId,
+            pinned: !!pinned
         });
     } catch (error) {
         console.error('Error unpinning chat:', error);
@@ -1037,18 +1038,18 @@ app.post('/v1/chats/:id/mute', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
         const duration = req.body?.duration != null ? parseInt(req.body.duration, 10) : null;
         const until = duration && duration > 0 ? new Date(Date.now() + duration) : undefined;
         const result = await chat.mute(until);
-        
-        res.json({ 
-            success: true, 
-            chatId: chat.id?._serialized || chatId, 
-            isMuted: result?.isMuted ?? true, 
-            muteExpiration: result?.muteExpiration ?? null 
+
+        res.json({
+            success: true,
+            chatId: chat.id?._serialized || chatId,
+            isMuted: result?.isMuted ?? true,
+            muteExpiration: result?.muteExpiration ?? null
         });
     } catch (error) {
         console.error('Error muting chat:', error);
@@ -1061,16 +1062,16 @@ app.delete('/v1/chats/:id/mute', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         const chat = await client.getChatById(chatId);
         const result = await chat.unmute();
-        
-        res.json({ 
-            success: true, 
-            chatId: chat.id?._serialized || chatId, 
-            isMuted: result?.isMuted ?? false, 
-            muteExpiration: result?.muteExpiration ?? null 
+
+        res.json({
+            success: true,
+            chatId: chat.id?._serialized || chatId,
+            isMuted: result?.isMuted ?? false,
+            muteExpiration: result?.muteExpiration ?? null
         });
     } catch (error) {
         console.error('Error unmuting chat:', error);
@@ -1084,13 +1085,13 @@ app.post('/v1/chats/:id/read', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = req.params.id;
         await client.sendSeen(chatId);
-        
-        res.json({ 
-            success: true, 
-            chatId: chatId 
+
+        res.json({
+            success: true,
+            chatId: chatId
         });
     } catch (error) {
         console.error('Error marking chat as read:', error);
@@ -1106,23 +1107,23 @@ app.post('/v1/messages', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const { to, body, type, mediaUrl, caption, filename } = req.body;
-        
+
         if (!to || (!body && !mediaUrl)) {
             return res.status(400).json({ success: false, error: 'Missing required fields' });
         }
-        
+
         const chatId = to.includes('@c.us') ? to : `${to}@c.us`;
         let result;
-        
+
         if (type === 'text' || !type) {
             result = await client.sendMessage(chatId, body);
         } else if (mediaUrl) {
             const media = await MessageMedia.fromUrl(mediaUrl, { filename });
             result = await client.sendMessage(chatId, media, { caption });
         }
-        
+
         res.json({
             success: true,
             messageId: result.id._serialized,
@@ -1140,16 +1141,16 @@ app.get('/v1/messages', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const { chatId, limit = 50, offset = 0 } = req.query;
-        
+
         if (!chatId) {
             return res.status(400).json({ success: false, error: 'chatId is required' });
         }
-        
+
         const chat = await client.getChatById(chatId);
         const messages = await chat.fetchMessages({ limit: parseInt(limit) });
-        
+
         res.json({
             success: true,
             chatId: chatId,
@@ -1177,14 +1178,14 @@ app.get('/v1/messages/:id', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const messageId = req.params.id;
         const message = await client.getMessageById(messageId);
-        
+
         if (!message) {
             return res.status(404).json({ success: false, error: 'Message not found' });
         }
-        
+
         res.json({
             success: true,
             message: {
@@ -1212,11 +1213,11 @@ app.get('/v1/contacts/:id/avatar', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const contactId = req.params.id.includes('@c.us') ? req.params.id : `${req.params.id}@c.us`;
         const contact = await client.getContactById(contactId);
         const avatarUrl = await contact.getProfilePicUrl();
-        
+
         if (avatarUrl) {
             res.json({
                 success: true,
@@ -1242,10 +1243,10 @@ app.get('/v1/contacts/:id', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const contactId = req.params.id.includes('@c.us') ? req.params.id : `${req.params.id}@c.us`;
         const contact = await client.getContactById(contactId);
-        
+
         res.json({
             success: true,
             contact: {
@@ -1273,7 +1274,7 @@ app.get('/v1/contacts', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const contacts = await client.getContacts();
         const formattedContacts = contacts
             .filter(contact => !contact.isGroup && contact.isWAContact)
@@ -1286,7 +1287,7 @@ app.get('/v1/contacts', async (req, res) => {
                 isMyContact: contact.isMyContact,
                 isWAContact: contact.isWAContact
             }));
-        
+
         res.json({
             success: true,
             count: formattedContacts.length,
@@ -1304,25 +1305,25 @@ app.get('/v1/contacts', async (req, res) => {
 app.post('/v1/media', async (req, res) => {
     try {
         const { to, type, url, caption, filename } = req.body;
-        
+
         if (!to || !type || !url) {
             return res.status(400).json({ success: false, error: 'to, type, and url are required' });
         }
-        
+
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = to.includes('@c.us') ? to : `${to}@c.us`;
         let result;
-        
+
         try {
             const media = await MessageMedia.fromUrl(url, { filename });
             result = await client.sendMessage(chatId, media, { caption });
         } catch (error) {
             return res.status(400).json({ success: false, error: 'Failed to process media: ' + error.message });
         }
-        
+
         res.json({
             success: true,
             messageId: result.id._serialized,
@@ -1368,10 +1369,10 @@ app.get('/info', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const info = client.info;
         const state = await client.getState();
-        
+
         res.json({
             success: true,
             info: {
@@ -1426,7 +1427,7 @@ app.post('/restart-client', async (req, res) => {
         console.log('🔄 Manual restart requested via API');
         retryCount = 0;
         initializeClientWithRecovery();
-        
+
         res.json({
             success: true,
             message: 'Client restart initiated',
@@ -1444,11 +1445,11 @@ app.post('/restart-client', async (req, res) => {
 app.post('/v1/webhooks', (req, res) => {
     try {
         const { url, secret, events = [] } = req.body;
-        
+
         if (!url) {
             return res.status(400).json({ success: false, error: 'URL is required' });
         }
-        
+
         const webhook = {
             id: crypto.randomUUID(),
             url: url,
@@ -1458,9 +1459,9 @@ app.post('/v1/webhooks', (req, res) => {
             createdAt: new Date().toISOString(),
             retries: 0
         };
-        
+
         webhooksStore.push(webhook);
-        
+
         res.json({
             success: true,
             webhook: webhook
@@ -1490,13 +1491,13 @@ app.delete('/v1/webhooks/:id', (req, res) => {
     try {
         const webhookId = req.params.id;
         const index = webhooksStore.findIndex(w => w.id === webhookId);
-        
+
         if (index === -1) {
             return res.status(404).json({ success: false, error: 'Webhook not found' });
         }
-        
+
         webhooksStore.splice(index, 1);
-        
+
         res.json({
             success: true,
             message: 'Webhook deleted successfully'
@@ -1511,15 +1512,15 @@ app.delete('/v1/webhooks/:id', (req, res) => {
 app.post('/v1/webhooks/test', (req, res) => {
     try {
         const { webhookId, eventType = 'test' } = req.body;
-        
+
         const webhook = webhooksStore.find(w => w.id === webhookId);
         if (!webhook) {
             return res.status(404).json({ success: false, error: 'Webhook not found' });
         }
-        
+
         // Trigger test webhook
         triggerWebhooks(eventType, { test: true, timestamp: new Date().toISOString() });
-        
+
         res.json({
             success: true,
             message: 'Test webhook triggered'
@@ -1535,12 +1536,12 @@ app.get('/v1/webhooks/:id/deliveries', (req, res) => {
     try {
         const webhookId = req.params.id;
         const limit = parseInt(req.query.limit) || 50;
-        
+
         const deliveries = webhookDeliveriesStore
             .filter(d => d.webhookId === webhookId)
             .sort((a, b) => b.startedAt - a.startedAt)
             .slice(0, limit);
-        
+
         res.json({
             success: true,
             count: deliveries.length,
@@ -1560,7 +1561,7 @@ app.get('/v1/groups', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chats = await client.getChats();
         const groups = chats
             .filter(chat => chat.isGroup)
@@ -1575,7 +1576,7 @@ app.get('/v1/groups', async (req, res) => {
                 archived: group.archived,
                 pinned: group.pinned
             }));
-        
+
         res.json({
             success: true,
             count: groups.length,
@@ -1593,20 +1594,20 @@ app.get('/v1/groups/:id/participants', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const groupId = req.params.id;
         const chat = await client.getChatById(groupId);
-        
+
         if (!chat.isGroup) {
             return res.status(400).json({ success: false, error: 'Not a group chat' });
         }
-        
+
         const participants = chat.participants.map(p => ({
             id: p.id._serialized,
             isAdmin: p.isAdmin,
             isSuperAdmin: p.isSuperAdmin
         }));
-        
+
         res.json({
             success: true,
             groupId: groupId,
@@ -1625,26 +1626,26 @@ app.get('/v1/contacts/:id/common-groups', async (req, res) => {
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const contactId = req.params.id.includes('@c.us') ? req.params.id : `${req.params.id}@c.us`;
         const chats = await client.getChats();
         const groups = chats.filter(c => c.isGroup === true);
         const result = [];
-        
+
         for (const g of groups) {
             try {
                 let participants = g.participants;
                 if ((!participants || !participants.length) && typeof g.fetchParticipants === 'function') {
                     participants = await g.fetchParticipants().catch(() => g.participants || []);
                 }
-                
+
                 const has = Array.isArray(participants) && participants.some(p => {
                     const id = (p.id && p.id._serialized) ? p.id._serialized : (p.id || p.user || '');
                     return id === contactId;
                 });
-                
+
                 if (!has) continue;
-                
+
                 result.push({
                     id: g.id?._serialized || String(g.id || ''),
                     name: g.name || g.groupMetadata?.subject || 'Grupo',
@@ -1657,12 +1658,12 @@ app.get('/v1/contacts/:id/common-groups', async (req, res) => {
                 // ignore group with permission/loading error
             }
         }
-        
-        res.json({ 
-            success: true, 
-            groups: result, 
-            total: result.length, 
-            timestamp: new Date().toISOString() 
+
+        res.json({
+            success: true,
+            groups: result,
+            total: result.length,
+            timestamp: new Date().toISOString()
         });
     } catch (error) {
         console.error('Error getting common groups:', error);
@@ -1685,17 +1686,17 @@ async function proxyToChannel1(endpoint, method = 'GET', body = null) {
             method,
             headers: { 'Content-Type': 'application/json' }
         };
-        
+
         if (body && method !== 'GET') {
             options.data = body;
         }
-        
+
         const response = await axios(url, options);
         return { success: true, data: response.data };
     } catch (error) {
         console.error(`❌ Error proxying to Channel 1 (${endpoint}):`, error.message);
-        return { 
-            success: false, 
+        return {
+            success: false,
             error: error.response?.data?.error || error.message,
             statusCode: error.response?.status || 500
         };
@@ -1706,20 +1707,20 @@ async function proxyToChannel1(endpoint, method = 'GET', body = null) {
 app.post('/send', async (req, res) => {
     try {
         console.log('🔄 Legacy /send request - redirecting to Channel 1');
-        
+
         const { phone, message } = req.body;
-        
+
         if (!phone || !message) {
             return res.status(400).json({ success: false, error: 'Phone and message are required' });
         }
-        
+
         // Try multi-channel first
         if (!MULTI_CHANNEL_MODE) {
-            const proxyResult = await proxyToChannel1('/send-message', 'POST', { 
-                number: phone, 
-                message: message 
+            const proxyResult = await proxyToChannel1('/send-message', 'POST', {
+                number: phone,
+                message: message
             });
-            
+
             if (proxyResult.success) {
                 console.log('✅ Successfully proxied to Channel 1');
                 return res.json({
@@ -1732,15 +1733,15 @@ app.post('/send', async (req, res) => {
                 console.log('⚠️ Channel 1 not available, falling back to legacy');
             }
         }
-        
+
         // Fallback to legacy if multi-channel not available
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
         const result = await client.sendMessage(chatId, message);
-        
+
         res.json({
             success: true,
             messageId: result.id._serialized,
@@ -1757,11 +1758,11 @@ app.post('/send', async (req, res) => {
 app.get('/chats', async (req, res) => {
     try {
         console.log('🔄 Legacy /chats request - redirecting to Channel 1');
-        
+
         // Try multi-channel first
         if (!MULTI_CHANNEL_MODE) {
             const proxyResult = await proxyToChannel1('/chats');
-            
+
             if (proxyResult.success) {
                 console.log('✅ Successfully proxied chats to Channel 1');
                 return res.json({
@@ -1774,12 +1775,12 @@ app.get('/chats', async (req, res) => {
                 console.log('⚠️ Channel 1 not available, falling back to legacy');
             }
         }
-        
+
         // Fallback to legacy if multi-channel not available
         if (clientStatus !== 'ready') {
             return res.status(503).json({ success: false, error: 'Client not ready' });
         }
-        
+
         const chats = await client.getChats();
         const formattedChats = chats.map(chat => ({
             id: chat.id._serialized,
@@ -1795,7 +1796,7 @@ app.get('/chats', async (req, res) => {
                 fromMe: chat.lastMessage.fromMe
             } : null
         }));
-        
+
         res.json({
             success: true,
             count: formattedChats.length,
@@ -1812,11 +1813,11 @@ app.get('/chats', async (req, res) => {
 app.get('/qr', async (req, res) => {
     try {
         console.log('🔄 Legacy /qr request - redirecting to Channel 1');
-        
+
         // Try multi-channel first
         if (!MULTI_CHANNEL_MODE) {
             const proxyResult = await proxyToChannel1('/qr');
-            
+
             if (proxyResult.success) {
                 console.log('✅ Successfully proxied QR to Channel 1');
                 return res.json({
@@ -1829,7 +1830,7 @@ app.get('/qr', async (req, res) => {
                 console.log('⚠️ Channel 1 not available, falling back to legacy');
             }
         }
-        
+
         // Fallback to legacy
         res.json({
             success: true,
@@ -1847,11 +1848,11 @@ app.get('/qr', async (req, res) => {
 app.get('/status', async (req, res) => {
     try {
         console.log('🔄 Legacy /status request - redirecting to Channel 1');
-        
+
         // Try multi-channel first
         if (!MULTI_CHANNEL_MODE) {
             const proxyResult = await proxyToChannel1('/status');
-            
+
             if (proxyResult.success) {
                 console.log('✅ Successfully proxied status to Channel 1');
                 return res.json({
@@ -1862,7 +1863,7 @@ app.get('/status', async (req, res) => {
                 console.log('⚠️ Channel 1 not available, falling back to legacy');
             }
         }
-        
+
         // Fallback to legacy
         res.json({
             success: true,
@@ -1882,45 +1883,45 @@ const PORT = process.env.WHATSAPP_PORT || 3001;
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 WhatsApp Official Module server running on port ${PORT}`);
     console.log(`📱 Web interface: http://localhost:${PORT}`);
-    
+
     try {
         if (MULTI_CHANNEL_MODE) {
             // Initialize Multi-Channel System
             console.log('🔄 Initializing Multi-Channel WhatsApp System...');
             console.log(`⚖️ License-based architecture with max ${MAX_CHANNELS} channels`);
-            
+
             // Initialize Channel Management API
             channelManagementAPI = new ChannelManagementAPI({
                 maxChannels: MAX_CHANNELS,
                 basePath: __dirname,
                 chromiumPath: CHROMIUM_PATH
             });
-            
+
             // Apply Channel Management routes to the app
             channelManagementAPI.applyToApp(app);
-            
+
             // Initialize any active channels from configuration
             await channelManagementAPI.initializeActiveChannels();
-            
+
             console.log('✅ Multi-Channel WhatsApp System initialized successfully');
             console.log(`📊 Access Channel Manager at: http://localhost:${PORT}/api/channel-manager/system/status`);
-            
+
         } else {
             // Initialize single WhatsApp client (legacy mode)
             console.log('🔄 Initializing Single-Channel WhatsApp Module (Legacy Mode)...');
             client.initialize();
         }
-        
+
     } catch (error) {
         console.error('❌ Error during system initialization:', error.message);
         console.error('Stack trace:', error.stack);
     }
 });
 
-module.exports = { 
-    client, 
-    app, 
+module.exports = {
+    client,
+    app,
     channelManagementAPI,
     MULTI_CHANNEL_MODE,
-    MAX_CHANNELS 
+    MAX_CHANNELS
 };

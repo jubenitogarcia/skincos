@@ -25,29 +25,29 @@ try {
   hybridQueue = enterpriseApi.hybridQueue;
   messageService = enterpriseApi.messageService;
   rateLimiter = enterpriseApi.rateLimiter;
-  
+
   QueueWorker = require('./lib/queue-worker');
   AuthService = require('./lib/auth-service');
   AuthMiddleware = require('./middleware/auth-middleware');
   authRoutes = require('./routes/auth-routes');
-  
+
   console.log('✅ Enterprise modules loaded successfully');
 } catch (error) {
   console.warn('⚠️ Enterprise modules failed to load (running in basic mode):', error.message);
-  
+
   // Create mock objects to prevent crashes
   enterpriseRouter = require('express').Router();
-  hybridQueue = { 
-    isReady: () => false, 
+  hybridQueue = {
+    isReady: () => false,
     getQueueStats: () => ({ memory: 'unavailable', redis: 'unavailable' }),
     getMode: () => ({ current: 'none', redisAvailable: false, memoryAvailable: false })
   };
   messageService = { pool: { query: () => Promise.reject(new Error('No database')) } };
   rateLimiter = (req, res, next) => next();
-  
-  QueueWorker = class { constructor() {} start() {} getStats() { return null; } };
-  AuthService = class { constructor() {} async initializeTables() {} async createDefaultAdminUser() {} };
-  AuthMiddleware = class { constructor() {} requireAdminPanelAuth() { return (req, res, next) => next(); } };
+
+  QueueWorker = class { constructor() { } start() { } getStats() { return null; } };
+  AuthService = class { constructor() { } async initializeTables() { } async createDefaultAdminUser() { } };
+  AuthMiddleware = class { constructor() { } requireAdminPanelAuth() { return (req, res, next) => next(); } };
   authRoutes = require('express').Router();
 }
 
@@ -73,51 +73,51 @@ let authMiddleware = null;
  * Validate critical environment variables and dependencies
  */
 async function validateEnvironment() {
-    console.log('🔍 Validating enterprise environment...');
-    
-    const requiredEnvVars = ['DATABASE_URL'];
-    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-        if (NODE_ENV === 'production') {
-            console.error('❌ Critical environment variables missing:', missingVars);
-            process.exit(1);
-        } else {
-            console.warn('⚠️ Environment variables missing (non-fatal in development):', missingVars);
-            console.warn('⚠️ System will run in memory-only mode');
-        }
+  console.log('🔍 Validating enterprise environment...');
+
+  const requiredEnvVars = ['DATABASE_URL'];
+  const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+  if (missingVars.length > 0) {
+    if (NODE_ENV === 'production') {
+      console.error('❌ Critical environment variables missing:', missingVars);
+      process.exit(1);
+    } else {
+      console.warn('⚠️ Environment variables missing (non-fatal in development):', missingVars);
+      console.warn('⚠️ System will run in memory-only mode');
     }
-    
-    // Check database connectivity (non-fatal in development)
-    try {
-        const { Pool } = require('pg');
-        const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-        await pool.query('SELECT 1');
-        await pool.end();
-        console.log('✅ Database connectivity verified');
-        global.DB_AVAILABLE = true;
-    } catch (error) {
-        if (NODE_ENV === 'production') {
-            console.error('❌ Database connection failed:', error.message);
-            process.exit(1);
-        } else {
-            console.warn('⚠️ Database connection failed (non-fatal in development):', error.message);
-            console.warn('⚠️ System will run without database features');
-            global.DB_AVAILABLE = false;
-        }
+  }
+
+  // Check database connectivity (non-fatal in development)
+  try {
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    await pool.query('SELECT 1');
+    await pool.end();
+    console.log('✅ Database connectivity verified');
+    global.DB_AVAILABLE = true;
+  } catch (error) {
+    if (NODE_ENV === 'production') {
+      console.error('❌ Database connection failed:', error.message);
+      process.exit(1);
+    } else {
+      console.warn('⚠️ Database connection failed (non-fatal in development):', error.message);
+      console.warn('⚠️ System will run without database features');
+      global.DB_AVAILABLE = false;
     }
-    
-    // Warn about Redis (not critical, has fallback)
-    if (!process.env.REDIS_URL) {
-        console.warn('⚠️ REDIS_URL not set - using memory fallback queue');
-    }
-    
-    // Warn about JWT secret
-    if (!process.env.JWT_SECRET) {
-        console.warn('⚠️ JWT_SECRET not set - using generated secret (not recommended for production)');
-    }
-    
-    console.log('✅ Environment validation complete');
+  }
+
+  // Warn about Redis (not critical, has fallback)
+  if (!process.env.REDIS_URL) {
+    console.warn('⚠️ REDIS_URL not set - using memory fallback queue');
+  }
+
+  // Warn about JWT secret
+  if (!process.env.JWT_SECRET) {
+    console.warn('⚠️ JWT_SECRET not set - using generated secret (not recommended for production)');
+  }
+
+  console.log('✅ Environment validation complete');
 }
 
 /**
@@ -125,49 +125,49 @@ async function validateEnvironment() {
  * Initialize authentication and security services
  */
 async function initializeEnterpriseServices() {
-    console.log('🔧 Initializing enterprise services...');
-    
-    try {
-        // Initialize auth service only if database is available
-        if (global.DB_AVAILABLE) {
-            authService = new AuthService();
-            await authService.initializeTables();
-            await authService.createDefaultAdminUser();
-            console.log('✅ Auth service initialized with database');
-        } else {
-            console.warn('⚠️ Skipping auth service initialization (no database)');
-        }
-        
-        // Initialize auth middleware (can work without database)
-        authMiddleware = new AuthMiddleware();
-        
-        console.log('✅ Enterprise services initialized');
-        global.SERVICES_INITIALIZED = true;
-        
-    } catch (error) {
-        if (NODE_ENV === 'production') {
-            console.error('❌ Failed to initialize enterprise services:', error);
-            process.exit(1);
-        } else {
-            console.warn('⚠️ Failed to initialize enterprise services (non-fatal in development):', error);
-            console.warn('⚠️ System will run with limited functionality');
-            global.SERVICES_INITIALIZED = false;
-            
-            // Create minimal fallback auth middleware
-            try {
-                authMiddleware = new AuthMiddleware();
-                console.warn('⚠️ Using fallback auth middleware');
-            } catch (e) {
-                console.warn('⚠️ Auth middleware failed, creating mock');
-                authMiddleware = { requireAdminPanelAuth: () => (req, res, next) => next() };
-            }
-        }
+  console.log('🔧 Initializing enterprise services...');
+
+  try {
+    // Initialize auth service only if database is available
+    if (global.DB_AVAILABLE) {
+      authService = new AuthService();
+      await authService.initializeTables();
+      await authService.createDefaultAdminUser();
+      console.log('✅ Auth service initialized with database');
+    } else {
+      console.warn('⚠️ Skipping auth service initialization (no database)');
     }
+
+    // Initialize auth middleware (can work without database)
+    authMiddleware = new AuthMiddleware();
+
+    console.log('✅ Enterprise services initialized');
+    global.SERVICES_INITIALIZED = true;
+
+  } catch (error) {
+    if (NODE_ENV === 'production') {
+      console.error('❌ Failed to initialize enterprise services:', error);
+      process.exit(1);
+    } else {
+      console.warn('⚠️ Failed to initialize enterprise services (non-fatal in development):', error);
+      console.warn('⚠️ System will run with limited functionality');
+      global.SERVICES_INITIALIZED = false;
+
+      // Create minimal fallback auth middleware
+      try {
+        authMiddleware = new AuthMiddleware();
+        console.warn('⚠️ Using fallback auth middleware');
+      } catch (e) {
+        console.warn('⚠️ Auth middleware failed, creating mock');
+        authMiddleware = { requireAdminPanelAuth: () => (req, res, next) => next() };
+      }
+    }
+  }
 }
 
 // CORS Configuration - Restrictive for production
 const corsOptions = {
-  origin: NODE_ENV === 'production' 
+  origin: NODE_ENV === 'production'
     ? ['https://replit.app', 'https://replit.com', 'https://replit.dev'] // Adjust for your allowed domains
     : true, // Allow all origins in development
   credentials: true,
@@ -178,20 +178,20 @@ const corsOptions = {
 
 // Apply enterprise security middleware with permissive CSP for React
 app.use(helmet({
-    contentSecurityPolicy: {
-        directives: {
-            defaultSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdnjs.cloudflare.com"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-            imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: ["'self'"],
-            fontSrc: ["'self'", "https://fonts.gstatic.com", "https://fonts.googleapis.com"],
-            objectSrc: ["'none'"],
-            mediaSrc: ["'self'"],
-            frameSrc: ["'none'"],
-        },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdnjs.cloudflare.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com", "https://fonts.googleapis.com"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
     },
-    crossOriginEmbedderPolicy: false
+  },
+  crossOriginEmbedderPolicy: false
 }));
 
 app.use(require('cors')(corsOptions));
@@ -205,7 +205,8 @@ app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Mount WhatsApp Official Module assets for centralized access
-app.use('/whatsapp', express.static(path.join(__dirname, 'whatsapp-official-module/public')));
+// Serve WhatsApp public UI from centralized location
+app.use('/whatsapp', express.static(path.join(__dirname, 'whatsapp/official-module/public')));
 
 // Mount authentication routes (public, no auth required)
 app.use('/v1/auth', authRoutes);
@@ -227,14 +228,14 @@ app.use('/whatsapp/api', async (req, res) => {
 
     const response = await fetch(targetUrl, options);
     const data = await response.text();
-    
+
     // Copy response headers
     response.headers.forEach((value, key) => {
       res.setHeader(key, value);
     });
-    
+
     res.status(response.status);
-    
+
     // Try to parse as JSON, fallback to text
     try {
       res.json(JSON.parse(data));
@@ -255,22 +256,22 @@ app.use('/whatsapp-api', async (req, res) => {
       method: req.method,
       headers: { ...req.headers, host: 'localhost:3002' },
     };
-    
+
     if (req.method === 'POST' || req.method === 'PUT') {
       options.body = JSON.stringify(req.body);
       options.headers['Content-Type'] = 'application/json';
     }
-    
+
     const response = await fetch(targetUrl, options);
     const data = await response.text();
-    
+
     res.status(response.status);
     response.headers.forEach((value, key) => {
       if (key !== 'content-encoding' && key !== 'content-length') {
         res.setHeader(key, value);
       }
     });
-    
+
     res.send(data);
   } catch (error) {
     console.error('WhatsApp Official API proxy error:', error);
@@ -283,7 +284,7 @@ app.get('/api/whatsapp/health', async (req, res) => {
   try {
     const response = await fetch('http://localhost:3002/api/status');
     const data = await response.json();
-    
+
     // Map official module status to expected health format
     res.json({
       ok: data.status === 'ready',
@@ -294,10 +295,10 @@ app.get('/api/whatsapp/health', async (req, res) => {
     });
   } catch (error) {
     console.error('WhatsApp Official health check error:', error);
-    res.status(503).json({ 
-      ok: false, 
+    res.status(503).json({
+      ok: false,
       status: 'service_unavailable',
-      error: 'WhatsApp Official Module is not responding' 
+      error: 'WhatsApp Official Module is not responding'
     });
   }
 });
@@ -310,8 +311,8 @@ app.get('/api/crm/health', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('CRM health check error:', error);
-    res.status(503).json({ 
-      ok: false, 
+    res.status(503).json({
+      ok: false,
       status: 'service_unavailable',
       error: 'CRM service is not responding',
       service: 'crm-microservice'
@@ -328,7 +329,7 @@ app.get('/v1/health', async (req, res) => {
       fetch('http://localhost:8099/health'),
       messageService.pool.query('SELECT 1')
     ]);
-    
+
     // Process WhatsApp status
     let whatsappData = { status: 'offline' };
     if (whatsappResponse.status === 'fulfilled') {
@@ -338,7 +339,7 @@ app.get('/v1/health', async (req, res) => {
         whatsappData = { status: 'error', error: e.message };
       }
     }
-    
+
     // Process CRM status
     let crmData = { status: 'offline' };
     if (crmResponse.status === 'fulfilled') {
@@ -348,17 +349,17 @@ app.get('/v1/health', async (req, res) => {
         crmData = { status: 'error', error: e.message };
       }
     }
-    
+
     // Check hybrid queue stats
     const queueStats = hybridQueue.getQueueStats();
-    
+
     // Get worker stats if available
     const workerStats = queueWorker ? queueWorker.getStats() : null;
 
     // Determine overall health
-    const isHealthy = dbCheck.status === 'fulfilled' && 
-                      (whatsappData.status === 'ready' || whatsappData.status === 'qr_received') &&
-                      (crmData.ok !== false);
+    const isHealthy = dbCheck.status === 'fulfilled' &&
+      (whatsappData.status === 'ready' || whatsappData.status === 'qr_received') &&
+      (crmData.ok !== false);
 
     res.json({
       success: true,
@@ -409,13 +410,13 @@ app.get('/admin/login', (req, res) => {
 // Enterprise Admin Interface - Protected with authentication (with NO_AUTH bypass)
 app.get('/admin', (req, res, next) => {
   console.log('[ADMIN] Access attempt from:', req.ip, 'Host:', req.hostname);
-  
+
   // NO_AUTH MODE: Skip all authentication in development
   if (NO_AUTH_MODE) {
     console.log('[ADMIN] 🔓 NO_AUTH MODE - bypassing authentication for development');
     return res.sendFile(path.join(__dirname, 'public/admin/index.html'));
   }
-  
+
   // Create a temporary authMiddleware if not yet initialized
   const tempAuthMiddleware = authMiddleware || new AuthMiddleware();
   tempAuthMiddleware.requireAdminPanelAuth()(req, res, next);
@@ -430,7 +431,7 @@ app.get('/admin/instagram', (req, res, next) => {
     console.log('[ADMIN/INSTAGRAM] 🔓 NO_AUTH MODE - bypassing authentication for development');
     return res.sendFile(path.join(__dirname, 'instagram-module/interface/instagram_dashboard.html'));
   }
-  
+
   const tempAuthMiddleware = authMiddleware || new AuthMiddleware();
   tempAuthMiddleware.requireAdminPanelAuth()(req, res, next);
 }, (req, res) => {
@@ -444,7 +445,7 @@ app.use('/instagram-api', (req, res, next) => {
     console.log('[API/INSTAGRAM] 🔓 NO_AUTH MODE - bypassing authentication for development');
     return next();
   }
-  
+
   const tempAuthMiddleware = authMiddleware || new AuthMiddleware();
   tempAuthMiddleware.requireAdminPanelAuth()(req, res, next);
 }, createProxyMiddleware({
@@ -463,7 +464,7 @@ app.get('/admin/agent-zero', (req, res, next) => {
     console.log('[ADMIN/AGENT-ZERO] 🔓 NO_AUTH MODE - bypassing authentication for development');
     return res.sendFile(path.join(__dirname, 'agent-zero-module-integrated/interface/agent_dashboard.html'));
   }
-  
+
   const tempAuthMiddleware = authMiddleware || new AuthMiddleware();
   tempAuthMiddleware.requireAdminPanelAuth()(req, res, next);
 }, (req, res) => {
@@ -477,7 +478,7 @@ app.use('/agent-zero-api', (req, res, next) => {
     console.log('[API/AGENT-ZERO] 🔓 NO_AUTH MODE - bypassing authentication for development');
     return next();
   }
-  
+
   const tempAuthMiddleware = authMiddleware || new AuthMiddleware();
   tempAuthMiddleware.requireAdminPanelAuth()(req, res, next);
 }, createProxyMiddleware({
@@ -570,7 +571,7 @@ app.use('/', createProxyMiddleware({
   pathFilter: (path, req) => {
     // Exclude specific existing routes (but allow /api/login, /api/callback, /api/logout for auth)
     const excludePatterns = [
-      /^\/v1(\/|$)/,                    // Enterprise API 
+      /^\/v1(\/|$)/,                    // Enterprise API
       /^\/api\/system(\/|$)/,           // System API routes (keep in main_app)
       /^\/api\/crm(\/|$)/,              // CRM health routes (keep in main_app)
       /^\/api\/whatsapp(\/|$)/,         // WhatsApp health routes (keep in main_app)
@@ -581,19 +582,19 @@ app.use('/', createProxyMiddleware({
       /^\/whatsapp(\/|$)/,              // WhatsApp assets
       /^\/dashboard(\/|$)/              // Dashboard routes
     ];
-    
+
     // Return false to exclude (don't proxy), true to proxy to CRM
     for (const pattern of excludePatterns) {
       if (pattern.test(path)) {
         return false; // Don't proxy, let existing routes handle
       }
     }
-    
+
     return true; // Proxy everything else to CRM
   },
   onError: (err, req, res) => {
     console.error('CRM proxy error:', err.message);
-    res.status(503).json({ 
+    res.status(503).json({
       error: 'CRM service temporarily unavailable',
       message: 'Please try again later or contact system administrator',
       timestamp: new Date().toISOString()
@@ -636,15 +637,15 @@ app.get('/dashboard/whatsapp', (req, res) => {
         <div class='icon'>📱</div>
         <h1>WhatsApp Business</h1>
         <p>Central de atendimento para conversas com clientes</p>
-        
+
         <div class='status'>
             <strong>Status:</strong> <span id='status-text'>Verificando conexão...</span>
         </div>
-        
+
         <a href='/whatsapp/' target='_blank' class='btn'>📱 Abrir Dashboard Completo</a>
         <a href='/whatsapp/qr-simple.html' target='_blank' class='btn'>🔗 Conectar WhatsApp</a>
         <a href='/' class='btn'>🏠 Voltar ao Início</a>
-        
+
         <div style='margin-top: 40px; opacity: 0.8;'>
             <h3>Funcionalidades:</h3>
             <p>✅ Receber mensagens de clientes<br>
@@ -653,7 +654,7 @@ app.get('/dashboard/whatsapp', (req, res) => {
             ✅ Estatísticas de atendimento</p>
         </div>
     </div>
-    
+
     <script>
         // Verificar status do WhatsApp
         fetch('/api/whatsapp/health')
@@ -701,13 +702,13 @@ app.get('/dashboard/crm', (req, res) => {
         <div class='icon'>👥</div>
         <h1>CRM Inteligente</h1>
         <p>Sistema completo de gestão de relacionamento com clientes</p>
-        
+
         <div class='status'>
             <strong>Status:</strong> Em desenvolvimento - Dashboard será lançado em breve!
         </div>
-        
+
         <a href='/' class='btn'>🏠 Voltar ao Início</a>
-        
+
         <div class='features'>
             <div class='feature'>
                 <h3>📊 Dashboard</h3>
@@ -758,13 +759,13 @@ app.get('/dashboard/broadhub', (req, res) => {
         <div class='icon'>📡</div>
         <h1>BroadHub</h1>
         <p>Central de transmissões e campanhas para múltiplas plataformas</p>
-        
+
         <div class='status'>
             <strong>Status:</strong> Em desenvolvimento - Sistema de campanhas será lançado em breve!
         </div>
-        
+
         <a href='/' class='btn'>🏠 Voltar ao Início</a>
-        
+
         <div class='features'>
             <div class='feature'>
                 <h3>📱 Multi-Plataforma</h3>
@@ -815,13 +816,13 @@ app.get('/dashboard/agent-zero', (req, res) => {
         <div class='icon'>🤖</div>
         <h1>Agent Zero</h1>
         <p>Assistente de IA inteligente para automação de tarefas e atendimento</p>
-        
+
         <div class='status'>
             <strong>Status:</strong> Aguardando configuração - Sistema de IA será ativado em breve!
         </div>
-        
+
         <a href='/' class='btn'>🏠 Voltar ao Início</a>
-        
+
         <div class='features'>
             <div class='feature'>
                 <h3>🧠 IA Conversacional</h3>
@@ -872,13 +873,13 @@ app.get('/dashboard/instagram', (req, res) => {
         <div class='icon'>📸</div>
         <h1>Instagram Manager</h1>
         <p>Gestão automatizada de conteúdo e interações no Instagram</p>
-        
+
         <div class='status'>
             <strong>Status:</strong> Aguardando configuração - Manager será ativado em breve!
         </div>
-        
+
         <a href='/' class='btn'>🏠 Voltar ao Início</a>
-        
+
         <div class='features'>
             <div class='feature'>
                 <h3>📷 Conteúdo</h3>
@@ -929,11 +930,11 @@ app.get('/dashboard/settings', (req, res) => {
         <div class='icon'>⚙️</div>
         <h1>Centro de Configurações</h1>
         <p>Configurações gerais, logs do sistema e ferramentas administrativas</p>
-        
+
         <a href='/' class='btn'>🏠 Voltar ao Início</a>
         <a href='/api/system/health' target='_blank' class='btn'>🔍 Saúde do Sistema</a>
         <a href='/api/system/status' target='_blank' class='btn'>📊 Status Completo</a>
-        
+
         <div class='settings-grid'>
             <div class='setting-card'>
                 <h3>📊 Monitoramento</h3>
@@ -971,7 +972,7 @@ async function checkServiceHealth(url, timeout = 3000) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
-    const response = await require('axios').get(url, { 
+    const response = await require('axios').get(url, {
       signal: controller.signal,
       timeout: timeout
     });
@@ -987,9 +988,9 @@ const API_KEY = process.env.API_KEY || 'sk-skincos-ai-' + require('crypto').rand
 function authenticateApiKey(req, res, next) {
   const apiKey = req.headers['x-api-key'] || req.query.apiKey;
   if (!apiKey || apiKey !== API_KEY) {
-    return res.status(401).json({ 
-      success: false, 
-      error: 'Unauthorized. Valid API key required in X-API-Key header or apiKey query parameter' 
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized. Valid API key required in X-API-Key header or apiKey query parameter'
     });
   }
   next();
@@ -1000,15 +1001,15 @@ app.get('/api/system/health', async (req, res) => {
   const [whatsappHealth] = await Promise.all([
     checkServiceHealth('http://localhost:3003/health')
   ]);
-  
-  res.json({ 
-    ok: true, 
-    service: 'skincos-ai-system', 
+
+  res.json({
+    ok: true,
+    service: 'skincos-ai-system',
     port: PORT,
     timestamp: new Date().toISOString(),
     services: {
       crm: 'stub',
-      whatsapp: whatsappHealth, 
+      whatsapp: whatsappHealth,
       broadhub: 'stub',
       agent_zero: 'pending',
       instagrapi: 'pending'
@@ -1017,8 +1018,8 @@ app.get('/api/system/health', async (req, res) => {
 });
 
 app.get('/api/system/status', (req, res) => {
-  res.json({ 
-    status: 'running', 
+  res.json({
+    status: 'running',
     project: 'SKINCOS AI',
     version: '1.0.0-stub',
     uptime: process.uptime(),
@@ -1033,8 +1034,8 @@ app.get('/api/crm/health', (req, res) => {
 });
 
 app.get('/api/crm/status', (req, res) => {
-  res.json({ 
-    status: 'running', 
+  res.json({
+    status: 'running',
     service: 'comprehensive-crm-so',
     version: '1.0.0-stub',
     uptime: process.uptime()
@@ -1049,11 +1050,11 @@ app.get('/api/whatsapp/health', async (req, res) => {
     res.json(response.data);
   } catch (error) {
     // Return fallback status when external service is not available
-    res.json({ 
-      ok: false, 
-      service: 'whatsapp-gateway', 
+    res.json({
+      ok: false,
+      service: 'whatsapp-gateway',
       status: 'fallback-mode',
-      message: 'WhatsApp assets served internally', 
+      message: 'WhatsApp assets served internally',
       port: PORT,
       assetsPath: '/whatsapp/'
     });
@@ -1084,12 +1085,12 @@ app.post('/api/whatsapp/send', authenticateApiKey, async (req, res) => {
   try {
     // Validate required fields
     if (!req.body || (!req.body.to && !req.body.phone)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Missing required field: to or phone' 
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: to or phone'
       });
     }
-    
+
     const response = await require('axios').post('http://localhost:3003/send', req.body, {
       timeout: 10000,
       headers: {
@@ -1101,8 +1102,8 @@ app.post('/api/whatsapp/send', authenticateApiKey, async (req, res) => {
     if (error.response) {
       res.status(error.response.status).json(error.response.data);
     } else {
-      res.status(503).json({ 
-        success: false, 
+      res.status(503).json({
+        success: false,
         error: 'WhatsApp Gateway not available',
         message: 'Make sure WhatsApp Official Module is running on port 3003'
       });
@@ -1115,7 +1116,7 @@ app.get('/api/broadhub/health', (req, res) => {
   res.json({ ok: true, service: 'broadhub', port: PORT });
 });
 
-// Documentation endpoints  
+// Documentation endpoints
 app.get('/docs/ai-knowledge', (req, res) => {
   res.redirect('/ai-knowledge/index.html');
 });
@@ -1183,39 +1184,39 @@ app.get('/docs/broadhub', (req, res) => {
 // Create a simple startup that opens port immediately
 function startSimpleServer() {
   console.log('🚀 Starting SKINCOS AI Enterprise System...');
-  
+
   try {
     const server = app.listen(PORT, '0.0.0.0', () => {
-        console.log('✅ SKINCOS AI Enterprise System started successfully!');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log(`🎯 SKINCOS AI System: http://0.0.0.0:${PORT}`);
-        console.log(`📊 Main Dashboard: http://0.0.0.0:${PORT}`);
-        console.log(`🔐 Admin Panel: http://0.0.0.0:${PORT}/admin`);
-        console.log(`🔑 Admin Login: http://0.0.0.0:${PORT}/admin/login`);
-        console.log(`🏢 Enterprise API: http://0.0.0.0:${PORT}/v1/*`);
-        console.log(`🔒 Authentication: http://0.0.0.0:${PORT}/v1/auth/*`);
-        console.log(`🔗 System Health: http://0.0.0.0:${PORT}/v1/health`);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log(`🌍 Environment: ${NODE_ENV}`);
-        console.log(`🔒 Security: JWT + RBAC + Tenant Isolation`);
-        console.log(`📋 Rate Limiting: Active per tenant`);
-        console.log(`📊 Audit Logging: Enabled`);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    
-        // Ensure logs directory exists and write log
-        try {
-          const logsDir = path.join(__dirname, 'logs');
-          if (!fs.existsSync(logsDir)) {
-            fs.mkdirSync(logsDir, { recursive: true });
-          }
-          const msg = `SKINCOS AI System with Enterprise API started on port ${PORT} at ${new Date().toISOString()}`;
-          fs.appendFileSync(path.join(logsDir, 'system.out'), msg + '\n');
-        } catch (logError) {
-          console.warn('⚠️ Could not write to logs directory:', logError.message);
-        }
+      console.log('✅ SKINCOS AI Enterprise System started successfully!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`🎯 SKINCOS AI System: http://0.0.0.0:${PORT}`);
+      console.log(`📊 Main Dashboard: http://0.0.0.0:${PORT}`);
+      console.log(`🔐 Admin Panel: http://0.0.0.0:${PORT}/admin`);
+      console.log(`🔑 Admin Login: http://0.0.0.0:${PORT}/admin/login`);
+      console.log(`🏢 Enterprise API: http://0.0.0.0:${PORT}/v1/*`);
+      console.log(`🔒 Authentication: http://0.0.0.0:${PORT}/v1/auth/*`);
+      console.log(`🔗 System Health: http://0.0.0.0:${PORT}/v1/health`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`🌍 Environment: ${NODE_ENV}`);
+      console.log(`🔒 Security: JWT + RBAC + Tenant Isolation`);
+      console.log(`📋 Rate Limiting: Active per tenant`);
+      console.log(`📊 Audit Logging: Enabled`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        // Start all background initialization after port is open
-        setTimeout(initializeAllServices, 1000);
+      // Ensure logs directory exists and write log
+      try {
+        const logsDir = path.join(__dirname, 'logs');
+        if (!fs.existsSync(logsDir)) {
+          fs.mkdirSync(logsDir, { recursive: true });
+        }
+        const msg = `SKINCOS AI System with Enterprise API started on port ${PORT} at ${new Date().toISOString()}`;
+        fs.appendFileSync(path.join(logsDir, 'system.out'), msg + '\n');
+      } catch (logError) {
+        console.warn('⚠️ Could not write to logs directory:', logError.message);
+      }
+
+      // Start all background initialization after port is open
+      setTimeout(initializeAllServices, 1000);
     });
 
     // Add server error handler
@@ -1226,22 +1227,22 @@ function startSimpleServer() {
         process.exit(1); // Only exit for port conflicts
       }
     });
-    
+
   } catch (error) {
     console.error('🚨 Failed to start server:', error.message);
     console.error('🔄 Attempting emergency fallback server...');
-    
+
     // Emergency fallback - basic Express server
     const fallbackApp = require('express')();
     fallbackApp.get('*', (req, res) => {
-      res.json({ 
+      res.json({
         status: 'emergency_mode',
         message: 'SKINCOS AI System - Emergency Mode',
         error: 'Main system components failed to load',
         timestamp: new Date().toISOString()
       });
     });
-    
+
     fallbackApp.listen(PORT, '0.0.0.0', () => {
       console.log(`🔄 Emergency server running on port ${PORT}`);
     });
@@ -1267,7 +1268,7 @@ async function initializeAllServices() {
  */
 async function initializeWhatsAppIntegration() {
   try {
-    
+
     // Wait for hybrid queue to initialize
     let retryCount = 0;
     while (!hybridQueue.isReady() && retryCount < 10) {
@@ -1275,43 +1276,43 @@ async function initializeWhatsAppIntegration() {
       await new Promise(resolve => setTimeout(resolve, 1000));
       retryCount++;
     }
-    
+
     if (hybridQueue.isReady()) {
       const queueMode = hybridQueue.getMode();
       console.log(`✅ Hybrid Queue initialized in mode: ${queueMode.current}`);
       console.log(`📊 Redis: ${queueMode.redisAvailable ? 'Available' : 'Fallback to Memory'} | Memory: ${queueMode.memoryAvailable ? 'Ready' : 'Error'}`);
-      
-      // Initialize WhatsApp integration  
+
+      // Initialize WhatsApp integration
       const WhatsAppIntegration = require('./lib/whatsapp-integration');
       const whatsappIntegration = new WhatsAppIntegration(messageService);
-      
+
       // Start integration in background
       setTimeout(async () => {
         try {
           const integrated = await whatsappIntegration.initialize();
-          
+
           // Initialize and start queue worker with WhatsApp client
           console.log('🤖 Starting Enterprise Queue Worker with Hybrid Queue...');
-          
+
           // For now, we'll simulate the WhatsApp client connection
           // In production, you'd get the actual client instance from the integration
           queueWorker = new QueueWorker(integrated || null); // Use WhatsApp client if available
-          
-          // Start worker with hybrid queue  
+
+          // Start worker with hybrid queue
           await queueWorker.start(hybridQueue);
           console.log('✅ Enterprise Queue Worker started successfully with hybrid fallback');
           console.log(`📈 Operating in ${queueMode.current} mode - Target: 99% delivery rate with intelligent retries`);
-          
+
           if (!queueMode.redisAvailable) {
             console.log('💡 Running in memory fallback mode with database outbox pattern for resilience');
           }
-          
+
         } catch (error) {
           console.error('❌ Enterprise queue worker initialization error:', error);
           console.log('📋 Enterprise API endpoints remain available for message queuing');
         }
       }, 1000); // Wait 1 second for WhatsApp to be ready
-      
+
     } else {
       throw new Error('Hybrid queue failed to initialize');
     }

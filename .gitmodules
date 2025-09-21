@@ -4,8 +4,9 @@
 [submodule "comprehensive-crm-so"]
 	path = comprehensive-crm-so
 	url = git@github.com:jubenitogarcia/comprehensive-crm-so.git
-[submodule "whatsapp-gateway"]
-	path = whatsapp-gateway
+
+[submodule "whatsapp/gateway"]
+	path = whatsapp/gateway
 	url = git@github.com:jubenitogarcia/WhatsApp.git
 [submodule "broadhub"]
 	path = broadhub

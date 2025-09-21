@@ -3,7 +3,12 @@ set -euo pipefail
 # Dev helper: run whatsapp-gateway bot_com_api.js with nodemon (hot-reload)
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-GW_DIR="$ROOT_DIR/whatsapp-gateway"
+# Prefer centralized path under whatsapp/; fallback to legacy root path
+GW_DIR="$ROOT_DIR/whatsapp/gateway"
+if [[ ! -d "$GW_DIR" ]]; then
+  GW_DIR="$ROOT_DIR/whatsapp-gateway"
+fi
+STUB_DIR="$ROOT_DIR/whatsapp/backup"
 
 INSTANCE=1
 QUIET=0
@@ -39,7 +44,15 @@ LOG_FILE="$GW_DIR/local_${INSTANCE}.out"
 PROFILE_DIR="$GW_DIR/.chrome_profile_${PORT}"
 
 if [[ ! -d "$GW_DIR" ]]; then
-  echo "[dev-gateway] whatsapp-gateway not found at $GW_DIR" >&2; exit 1
+  echo "[dev-gateway] whatsapp-gateway not found at $GW_DIR"
+  if [[ -f "$STUB_DIR/bot_com_api.js" ]]; then
+    echo "[dev-gateway] Falling back to stub gateway at $STUB_DIR/bot_com_api.js"
+    USE_STUB=1
+  else
+    echo "[dev-gateway] No stub available either. Exiting." >&2; exit 1
+  fi
+else
+  USE_STUB=0
 fi
 
 # Kill any process bound to the target port to avoid conflicts
@@ -67,7 +80,11 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-cd "$GW_DIR"
+if [[ $USE_STUB -eq 1 ]]; then
+  cd "$STUB_DIR"
+else
+  cd "$GW_DIR"
+fi
 
 # Ensure nodemon is available locally to the gateway module
 if ! npx --yes nodemon --version >/dev/null 2>&1; then
@@ -75,7 +92,11 @@ if ! npx --yes nodemon --version >/dev/null 2>&1; then
   npm install -D nodemon --no-audit --no-fund >/dev/null 2>&1 || true
 fi
 
-echo "[dev-gateway] Starting whatsapp-gateway (instance $INSTANCE) on :$PORT with nodemon..."
+if [[ $USE_STUB -eq 1 ]]; then
+  echo "[dev-gateway] Starting whatsapp-gateway STUB (instance $INSTANCE) on :$PORT with nodemon..."
+else
+  echo "[dev-gateway] Starting whatsapp-gateway (instance $INSTANCE) on :$PORT with nodemon..."
+fi
 
 NODEMON_FLAGS=(
   --watch bot_com_api.js
@@ -91,7 +112,11 @@ NODEMON_FLAGS=(
   export PORT="$PORT"
   export ACCOUNT_ID="$PORT"
   # Route logs to local_N.out for consistency with orchestrator
-  npx nodemon "${NODEMON_FLAGS[@]}" bot_com_api.js >"$LOG_FILE" 2>&1 &
+  if [[ $USE_STUB -eq 1 ]]; then
+    npx nodemon --quiet bot_com_api.js >"$LOG_FILE" 2>&1 &
+  else
+    npx nodemon "${NODEMON_FLAGS[@]}" bot_com_api.js >"$LOG_FILE" 2>&1 &
+  fi
   echo $! > "$PID_FILE"
 )
 

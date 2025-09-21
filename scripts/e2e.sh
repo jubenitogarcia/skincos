@@ -9,7 +9,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GW_SCRIPT="$ROOT_DIR/scripts/dev-gateway-watch.sh"
-MOCK="$ROOT_DIR/whatsapp-gateway/simple-mock-api.js"
+# Use centralized path; fallback to legacy if not present
+MOCK="$ROOT_DIR/whatsapp/gateway/simple-mock-api.js"
+if [ ! -f "$MOCK" ]; then
+  MOCK="$ROOT_DIR/whatsapp-gateway/simple-mock-api.js"
+fi
 
 cmd=${1:-help}
 shift || true
@@ -51,8 +55,8 @@ start_instance() {
 
 start_mocks() {
   log "CI mock: starting mock servers on 3001 and 3002"
-  (PORT=3001 node "$MOCK" >/dev/null 2>&1 & echo $! > "$ROOT_DIR/whatsapp-gateway/.mock_3001.pid")
-  (PORT=3002 node "$MOCK" >/dev/null 2>&1 & echo $! > "$ROOT_DIR/whatsapp-gateway/.mock_3002.pid")
+  (PORT=3001 node "$MOCK" >/dev/null 2>&1 & echo $! > "$ROOT_DIR/whatsapp/gateway/.mock_3001.pid")
+  (PORT=3002 node "$MOCK" >/dev/null 2>&1 & echo $! > "$ROOT_DIR/whatsapp/gateway/.mock_3002.pid")
   for _ in {1..30}; do
     if curl -sf "http://localhost:3001/health" >/dev/null 2>&1 && curl -sf "http://localhost:3002/health" >/dev/null 2>&1; then
       return 0
@@ -63,7 +67,7 @@ start_mocks() {
 }
 
 cleanup_mocks() {
-  for p in "$ROOT_DIR/whatsapp-gateway/.mock_3001.pid" "$ROOT_DIR/whatsapp-gateway/.mock_3002.pid"; do
+  for p in "$ROOT_DIR/whatsapp/gateway/.mock_3001.pid" "$ROOT_DIR/whatsapp/gateway/.mock_3002.pid"; do
     if [[ -f "$p" ]]; then
       pid="$(cat "$p")"
       if [[ "$pid" =~ ^[0-9]+$ ]]; then

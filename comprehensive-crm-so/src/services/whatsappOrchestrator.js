@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const INSTANCES_FILE = process.env.WA_INSTANCES_FILE || path.join(process.cwd(), 'whatsapp_instances.json')
 const PORTS_RANGE = { min: 3001, max: 3009 } // 9 available channels
-const WHATSAPP_MODULE_PATH = path.resolve(__dirname, '../../../whatsapp-official-module')
+const WHATSAPP_MODULE_PATH = path.resolve(__dirname, '../../../whatsapp/official-module')
 
 // Authentication configuration for Unified System communication
 const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY || 'unified-dev-key'
@@ -38,12 +38,12 @@ class WhatsAppOrchestrator {
       'X-API-Key': CRM_UNIFIED_API_KEY,
       ...options.headers
     }
-    
+
     const fetchOptions = {
       ...options,
       headers
     }
-    
+
     console.log(`[WhatsApp Orchestrator] Making authenticated request to: ${url}`)
     return fetch(url, fetchOptions)
   }
@@ -51,7 +51,7 @@ class WhatsAppOrchestrator {
   // Smart fetch method that automatically chooses authentication based on port
   async smartFetch(port, endpoint, options = {}) {
     const url = `http://localhost:${port}${endpoint}`
-    
+
     if (this.shouldUseAuthentication(port)) {
       return this.fetchUnifiedSystem(url, options)
     } else {
@@ -76,12 +76,12 @@ class WhatsAppOrchestrator {
 
   // Get all valid channels (1-9)
   getAllChannels() {
-    return Array.from({length: 9}, (_, i) => i + 1)
+    return Array.from({ length: 9 }, (_, i) => i + 1)
   }
 
   // Get all valid ports (3001-3009)
   getAllPorts() {
-    return Array.from({length: 9}, (_, i) => PORTS_RANGE.min + i)
+    return Array.from({ length: 9 }, (_, i) => PORTS_RANGE.min + i)
   }
 
   // Create instance record only when needed (no global instances)
@@ -105,7 +105,7 @@ class WhatsAppOrchestrator {
         ...options.metadata
       }
     }
-    
+
     this.instances.set(port, instance)
     this.scheduleSave()
     return instance
@@ -146,7 +146,7 @@ class WhatsAppOrchestrator {
       ...inst,
       process: undefined // Don't serialize process references
     }))
-    
+
     try {
       await fs.writeFile(INSTANCES_FILE, JSON.stringify({
         instances: instancesArray,
@@ -191,7 +191,7 @@ class WhatsAppOrchestrator {
     const channelStatus = allChannels.map(channel => {
       const port = this.channelToPort(channel)
       const instance = this.instances.get(port)
-      
+
       if (instance) {
         return { ...this.serializeInstance(instance) }
       } else {
@@ -256,7 +256,7 @@ class WhatsAppOrchestrator {
 
     const startTime = Date.now()
     const pollInterval = 1000 // Poll every 1 second
-    
+
     while (Date.now() - startTime < timeoutMs) {
       // First check if the process is still alive
       if (!instance.process || instance.process.killed) {
@@ -268,14 +268,14 @@ class WhatsAppOrchestrator {
         // TIMEOUT FIX: Use AbortController instead of unsupported timeout parameter
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 3000) // 3 second timeout
-        
+
         const response = await this.smartFetch(port, '/api/status', {
           method: 'GET',
           signal: controller.signal
         })
-        
+
         clearTimeout(timeoutId)
-        
+
         if (response.ok) {
           const data = await response.json()
           // Instance is ready if it responds with any valid status
@@ -287,9 +287,9 @@ class WhatsAppOrchestrator {
       } catch (error) {
         // Connection refused is expected during startup, continue polling
         // Only log non-connection errors and non-abort errors
-        if (!error.message?.includes('ECONNREFUSED') && 
-            !error.message?.includes('fetch failed') &&
-            error.name !== 'AbortError') {
+        if (!error.message?.includes('ECONNREFUSED') &&
+          !error.message?.includes('fetch failed') &&
+          error.name !== 'AbortError') {
           console.log(`[WhatsApp Orchestrator] Readiness check error for port ${port}: ${error.message}`)
         }
       }
@@ -308,7 +308,7 @@ class WhatsAppOrchestrator {
     if (freeInstance) {
       return freeInstance.port
     }
-    
+
     // If no free instances, return the first available channel
     const availableChannel = this.getAvailableChannel()
     return availableChannel ? this.channelToPort(availableChannel) : null
@@ -347,7 +347,7 @@ class WhatsAppOrchestrator {
   getNextAvailableChannel() {
     const available = this.getAvailableChannel()
     if (available) return available
-    
+
     const freeChannels = this.getFreeChannels()
     return freeChannels.length > 0 ? freeChannels[0] : null
   }
@@ -362,7 +362,7 @@ class WhatsAppOrchestrator {
   getAllFreePorts() {
     const availableChannels = this.getAvailableChannels()
     const freeChannels = this.getFreeChannels()
-    
+
     return [...availableChannels, ...freeChannels]
       .sort((a, b) => a - b)
       .map(channel => this.channelToPort(channel))
@@ -418,9 +418,9 @@ class WhatsAppOrchestrator {
         targetPort = channelOrPort
         targetChannel = this.portToChannel(targetPort)
       } else {
-        return { 
-          success: false, 
-          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}` 
+        return {
+          success: false,
+          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}`
         }
       }
     } else if (!channelOrPort) {
@@ -429,7 +429,7 @@ class WhatsAppOrchestrator {
       if (!targetChannel) {
         const recoverySuggestions = this.getRecoverySuggestions()
         const hasRecoveryOptions = recoverySuggestions.erroredChannels.length > 0 || recoverySuggestions.staleChannels.length > 0
-        
+
         return {
           success: false,
           error: 'No available channels',
@@ -438,7 +438,7 @@ class WhatsAppOrchestrator {
             availableChannels: this.getAvailableChannels(),
             freeChannels: this.getFreeChannels(),
             recoverySuggestions: hasRecoveryOptions ? recoverySuggestions : null,
-            message: hasRecoveryOptions 
+            message: hasRecoveryOptions
               ? 'Nenhum canal disponível. Considere parar ou reiniciar instâncias com erro.'
               : 'Todos os canais estão ocupados. Aguarde ou pare uma instância ativa.'
           }
@@ -460,53 +460,53 @@ class WhatsAppOrchestrator {
 
     // CONCURRENCY FIX: Acquire port lock to prevent race conditions
     await this.acquirePortLock(targetPort)
-    
+
     try {
       // If this is Channel 1 and UNIFIED_MODE is enabled, always forward to unified system
       if (targetChannel === 1 && process.env.UNIFIED_MODE === 'true') {
-          console.log(`[WhatsApp Orchestrator] Forwarding Channel 1 start request to unified system`)
-          try {
-            const response = await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/whatsapp/1/status`, {
-              method: 'GET'
-            })
-            
-            if (response.ok) {
-              const data = await response.json()
-              console.log(`[WhatsApp Orchestrator] Unified system response:`, data)
-              return {
-                success: true,
-                channel: targetChannel,
-                port: targetPort,
-                forwardedToUnified: true,
-                unifiedResponse: data,
-                message: 'Request forwarded to WhatsApp Unified System'
-              }
-            } else {
-              const errorData = await response.json().catch(() => ({}))
-              console.error(`[WhatsApp Orchestrator] Unified system error:`, response.status, errorData)
-              return {
-                success: false,
-                error: `Unified system error: ${response.status} ${response.statusText}`,
-                channel: targetChannel,
-                port: targetPort,
-                unifiedError: errorData
-              }
-            }
-          } catch (error) {
-            console.error(`[WhatsApp Orchestrator] Failed to connect to unified system:`, error)
+        console.log(`[WhatsApp Orchestrator] Forwarding Channel 1 start request to unified system`)
+        try {
+          const response = await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/whatsapp/1/status`, {
+            method: 'GET'
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            console.log(`[WhatsApp Orchestrator] Unified system response:`, data)
             return {
-              success: false,
-              error: `Failed to connect to unified system: ${error.message}`,
+              success: true,
               channel: targetChannel,
               port: targetPort,
-              suggestions: {
-                type: 'unified_connection_error',
-                message: 'Make sure WhatsApp Unified System is running on port 3001'
-              }
+              forwardedToUnified: true,
+              unifiedResponse: data,
+              message: 'Request forwarded to WhatsApp Unified System'
+            }
+          } else {
+            const errorData = await response.json().catch(() => ({}))
+            console.error(`[WhatsApp Orchestrator] Unified system error:`, response.status, errorData)
+            return {
+              success: false,
+              error: `Unified system error: ${response.status} ${response.statusText}`,
+              channel: targetChannel,
+              port: targetPort,
+              unifiedError: errorData
+            }
+          }
+        } catch (error) {
+          console.error(`[WhatsApp Orchestrator] Failed to connect to unified system:`, error)
+          return {
+            success: false,
+            error: `Failed to connect to unified system: ${error.message}`,
+            channel: targetChannel,
+            port: targetPort,
+            suggestions: {
+              type: 'unified_connection_error',
+              message: 'Make sure WhatsApp Unified System is running on port 3001'
             }
           }
         }
-      
+      }
+
       // Check if instance is disabled (for non-Channel-1 or non-unified mode)
       if (instance.status === 'disabled' || instance.metadata?.disabled) {
         const disabledReason = instance.metadata?.disabledReason || 'Instance disabled'
@@ -530,7 +530,7 @@ class WhatsAppOrchestrator {
         const nextAvailableChannel = this.getNextAvailableChannel()
         const availableChannels = this.getAvailableChannels()
         const freeChannels = this.getFreeChannels()
-        
+
         return {
           success: false,
           error: `Channel ${targetChannel} is not available (status: ${instance.status})`,
@@ -542,7 +542,7 @@ class WhatsAppOrchestrator {
             nextAvailableChannel,
             availableChannels,
             freeChannels,
-            message: nextAvailableChannel 
+            message: nextAvailableChannel
               ? `Canal ${targetChannel} ocupado — iniciar no canal ${nextAvailableChannel}?`
               : 'Canal ocupado e nenhum canal livre disponível'
           }
@@ -606,11 +606,11 @@ class WhatsAppOrchestrator {
 
       child.stdout?.on('data', (data) => {
         const output = data.toString()
-        
+
         // SECURITY FIX: Sanitize QR output - redact sensitive tokens while preserving state
         const sanitizedOutput = this.sanitizeLogOutput(output)
         console.log(`[WhatsApp ${targetPort}] ${sanitizedOutput}`)
-        
+
         // Monitor for status changes
         if (output.includes('QR RECEIVED')) {
           instance.status = 'qr_pending'
@@ -638,7 +638,7 @@ class WhatsAppOrchestrator {
 
       // ROBUSTNESS FIX: Replace fixed delay with proper readiness polling
       const readinessResult = await this.waitForInstanceReadiness(targetPort, 30000) // 30s timeout
-      
+
       if (readinessResult.success) {
         return { success: true, instance: this.serializeInstance(instance) }
       } else {
@@ -655,7 +655,7 @@ class WhatsAppOrchestrator {
         const nextAvailableChannel = this.getNextAvailableChannel()
         const availableChannels = this.getAvailableChannels()
         const freeChannels = this.getFreeChannels()
-        
+
         return {
           success: false,
           error: readinessResult.error || 'Instance failed to become ready',
@@ -678,12 +678,12 @@ class WhatsAppOrchestrator {
       }
       instance.updatedAt = new Date()
       this.scheduleSave()
-      
+
       // ALTERNATIVE CHANNEL SUGGESTIONS: When startup exception occurs, suggest alternatives
       const nextAvailableChannel = this.getNextAvailableChannel()
       const availableChannels = this.getAvailableChannels()
       const freeChannels = this.getFreeChannels()
-      
+
       return {
         success: false,
         error: error.message,
@@ -714,9 +714,9 @@ class WhatsAppOrchestrator {
         port = channelOrPort
         channel = this.portToChannel(port)
       } else {
-        return { 
+        return {
           success: false,
-          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}` 
+          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}`
         }
       }
     } else {
@@ -725,9 +725,9 @@ class WhatsAppOrchestrator {
 
     const instance = this.instances.get(port)
     if (!instance) {
-      return { 
-        success: true, 
-        channel, 
+      return {
+        success: true,
+        channel,
         port,
         message: 'No instance to stop - channel is available'
       }
@@ -754,15 +754,15 @@ class WhatsAppOrchestrator {
         // First try graceful shutdown with SIGTERM
         console.log(`[WhatsApp Orchestrator] Sending SIGTERM to channel ${channel} process...`)
         instance.process.kill('SIGTERM')
-        
+
         // Wait for graceful shutdown
         await new Promise(resolve => setTimeout(resolve, 5000))
-        
+
         // Force kill if still running
         if (instance.process && !instance.process.killed) {
           console.log(`[WhatsApp Orchestrator] Force killing channel ${channel} process...`)
           instance.process.kill('SIGKILL')
-          
+
           // Wait a bit more for force kill to take effect
           await new Promise(resolve => setTimeout(resolve, 1000))
         }
@@ -797,8 +797,8 @@ class WhatsAppOrchestrator {
         port = channelOrPort
         channel = this.portToChannel(port)
       } else {
-        return { 
-          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}` 
+        return {
+          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}`
         }
       }
     } else {
@@ -807,7 +807,7 @@ class WhatsAppOrchestrator {
 
     const instance = this.instances.get(port)
     if (!instance) {
-      return { 
+      return {
         error: `No instance on channel ${channel}`,
         channel,
         port,
@@ -817,8 +817,8 @@ class WhatsAppOrchestrator {
 
     // If we have a cached QR and status is appropriate, return it
     if (instance.qr && instance.status === 'qr_pending') {
-      return { 
-        qr: instance.qr, 
+      return {
+        qr: instance.qr,
         status: instance.status,
         channel,
         port,
@@ -830,25 +830,25 @@ class WhatsAppOrchestrator {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10s timeout for QR fetch
-      
+
       // Use fetchUnifiedSystem directly for port 3001 to ensure authentication
-      const response = port === 3001 
+      const response = port === 3001
         ? await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/api/qr`, {
-            signal: controller.signal,
-            headers: {
-              'Accept': 'application/json',
-              'User-Agent': 'WhatsApp-Orchestrator/1.0'
-            }
-          })
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'WhatsApp-Orchestrator/1.0'
+          }
+        })
         : await this.smartFetch(port, '/api/qr', {
-            signal: controller.signal,
-            headers: {
-              'Accept': 'application/json',
-              'User-Agent': 'WhatsApp-Orchestrator/1.0'
-            }
-          })
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'WhatsApp-Orchestrator/1.0'
+          }
+        })
       clearTimeout(timeoutId)
-      
+
       if (response.ok) {
         const data = await response.json()
         if (data.qr) {
@@ -861,11 +861,11 @@ class WhatsAppOrchestrator {
           }
           instance.updatedAt = new Date()
           this.scheduleSave()
-          
+
           console.log(`[WhatsApp Orchestrator] QR generated for channel ${channel} (attempt ${instance.metadata.qrAttempts})`)
-          
-          return { 
-            qr: data.qr, 
+
+          return {
+            qr: data.qr,
             status: instance.status,
             channel,
             port,
@@ -893,11 +893,11 @@ class WhatsAppOrchestrator {
     } catch (error) {
       const isTimeoutError = error.name === 'AbortError'
       const isConnectionError = error.message?.includes('ECONNREFUSED') || error.message?.includes('fetch failed')
-      
+
       if (!isConnectionError && !isTimeoutError) {
         console.error(`[WhatsApp Orchestrator] Error fetching QR for channel ${channel}:`, error.message)
       }
-      
+
       return {
         status: instance.status,
         channel,
@@ -906,7 +906,7 @@ class WhatsAppOrchestrator {
       }
     }
 
-    return { 
+    return {
       status: instance.status,
       channel,
       port,
@@ -926,8 +926,8 @@ class WhatsAppOrchestrator {
         port = channelOrPort
         channel = this.portToChannel(port)
       } else {
-        return { 
-          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}` 
+        return {
+          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}`
         }
       }
     } else {
@@ -937,9 +937,9 @@ class WhatsAppOrchestrator {
     const instance = this.instances.get(port)
     if (!instance) {
       // Channel/port exists but no instance created yet
-      return { 
-        status: 'available', 
-        channel, 
+      return {
+        status: 'available',
+        channel,
         port,
         instance: {
           id: `wa-channel-${channel}`,
@@ -957,7 +957,7 @@ class WhatsAppOrchestrator {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 8000) // Longer timeout for better reliability
-      
+
       const response = await this.smartFetch(port, '/api/status', {
         signal: controller.signal,
         headers: {
@@ -966,22 +966,22 @@ class WhatsAppOrchestrator {
         }
       })
       clearTimeout(timeoutId)
-      
+
       if (response.ok) {
         const data = await response.json()
-        
+
         // Update our internal status based on live data with better mapping
         const statusMapping = {
           'ready': 'connected',
-          'authenticated': 'connected', 
+          'authenticated': 'connected',
           'qr_received': 'qr_pending',
           'loading': 'starting',
           'disconnected': 'error',
           'auth_failure': 'error'
         }
-        
+
         const mappedStatus = statusMapping[data.status] || instance.status
-        
+
         if (mappedStatus === 'connected' && instance.status !== 'connected') {
           instance.status = 'connected'
           instance.qr = undefined
@@ -1000,10 +1000,10 @@ class WhatsAppOrchestrator {
           instance.updatedAt = new Date()
           this.scheduleSave()
         }
-        
+
         // Return comprehensive status information
-        return { 
-          status: instance.status, 
+        return {
+          status: instance.status,
           channel,
           port,
           instance: this.serializeInstance(instance),
@@ -1018,7 +1018,7 @@ class WhatsAppOrchestrator {
         // HTTP error - categorize and handle appropriately
         const errorCategory = response.status >= 500 ? 'server_error' : 'client_error'
         console.warn(`[WhatsApp Orchestrator] HTTP ${response.status} from channel ${channel} (${errorCategory}) - keeping current status`)
-        
+
         return {
           status: instance.status,
           channel,
@@ -1031,12 +1031,12 @@ class WhatsAppOrchestrator {
       // ENHANCED ERROR CATEGORIZATION: Better error handling with detailed categorization
       const errorCategories = {
         'AbortError': 'timeout',
-        'ECONNREFUSED': 'connection_refused', 
+        'ECONNREFUSED': 'connection_refused',
         'ENOTFOUND': 'dns_error',
         'fetch failed': 'network_error',
         'TypeError': 'protocol_error'
       }
-      
+
       let errorCategory = 'unknown_error'
       for (const [errorType, category] of Object.entries(errorCategories)) {
         if (error.name === errorType || error.message?.includes(errorType)) {
@@ -1044,16 +1044,16 @@ class WhatsAppOrchestrator {
           break
         }
       }
-      
+
       // Log detailed error information for debugging
       if (errorCategory !== 'connection_refused' && errorCategory !== 'timeout') {
         console.error(`[WhatsApp Orchestrator] ${errorCategory} checking channel ${channel}:`, error.message)
       }
-      
+
       // Conservative error state management - only mark as error if process is definitively dead
-      if ((instance.status === 'connected' || instance.status === 'qr_pending') && 
-          (!instance.process || instance.process.killed) &&
-          errorCategory === 'connection_refused') {
+      if ((instance.status === 'connected' || instance.status === 'qr_pending') &&
+        (!instance.process || instance.process.killed) &&
+        errorCategory === 'connection_refused') {
         console.warn(`[WhatsApp Orchestrator] Channel ${channel} process appears dead, marking as error`)
         instance.status = 'error'
         instance.metadata = {
@@ -1065,9 +1065,9 @@ class WhatsAppOrchestrator {
         instance.updatedAt = new Date()
         this.scheduleSave()
       }
-      
-      return { 
-        status: instance.status, 
+
+      return {
+        status: instance.status,
         channel,
         port,
         instance: this.serializeInstance(instance),
@@ -1089,9 +1089,9 @@ class WhatsAppOrchestrator {
         port = channelOrPort
         channel = this.portToChannel(port)
       } else {
-        return { 
+        return {
           success: false,
-          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}` 
+          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}`
         }
       }
     } else {
@@ -1100,8 +1100,8 @@ class WhatsAppOrchestrator {
 
     const instance = this.instances.get(port)
     if (!instance) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: `No instance on channel ${channel}`,
         suggestion: 'Create an instance first by starting it'
       }
@@ -1130,9 +1130,9 @@ class WhatsAppOrchestrator {
         port = channelOrPort
         channel = this.portToChannel(port)
       } else {
-        return { 
+        return {
           success: false,
-          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}` 
+          error: `Invalid channel/port: ${channelOrPort}. Use channel 1-9 or port ${PORTS_RANGE.min}-${PORTS_RANGE.max}`
         }
       }
     } else {
@@ -1140,7 +1140,7 @@ class WhatsAppOrchestrator {
     }
 
     console.log(`[WhatsApp Orchestrator] Restarting channel ${channel}...`)
-    
+
     const stopResult = await this.stopInstance(port)
     if (!stopResult.success) {
       return { ...stopResult, channel, port }

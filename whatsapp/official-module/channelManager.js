@@ -11,7 +11,7 @@ const { encryptLicenseKey, decryptLicenseKey, saveEncryptedFile, loadEncryptedFi
 const { authenticate, moderateRateLimit } = require('./middleware/security');
 
 // Import WhatsApp Web.js
-const { Client, LocalAuth } = require('../whatsapp-official');
+const { Client, LocalAuth } = require('../official');
 
 // Import extension handlers
 const MediaHandler = require('./extensions/media-handler');
@@ -20,7 +20,7 @@ const ContactManager = require('./extensions/contact-manager');
 
 /**
  * LicensedChannelManager - Gerenciador de canais multi-licenciado
- * 
+ *
  * Esta classe permite:
  * - Gerenciar múltiplos canais WhatsApp dinamicamente
  * - Sistema de licenças para ativar/desativar canais
@@ -37,13 +37,13 @@ class LicensedChannelManager {
         this.basePath = options.basePath || __dirname;
         this.sessionsPath = path.join(this.basePath, 'sessions');
         this.chromiumPath = options.chromiumPath || process.env.CHROMIUM_PATH || process.env.CHROME_PATH || '/nix/store/qa9cnw4v5xkxyip6mb9kxqfq1z4x2dx1-chromium-138.0.7204.100/bin/chromium';
-        
+
         // Configuration file for active channels and licenses
         this.configPath = path.join(this.basePath, 'channels-config.json');
-        
+
         // 🚀 NOVO: Sistema de tracking de clientes SSE para broadcast de eventos
         this.sseClients = new Map(); // channelId -> Set of response objects
-        
+
         this.init();
     }
 
@@ -58,7 +58,7 @@ class LicensedChannelManager {
 
         // Load configuration
         this.loadConfiguration();
-        
+
         console.log('🚀 LicensedChannelManager initialized');
         console.log(`📁 Sessions path: ${this.sessionsPath}`);
         console.log(`⚖️ Max channels: ${this.maxChannels}`);
@@ -129,13 +129,13 @@ class LicensedChannelManager {
                 // 🚀 CORREÇÃO CRÍTICA: Emitir AMBOS eventos para máxima compatibilidade
                 // Original event type (manter compatibilidade existente)
                 const originalEventType = channelInstance.qrCode && !isConnected ? 'qr' : 'state';
-                
+
                 // 🎯 PRIMEIRO: Emitir evento original
                 res.write(`event: ${originalEventType}\ndata: ${JSON.stringify(statusData)}\n\n`);
-                
+
                 // 🎯 SEGUNDO: TAMBÉM emitir evento 'status' que o dashboard espera
                 res.write(`event: status\ndata: ${JSON.stringify(statusData)}\n\n`);
-                
+
                 console.log(`📤 [${channelId}] Events '${originalEventType}' AND 'status' (status: ${status}) broadcasted to SSE client`);
             } catch (error) {
                 console.warn(`⚠️ Failed to send SSE to client for channel ${channelId}:`, error.message);
@@ -158,37 +158,37 @@ class LicensedChannelManager {
         try {
             if (fs.existsSync(this.configPath)) {
                 console.log('📋 Loading configuration from:', this.configPath);
-                
+
                 // Try to load encrypted configuration first
                 const encryptedResult = loadEncryptedFile(this.configPath);
                 let config = null;
-                
+
                 if (encryptedResult.success) {
                     config = encryptedResult.data;
                     console.log('🔐 Loaded encrypted configuration successfully');
                 } else {
                     console.log('⚠️ Encrypted configuration failed:', encryptedResult.error);
-                    
+
                     // Fallback: try to read as plain text JSON
                     try {
                         const plainTextData = fs.readFileSync(this.configPath, 'utf8');
-                        
+
                         // Check if it's a corrupted base64 (starts with "eyJ")
                         if (plainTextData.trim().startsWith('eyJ') && !plainTextData.includes('{')) {
                             console.log('🗑️ Detected corrupted base64 config, removing...');
                             fs.unlinkSync(this.configPath);
                             throw new Error('Corrupted configuration file removed');
                         }
-                        
+
                         config = JSON.parse(plainTextData);
                         console.log('📝 Loaded plain text configuration successfully');
-                        
+
                         // Migrate to encrypted format
                         console.log('🔄 Migrating to encrypted configuration...');
                         this.saveConfiguration(config);
                     } catch (plaintextError) {
                         console.error('❌ Plain text configuration also failed:', plaintextError.message);
-                        
+
                         // Backup corrupted file and remove it
                         const backupPath = this.configPath + '.corrupted.' + Date.now();
                         try {
@@ -198,20 +198,20 @@ class LicensedChannelManager {
                         } catch (backupError) {
                             console.error('⚠️ Failed to backup corrupted config:', backupError.message);
                         }
-                        
+
                         throw new Error('Configuration file is corrupted and has been reset');
                     }
                 }
-                
+
                 if (!config) {
                     throw new Error('Failed to load any configuration');
                 }
-                
+
                 // Load licenses with decryption
                 if (config.licenses) {
                     config.licenses.forEach(license => {
                         let licenseData = license;
-                        
+
                         // Check if license key is encrypted
                         if (license.encrypted === true && license.encryptedKey) {
                             const decryptResult = decryptLicenseKey(license.encryptedKey);
@@ -228,7 +228,7 @@ class LicensedChannelManager {
                                 return; // Skip this license
                             }
                         }
-                        
+
                         this.licenses.set(licenseData.key, {
                             ...licenseData,
                             createdAt: new Date(licenseData.createdAt),
@@ -236,14 +236,14 @@ class LicensedChannelManager {
                         });
                     });
                 }
-                
+
                 // Load active channels
                 if (config.activeChannels) {
                     config.activeChannels.forEach(channelId => {
                         this.activeChannels.add(channelId);
                     });
                 }
-                
+
                 console.log('✅ Configuration loaded successfully');
             } else {
                 // Create default configuration
@@ -275,7 +275,7 @@ class LicensedChannelManager {
         };
 
         this.saveConfiguration(defaultConfig);
-        
+
         // Load the default license
         this.licenses.set('DEFAULT_LICENSE_001', {
             key: 'DEFAULT_LICENSE_001',
@@ -303,7 +303,7 @@ class LicensedChannelManager {
                         maxChannels: license.maxChannels,
                         features: license.features
                     });
-                    
+
                     if (encryptResult.success) {
                         return {
                             ...license,
@@ -329,7 +329,7 @@ class LicensedChannelManager {
 
             // Save using encrypted file system
             const saveResult = saveEncryptedFile(this.configPath, configToSave);
-            
+
             if (saveResult.success) {
                 console.log('💾🔐 Encrypted configuration saved successfully');
             } else {
@@ -347,7 +347,7 @@ class LicensedChannelManager {
      */
     validateLicense(licenseKey) {
         const license = this.licenses.get(licenseKey);
-        
+
         if (!license) {
             return { valid: false, reason: 'License not found' };
         }
@@ -368,7 +368,7 @@ class LicensedChannelManager {
      */
     createChannelSessionPath(channelId) {
         const channelSessionPath = path.join(this.sessionsPath, `channel-${channelId}`);
-        
+
         if (!fs.existsSync(channelSessionPath)) {
             fs.mkdirSync(channelSessionPath, { recursive: true });
         }
@@ -382,23 +382,23 @@ class LicensedChannelManager {
     createChannelUserDataDir(channelId) {
         // Cleanup old userDataDir directories first
         this.cleanupOldUserDataDirs(channelId);
-        
+
         const userDataDir = path.join(os.tmpdir(), `whatsapp-channel-${channelId}-${Date.now()}`);
-        
+
         if (!fs.existsSync(userDataDir)) {
             fs.mkdirSync(userDataDir, { recursive: true });
         }
-        
+
         // Store reference for cleanup
         if (!this.userDataDirs) {
             this.userDataDirs = new Map();
         }
         this.userDataDirs.set(channelId, userDataDir);
-        
+
         console.log(`📁 Created userDataDir for channel ${channelId}: ${userDataDir}`);
         return userDataDir;
     }
-    
+
     /**
      * Limpa diretórios antigos de userData para um canal
      */
@@ -406,10 +406,10 @@ class LicensedChannelManager {
         try {
             const tempDir = os.tmpdir();
             const pattern = `whatsapp-channel-${channelId}-`;
-            
+
             const files = fs.readdirSync(tempDir);
             let cleanedCount = 0;
-            
+
             files.forEach(file => {
                 if (file.startsWith(pattern)) {
                     const fullPath = path.join(tempDir, file);
@@ -417,7 +417,7 @@ class LicensedChannelManager {
                         const stat = fs.statSync(fullPath);
                         // Remove directories older than 1 hour
                         const ageHours = (Date.now() - stat.mtime.getTime()) / (1000 * 60 * 60);
-                        
+
                         if (stat.isDirectory() && ageHours > 1) {
                             fs.rmSync(fullPath, { recursive: true, force: true });
                             cleanedCount++;
@@ -428,7 +428,7 @@ class LicensedChannelManager {
                     }
                 }
             });
-            
+
             if (cleanedCount > 0) {
                 console.log(`✅ Cleaned ${cleanedCount} old userDataDir(s) for channel ${channelId}`);
             }
@@ -436,7 +436,7 @@ class LicensedChannelManager {
             console.warn(`⚠️ Error during userDataDir cleanup for channel ${channelId}:`, error.message);
         }
     }
-    
+
     /**
      * Força cleanup de todos os userDataDirs de um canal
      */
@@ -451,7 +451,7 @@ class LicensedChannelManager {
                 }
                 this.userDataDirs.delete(channelId);
             }
-            
+
             // Also cleanup any remaining directories
             this.cleanupOldUserDataDirs(channelId);
         } catch (error) {
@@ -465,9 +465,9 @@ class LicensedChannelManager {
     createChannelClient(channelId, options = {}) {
         // Support legacy session for Channel 1 backward compatibility
         const isLegacyChannel = channelId === '1' && options.useLegacySession;
-        
+
         let sessionPath, clientId;
-        
+
         if (isLegacyChannel) {
             // Use legacy session path and client ID for Channel 1 compatibility
             sessionPath = path.join(this.basePath, 'sessions', 'session-whatsapp-official-replit');
@@ -477,7 +477,7 @@ class LicensedChannelManager {
             sessionPath = this.createChannelSessionPath(channelId);
             clientId = options.clientId || `channel-${channelId}`;
         }
-        
+
         const userDataDir = this.createChannelUserDataDir(channelId);
 
         console.log(`🔧 Creating client for channel ${channelId}`);
@@ -561,7 +561,7 @@ class LicensedChannelManager {
 
             // Create client
             const client = this.createChannelClient(channelId, options);
-            
+
             // Create extension handlers
             const mediaHandler = new MediaHandler(client);
             const chatManager = new ChatManager(client);
@@ -597,7 +597,7 @@ class LicensedChannelManager {
             client.initialize();
 
             console.log(`✅ Channel ${channelId} activated successfully`);
-            
+
             return {
                 success: true,
                 channelId,
@@ -621,10 +621,10 @@ class LicensedChannelManager {
         client.on('loading_screen', (percent, message) => {
             console.log(`📱 [${channelId}] Loading: ${percent}% - ${message}`);
             channelInstance.status = `loading: ${percent}%`;
-            this.broadcastStatusChange(channelId, channelInstance.status, { 
-                percent, 
+            this.broadcastStatusChange(channelId, channelInstance.status, {
+                percent,
                 message,
-                connected: false 
+                connected: false
             });
         });
 
@@ -635,7 +635,7 @@ class LicensedChannelManager {
             // QR expires after 30 seconds typically
             channelInstance.qrExpiresAt = new Date(Date.now() + 30 * 1000).toISOString();
             channelInstance.qrGeneratedAt = new Date().toISOString();
-            this.broadcastStatusChange(channelId, 'qr_received', { 
+            this.broadcastStatusChange(channelId, 'qr_received', {
                 qrCode: qr,
                 expiresAt: channelInstance.qrExpiresAt,
                 connected: false
@@ -647,9 +647,9 @@ class LicensedChannelManager {
             channelInstance.status = 'authenticated';
             channelInstance.qrCode = null;
             channelInstance.lastActivity = new Date();
-            
+
             // 🚀 NOVO: Broadcast evento de autenticação para SSE clients
-            this.broadcastStatusChange(channelId, 'authenticated', { 
+            this.broadcastStatusChange(channelId, 'authenticated', {
                 authenticated: true,
                 connected: false,
                 timestamp: new Date().toISOString()
@@ -660,9 +660,9 @@ class LicensedChannelManager {
         client.on('auth_failure', (msg) => {
             console.error(`📱 [${channelId}] Authentication failure:`, msg);
             channelInstance.status = 'auth_failure';
-            this.broadcastStatusChange(channelId, 'auth_failure', { 
+            this.broadcastStatusChange(channelId, 'auth_failure', {
                 error: msg,
-                connected: false 
+                connected: false
             });
         });
 
@@ -672,9 +672,9 @@ class LicensedChannelManager {
             channelInstance.clientInfo = client.info;
             channelInstance.lastActivity = new Date();
             channelInstance.connectedAt = new Date().toISOString();
-            
+
             // 🚀 NOVO: Broadcast evento de conexão bem-sucedida para SSE clients
-            this.broadcastStatusChange(channelId, 'connected', { 
+            this.broadcastStatusChange(channelId, 'connected', {
                 authenticated: true,
                 connected: true,
                 ready: true,
@@ -689,7 +689,7 @@ class LicensedChannelManager {
             console.log(`📱 [${channelId}] Message received:`, msg.body.substring(0, 50));
             channelInstance.lastActivity = new Date();
             // Atualizar último status de atividade via SSE
-            this.broadcastStatusChange(channelId, channelInstance.status, { 
+            this.broadcastStatusChange(channelId, channelInstance.status, {
                 lastMessage: msg.body.substring(0, 50),
                 lastActivity: channelInstance.lastActivity.toISOString(),
                 connected: channelInstance.status === 'connected'
@@ -701,7 +701,7 @@ class LicensedChannelManager {
             channelInstance.status = 'disconnected';
             channelInstance.qrCode = null;
             channelInstance.clientInfo = null;
-            this.broadcastStatusChange(channelId, 'disconnected', { 
+            this.broadcastStatusChange(channelId, 'disconnected', {
                 reason,
                 connected: false,
                 authenticated: false
@@ -721,7 +721,7 @@ class LicensedChannelManager {
             console.log(`🛑 Deactivating channel ${channelId}`);
 
             const channelInstance = this.channels.get(channelId);
-            
+
             // Destroy client
             if (channelInstance.client) {
                 await channelInstance.client.destroy();
@@ -762,7 +762,7 @@ class LicensedChannelManager {
      */
     getActiveChannels() {
         const channels = [];
-        
+
         for (const [channelId, channelInstance] of this.channels) {
             channels.push({
                 channelId,
@@ -795,7 +795,7 @@ class LicensedChannelManager {
         }
 
         const channelInstance = this.channels.get(channelId);
-        
+
         return {
             success: true,
             channelId,
@@ -852,7 +852,7 @@ class LicensedChannelManager {
      */
     getLicenses() {
         const licenses = Array.from(this.licenses.values());
-        
+
         return {
             success: true,
             count: licenses.length,
@@ -865,9 +865,9 @@ class LicensedChannelManager {
      */
     createChannelRoutes(channelId) {
         const router = express.Router();
-        
+
         // Status do canal - 🔧 AGORA COM AUTENTICAÇÃO
-        router.get('/status', 
+        router.get('/status',
             moderateRateLimit,
             authenticate({ required: true }), // 🔧 NOVO: Middleware de autenticação
             (req, res) => {
@@ -876,7 +876,7 @@ class LicensedChannelManager {
             });
 
         // QR Code do canal - 🔧 AGORA COM AUTENTICAÇÃO
-        router.get('/qr', 
+        router.get('/qr',
             moderateRateLimit,
             authenticate({ required: process.env.NODE_ENV !== 'development' }), // 🔧 CRITICAL: Auth protection
             (req, res) => {
@@ -896,7 +896,7 @@ class LicensedChannelManager {
             });
 
         // 🚀 MELHORADO: SSE stream com sistema de broadcast automático
-        router.get('/qr/stream', 
+        router.get('/qr/stream',
             moderateRateLimit,
             authenticate({ required: process.env.NODE_ENV !== 'development' }), // 🔧 CRITICAL: Auth protection
             (req, res) => {
@@ -981,16 +981,16 @@ class LicensedChannelManager {
             });
 
         // 🆕 Endpoint para forçar geração de novo QR
-        router.post('/start', 
+        router.post('/start',
             moderateRateLimit,
             authenticate({ required: true }),
             async (req, res) => {
                 try {
                     const channelInstance = this.getChannelInstance(channelId);
                     if (!channelInstance) {
-                        return res.status(404).json({ 
-                            success: false, 
-                            error: 'Channel not found' 
+                        return res.status(404).json({
+                            success: false,
+                            error: 'Channel not found'
                         });
                     }
 
@@ -1001,7 +1001,7 @@ class LicensedChannelManager {
                         try {
                             // Destroy current client
                             await channelInstance.client.destroy();
-                            
+
                             // Clear QR data
                             channelInstance.qrCode = null;
                             channelInstance.qrExpiresAt = null;
@@ -1060,7 +1060,7 @@ class LicensedChannelManager {
             try {
                 const { number, message } = req.body;
                 const channelInstance = this.getChannelInstance(channelId);
-                
+
                 if (!channelInstance) {
                     return res.status(404).json({ error: 'Channel not found' });
                 }
@@ -1090,7 +1090,7 @@ class LicensedChannelManager {
         router.get('/chats', async (req, res) => {
             try {
                 const channelInstance = this.getChannelInstance(channelId);
-                
+
                 if (!channelInstance) {
                     return res.status(404).json({ error: 'Channel not found' });
                 }
@@ -1119,7 +1119,7 @@ class LicensedChannelManager {
         router.get('/contacts', async (req, res) => {
             try {
                 const channelInstance = this.getChannelInstance(channelId);
-                
+
                 if (!channelInstance) {
                     return res.status(404).json({ error: 'Channel not found' });
                 }
@@ -1152,7 +1152,7 @@ class LicensedChannelManager {
      */
     async destroy() {
         console.log('🛑 Destroying all channels...');
-        
+
         for (const channelId of this.channels.keys()) {
             try {
                 await this.deactivateChannel(channelId);
@@ -1163,7 +1163,7 @@ class LicensedChannelManager {
 
         this.channels.clear();
         this.activeChannels.clear();
-        
+
         console.log('✅ All channels destroyed');
     }
 }

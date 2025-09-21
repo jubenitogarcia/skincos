@@ -36,7 +36,8 @@ app.use((req, res, next) => {
 // Serve static files
 try {
   app.use(express.static(path.join(__dirname, 'public')));
-  app.use('/whatsapp', express.static(path.join(__dirname, 'whatsapp-official-module/public')));
+  // New centralized path
+  app.use('/whatsapp', express.static(path.join(__dirname, 'whatsapp/official-module/public')));
 } catch (e) {
   console.warn('⚠️ Static file serving disabled:', e.message);
 }
@@ -76,7 +77,7 @@ app.get('/admin', (req, res) => {
     <h1>🚀 SKINCOS AI System</h1>
     <p class="status">✅ Server Running (Simplified Mode)</p>
     <p class="warning">⚠️ Some enterprise features are disabled</p>
-    
+
     <h3>Available Services:</h3>
     <ul>
       <li>✅ Basic Web Server</li>
@@ -84,13 +85,13 @@ app.get('/admin', (req, res) => {
       <li>⚠️ Enterprise API (limited)</li>
       <li>⚠️ Database Features (disabled)</li>
     </ul>
-    
+
     <h3>Quick Links:</h3>
     <ul>
       <li><a href="/v1/health" target="_blank">System Health</a></li>
       <li><a href="/">Main Dashboard</a></li>
     </ul>
-    
+
     <p><small>Server started at: ${new Date().toISOString()}</small></p>
   </div>
 </body>
@@ -123,33 +124,33 @@ app.get('/', (req, res) => {
       <p>Sistema Integrado de Gestão Empresarial</p>
       <div class="status">✅ Sistema Funcionando em Modo Simplificado</div>
     </div>
-    
+
     <div class="grid">
       <div class="card">
         <h3>📊 Dashboard</h3>
         <p>Painel principal do sistema</p>
         <a href="/admin" class="btn">Abrir Dashboard</a>
       </div>
-      
+
       <div class="card">
         <h3>🔍 Status do Sistema</h3>
         <p>Verificar saúde dos serviços</p>
         <a href="/v1/health" class="btn">Ver Status</a>
       </div>
-      
+
       <div class="card">
         <h3>📱 WhatsApp</h3>
         <p>Central de atendimento</p>
         <span style="opacity: 0.7;">Em manutenção</span>
       </div>
-      
+
       <div class="card">
         <h3>👥 CRM</h3>
         <p>Gestão de clientes</p>
         <span style="opacity: 0.7;">Em manutenção</span>
       </div>
     </div>
-    
+
     <div style="text-align: center; margin-top: 40px; opacity: 0.8;">
       <p>Servidor iniciado em: ${new Date().toISOString()}</p>
     </div>
@@ -190,7 +191,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔒 Mode: Simplified (Enterprise features disabled)`);
   console.log(`📊 Status: Server listening on port ${PORT} ✅`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  
+
   // Try to load enterprise modules in background (non-blocking)
   setTimeout(() => {
     console.log('🔄 Attempting to load enterprise modules in background...');
@@ -216,17 +217,17 @@ server.on('error', (error) => {
 async function loadEnterpriseModulesInBackground() {
   try {
     console.log('🔧 Loading enterprise API routes...');
-    
+
     // Try to require enterprise modules
     const { router: enterpriseRouter } = require('./routes/enterprise-api');
-    
+
     // Mount enterprise routes if successful
     app.use('/v1', enterpriseRouter);
     console.log('✅ Enterprise API routes loaded successfully');
-    
+
   } catch (error) {
     console.warn('⚠️ Enterprise API routes failed to load:', error.message);
-    
+
     // Create basic fallback routes
     app.use('/v1', express.Router()
       .get('/status', (req, res) => {
