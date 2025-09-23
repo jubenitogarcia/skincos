@@ -1439,6 +1439,24 @@ app.post('/restart-client', async (req, res) => {
     }
 });
 
+// Explicit start endpoint (alias of restart for lazy-init flows)
+app.post('/start-client', async (req, res) => {
+    try {
+        console.log('▶️  Start requested via API');
+        retryCount = 0;
+        initializeClientWithRecovery();
+
+        res.json({
+            success: true,
+            message: 'Client start initiated',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error starting client:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ========== WEBHOOK APIs ==========
 
 // Create webhook
@@ -1886,30 +1904,26 @@ app.listen(PORT, '0.0.0.0', async () => {
 
     try {
         if (MULTI_CHANNEL_MODE) {
-            // Initialize Multi-Channel System
-            console.log('🔄 Initializing Multi-Channel WhatsApp System...');
+            // Initialize Multi-Channel System (LAZY INIT: do not auto-activate channels)
+            console.log('🧭 Multi-Channel mode enabled (lazy initialization)');
             console.log(`⚖️ License-based architecture with max ${MAX_CHANNELS} channels`);
 
-            // Initialize Channel Management API
+            // Initialize Channel Management API and mount routes
             channelManagementAPI = new ChannelManagementAPI({
                 maxChannels: MAX_CHANNELS,
                 basePath: __dirname,
                 chromiumPath: CHROMIUM_PATH
             });
 
-            // Apply Channel Management routes to the app
             channelManagementAPI.applyToApp(app);
 
-            // Initialize any active channels from configuration
-            await channelManagementAPI.initializeActiveChannels();
-
-            console.log('✅ Multi-Channel WhatsApp System initialized successfully');
-            console.log(`📊 Access Channel Manager at: http://localhost:${PORT}/api/channel-manager/system/status`);
+            console.log('✅ Channel Management API ready — channels will be activated on-demand via API');
+            console.log(`📊 Channel Manager: http://localhost:${PORT}/api/channel-manager/system/status`);
 
         } else {
-            // Initialize single WhatsApp client (legacy mode)
-            console.log('🔄 Initializing Single-Channel WhatsApp Module (Legacy Mode)...');
-            client.initialize();
+            // Legacy single-channel mode — LAZY INIT: do not auto-initialize client
+            console.log('🧭 Single-Channel mode (legacy) — lazy initialization enabled.');
+            console.log('ℹ️ Use POST /restart-client to initialize the WhatsApp client when the user requests it.');
         }
 
     } catch (error) {

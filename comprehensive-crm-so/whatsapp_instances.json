@@ -3,27 +3,43 @@
     {
       "id": "wa-instance-3001",
       "port": 3001,
-      "status": "qr_pending",
+      "status": "starting",
       "createdAt": "2025-09-16T23:38:40.276Z",
-      "updatedAt": "2025-09-20T19:36:36.045Z",
+      "updatedAt": "2025-09-23T22:36:43.986Z",
       "metadata": {
-        "errorCount": 2,
-        "restartCount": 1,
-        "stoppedAt": "2025-09-18T22:09:16.439Z",
+        "errorCount": 21,
+        "restartCount": 29,
+        "stoppedAt": "2025-09-23T22:36:40.072Z",
         "explicitStart": true,
         "autoStart": false,
-        "disabled": true,
-        "disabledReason": "Port managed by WhatsApp Unified System",
         "note": "DISABLED - Port 3001 reserved for unified multi-channel system",
-        "startedAt": "2025-09-18T22:00:15.797Z",
+        "startedAt": "2025-09-23T22:36:43.667Z",
         "lastError": "Process died during startup",
-        "lastErrorAt": "2025-09-18T22:00:16.831Z",
-        "qrGeneratedAt": "2025-09-20T19:36:36.045Z",
-        "qrAttempts": 4
+        "lastErrorAt": "2025-09-23T01:33:41.846Z",
+        "qrGeneratedAt": "2025-09-23T15:41:47.033Z",
+        "qrAttempts": 48,
+        "phoneNumber": "555198493563",
+        "clientInfo": {
+          "pushname": "Espaço Facial - Novo Hamburgo",
+          "wid": {
+            "server": "c.us",
+            "user": "555198493563",
+            "_serialized": "555198493563@c.us"
+          },
+          "me": {
+            "server": "c.us",
+            "user": "555198493563",
+            "_serialized": "555198493563@c.us"
+          },
+          "platform": "smbi"
+        },
+        "lastActivity": "2025-09-23T01:37:12.790Z",
+        "connectedAt": "2025-09-23T01:37:12.790Z",
+        "attachedExternal": true,
+        "attachedAt": "2025-09-23T22:36:43.890Z"
       },
-      "name": "[DISABLED] Use Unified System Instead",
-      "channel": 1,
-      "qr": "2@j4hHvlVhqyd/7pdg0y5lfYNC4WlE2Rwml8qEu2ciQaFPdVrh0RW/zk0k/yM175Sb1RNUnFNskBCC6EA85aFjm4oOOdKQm6VuNPc=,/IgniqGk7IA2+SF+ivy0QGIM2FStxCKd+T93UEWO7jk=,9k2cD1mfp9yz3Fi7ezaz8tx0Q5dXZdemSNtz9UZtL28=,4DiqlVJOu34ysyiNHHjKpkvAbjXnsyjfC6Jg3oOzlK4=,1"
+      "name": "WhatsApp Official",
+      "channel": 1
     },
     {
       "id": "wa-instance-3002",
@@ -138,5 +154,5 @@
       "name": "Test-Channel-9"
     }
   ],
-  "lastUpdate": "2025-09-20T19:36:37.045Z"
+  "lastUpdate": "2025-09-23T22:36:44.987Z"
 }

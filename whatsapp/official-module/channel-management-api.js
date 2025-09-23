@@ -15,7 +15,7 @@ const {
 
 /**
  * Channel Management API
- * 
+ *
  * Fornece todas as APIs para gerenciamento de canais multi-licenciados:
  * - Ativar/desativar canais
  * - Listar canais ativos
@@ -28,11 +28,11 @@ class ChannelManagementAPI {
         this.channelManager = new LicensedChannelManager(options);
         this.router = express.Router();
         this.setupRoutes();
-        
+
         // Track dynamic routes for cleanup
         this.dynamicRoutes = new Map(); // channelId -> router
         this.app = null; // Reference to Express app for dynamic mounting
-        
+
         console.log('🚀 Channel Management API initialized');
     }
 
@@ -41,9 +41,9 @@ class ChannelManagementAPI {
      */
     setupRoutes() {
         // ========== LICENSE MANAGEMENT ==========
-        
+
         // Get all licenses - Critical operation requiring IP allowlist + authentication
-        this.router.get('/licenses', 
+        this.router.get('/licenses',
             strictRateLimit,
             requireAllowedIP(),
             authenticate({ required: true }),
@@ -59,7 +59,7 @@ class ChannelManagementAPI {
         );
 
         // Add new license - Critical operation requiring IP allowlist + authentication + CSRF
-        this.router.post('/licenses', 
+        this.router.post('/licenses',
             strictRateLimit,
             requireAllowedIP(),
             authenticate({ required: true }),
@@ -82,29 +82,29 @@ class ChannelManagementAPI {
         );
 
         // Validate license
-        this.router.post('/licenses/:licenseKey/validate', 
+        this.router.post('/licenses/:licenseKey/validate',
             strictRateLimit,
             authenticate({ required: true }),
             (req, res) => {
-            try {
-                const { licenseKey } = req.params;
-                const validation = this.channelManager.validateLicense(licenseKey);
-                
-                res.json({
-                    success: validation.valid,
-                    licenseKey,
-                    ...validation
-                });
-            } catch (error) {
-                console.error('❌ Error validating license:', error.message);
-                res.status(500).json({ success: false, error: error.message });
-            }
-        });
+                try {
+                    const { licenseKey } = req.params;
+                    const validation = this.channelManager.validateLicense(licenseKey);
+
+                    res.json({
+                        success: validation.valid,
+                        licenseKey,
+                        ...validation
+                    });
+                } catch (error) {
+                    console.error('❌ Error validating license:', error.message);
+                    res.status(500).json({ success: false, error: error.message });
+                }
+            });
 
         // ========== CHANNEL MANAGEMENT ==========
-        
+
         // Get all active channels - Requires authentication + rate limiting
-        this.router.get('/channels', 
+        this.router.get('/channels',
             moderateRateLimit,
             authenticate({ required: true }),
             (req, res) => {
@@ -119,7 +119,7 @@ class ChannelManagementAPI {
         );
 
         // Get specific channel status - Requires authentication + channel validation
-        this.router.get('/channels/:channelId', 
+        this.router.get('/channels/:channelId',
             moderateRateLimit,
             authenticate({ required: true }),
             validateChannelIdMiddleware(),
@@ -136,7 +136,7 @@ class ChannelManagementAPI {
         );
 
         // Activate channel - Critical operation requiring IP allowlist + authentication + CSRF
-        this.router.post('/channels/:channelId/activate', 
+        this.router.post('/channels/:channelId/activate',
             strictRateLimit,
             requireAllowedIP(),
             authenticate({ required: true }),
@@ -152,10 +152,10 @@ class ChannelManagementAPI {
                     const { licenseKey, options } = req.body;
 
                     const result = await this.channelManager.activateChannel(channelId, licenseKey, options || {});
-                    
+
                     // Create dynamic routes for the new channel
                     this.createDynamicChannelRoutes(channelId);
-                    
+
                     res.json(result);
                 } catch (error) {
                     console.error('❌ Error activating channel:', error.message);
@@ -165,7 +165,7 @@ class ChannelManagementAPI {
         );
 
         // Deactivate channel - Critical operation requiring IP allowlist + authentication + CSRF
-        this.router.delete('/channels/:channelId', 
+        this.router.delete('/channels/:channelId',
             strictRateLimit,
             requireAllowedIP(),
             authenticate({ required: true }),
@@ -175,10 +175,10 @@ class ChannelManagementAPI {
                 try {
                     const { channelId } = req.params;
                     const result = await this.channelManager.deactivateChannel(channelId);
-                    
+
                     // Remove dynamic routes for the channel
                     this.removeDynamicChannelRoutes(channelId);
-                    
+
                     res.json(result);
                 } catch (error) {
                     console.error('❌ Error deactivating channel:', error.message);
@@ -188,34 +188,34 @@ class ChannelManagementAPI {
         );
 
         // ========== CHANNEL OPERATIONS ==========
-        
+
         // Get channel QR code - Secured endpoint requiring authentication + IP allowlist
-        this.router.get('/channels/:channelId/qr', 
+        this.router.get('/channels/:channelId/qr',
             strictRateLimit,
             requireAllowedIP(),
             authenticate({ required: true }),
             validateChannelIdMiddleware(),
             (req, res) => {
-            try {
-                const { channelId } = req.params;
-                const channelInstance = this.channelManager.getChannelInstance(channelId);
-                
-                if (!channelInstance) {
-                    return res.status(404).json({ success: false, error: 'Channel not found' });
-                }
+                try {
+                    const { channelId } = req.params;
+                    const channelInstance = this.channelManager.getChannelInstance(channelId);
 
-                res.json({
-                    success: true,
-                    channelId,
-                    qr: channelInstance.qrCode,
-                    status: channelInstance.status,
-                    hasQR: !!channelInstance.qrCode
-                });
-            } catch (error) {
-                console.error('❌ Error getting channel QR:', error.message);
-                res.status(500).json({ success: false, error: error.message });
-            }
-        });
+                    if (!channelInstance) {
+                        return res.status(404).json({ success: false, error: 'Channel not found' });
+                    }
+
+                    res.json({
+                        success: true,
+                        channelId,
+                        qr: channelInstance.qrCode,
+                        status: channelInstance.status,
+                        hasQR: !!channelInstance.qrCode
+                    });
+                } catch (error) {
+                    console.error('❌ Error getting channel QR:', error.message);
+                    res.status(500).json({ success: false, error: error.message });
+                }
+            });
 
         // Send message through specific channel - Critical operation requiring full security
         this.router.post('/channels/:channelId/send-message',
@@ -229,41 +229,41 @@ class ChannelManagementAPI {
                 message: { required: true, type: 'string', maxLength: 4096 }
             }),
             async (req, res) => {
-            try {
-                const { channelId } = req.params;
-                const { number, message } = req.body;
-                
-                if (!number || !message) {
-                    return res.status(400).json({ success: false, error: 'Number and message are required' });
+                try {
+                    const { channelId } = req.params;
+                    const { number, message } = req.body;
+
+                    if (!number || !message) {
+                        return res.status(400).json({ success: false, error: 'Number and message are required' });
+                    }
+
+                    const channelInstance = this.channelManager.getChannelInstance(channelId);
+
+                    if (!channelInstance) {
+                        return res.status(404).json({ success: false, error: 'Channel not found' });
+                    }
+
+                    if (channelInstance.status !== 'ready') {
+                        return res.status(400).json({ success: false, error: 'Channel not ready' });
+                    }
+
+                    const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
+                    const result = await channelInstance.client.sendMessage(chatId, message);
+
+                    channelInstance.lastActivity = new Date();
+
+                    res.json({
+                        success: true,
+                        channelId,
+                        messageId: result.id._serialized,
+                        timestamp: new Date().toISOString()
+                    });
+
+                } catch (error) {
+                    console.error('❌ Error sending message:', error.message);
+                    res.status(500).json({ success: false, error: error.message });
                 }
-
-                const channelInstance = this.channelManager.getChannelInstance(channelId);
-                
-                if (!channelInstance) {
-                    return res.status(404).json({ success: false, error: 'Channel not found' });
-                }
-
-                if (channelInstance.status !== 'ready') {
-                    return res.status(400).json({ success: false, error: 'Channel not ready' });
-                }
-
-                const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
-                const result = await channelInstance.client.sendMessage(chatId, message);
-
-                channelInstance.lastActivity = new Date();
-
-                res.json({
-                    success: true,
-                    channelId,
-                    messageId: result.id._serialized,
-                    timestamp: new Date().toISOString()
-                });
-
-            } catch (error) {
-                console.error('❌ Error sending message:', error.message);
-                res.status(500).json({ success: false, error: error.message });
-            }
-        });
+            });
 
         // Get channel chats - Secured endpoint requiring authentication + IP allowlist
         this.router.get('/channels/:channelId/chats',
@@ -272,33 +272,33 @@ class ChannelManagementAPI {
             authenticate({ required: true }),
             validateChannelIdMiddleware(),
             async (req, res) => {
-            try {
-                const { channelId } = req.params;
-                const channelInstance = this.channelManager.getChannelInstance(channelId);
-                
-                if (!channelInstance) {
-                    return res.status(404).json({ success: false, error: 'Channel not found' });
+                try {
+                    const { channelId } = req.params;
+                    const channelInstance = this.channelManager.getChannelInstance(channelId);
+
+                    if (!channelInstance) {
+                        return res.status(404).json({ success: false, error: 'Channel not found' });
+                    }
+
+                    if (channelInstance.status !== 'ready') {
+                        return res.status(400).json({ success: false, error: 'Channel not ready' });
+                    }
+
+                    const chats = await channelInstance.chatManager.getChats();
+                    channelInstance.lastActivity = new Date();
+
+                    res.json({
+                        success: true,
+                        channelId,
+                        count: chats.length,
+                        chats
+                    });
+
+                } catch (error) {
+                    console.error('❌ Error getting chats:', error.message);
+                    res.status(500).json({ success: false, error: error.message });
                 }
-
-                if (channelInstance.status !== 'ready') {
-                    return res.status(400).json({ success: false, error: 'Channel not ready' });
-                }
-
-                const chats = await channelInstance.chatManager.getChats();
-                channelInstance.lastActivity = new Date();
-
-                res.json({
-                    success: true,
-                    channelId,
-                    count: chats.length,
-                    chats
-                });
-
-            } catch (error) {
-                console.error('❌ Error getting chats:', error.message);
-                res.status(500).json({ success: false, error: error.message });
-            }
-        });
+            });
 
         // Get channel contacts
         this.router.get('/channels/:channelId/contacts',
@@ -307,42 +307,42 @@ class ChannelManagementAPI {
             authenticate({ required: true }),
             validateChannelIdMiddleware(),
             async (req, res) => {
-            try {
-                const { channelId } = req.params;
-                const channelInstance = this.channelManager.getChannelInstance(channelId);
-                
-                if (!channelInstance) {
-                    return res.status(404).json({ success: false, error: 'Channel not found' });
+                try {
+                    const { channelId } = req.params;
+                    const channelInstance = this.channelManager.getChannelInstance(channelId);
+
+                    if (!channelInstance) {
+                        return res.status(404).json({ success: false, error: 'Channel not found' });
+                    }
+
+                    if (channelInstance.status !== 'ready') {
+                        return res.status(400).json({ success: false, error: 'Channel not ready' });
+                    }
+
+                    const contacts = await channelInstance.contactManager.getContacts();
+                    channelInstance.lastActivity = new Date();
+
+                    res.json({
+                        success: true,
+                        channelId,
+                        count: contacts.length,
+                        contacts
+                    });
+
+                } catch (error) {
+                    console.error('❌ Error getting contacts:', error.message);
+                    res.status(500).json({ success: false, error: error.message });
                 }
-
-                if (channelInstance.status !== 'ready') {
-                    return res.status(400).json({ success: false, error: 'Channel not ready' });
-                }
-
-                const contacts = await channelInstance.contactManager.getContacts();
-                channelInstance.lastActivity = new Date();
-
-                res.json({
-                    success: true,
-                    channelId,
-                    count: contacts.length,
-                    contacts
-                });
-
-            } catch (error) {
-                console.error('❌ Error getting contacts:', error.message);
-                res.status(500).json({ success: false, error: error.message });
-            }
-        });
+            });
 
         // ========== SYSTEM MANAGEMENT ==========
-        
+
         // Get system status
         this.router.get('/system/status', (req, res) => {
             try {
                 const channels = this.channelManager.getActiveChannels();
                 const licenses = this.channelManager.getLicenses();
-                
+
                 res.json({
                     success: true,
                     system: {
@@ -365,46 +365,46 @@ class ChannelManagementAPI {
         });
 
         // Restart specific channel
-        this.router.post('/channels/:channelId/restart', 
+        this.router.post('/channels/:channelId/restart',
             strictRateLimit,
             requireAllowedIP(),
             authenticate({ required: true }),
             csrfProtection(),
             validateChannelIdMiddleware(),
             async (req, res) => {
-            try {
-                const { channelId } = req.params;
-                const channelInstance = this.channelManager.getChannelInstance(channelId);
-                
-                if (!channelInstance) {
-                    return res.status(404).json({ success: false, error: 'Channel not found' });
+                try {
+                    const { channelId } = req.params;
+                    const channelInstance = this.channelManager.getChannelInstance(channelId);
+
+                    if (!channelInstance) {
+                        return res.status(404).json({ success: false, error: 'Channel not found' });
+                    }
+
+                    console.log(`🔄 Restarting channel ${channelId}`);
+
+                    // Store license key for reactivation
+                    const licenseKey = channelInstance.licenseKey;
+
+                    // Deactivate and reactivate
+                    await this.channelManager.deactivateChannel(channelId);
+                    await this.channelManager.activateChannel(channelId, licenseKey);
+
+                    // Recreate dynamic routes
+                    this.removeDynamicChannelRoutes(channelId);
+                    this.createDynamicChannelRoutes(channelId);
+
+                    res.json({
+                        success: true,
+                        channelId,
+                        status: 'restarted',
+                        timestamp: new Date().toISOString()
+                    });
+
+                } catch (error) {
+                    console.error('❌ Error restarting channel:', error.message);
+                    res.status(500).json({ success: false, error: error.message });
                 }
-
-                console.log(`🔄 Restarting channel ${channelId}`);
-                
-                // Store license key for reactivation
-                const licenseKey = channelInstance.licenseKey;
-                
-                // Deactivate and reactivate
-                await this.channelManager.deactivateChannel(channelId);
-                await this.channelManager.activateChannel(channelId, licenseKey);
-                
-                // Recreate dynamic routes
-                this.removeDynamicChannelRoutes(channelId);
-                this.createDynamicChannelRoutes(channelId);
-
-                res.json({
-                    success: true,
-                    channelId,
-                    status: 'restarted',
-                    timestamp: new Date().toISOString()
-                });
-
-            } catch (error) {
-                console.error('❌ Error restarting channel:', error.message);
-                res.status(500).json({ success: false, error: error.message });
-            }
-        });
+            });
 
         console.log('✅ Channel Management API routes configured');
     }
@@ -420,7 +420,7 @@ class ChannelManagementAPI {
 
         const channelRouter = this.channelManager.createChannelRoutes(channelId);
         this.dynamicRoutes.set(channelId, channelRouter);
-        
+
         // Mount routes immediately if app is available
         if (this.app) {
             this.app.use(`/whatsapp/${channelId}`, channelRouter);
@@ -459,10 +459,10 @@ class ChannelManagementAPI {
     applyToApp(app) {
         // Store app reference for dynamic mounting
         this.app = app;
-        
+
         // Mount main management API
         app.use('/api/channel-manager', this.router);
-        
+
         // Mount existing dynamic channel routes
         this.mountDynamicRoutes(app);
 
@@ -491,100 +491,24 @@ class ChannelManagementAPI {
     }
 
     /**
-     * Inicializa canais ativos na inicialização
-     * FIXED: Now properly activates channels with WhatsApp clients, not just routes
+     * Lazy initialization placeholder — channels are now started explicitly via API.
+     * Kept for backward compatibility: now only creates dynamic routes without activating clients.
      */
     async initializeActiveChannels() {
         try {
-            console.log('🚀 Initializing active channels from configuration...');
-            
+            console.log('🧭 Lazy mode: not auto-activating channels on startup');
+            // Ensure routes exist for any pre-listed active channels, but do not start clients
             const activeChannels = Array.from(this.channelManager.activeChannels);
-            console.log(`📋 Found ${activeChannels.length} active channels in configuration: [${activeChannels.join(', ')}]`);
-
-            // If no active channels in config, initialize Channel 1 as default
-            if (activeChannels.length === 0) {
-                console.log('🎯 No active channels found, initializing default Channel 1...');
-                activeChannels.push('1');
-            }
-            
-            let successCount = 0;
-            let errorCount = 0;
-
             for (const channelId of activeChannels) {
-                try {
-                    console.log(`\n🔄 Processing channel ${channelId}...`);
-                    
-                    // Check if channel instance already exists and is running
-                    const existingInstance = this.channelManager.getChannelInstance(channelId);
-                    if (existingInstance && (existingInstance.status === 'ready' || existingInstance.status === 'qr_received')) {
-                        console.log(`✅ Channel ${channelId} already active with status: ${existingInstance.status}`);
-                        this.createDynamicChannelRoutes(channelId);
-                        successCount++;
-                        continue;
-                    }
-
-                    // Clean existing session data to prevent conflicts
-                    await this.cleanChannelSessionData(channelId);
-
-                    // Determine license key - use DEFAULT_LICENSE_001 for Channel 1
-                    const licenseKey = channelId === '1' ? 'DEFAULT_LICENSE_001' : 'DEFAULT_LICENSE_001';
-                    
-                    // Validate license exists
-                    const licenseValidation = this.channelManager.validateLicense(licenseKey);
-                    if (!licenseValidation.valid) {
-                        console.error(`❌ License ${licenseKey} validation failed for channel ${channelId}: ${licenseValidation.reason}`);
-                        errorCount++;
-                        continue;
-                    }
-
-                    console.log(`🔑 Using license ${licenseKey} for channel ${channelId}`);
-
-                    // Activate channel with WhatsApp client (this creates the actual client instance)
-                    const activationOptions = {
-                        useLegacySession: channelId === '1', // Use legacy session for Channel 1
-                        autoRetry: true,
-                        retryDelay: 5000
-                    };
-
-                    console.log(`⚡ Activating channel ${channelId} with WhatsApp client...`);
-                    const result = await this.channelManager.activateChannel(channelId, licenseKey, activationOptions);
-                    
-                    if (result.success) {
-                        console.log(`✅ Channel ${channelId} activated successfully`);
-                        
-                        // Create dynamic routes for the activated channel
-                        this.createDynamicChannelRoutes(channelId);
-                        successCount++;
-                    } else {
-                        console.error(`❌ Failed to activate channel ${channelId}`);
-                        errorCount++;
-                    }
-
-                } catch (channelError) {
-                    console.error(`❌ Error initializing channel ${channelId}:`, channelError.message);
-                    console.error(`   Stack trace:`, channelError.stack);
-                    errorCount++;
-                    
-                    // Continue with other channels
-                    continue;
-                }
+                this.createDynamicChannelRoutes(channelId);
             }
-            
-            console.log(`\n🎯 Channel initialization completed:`);
-            console.log(`   ✅ Success: ${successCount} channels`);
-            console.log(`   ❌ Errors: ${errorCount} channels`);
-            console.log(`   📊 Total: ${activeChannels.length} channels processed`);
-
-            // If Channel 1 was successfully activated, log additional info
-            const channel1Instance = this.channelManager.getChannelInstance('1');
-            if (channel1Instance) {
-                console.log(`\n📱 Channel 1 Status: ${channel1Instance.status}`);
-                console.log(`📍 Channel 1 Session Path: ${this.channelManager.createChannelSessionPath('1')}`);
+            if (activeChannels.length === 0) {
+                // Expose at least channel 1 routes for convenience
+                this.createDynamicChannelRoutes('1');
             }
-            
+            console.log('✅ Dynamic routes ready. Use POST /api/channel-manager/channels/:id/activate to start a channel.');
         } catch (error) {
-            console.error('❌ Critical error initializing active channels:', error.message);
-            console.error('Stack trace:', error.stack);
+            console.error('❌ Error preparing dynamic routes:', error.message);
         }
     }
 
@@ -594,25 +518,25 @@ class ChannelManagementAPI {
     async cleanChannelSessionData(channelId) {
         try {
             console.log(`🧹 Cleaning session data for channel ${channelId}...`);
-            
+
             const sessionPath = this.channelManager.createChannelSessionPath(channelId);
             const fs = require('fs');
-            
+
             // Remove session directory if it exists
             if (fs.existsSync(sessionPath)) {
                 fs.rmSync(sessionPath, { recursive: true, force: true });
                 console.log(`🗑️ Removed session directory: ${sessionPath}`);
             }
-            
+
             // Clean user data directory for the channel
             const userDataDir = this.channelManager.createChannelUserDataDir(channelId);
             if (fs.existsSync(userDataDir)) {
                 fs.rmSync(userDataDir, { recursive: true, force: true });
                 console.log(`🗑️ Removed user data directory: ${userDataDir}`);
             }
-            
+
             console.log(`✅ Session cleanup completed for channel ${channelId}`);
-            
+
         } catch (cleanupError) {
             console.warn(`⚠️ Session cleanup warning for channel ${channelId}:`, cleanupError.message);
             // Don't throw - continue with activation even if cleanup fails
@@ -624,13 +548,13 @@ class ChannelManagementAPI {
      */
     async destroy() {
         console.log('🛑 Destroying Channel Management API...');
-        
+
         // Clear dynamic routes
         this.dynamicRoutes.clear();
-        
+
         // Destroy channel manager
         await this.channelManager.destroy();
-        
+
         console.log('✅ Channel Management API destroyed');
     }
 

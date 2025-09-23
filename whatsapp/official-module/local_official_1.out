@@ -1,0 +1,21 @@
+[33m[nodemon] 3.1.10[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): official-whatsapp.js extensions/**/* middleware/**/*[39m
+[33m[nodemon] watching extensions: js,json[39m
+[32m[nodemon] starting `node official-whatsapp.js`[39m
+🧹 Cleaning up browser data to prevent locks...
+🔧 WhatsApp Configuration:
+   Client ID: whatsapp-official-replit
+   Data Path: /Users/jubenitogarcia/Automation/skincos/whatsapp/official-module/sessions/session-whatsapp-official-replit
+   User Data Dir: /var/folders/6f/tkkbj0n53vx5h4zv565hhh2m0000gn/T/whatsapp-chromium-whatsapp-official-replit
+   Chromium Path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+   Multi-Channel Mode: DISABLED
+🚀 Creating WhatsApp client...
+🔗 Attaching event listeners...
+✅ Event listeners attached successfully
+🚀 WhatsApp Official Module server running on port 3001
+📱 Web interface: http://localhost:3001
+🧭 Single-Channel mode (legacy) — lazy initialization enabled.
+ℹ️ Use POST /restart-client to initialize the WhatsApp client when the user requests it.
+🔓 [AUTH] NO_AUTH mode - bypassing authentication for GET /api/status
+🔓 [AUTH] NO_AUTH mode - bypassing authentication for GET /api/qr

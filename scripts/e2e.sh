@@ -8,8 +8,7 @@ set -euo pipefail
 #   health     - repository health checks (non-failing)
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-GW_SCRIPT="$ROOT_DIR/scripts/dev-gateway-watch.sh"
-# Use centralized path; fallback to legacy if not present
+OFFICIAL_DIR="$ROOT_DIR/whatsapp/official-module"
 MOCK="$ROOT_DIR/whatsapp/gateway/simple-mock-api.js"
 if [ ! -f "$MOCK" ]; then
   MOCK="$ROOT_DIR/whatsapp-gateway/simple-mock-api.js"
@@ -42,11 +41,29 @@ assert_condition() {
 
 start_instance() {
   local inst=$1
-  if [[ ! -x "$GW_SCRIPT" ]]; then chmod +x "$GW_SCRIPT" 2>/dev/null || true; fi
-  "$GW_SCRIPT" --instance "$inst" --quiet >/dev/null 2>&1 || true
+  local port=$((3000 + inst))
+  # Prefer official module
+  if [[ -d "$OFFICIAL_DIR" ]]; then
+    (
+      cd "$OFFICIAL_DIR"
+      if [[ ! -d node_modules ]]; then npm install --no-audit --no-fund >/dev/null 2>&1 || true; fi
+      # Start once via node if not already up
+      if ! curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
+        PORT="$port" NO_AUTH=true NODE_ENV=development node official-whatsapp.js >/dev/null 2>&1 &
+        echo $! > ".e2e_${inst}.pid"
+      fi
+    )
+  else
+    # Fallback stub
+    (
+      cd "$ROOT_DIR/whatsapp/backup"
+      PORT="$port" ACCOUNT_ID="$port" node bot_com_api.js >/dev/null 2>&1 &
+      echo $! > ".e2e_stub_${inst}.pid"
+    )
+  fi
   for _ in {1..30}; do
-    if curl -sf "http://localhost:$((3000 + inst))/health" >/dev/null 2>&1; then
-      log "instance $inst UP on :$((3000 + inst))"; return 0
+    if curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
+      log "instance $inst UP on :${port}"; return 0
     fi
     sleep 0.3
   done

@@ -1,10 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: dev-gateway dev-all e2e-smoke e2e-ci e2e-health
-
-dev-gateway:
-	@chmod +x scripts/dev-gateway-watch.sh || true
-	@scripts/dev-gateway-watch.sh --instance $(or $(INST),1)
+.PHONY: dev-all e2e-smoke e2e-ci e2e-health
 
 dev-all:
 	@chmod +x scripts/dev-all-watch.sh || true

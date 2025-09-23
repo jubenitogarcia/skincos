@@ -81,6 +81,10 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 if [[ $USE_STUB -eq 1 ]]; then
+  # When using the stub, keep PID/LOG files under the stub directory as well
+  PID_FILE="$STUB_DIR/.local_instance_${INSTANCE}.pid"
+  LOG_FILE="$STUB_DIR/local_${INSTANCE}.out"
+  PROFILE_DIR="$STUB_DIR/.chrome_profile_${PORT}"
   cd "$STUB_DIR"
 else
   cd "$GW_DIR"

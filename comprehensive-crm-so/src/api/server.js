@@ -24,7 +24,7 @@ const app = express()
 
 // Critical: Enhanced CORS configuration to prevent API access issues
 app.use(cors({
-    origin: true, // Allow all origins in development  
+    origin: true, // Allow all origins in development
     credentials: true, // Essential for SSE/EventSource and auth cookies
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept'],
@@ -48,26 +48,26 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
     const userAgent = req.get('User-Agent') || ''
     const host = req.get('Host') || ''
-    
+
     // Check if request is targeting legacy port 3003 references
     if (host.includes(':3003') || req.headers.referer?.includes(':3003')) {
         const newUrl = `${req.protocol}://${host.replace(':3003', ':3001')}${req.originalUrl}`
         console.log(`🔄 [MIGRATION] 301 Redirect: ${req.url} → port 3001`)
         return res.status(301).redirect(newUrl)
     }
-    
+
     // Handle legacy WhatsApp API endpoints that might reference old port
     if (req.path.match(/\/api\/whatsapp\/.*/) && req.query.port === '3003') {
         const redirectPath = req.path.replace('/api/whatsapp/', '/whatsapp/channel-1/')
         console.log(`🔄 [MIGRATION] WhatsApp API redirect: ${req.path} → ${redirectPath}`)
         return res.status(301).redirect(redirectPath)
     }
-    
+
     next()
 })
 
 // Enhanced body parser with larger limits and better error handling
-app.use(bodyParser.json({ 
+app.use(bodyParser.json({
     limit: '10mb',
     verify: (req, res, buf) => {
         try {
@@ -80,11 +80,11 @@ app.use(bodyParser.json({
 }))
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }))
 
-// Smart static file serving - avoid conflicts with API routes  
+// Smart static file serving - avoid conflicts with API routes
 app.use((req, res, next) => {
     // Skip static middleware for API routes, health checks, and special paths
-    if (req.path.startsWith('/api/') || 
-        req.path.startsWith('/health') || 
+    if (req.path.startsWith('/api/') ||
+        req.path.startsWith('/health') ||
         req.path.includes('events') ||
         req.path.startsWith('/auth/')) {
         return next()
@@ -118,40 +118,40 @@ function authOk(req) {
 app.use((req, res, next) => {
     // Skip auth entirely if not configured
     if (!basicAuthUser) return next()
-    
+
     // Always allow preflight OPTIONS and health checks
     if (req.method === 'OPTIONS' || req.path.startsWith('/health')) {
         return next()
     }
-    
+
     // Special handling for SSE/EventSource endpoints - they need query-based auth
     if (req.path.includes('/events')) {
         if (req.query && req.query.auth) {
-            try { 
+            try {
                 const dec = Buffer.from(String(req.query.auth), 'base64').toString()
                 if (dec === BASIC_AUTH) return next()
-            } catch (e) { 
+            } catch (e) {
                 console.warn('[AUTH] Invalid query auth for SSE:', e.message)
             }
         }
         // For SSE without query auth, try normal auth
         if (authOk(req)) return next()
         // SSE endpoints get a different error format
-        return res.status(401).json({ 
-            success: false, 
+        return res.status(401).json({
+            success: false,
             error: 'Authentication required for event stream',
             hint: 'Add ?auth=BASE64(user:pass) to URL for EventSource'
         })
     }
-    
+
     // Try normal authentication
     if (authOk(req)) return next()
-    
+
     // Return appropriate error format based on request type
     if (req.path.startsWith('/api/')) {
         // JSON error for API endpoints (better for frontend error handling)
-        return res.status(401).json({ 
-            success: false, 
+        return res.status(401).json({
+            success: false,
             error: 'Authentication required',
             code: 'AUTH_REQUIRED'
         })
@@ -281,10 +281,10 @@ const convEventClients = new Set()
 // Enhanced SSE broadcast with connection health checks and cleanup
 function sseBroadcast(payload) {
     if (sseClients.size === 0) return
-    
+
     const data = `data: ${JSON.stringify({ ...payload, timestamp: new Date().toISOString() })}\n\n`
     const deadClients = new Set()
-    
+
     for (const res of sseClients) {
         try {
             if (res.destroyed || res.writableEnded) {
@@ -297,7 +297,7 @@ function sseBroadcast(payload) {
             deadClients.add(res)
         }
     }
-    
+
     // Clean up dead clients to prevent memory leaks
     for (const deadClient of deadClients) {
         sseClients.delete(deadClient)
@@ -307,15 +307,15 @@ function sseBroadcast(payload) {
 // Enhanced conversation broadcast with robust error handling and client cleanup
 function broadcastConversationUpdate(conv) {
     if (convEventClients.size === 0) return
-    
-    const payload = { 
-        type: 'conversation-update', 
+
+    const payload = {
+        type: 'conversation-update',
         conversation: conv,
         timestamp: new Date().toISOString()
     }
     const data = `data: ${JSON.stringify(payload)}\n\n`
     const deadClients = new Set()
-    
+
     for (const res of convEventClients) {
         try {
             if (res.destroyed || res.writableEnded) {
@@ -328,7 +328,7 @@ function broadcastConversationUpdate(conv) {
             deadClients.add(res)
         }
     }
-    
+
     // Clean up dead clients
     for (const deadClient of deadClients) {
         convEventClients.delete(deadClient)
@@ -337,15 +337,15 @@ function broadcastConversationUpdate(conv) {
 
 function broadcastNewMessage(message) {
     if (convEventClients.size === 0) return
-    
-    const payload = { 
-        type: 'message', 
+
+    const payload = {
+        type: 'message',
         message,
         timestamp: new Date().toISOString()
     }
     const data = `data: ${JSON.stringify(payload)}\n\n`
     const deadClients = new Set()
-    
+
     for (const res of convEventClients) {
         try {
             if (res.destroyed || res.writableEnded) {
@@ -358,7 +358,7 @@ function broadcastNewMessage(message) {
             deadClients.add(res)
         }
     }
-    
+
     // Clean up dead clients
     for (const deadClient of deadClients) {
         convEventClients.delete(deadClient)
@@ -497,15 +497,15 @@ app.get('/api/ai-suppression/events', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
     res.setHeader('Access-Control-Allow-Credentials', 'true')
     res.setHeader('X-Accel-Buffering', 'no') // Disable nginx buffering
-    
+
     // Flush headers immediately
     res.flushHeaders?.()
     res.status(200)
-    
+
     // Send initial connection confirmation
     try {
         res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`)
-        
+
         // Send initial snapshot with error handling
         const snapshot = { type: 'snapshot', suppressions: aiSuppression, timestamp: new Date().toISOString() }
         res.write(`data: ${JSON.stringify(snapshot)}\n\n`)
@@ -513,10 +513,10 @@ app.get('/api/ai-suppression/events', (req, res) => {
         console.error('[SSE] Failed to send initial data:', error)
         return res.end()
     }
-    
+
     // Add client to set with cleanup tracking
     sseClients.add(res)
-    
+
     // Enhanced cleanup with multiple event handlers to prevent race conditions
     const cleanup = () => {
         sseClients.delete(res)
@@ -528,12 +528,12 @@ app.get('/api/ai-suppression/events', (req, res) => {
             // Ignore cleanup errors
         }
     }
-    
+
     req.on('close', cleanup)
-    req.on('error', cleanup) 
+    req.on('error', cleanup)
     res.on('close', cleanup)
     res.on('error', cleanup)
-    
+
     // Heartbeat to detect disconnected clients and prevent loading loops
     const heartbeat = setInterval(() => {
         if (res.destroyed || !sseClients.has(res)) {
@@ -547,7 +547,7 @@ app.get('/api/ai-suppression/events', (req, res) => {
             cleanup()
         }
     }, 30000) // 30 second heartbeat
-    
+
     // Clear heartbeat on cleanup
     req.on('close', () => clearInterval(heartbeat))
 })
@@ -587,31 +587,31 @@ app.get('/api/conversations/events', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
     res.setHeader('Access-Control-Allow-Credentials', 'true')
     res.setHeader('X-Accel-Buffering', 'no') // Disable proxy buffering
-    
+
     // Flush headers and set status immediately
     res.flushHeaders?.()
     res.status(200)
-    
+
     // Send connection confirmation and initial snapshot with robust error handling
     try {
         // Connection confirmation
         res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`)
-        
+
         // Initial conversation snapshot
-        const snapshot = { 
-            type: 'snapshot', 
+        const snapshot = {
+            type: 'snapshot',
             conversations: conversations.filter(c => !c.archived), // Filter archived by default
-            timestamp: new Date().toISOString() 
+            timestamp: new Date().toISOString()
         }
         res.write(`data: ${JSON.stringify(snapshot)}\n\n`)
     } catch (error) {
         console.error('[CONV-SSE] Failed to send initial data:', error)
         return res.end()
     }
-    
+
     // Add client to tracking set
     convEventClients.add(res)
-    
+
     // Enhanced cleanup function to prevent memory leaks and race conditions
     const cleanup = () => {
         convEventClients.delete(res)
@@ -623,7 +623,7 @@ app.get('/api/conversations/events', (req, res) => {
             // Ignore cleanup errors - connection likely already closed
         }
     }
-    
+
     // Multiple event handlers for robust cleanup
     req.on('close', cleanup)
     req.on('error', cleanup)
@@ -631,7 +631,7 @@ app.get('/api/conversations/events', (req, res) => {
     res.on('close', cleanup)
     res.on('error', cleanup)
     res.on('finish', cleanup)
-    
+
     // Heartbeat mechanism to detect stale connections and prevent loading loops
     const heartbeat = setInterval(() => {
         if (res.destroyed || !convEventClients.has(res)) {
@@ -639,24 +639,24 @@ app.get('/api/conversations/events', (req, res) => {
             return
         }
         try {
-            res.write(`data: ${JSON.stringify({ 
-                type: 'heartbeat', 
+            res.write(`data: ${JSON.stringify({
+                type: 'heartbeat',
                 timestamp: new Date().toISOString(),
-                activeConnections: convEventClients.size 
+                activeConnections: convEventClients.size
             })}\n\n`)
         } catch (e) {
             clearInterval(heartbeat)
             cleanup()
         }
     }, 25000) // 25 second heartbeat
-    
+
     // Ensure heartbeat is cleared on all cleanup scenarios
     const originalCleanup = cleanup
     const enhancedCleanup = () => {
         clearInterval(heartbeat)
         originalCleanup()
     }
-    
+
     req.on('close', enhancedCleanup)
     res.on('close', enhancedCleanup)
 })
@@ -858,7 +858,7 @@ function isPidAlive(pid) {
 }
 
 // Channel-to-port mapping utility (unified multi-channel system)
-function portForChannel(channel) { 
+function portForChannel(channel) {
     // All channels now use the unified multi-channel system on port 3001
     // with REST routes /whatsapp/{account}/
     const channelNum = parseInt(channel, 10)
@@ -879,7 +879,7 @@ function channelForPort(port) {
 }
 
 // Legacy compatibility - remove port 3002 reservation
-function portFor(inst) { 
+function portFor(inst) {
     // Single instance always uses official module port
     return 3001 // Instance 1 = 3001 (official module)
 }
@@ -920,7 +920,7 @@ async function listWaInstances() {
     const list = []
     for (const inst of INSTANCES_RANGE) {
         let pid, alive, ready, status, message
-        
+
         {
             // Regular whatsapp-gateway instances
             pid = await readPid(inst)
@@ -928,7 +928,7 @@ async function listWaInstances() {
             ready = false
             status = 'stopped'
             message = null
-            
+
             if (alive) {
                 const ctrl = new AbortController()
                 const t = setTimeout(() => ctrl.abort(), 1200)
@@ -945,7 +945,7 @@ async function listWaInstances() {
                 } catch { status = 'unknown' } finally { clearTimeout(t) }
             }
         }
-        
+
         const meta = (waInstancesMeta.instances && waInstancesMeta.instances[String(inst)]) || {}
         list.push({
             instance: inst,
@@ -1092,12 +1092,12 @@ app.get('/api/wa/instances', async (req, res) => {
 app.post('/api/wa/start', async (req, res) => {
     try {
         const tried = []
-        
+
         // Basic guard: submodule must exist
         if (!(await fileExists(path.join(WA_GATEWAY_DIR, 'manage-instances.sh')))) {
             return res.status(500).json({ success: false, error: 'whatsapp-gateway submodule not available' })
         }
-        
+
         for (const inst of INSTANCES_RANGE) {
             const pid = await readPid(inst)
             const alive = pid ? isPidAlive(pid) : false
@@ -1131,12 +1131,12 @@ app.post('/api/wa/start/:instance', async (req, res) => {
     try {
         const inst = parseInt(String(req.params.instance), 10)
         if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        
+
         // Use the gateway management for all instances
         if (!(await fileExists(path.join(WA_GATEWAY_DIR, 'manage-instances.sh')))) {
             return res.status(500).json({ success: false, error: 'whatsapp-gateway submodule not available' })
         }
-        
+
         const pid = await readPid(inst)
         const alive = pid ? isPidAlive(pid) : false
         if (alive) {
@@ -1440,24 +1440,24 @@ const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY || 'sk_prod_a7b8c9d0
 app.get('/api/unified/status', async (req, res) => {
     try {
         console.log(`[FACADE] Proxying legacy status request to Unified System`)
-        
+
         const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/1/status`, {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
             }
         })
-        
+
         res.json(response.data)
     } catch (error) {
         console.error(`[FACADE] Error proxying legacy status:`, error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
-            res.status(500).json({ 
-                success: false, 
+            res.status(500).json({
+                success: false,
                 error: 'Failed to communicate with Unified System',
-                details: error.message 
+                details: error.message
             })
         }
     }
@@ -1467,24 +1467,24 @@ app.get('/api/unified/status', async (req, res) => {
 app.get('/api/unified/qr', async (req, res) => {
     try {
         console.log(`[FACADE] Proxying legacy QR request to Unified System`)
-        
+
         const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/1/qr`, {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
             }
         })
-        
+
         res.json(response.data)
     } catch (error) {
         console.error(`[FACADE] Error proxying legacy QR:`, error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
-            res.status(500).json({ 
-                success: false, 
+            res.status(500).json({
+                success: false,
                 error: 'Failed to communicate with Unified System',
-                details: error.message 
+                details: error.message
             })
         }
     }
@@ -1494,24 +1494,24 @@ app.get('/api/unified/qr', async (req, res) => {
 app.get('/api/qr', async (req, res) => {
     try {
         console.log(`[FACADE] Proxying direct QR request to Unified System`)
-        
+
         const response = await axios.get(`${UNIFIED_SYSTEM_URL}/api/qr`, {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
             }
         })
-        
+
         res.json(response.data)
     } catch (error) {
         console.error(`[FACADE] Error proxying direct QR:`, error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
-            res.status(500).json({ 
-                success: false, 
+            res.status(500).json({
+                success: false,
                 error: 'Failed to communicate with Unified System',
-                details: error.message 
+                details: error.message
             })
         }
     }
@@ -1522,24 +1522,24 @@ app.get('/api/unified/whatsapp/:channelId/status', async (req, res) => {
     try {
         const { channelId } = req.params
         console.log(`[FACADE] Proxying status request for channel ${channelId} to Unified System`)
-        
+
         const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/${channelId}/status`, {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
             }
         })
-        
+
         res.json(response.data)
     } catch (error) {
         console.error(`[FACADE] Error proxying status for channel ${req.params.channelId}:`, error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
-            res.status(500).json({ 
-                success: false, 
+            res.status(500).json({
+                success: false,
                 error: 'Failed to communicate with Unified System',
-                details: error.message 
+                details: error.message
             })
         }
     }
@@ -1550,24 +1550,24 @@ app.get('/api/unified/whatsapp/:channelId/qr', async (req, res) => {
     try {
         const { channelId } = req.params
         console.log(`[FACADE] Proxying QR request for channel ${channelId} to Unified System`)
-        
+
         const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/${channelId}/qr`, {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
             }
         })
-        
+
         res.json(response.data)
     } catch (error) {
         console.error(`[FACADE] Error proxying QR for channel ${req.params.channelId}:`, error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
-            res.status(500).json({ 
-                success: false, 
+            res.status(500).json({
+                success: false,
                 error: 'Failed to communicate with Unified System',
-                details: error.message 
+                details: error.message
             })
         }
     }
@@ -1578,7 +1578,7 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
     try {
         const { channelId } = req.params
         console.log(`[FACADE] Setting up SSE proxy for channel ${channelId} QR stream`)
-        
+
         // Configure SSE headers
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -1590,14 +1590,14 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
 
         // Create proxy to Unified System
         const proxyUrl = `${UNIFIED_SYSTEM_URL}/whatsapp/${channelId}/qr/stream`
-        
+
         // Use axios with stream to proxy SSE
         const forwardHeaders = {
             'X-API-Key': CRM_UNIFIED_API_KEY,
             'Accept': 'text/event-stream',
             'Cache-Control': 'no-cache'
         }
-        
+
         // 🔧 PRODUCTION HARDENING: Forward client auth headers for SSE
         if (req.headers.authorization) {
             forwardHeaders['Authorization'] = req.headers.authorization
@@ -1605,7 +1605,7 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
         if (req.headers.cookie) {
             forwardHeaders['Cookie'] = req.headers.cookie
         }
-        
+
         const source = axios.get(proxyUrl, {
             headers: forwardHeaders,
             responseType: 'stream',
@@ -1615,20 +1615,20 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
         source.then(response => {
             // Pipe the SSE stream directly to client
             response.data.pipe(res)
-            
+
             console.log(`📡 [FACADE] SSE proxy established for channel ${channelId}`)
-            
+
             // Handle client disconnect
             req.on('close', () => {
                 console.log(`🔌 [FACADE] SSE client disconnected from channel ${channelId} stream`)
                 response.data.destroy()
             })
-            
+
             req.on('error', (err) => {
                 console.error(`❌ [FACADE] SSE client error for channel ${channelId}:`, err.message)
                 response.data.destroy()
             })
-            
+
         }).catch(error => {
             console.error(`[FACADE] Error setting up SSE proxy for channel ${channelId}:`, error.message)
             res.write(`event: error\ndata: ${JSON.stringify({ error: 'SSE proxy failed', details: error.message })}\n\n`)
@@ -1637,10 +1637,10 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
 
     } catch (error) {
         console.error(`[FACADE] Critical error in SSE proxy for channel ${req.params.channelId}:`, error.message)
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             error: 'Failed to setup SSE proxy',
-            details: error.message 
+            details: error.message
         })
     }
 })
@@ -1656,9 +1656,9 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
         const availableChannels = whatsappOrchestrator.getAvailableChannels()
         const freeChannels = whatsappOrchestrator.getFreeChannels()
         const recoverySuggestions = whatsappOrchestrator.getRecoverySuggestions()
-        
-        res.json({ 
-            success: true, 
+
+        res.json({
+            success: true,
             ...status,
             availableChannelsList: availableChannels,
             freeChannelsList: freeChannels,
@@ -1693,18 +1693,18 @@ app.post('/api/wa-orchestrator/instances/start', async (req, res) => {
         const { port, channel, name } = req.body
         const channelOrPort = channel || port // Accept both channel and port parameters
         const result = await whatsappOrchestrator.startInstance(channelOrPort, { name })
-        
+
         if (result.success) {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 instance: result.instance,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         } else {
-            res.status(400).json({ 
-                success: false, 
+            res.status(400).json({
+                success: false,
                 error: result.error,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         }
     } catch (error) {
@@ -1717,28 +1717,28 @@ app.post('/api/wa-orchestrator/instances/:port/start', async (req, res) => {
     try {
         const port = parseInt(req.params.port)
         const { name } = req.body
-        
+
         // Validate port range
         if (isNaN(port) || port !== 3001) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid port. Must be 3001 for the official WhatsApp module.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid port. Must be 3001 for the official WhatsApp module.'
             })
         }
-        
+
         const result = await whatsappOrchestrator.startInstance(port, { name })
-        
+
         if (result.success) {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 instance: result.instance,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         } else {
-            res.status(400).json({ 
-                success: false, 
+            res.status(400).json({
+                success: false,
                 error: result.error,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         }
     } catch (error) {
@@ -1750,30 +1750,30 @@ app.post('/api/wa-orchestrator/instances/:port/start', async (req, res) => {
 app.post('/api/wa-orchestrator/instances/:port/stop', async (req, res) => {
     try {
         const port = parseInt(req.params.port)
-        
+
         // Validate port range
         if (isNaN(port) || port !== 3001) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid port. Must be 3001 for the official WhatsApp module.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid port. Must be 3001 for the official WhatsApp module.'
             })
         }
-        
+
         const result = await whatsappOrchestrator.stopInstance(port)
-        
+
         if (result.success) {
-            res.json({ 
+            res.json({
                 success: true,
                 channel: result.channel,
                 port: result.port,
-                message: result.message || 'Instance stopped successfully' 
+                message: result.message || 'Instance stopped successfully'
             })
         } else {
-            res.status(400).json({ 
-                success: false, 
+            res.status(400).json({
+                success: false,
                 error: result.error,
                 channel: result.channel || null,
-                port: result.port || null 
+                port: result.port || null
             })
         }
     } catch (error) {
@@ -1785,31 +1785,31 @@ app.post('/api/wa-orchestrator/instances/:port/stop', async (req, res) => {
 app.post('/api/wa-orchestrator/instances/:port/restart', async (req, res) => {
     try {
         const port = parseInt(req.params.port)
-        
+
         // Validate port range
         if (isNaN(port) || port !== 3001) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid port. Must be 3001 for the official WhatsApp module.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid port. Must be 3001 for the official WhatsApp module.'
             })
         }
-        
+
         const result = await whatsappOrchestrator.restartInstance(port)
-        
+
         if (result.success) {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 instance: result.instance,
                 channel: result.channel,
                 port: result.port,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         } else {
-            res.status(400).json({ 
-                success: false, 
+            res.status(400).json({
+                success: false,
                 error: result.error,
                 channel: result.channel || null,
-                port: result.port || null 
+                port: result.port || null
             })
         }
     } catch (error) {
@@ -1821,33 +1821,33 @@ app.post('/api/wa-orchestrator/instances/:port/restart', async (req, res) => {
 app.get('/api/wa-orchestrator/instances/:port', async (req, res) => {
     try {
         const port = parseInt(req.params.port)
-        
+
         // Validate port range
         if (isNaN(port) || port !== 3001) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid port. Must be 3001 for the official WhatsApp module.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid port. Must be 3001 for the official WhatsApp module.'
             })
         }
-        
+
         const result = await whatsappOrchestrator.getInstanceStatus(port)
-        
+
         if (result.error) {
-            res.status(404).json({ 
-                success: false, 
+            res.status(404).json({
+                success: false,
                 error: result.error,
                 channel: result.channel || null,
-                port: result.port || null 
+                port: result.port || null
             })
         } else {
-            res.json({ 
-                success: true, 
-                status: result.status, 
+            res.json({
+                success: true,
+                status: result.status,
                 channel: result.channel,
                 port: result.port,
                 instance: result.instance,
                 liveData: result.liveData || null,
-                warning: result.warning || null 
+                warning: result.warning || null
             })
         }
     } catch (error) {
@@ -1859,29 +1859,29 @@ app.get('/api/wa-orchestrator/instances/:port', async (req, res) => {
 app.get('/api/wa-orchestrator/instances/:port/qr', async (req, res) => {
     try {
         const port = parseInt(req.params.port)
-        
+
         // Validate port range
         if (isNaN(port) || port !== 3001) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid port. Must be 3001 for the official WhatsApp module.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid port. Must be 3001 for the official WhatsApp module.'
             })
         }
-        
+
         const result = await whatsappOrchestrator.getInstanceQR(port)
-        
+
         if (result.error) {
-            res.status(404).json({ 
-                success: false, 
+            res.status(404).json({
+                success: false,
                 error: result.error,
                 channel: result.channel || null,
                 port: result.port || null,
                 suggestion: result.suggestion || null
             })
         } else {
-            res.json({ 
-                success: true, 
-                qr: result.qr, 
+            res.json({
+                success: true,
+                qr: result.qr,
                 status: result.status,
                 channel: result.channel,
                 port: result.port,
@@ -1900,35 +1900,35 @@ app.put('/api/wa-orchestrator/instances/:port/metadata', async (req, res) => {
     try {
         const port = parseInt(req.params.port)
         const { metadata } = req.body
-        
+
         // Validate port range
         if (isNaN(port) || port !== 3001) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid port. Must be 3001 for the official WhatsApp module.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid port. Must be 3001 for the official WhatsApp module.'
             })
         }
-        
+
         if (!metadata || typeof metadata !== 'object') {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Metadata object required' 
+            return res.status(400).json({
+                success: false,
+                error: 'Metadata object required'
             })
         }
-        
+
         const result = await whatsappOrchestrator.updateInstanceMetadata(port, metadata)
-        
+
         if (result.success) {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 channel: result.channel,
-                port: result.port 
+                port: result.port
             })
         } else {
-            res.status(404).json({ 
-                success: false, 
+            res.status(404).json({
+                success: false,
                 error: result.error,
-                suggestion: result.suggestion || null 
+                suggestion: result.suggestion || null
             })
         }
     } catch (error) {
@@ -1942,16 +1942,16 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
         const port = whatsappOrchestrator.getFreePort()
         if (port) {
             const channel = channelForPort(port)
-            res.json({ 
-                success: true, 
-                port, 
+            res.json({
+                success: true,
+                port,
                 channel,
-                message: `Channel ${channel} (port ${port}) is available` 
+                message: `Channel ${channel} (port ${port}) is available`
             })
         } else {
             const status = whatsappOrchestrator.getStatus()
-            res.status(409).json({ 
-                success: false, 
+            res.status(409).json({
+                success: false,
                 error: 'No free ports available',
                 status: {
                     totalChannels: status.totalChannels,
@@ -1975,8 +1975,8 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
 app.get('/api/wa-orchestrator/channels', async (req, res) => {
     try {
         const status = whatsappOrchestrator.getStatus()
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             channels: status.channels,
             summary: {
                 totalChannels: status.totalChannels,
@@ -1997,31 +1997,31 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
     try {
         const channel = parseInt(req.params.channel)
         const { name } = req.body
-        
+
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid channel. Must be between 1 and 9.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
             })
         }
-        
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.startInstance(port, { name })
-        
+
         if (result.success) {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 instance: result.instance,
                 channel: result.instance?.channel,
                 port: result.instance?.port,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         } else {
-            res.status(400).json({ 
-                success: false, 
+            res.status(400).json({
+                success: false,
                 error: result.error,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         }
     } catch (error) {
@@ -2033,34 +2033,34 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
 app.get('/api/wa-orchestrator/channels/:channel', async (req, res) => {
     try {
         const channel = parseInt(req.params.channel)
-        
+
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid channel. Must be between 1 and 9.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
             })
         }
-        
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.getInstanceStatus(port)
-        
+
         if (result.error) {
-            res.status(404).json({ 
-                success: false, 
+            res.status(404).json({
+                success: false,
                 error: result.error,
                 channel: result.channel || channel,
-                port: result.port || null 
+                port: result.port || null
             })
         } else {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 status: result.status,
                 channel: result.channel || channel,
                 port: result.port,
                 instance: result.instance,
                 liveData: result.liveData || null,
-                warning: result.warning || null 
+                warning: result.warning || null
             })
         }
     } catch (error) {
@@ -2072,30 +2072,30 @@ app.get('/api/wa-orchestrator/channels/:channel', async (req, res) => {
 app.get('/api/wa-orchestrator/channels/:channel/qr', async (req, res) => {
     try {
         const channel = parseInt(req.params.channel)
-        
+
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid channel. Must be between 1 and 9.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
             })
         }
-        
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.getInstanceQR(port)
-        
+
         if (result.error) {
-            res.status(404).json({ 
-                success: false, 
+            res.status(404).json({
+                success: false,
                 error: result.error,
                 channel: result.channel || channel,
                 port: result.port || null,
                 suggestion: result.suggestion || null
             })
         } else {
-            res.json({ 
-                success: true, 
-                qr: result.qr, 
+            res.json({
+                success: true,
+                qr: result.qr,
                 status: result.status,
                 channel: result.channel || channel,
                 port: result.port,
@@ -2113,41 +2113,41 @@ app.get('/api/wa-orchestrator/channels/:channel/qr', async (req, res) => {
 app.post('/api/wa-orchestrator/channels/:channel/stop', async (req, res) => {
     // Prevent double response with response sent flag
     let responseSent = false
-    
+
     const sendResponse = (statusCode, payload) => {
         if (!responseSent && !res.headersSent) {
             responseSent = true
             res.status(statusCode).json(payload)
         }
     }
-    
+
     try {
         const channel = parseInt(req.params.channel)
-        
+
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
-            return sendResponse(400, { 
-                success: false, 
-                error: 'Invalid channel. Must be between 1 and 9.' 
+            return sendResponse(400, {
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
             })
         }
-        
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.stopInstance(port)
-        
+
         if (result.success) {
-            sendResponse(200, { 
+            sendResponse(200, {
                 success: true,
                 channel: result.channel || channel,
                 port: result.port || port,
-                message: result.message || 'Channel stopped successfully' 
+                message: result.message || 'Channel stopped successfully'
             })
         } else {
-            sendResponse(400, { 
-                success: false, 
+            sendResponse(400, {
+                success: false,
                 error: result.error,
                 channel: result.channel || channel,
-                port: result.port || port 
+                port: result.port || port
             })
         }
     } catch (error) {
@@ -2160,42 +2160,42 @@ app.post('/api/wa-orchestrator/channels/:channel/stop', async (req, res) => {
 app.post('/api/wa-orchestrator/channels/:channel/restart', async (req, res) => {
     // Prevent double response with response sent flag
     let responseSent = false
-    
+
     const sendResponse = (statusCode, payload) => {
         if (!responseSent && !res.headersSent) {
             responseSent = true
             res.status(statusCode).json(payload)
         }
     }
-    
+
     try {
         const channel = parseInt(req.params.channel)
-        
+
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
-            return sendResponse(400, { 
-                success: false, 
-                error: 'Invalid channel. Must be between 1 and 9.' 
+            return sendResponse(400, {
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
             })
         }
-        
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.restartInstance(port)
-        
+
         if (result.success) {
-            sendResponse(200, { 
-                success: true, 
+            sendResponse(200, {
+                success: true,
                 instance: result.instance,
                 channel: result.channel || channel,
                 port: result.port || port,
-                suggestions: result.suggestions || null 
+                suggestions: result.suggestions || null
             })
         } else {
-            sendResponse(400, { 
-                success: false, 
+            sendResponse(400, {
+                success: false,
                 error: result.error,
                 channel: result.channel || channel,
-                port: result.port || port 
+                port: result.port || port
             })
         }
     } catch (error) {
@@ -2209,36 +2209,36 @@ app.put('/api/wa-orchestrator/channels/:channel/metadata', async (req, res) => {
     try {
         const channel = parseInt(req.params.channel)
         const { metadata } = req.body
-        
+
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid channel. Must be between 1 and 9.' 
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
             })
         }
-        
+
         if (!metadata || typeof metadata !== 'object') {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Metadata object required' 
+            return res.status(400).json({
+                success: false,
+                error: 'Metadata object required'
             })
         }
-        
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.updateInstanceMetadata(port, metadata)
-        
+
         if (result.success) {
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 channel: result.channel || channel,
-                port: result.port 
+                port: result.port
             })
         } else {
-            res.status(404).json({ 
-                success: false, 
+            res.status(404).json({
+                success: false,
                 error: result.error,
-                suggestion: result.suggestion || null 
+                suggestion: result.suggestion || null
             })
         }
     } catch (error) {
@@ -2252,16 +2252,16 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
         const channel = whatsappOrchestrator.getNextAvailableChannel()
         if (channel) {
             const port = portForChannel(channel)
-            res.json({ 
-                success: true, 
-                channel, 
+            res.json({
+                success: true,
+                channel,
                 port,
-                message: `Channel ${channel} (port ${port}) is available` 
+                message: `Channel ${channel} (port ${port}) is available`
             })
         } else {
             const status = whatsappOrchestrator.getStatus()
-            res.status(409).json({ 
-                success: false, 
+            res.status(409).json({
+                success: false,
                 error: 'No available channels',
                 status: {
                     totalChannels: status.totalChannels,
@@ -2279,9 +2279,9 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
 
 // Health endpoint for microservice monitoring
 app.get('/health', (req, res) => {
-    res.status(200).json({ 
-        ok: true, 
-        status: 'healthy', 
+    res.status(200).json({
+        ok: true,
+        status: 'healthy',
         service: 'CRM Microservice',
         port: process.env.CRM_API_PORT || process.env.PORT || 8099,
         timestamp: new Date().toISOString()
@@ -2289,9 +2289,9 @@ app.get('/health', (req, res) => {
 })
 
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ 
-        ok: true, 
-        status: 'healthy', 
+    res.status(200).json({
+        ok: true,
+        status: 'healthy',
         service: 'CRM API',
         conversations: conversations.length,
         timestamp: new Date().toISOString()
@@ -2309,22 +2309,22 @@ const channelToPort = (channel) => channel === 1 ? 3001 : null
 const isChannelRunning = async (channel) => {
     try {
         const status = whatsappOrchestrator.getStatus()
-        
+
         // Ensure channels array exists
         if (!status || !Array.isArray(status.channels)) {
             console.warn(`[Proxy] Invalid status response for channel ${channel}:`, status)
             return false
         }
-        
+
         const instance = status.channels.find(inst => inst.channel === channel)
-        
+
         // Channel is ready if it has an instance with active server status
         const isReady = instance && (
-            instance.status === 'connected' || 
-            instance.status === 'qr_pending' || 
+            instance.status === 'connected' ||
+            instance.status === 'qr_pending' ||
             instance.status === 'starting'
         )
-        
+
         console.log(`[Proxy] Channel ${channel} check: status=${instance?.status}, ready=${isReady}`)
         return isReady
     } catch (error) {
@@ -2337,7 +2337,7 @@ const isChannelRunning = async (channel) => {
 for (let channel = 1; channel <= 1; channel++) {
     const port = channelToPort(channel) // Always 3001 for official module
     const channelRoute = `/canal${channel}` // Only /canal1 for official module
-    
+
     // Create proxy middleware for each channel
     const channelProxy = createProxyMiddleware({
         target: `http://localhost:${port}`,
@@ -2371,12 +2371,12 @@ for (let channel = 1; channel <= 1; channel++) {
             return `http://localhost:${port}`
         }
     })
-    
+
     // Register the proxy route
     app.use(channelRoute, async (req, res, next) => {
         // First check if channel is running
         const isRunning = await isChannelRunning(channel)
-        
+
         if (!isRunning) {
             return res.status(503).json({
                 success: false,
@@ -2387,23 +2387,23 @@ for (let channel = 1; channel <= 1; channel++) {
                 redirect: '/'
             })
         }
-        
+
         // If running, proceed with proxy
         channelProxy(req, res, next)
     })
-    
+
     console.log(`📡 Proxy route registered: ${channelRoute} → localhost:${port}`)
 }
 
 // Serve the React app for all non-API/non-channel routes (MUST BE LAST)
 app.use((req, res, next) => {
     // Skip if it's an API route, health check, or channel proxy route
-    if (req.path.startsWith('/api/') || 
-        req.path === '/health' || 
+    if (req.path.startsWith('/api/') ||
+        req.path === '/health' ||
         req.path.startsWith('/canal')) {
         return next()
     }
-    
+
     // For all other routes, serve the React app
     res.sendFile(path.resolve(__dirname, '../../index.html'))
 })

@@ -15,6 +15,8 @@ const WHATSAPP_MODULE_PATH = path.resolve(__dirname, '../../../whatsapp/official
 // Authentication configuration for Unified System communication
 const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY || 'unified-dev-key'
 const UNIFIED_SYSTEM_URL = 'http://localhost:3001'
+// Lazy-init enforcement: do NOT auto-start client on readiness unless explicitly enabled
+const UNIFIED_AUTOSTART_ON_READY = process.env.UNIFIED_AUTOSTART_ON_READY === 'true'
 
 class WhatsAppOrchestrator {
   constructor() {
@@ -640,6 +642,24 @@ class WhatsAppOrchestrator {
       const readinessResult = await this.waitForInstanceReadiness(targetPort, 30000) // 30s timeout
 
       if (readinessResult.success) {
+        // Strict lazy-init: do not auto-start client unless flag is enabled
+        if (targetPort === 3001) {
+          if (UNIFIED_AUTOSTART_ON_READY) {
+            try {
+              const startResp = await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/start-client`, { method: 'POST' })
+              if (!startResp.ok) {
+                const errText = await startResp.text().catch(() => '')
+                console.warn(`[WhatsApp Orchestrator] start-client returned ${startResp.status}: ${errText}`)
+              } else {
+                console.log('[WhatsApp Orchestrator] start-client invoked successfully for Channel 1 (autostart enabled)')
+              }
+            } catch (e) {
+              console.warn('[WhatsApp Orchestrator] Failed to invoke start-client (autostart):', e?.message || e)
+            }
+          } else {
+            console.log('[WhatsApp Orchestrator] Unified WA ready on :3001 — awaiting explicit user action to start client (lazy-init)')
+          }
+        }
         return { success: true, instance: this.serializeInstance(instance) }
       } else {
         instance.status = 'error'

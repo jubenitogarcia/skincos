@@ -1,12 +1,8 @@
-# Dev scripts
-
-- scripts/dev-gateway-watch.sh
-  - Run whatsapp-gateway with nodemon in watch mode for a selected instance (default 1, port 3001)
-  - Example: ./scripts/dev-gateway-watch.sh --instance 2
+# Dev scripts (unificados)
 
 - scripts/dev-all-watch.sh
-  - Starts CRM API (watch) + CRM Frontend (HMR) + whatsapp-gateway (watch) together
-  - Env: CRM_PORT=5173 CRM_API_PORT=3100 GW_INSTANCE=1
+  - Ponto único de entrada: mata portas comuns e inicia CRM API (watch), CRM Frontend (HMR) e WhatsApp (oficial por padrão; stub como fallback)
+  - Env: CRM_PORT=5173 CRM_API_PORT=3100 GW_INSTANCE=1 USE_OFFICIAL=1|0 (default auto)
 
 - scripts/e2e.sh (unified)
   - smoke: start real gateway instances (default INSTANCES=1,2) and run basic checks
@@ -18,7 +14,7 @@
 
 - scripts/e2e-multi-instance-smoke.sh (delegates to e2e.sh smoke)
 
-Github Actions
+GitHub Actions
 - .github/workflows/auto-next-steps.yml
   - On each push to main, creates an issue suggesting next steps based on changed paths.
   - It avoids paid models and notes how to enable GitHub Models free tiers if desired.
