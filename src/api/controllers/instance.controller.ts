@@ -30,7 +30,7 @@ export class InstanceController {
     private readonly chatwootCache: CacheService,
     private readonly baileysCache: CacheService,
     private readonly providerFiles: ProviderFiles,
-  ) {}
+  ) { }
 
   private readonly logger = new Logger('InstanceController');
 
@@ -388,11 +388,17 @@ export class InstanceController {
       }
     }
 
+    // If filtering by id or number, return full info
     if (instanceId || number) {
       return this.waMonitor.instanceInfoById(instanceId, number);
     }
 
     const instanceNames = instanceName ? [instanceName] : null;
+
+    // Use lightweight variant when no specific instance requested (performance)
+    if (!instanceName) {
+      return this.waMonitor.instanceInfoLight();
+    }
 
     return this.waMonitor.instanceInfo(instanceNames);
   }

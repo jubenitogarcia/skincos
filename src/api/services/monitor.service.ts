@@ -80,11 +80,11 @@ export class WAMonitoringService {
     const where =
       instanceNames && instanceNames.length > 0
         ? {
-            name: {
-              in: instanceNames,
-            },
-            clientName,
-          }
+          name: {
+            in: instanceNames,
+          },
+          clientName,
+        }
         : { clientName };
 
     const instances = await this.prismaRepository.instance.findMany({
@@ -108,6 +108,36 @@ export class WAMonitoringService {
     });
 
     return instances;
+  }
+
+  // Lightweight instance info (no heavy relation graphs) to speed up fetchInstances listing
+  public async instanceInfoLight(instanceNames?: string[]) {
+    const clientName = this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
+    const where = instanceNames && instanceNames.length > 0
+      ? { name: { in: instanceNames }, clientName }
+      : { clientName };
+
+    return this.prismaRepository.instance.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        connectionStatus: true,
+        ownerJid: true,
+        profileName: true,
+        profilePicUrl: true,
+        integration: true,
+        number: true,
+        clientName: true,
+        disconnectionReasonCode: true,
+        disconnectionAt: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: { Message: true, Contact: true, Chat: true },
+        },
+      },
+    });
   }
 
   public async instanceInfoById(instanceId?: string, number?: string) {

@@ -253,6 +253,9 @@ export class BaileysStartupService extends ChannelStartupService {
   private readonly userDevicesCache: CacheStore = new NodeCache({ stdTTL: 300000, useClones: false });
   private endSession = false;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
+  private reconnectAttempts = 0;
+  private readonly maxReconnectAttempts = 3; // Reduced to prevent excessive reconnections
+  private isReconnecting = false;
 
   public stateConnection: wa.StateConnection = { state: 'close' };
 
@@ -308,6 +311,17 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async connectionUpdate({ qr, connection, lastDisconnect }: Partial<ConnectionState>) {
+    // Early return for duplicate connection states to prevent reconnection loops
+    if (connection && connection === this.stateConnection.state) {
+      return;
+    }
+
+    // Prevent concurrent reconnections
+    if (connection === 'close' && this.isReconnecting) {
+      this.logger.warn('Reconnection already in progress, skipping...');
+      return;
+    }
+
     if (qr) {
       if (this.instance.qrcode.count === this.configService.get<QrCode>('QRCODE').LIMIT) {
         this.sendDataWebhook(Events.QRCODE_UPDATED, {
@@ -382,7 +396,7 @@ export class BaileysStartupService extends ChannelStartupService {
       qrcodeTerminal.generate(qr, { small: true }, (qrcode) =>
         this.logger.log(
           `\n{ instance: ${this.instance.name} pairingCode: ${this.instance.qrcode.pairingCode}, qrcodeCount: ${this.instance.qrcode.count} }\n` +
-            qrcode,
+          qrcode,
         ),
       );
 
@@ -403,8 +417,38 @@ export class BaileysStartupService extends ChannelStartupService {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
+
+      // Special handling for "conflict type=replaced" errors - pause longer
+      const isConflictError = lastDisconnect?.error?.message?.includes?.('conflict') ||
+        lastDisconnect?.error?.output?.payload?.error?.message?.includes?.('conflict');
+
       if (shouldReconnect) {
-        await this.connectToWhatsapp(this.phoneNumber);
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.isReconnecting = true;
+          this.reconnectAttempts++;
+
+          // Much longer backoff for conflict errors to prevent session collisions
+          const baseBackoff = isConflictError ? 60000 : 5000; // 1 minute for conflicts, 5s for others
+          const backoffMs = Math.min(this.reconnectAttempts * baseBackoff, isConflictError ? 300000 : 30000);
+
+          this.logger.info(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${backoffMs}ms ${isConflictError ? '(CONFLICT DETECTED - Extended delay)' : ''}`);
+          await delay(backoffMs);
+
+          try {
+            await this.connectToWhatsapp(this.phoneNumber);
+          } finally {
+            this.isReconnecting = false;
+          }
+        } else {
+          this.logger.error(`Max reconnect attempts (${this.maxReconnectAttempts}) reached for instance ${this.instance.name}`);
+          this.sendDataWebhook(Events.STATUS_INSTANCE, {
+            instance: this.instance.name,
+            status: 'closed',
+            disconnectionAt: new Date(),
+            disconnectionReasonCode: statusCode,
+            disconnectionObject: JSON.stringify(lastDisconnect),
+          });
+        }
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
           instance: this.instance.name,
@@ -441,6 +485,8 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     if (connection === 'open') {
+      this.reconnectAttempts = 0; // reset attempts on successful connection
+      this.isReconnecting = false; // reset reconnection flag
       this.instance.wuid = this.client.user.id.replace(/:\d+/, '');
       try {
         const profilePic = await this.profilePicture(this.instance.wuid);
@@ -500,8 +546,8 @@ export class BaileysStartupService extends ChannelStartupService {
     try {
       // Use raw SQL to avoid JSON path issues
       const webMessageInfo = (await this.prismaRepository.$queryRaw`
-        SELECT * FROM "Message" 
-        WHERE "instanceId" = ${this.instanceId} 
+        SELECT * FROM "Message"
+        WHERE "instanceId" = ${this.instanceId}
         AND "key"->>'id' = ${key.id}
       `) as proto.IWebMessageInfo[];
 
@@ -550,6 +596,26 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async createClient(number?: string): Promise<WASocket> {
+    // Proper cleanup of previous client to prevent WebSocket conflicts
+    if (this.client) {
+      try {
+        // Close existing WebSocket connection first
+        this.client.ws?.terminate?.();
+        this.client.ws?.close?.();
+
+        // Wait for proper cleanup before proceeding (increased delay)
+        await delay(3000);
+
+        // Remove all event listeners
+        (this.client.ev as any)?.removeAllListeners?.();
+        this.client.ws?.removeAllListeners?.();
+
+        // End the client properly
+        this.client.end?.(new Error('Creating new client'));
+      } catch (error) {
+        this.logger.warn(`Client cleanup error: ${error.message}`);
+      }
+    }
     this.instance.authState = await this.defineAuthState();
 
     const session = this.configService.get<ConfigSessionPhone>('CONFIG_SESSION_PHONE');
@@ -623,42 +689,37 @@ export class BaileysStartupService extends ChannelStartupService {
     const socketConfig: UserFacingSocketConfig = {
       ...options,
       version,
-      logger: P({ level: this.logBaileys }),
+      logger: P({ level: 'fatal' }), // Minimal logging to reduce noise
       printQRInTerminal: false,
       auth: {
         creds: this.instance.authState.state.creds,
-        keys: makeCacheableSignalKeyStore(this.instance.authState.state.keys, P({ level: 'error' }) as any),
+        keys: makeCacheableSignalKeyStore(this.instance.authState.state.keys, P({ level: 'fatal' }) as any),
       },
       msgRetryCounterCache: this.msgRetryCounterCache,
-      generateHighQualityLinkPreview: true,
-      getMessage: async (key) => (await this.getMessage(key)) as Promise<proto.IMessage>,
       ...browserOptions,
-      markOnlineOnConnect: this.localSettings.alwaysOnline,
-      retryRequestDelayMs: 350,
-      maxMsgRetryCount: 4,
-      fireInitQueries: true,
-      connectTimeoutMs: 30_000,
-      keepAliveIntervalMs: 30_000,
-      qrTimeout: 45_000,
+
+      // ULTRA-CONSERVATIVE SETTINGS TO ELIMINATE CONFLICTS
+      markOnlineOnConnect: false,
+      retryRequestDelayMs: 10000, // 10 second delay between retries
+      maxMsgRetryCount: 0, // Disable all retries to prevent conflicts
+      fireInitQueries: false,
+      defaultQueryTimeoutMs: 180000, // 3 minute timeout
+      linkPreviewImageThumbnailWidth: 0,
+      generateHighQualityLinkPreview: false,
+      connectTimeoutMs: 180000, // 3 minute connection timeout
+      keepAliveIntervalMs: 600000, // 10 minute keep-alive
+      qrTimeout: 60000,
       emitOwnEvents: false,
-      shouldIgnoreJid: (jid) => {
-        if (this.localSettings.syncFullHistory && isJidGroup(jid)) {
-          return false;
-        }
+      getMessage: undefined,
+      syncFullHistory: false,
+      shouldSyncHistoryMessage: () => false,
 
-        const isGroupJid = this.localSettings.groupsIgnore && isJidGroup(jid);
-        const isBroadcast = !this.localSettings.readStatus && isJidBroadcast(jid);
-        const isNewsletter = isJidNewsletter(jid);
+      // Temporarily ignore ALL JIDs to minimize session conflicts
+      shouldIgnoreJid: () => true,
 
-        return isGroupJid || isBroadcast || isNewsletter;
-      },
-      syncFullHistory: this.localSettings.syncFullHistory,
-      shouldSyncHistoryMessage: (msg: proto.Message.IHistorySyncNotification) => {
-        return this.historySyncNotification(msg);
-      },
       cachedGroupMetadata: this.getGroupMetadataCache,
       userDevicesCache: this.userDevicesCache,
-      transactionOpts: { maxCommitRetries: 10, delayBetweenTriesMs: 3000 },
+      transactionOpts: { maxCommitRetries: 1, delayBetweenTriesMs: 10000 },
       patchMessageBeforeSending(message) {
         if (
           message.deviceSentMessage?.message?.listMessage?.listType === proto.Message.ListMessage.ListType.PRODUCT_LIST
@@ -680,6 +741,11 @@ export class BaileysStartupService extends ChannelStartupService {
 
     this.endSession = false;
 
+    // Force disable full history sync if CONFIG_DISABLE_FULL_HISTORY env flag set or historic persistence disabled
+    const disableHistory = process.env.CONFIG_DISABLE_FULL_HISTORY === 'true' || process.env.DATABASE_SAVE_DATA_HISTORIC === 'false';
+    if (disableHistory) {
+      socketConfig.syncFullHistory = false;
+    }
     this.client = makeWASocket(socketConfig);
 
     if (this.localSettings.wavoipToken && this.localSettings.wavoipToken.length > 0) {
@@ -979,16 +1045,16 @@ export class BaileysStartupService extends ChannelStartupService {
 
         const messagesRepository: Set<string> = new Set(
           chatwootImport.getRepositoryMessagesCache(instance) ??
-            (
-              await this.prismaRepository.message.findMany({
-                select: { key: true },
-                where: { instanceId: this.instanceId },
-              })
-            ).map((message) => {
-              const key = message.key as { id: string };
+          (
+            await this.prismaRepository.message.findMany({
+              select: { key: true },
+              where: { instanceId: this.instanceId },
+            })
+          ).map((message) => {
+            const key = message.key as { id: string };
 
-              return key.id;
-            }),
+            return key.id;
+          }),
         );
 
         if (chatwootImport.getRepositoryMessagesCache(instance) === null) {
@@ -1491,8 +1557,8 @@ export class BaileysStartupService extends ChannelStartupService {
           if (configDatabaseData.HISTORIC || configDatabaseData.NEW_MESSAGE) {
             // Use raw SQL to avoid JSON path issues
             const messages = (await this.prismaRepository.$queryRaw`
-              SELECT * FROM "Message" 
-              WHERE "instanceId" = ${this.instanceId} 
+              SELECT * FROM "Message"
+              WHERE "instanceId" = ${this.instanceId}
               AND "key"->>'id' = ${key.id}
               LIMIT 1
             `) as any[];
@@ -1503,8 +1569,8 @@ export class BaileysStartupService extends ChannelStartupService {
 
           if (update.message === null && update.status === undefined) {
             this.sendDataWebhook(Events.MESSAGES_DELETE, key);
-
-            if (this.configService.get<Database>('DATABASE').SAVE_DATA.MESSAGE_UPDATE)
+            // Only persist update if we have the original message id (schema requires relation)
+            if (message.messageId && this.configService.get<Database>('DATABASE').SAVE_DATA.MESSAGE_UPDATE)
               await this.prismaRepository.messageUpdate.create({ data: message });
 
             if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
@@ -1550,7 +1616,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
           this.sendDataWebhook(Events.MESSAGES_UPDATE, message);
 
-          if (this.configService.get<Database>('DATABASE').SAVE_DATA.MESSAGE_UPDATE)
+          if (message.messageId && this.configService.get<Database>('DATABASE').SAVE_DATA.MESSAGE_UPDATE)
             await this.prismaRepository.messageUpdate.create({ data: message });
 
           const existingChat = await this.prismaRepository.chat.findFirst({
@@ -4461,7 +4527,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
     // Use raw SQL to avoid JSON path issues
     const result = await this.prismaRepository.$executeRaw`
-      UPDATE "Message" 
+      UPDATE "Message"
       SET "status" = ${status[4]}
       WHERE "instanceId" = ${this.instanceId}
       AND "key"->>'remoteJid' = ${remoteJid}
@@ -4486,7 +4552,7 @@ export class BaileysStartupService extends ChannelStartupService {
       this.prismaRepository.chat.findFirst({ where: { remoteJid } }),
       // Use raw SQL to avoid JSON path issues
       this.prismaRepository.$queryRaw`
-        SELECT COUNT(*)::int as count FROM "Message" 
+        SELECT COUNT(*)::int as count FROM "Message"
         WHERE "instanceId" = ${this.instanceId}
         AND "key"->>'remoteJid' = ${remoteJid}
         AND ("key"->>'fromMe')::boolean = false
