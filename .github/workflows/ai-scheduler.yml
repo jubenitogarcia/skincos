@@ -48,4 +48,4 @@ jobs:
           AI_ASSIGNEE: ${{ vars.AI_ASSIGNEE }}
           AI_MENTION: ${{ vars.AI_MENTION }}
         run: |
-          node scripts/ai-scheduler.js
+          node backend/tools/scripts/ai-scheduler.js

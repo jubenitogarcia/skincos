@@ -1,0 +1,99 @@
+# Production Environment Override
+# Usage: docker-compose -f docker-compose.base.yml -f docker-compose.prod.yml up
+
+services:
+  whatsapp-api:
+    build:
+      target: production
+      args:
+        - NODE_ENV=production
+    container_name: whatsapp-api-prod
+    environment:
+      - NODE_ENV=production
+      - DEBUG=whatsapp:error
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    container_name: redis-whatsapp-prod
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Traefik Reverse Proxy for Production
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik-prod
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--log.level=WARN"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks:
+      - whatsapp-network
+    labels:
+      - "traefik.enable=true"
+    profiles:
+      - proxy
+
+  # Watchtower for auto-updates
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower-prod
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=true
+      - WATCHTOWER_NOTIFICATIONS=email
+      - WATCHTOWER_NOTIFICATION_EMAIL_FROM=${NOTIFICATION_EMAIL}
+      - WATCHTOWER_NOTIFICATION_EMAIL_TO=${NOTIFICATION_EMAIL}
+      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER=${SMTP_SERVER}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - whatsapp-network
+    profiles:
+      - monitoring
+
+volumes:
+  traefik_letsencrypt:
+    driver: local

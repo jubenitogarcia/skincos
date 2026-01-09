@@ -1,0 +1,47 @@
+# Development Environment Override
+# Usage: docker-compose -f docker-compose.base.yml -f docker-compose.dev.yml up
+
+services:
+  whatsapp-api:
+    build:
+      target: development
+    environment:
+      - NODE_ENV=development
+      - DEBUG=whatsapp:*
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-web-security
+    volumes:
+      # Mount source code for hot reload
+      - ./apps/whatsapp-api/src:/app/src:ro
+      - ./apps/whatsapp-api/package.json:/app/package.json:ro
+    command: ["npm", "run", "dev"]
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Development tools
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: redis-insight
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    networks:
+      - whatsapp-network
+    profiles:
+      - tools
+
+  # Mailhog for testing webhooks
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - whatsapp-network
+    profiles:
+      - tools

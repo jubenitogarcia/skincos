@@ -1,0 +1,9 @@
+{
+  "name": "@whatsapp-monorepo/tsconfig",
+  "version": "1.0.0",
+  "description": "Shared TypeScript configuration for WhatsApp monorepo",
+  "main": "tsconfig.base.json",
+  "files": [
+    "tsconfig.*.json"
+  ]
+}

@@ -1,0 +1,13 @@
+packages:
+  # Simple Node apps (no nested workspaces)
+  - "apps/crm-api"
+  - "apps/instagram/module"
+  - "apps/whatsapp/official-module"
+  - "apps/whatsapp/official"
+
+  # NOTE:
+  # - `apps/agent-zero/` is its own Nx monorepo (npm workspaces).
+  # - `apps/actual-server/` declares yarn@4.
+  # - `apps/whatsapp/chat-module/*` are npm packages (kept independent).
+  # - `apps/whatsapp/gateway/` is its own turbo monorepo/workspace.
+  # Keep those managed independently to avoid nested workspace conflicts.

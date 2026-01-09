@@ -1,0 +1,40 @@
+📦 BLOCO 1/1 - 10 números
+----------------------------------------
+  📤 [1/10] Enviando para 51999999999...
+    ✅ 51999999999: Enviado com sucesso
+    ✅ Pausa de 8s concluída!
+  📤 [2/10] Enviando para 11888888888...
+    ✅ 11888888888: Enviado com sucesso
+    ✅ Pausa de 12s concluída!
+  📤 [3/10] Enviando para 21777777777...
+    ✅ 21777777777: Enviado com sucesso
+    ✅ Pausa de 7s concluída!
+  📤 [4/10] Enviando para 47666666666...
+    ✅ 47666666666: Enviado com sucesso
+    ✅ Pausa de 10s concluída!
+  📤 [5/10] Enviando para 85555555555...
+    ✅ 85555555555: Enviado com sucesso
+    ✅ Pausa de 9s concluída!
+  📤 [6/10] Enviando para 11777788888...
+    ✅ 11777788888: Enviado com sucesso
+    ✅ Pausa de 11s concluída!
+  📤 [7/10] Enviando para 21888899999...
+    ❌ 21888899999: Erro 400
+    ✅ Pausa de 6s concluída!
+  📤 [8/10] Enviando para 5199988776...
+    ✅ 5199988776: Enviado com sucesso
+    ✅ Pausa de 13s concluída!
+  📤 [9/10] Enviando para 11988776655...
+    ✅ 11988776655: Enviado com sucesso
+    ✅ Pausa de 8s concluída!
+  📤 [10/10] Enviando para 47997766544...
+    ❌ 47997766544: Erro - Timeout
+✅ Bloco 1 concluído!
+
+============================================================
+🎉 ENVIO CONCLUÍDO!
+============================================================
+✅ Mensagens enviadas: 8
+❌ Falhas: 2
+📊 Taxa de sucesso: 80.0%
+============================================================

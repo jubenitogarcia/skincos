@@ -1,0 +1,182 @@
+services:
+  # API WhatsApp Segunda Instância
+  whatsapp-api-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: whatsapp-api-prod-2
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - API_PORT=3002
+      - DEBUG=1
+      - DISPLAY=:99
+      - INSTANCE_NAME=instance2
+    volumes:
+      - whatsapp_auth_data_2:/app/.wwebjs_auth
+      - whatsapp_temp_videos_2:/app/temp_videos
+      - whatsapp_logs_data_2:/app/logs
+      - whatsapp_public_data_2:/app/public
+    ports:
+      - "3002:3002"
+    networks:
+      - whatsapp-network-2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 1.5G
+
+  # Traefik Reverse Proxy Instância 2
+  traefik-2:
+    image: traefik:v3.0
+    container_name: traefik-proxy-2
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:8001"
+      - "--entrypoints.websecure.address=:8444"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    ports:
+      - "8001:8001"
+      - "8444:8444"
+      - "8081:8080"
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_config_data_2:/etc/traefik
+      - traefik_logs_data_2:/var/log/traefik
+    networks:
+      - whatsapp-network-2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-2.rule=Host(`traefik2.localhost`)"
+      - "traefik.http.routers.traefik-2.service=api@internal"
+      - "traefik.http.routers.whatsapp-2.rule=Host(`api2.localhost`)"
+      - "traefik.http.routers.whatsapp-2.service=whatsapp-2"
+      - "traefik.http.services.whatsapp-2.loadbalancer.server.port=3002"
+
+  # Watchtower para auto-update Instância 2
+  watchtower-2:
+    image: containrrr/watchtower:latest
+    container_name: watchtower-whatsapp-2
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=true
+      - WATCHTOWER_DEBUG=true
+      - WATCHTOWER_LOG_LEVEL=info
+      - WATCHTOWER_SCOPE=instance2
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - whatsapp-network-2
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=instance2"
+
+  # Redis para cache e sessões Instância 2
+  redis-2:
+    image: redis:7-alpine
+    container_name: redis-whatsapp-2
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --port 6380
+    volumes:
+      - redis_data_2:/data
+    ports:
+      - "6380:6380"
+    networks:
+      - whatsapp-network-2
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx para servir arquivos estáticos Instância 2
+  nginx-2:
+    image: nginx:alpine
+    container_name: nginx-whatsapp-2
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - whatsapp_public_data_2:/usr/share/nginx/html/public:ro
+      - whatsapp_temp_videos_2:/usr/share/nginx/html/media:ro
+    ports:
+      - "8091:80"
+    networks:
+      - whatsapp-network-2
+    depends_on:
+      - whatsapp-api-2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nginx-2.rule=Host(`files2.localhost`)"
+      - "traefik.http.services.nginx-2.loadbalancer.server.port=80"
+
+  # Portainer para gerenciamento Instância 2
+  portainer-2:
+    image: portainer/portainer-ce:latest
+    container_name: portainer-whatsapp-2
+    restart: unless-stopped
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+      - portainer_data_2:/data
+    ports:
+      - "9001:9000"
+    networks:
+      - whatsapp-network-2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer-2.rule=Host(`portainer2.localhost`)"
+      - "traefik.http.services.portainer-2.loadbalancer.server.port=9000"
+
+  # Cloudflare Tunnel Instância 2 (opcional)
+  cloudflare-tunnel-2:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare-tunnel-2
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TOKEN_2:-dummy}
+    networks:
+      - whatsapp-network-2
+    depends_on:
+      - whatsapp-api-2
+    profiles:
+      - tunnel
+
+volumes:
+  whatsapp_auth_data_2:
+    driver: local
+  whatsapp_temp_videos_2:
+    driver: local
+  whatsapp_logs_data_2:
+    driver: local
+  whatsapp_public_data_2:
+    driver: local
+  traefik_config_data_2:
+    driver: local
+  traefik_logs_data_2:
+    driver: local
+  redis_data_2:
+    driver: local
+  portainer_data_2:
+    driver: local
+
+networks:
+  whatsapp-network-2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

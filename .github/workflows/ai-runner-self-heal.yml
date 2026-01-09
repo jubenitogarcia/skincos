@@ -30,4 +30,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          node scripts/ai-runner-failure-analyzer.js || true
+          node backend/tools/scripts/ai-runner-failure-analyzer.js || true

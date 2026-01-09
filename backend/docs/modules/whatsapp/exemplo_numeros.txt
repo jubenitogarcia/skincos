@@ -1,0 +1,16 @@
+Lista de Contatos Importantes
+
+João Silva: (51) 99999-9999
+Maria Santos: +55 11 88888-8888
+Pedro Costa: 21 7777-7777
+Ana Oliveira: 47 6666-6666
+Carlos Souza: 85 5555-5555
+
+Escritório Regional:
+- Porto Alegre: 51999999999
+- São Paulo: 11888888888
+
+Contatos de emergência:
+21777777777
+47666666666
+85555555555

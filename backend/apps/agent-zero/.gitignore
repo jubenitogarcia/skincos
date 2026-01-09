@@ -1,0 +1,151 @@
+# Ignore common unwanted files globally
+**/.DS_Store
+**/.env
+**/__pycache__/
+**/.conda/
+
+#Ignore cursor rules
+.cursor/
+
+# ignore test files in root dir
+/*.test.py
+
+# Ignore all contents of the virtual environment directory
+.venv/
+
+# Handle memory directory
+memory/**
+!memory/**/
+
+# Handle logs directory
+logs/*
+logs/
+
+# Handle tmp directory
+tmp/*
+tmp/
+
+# Handle knowledge directory
+knowledge/**
+!knowledge/**/
+# Explicitly allow the default folder in knowledge
+!knowledge/default/
+!knowledge/default/**
+
+# Handle instruments directory
+instruments/**
+!instruments/**/
+# Explicitly allow the default folder in instruments
+!instruments/default/
+!instruments/default/**
+
+# Global rule to include .gitkeep files anywhere
+!**/.gitkeep
+agent_history.gif
+queue.py
+
+# Ignore runtime/output artifacts
+*.out
+scripts/logs/*.log
+
+# Nx cache and workspace data
+.nx/cache
+.nx/workspace-data
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Node.js artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+coverage/
+*.lcov
+.nyc_output
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.venv/
+env/
+venv/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Monorepo build artifacts
+apps/*/dist/
+packages/*/dist/
+apps/*/build/
+packages/*/build/
+apps/*/coverage/
+packages/*/coverage/
+
+# Agent Zero specific runtime files
+daemon.out
+daemon.pid
+crm_*.out
+crm_*.pid
+gw*.out
+gw*.pid
+ui_test.pid
+worker*.out
+worker*.pid
+bot_headless.out
+queue_shadowed.*.disabled
+tunnel.log
+cookies.txt
+
+# Working directories
+work_dir/
+storage/
+.a0/
+
+# Temporary and backup files
+*.bak
+*.backup
+*.old
+*.tmp

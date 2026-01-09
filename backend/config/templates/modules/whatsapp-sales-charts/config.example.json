@@ -1,0 +1,47 @@
+{
+  "spreadsheet_id": "YOUR_SPREADSHEET_ID",
+  "google_scopes": [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file"
+  ],
+  "google_service_account": {
+    "type": "service_account",
+    "project_id": "your-project-id",
+    "private_key_id": "your-private-key-id",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n",
+    "client_email": "your-service-account@your-project-id.iam.gserviceaccount.com",
+    "client_id": "your-client-id",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project-id.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+  },
+  "whatsapp_config": {
+    "api_url": "https://wa.example.com",
+    "api_key": "YOUR_API_KEY",
+    "instance_id": "your-instance"
+  },
+  "is_private": false,
+  "automated": true,
+  "global": {
+    "test_phone_number": "+550000000000",
+    "production_phone_number": "+550000000000",
+    "common_cells": {
+      "data_referencia_1": "Comercial!F12"
+    },
+    "morning_message": "...",
+    "evening_message": "..."
+  },
+  "units": {
+    "bss": {
+      "chart_id_morning": "0000000000",
+      "chart_id_evening": "0000000000",
+      "cell_set": "bss",
+      "specific_cells": {
+        "venda_hoje": "Comercial!F3"
+      }
+    }
+  }
+}

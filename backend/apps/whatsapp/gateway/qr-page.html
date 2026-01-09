@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Bot - QR Code</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            min-height: 100vh;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .logo {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .status.ready {
+            background-color: #d4edda;
+            border: 2px solid #25D366;
+            color: #155724;
+        }
+
+        .status.waiting {
+            background-color: #fff3cd;
+            border: 2px solid #ffc107;
+            color: #856404;
+        }
+
+        .qr-container {
+            margin: 30px 0;
+            padding: 30px;
+            border: 3px dashed #25D366;
+            border-radius: 15px;
+            background-color: #f8f9fa;
+        }
+
+        .qr-visual {
+            margin: 20px auto;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .qr-image {
+            max-width: 300px;
+            height: auto;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            padding: 10px;
+            background: white;
+        }
+
+        .qr-text {
+            font-family: monospace;
+            font-size: 12px;
+            background: #000;
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            word-break: break-all;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 10px;
+            transition: transform 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(37, 211, 102, 0.3);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #25D366;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .debug {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #666;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="logo">📱</div>
+        <h1>WhatsApp Bot</h1>
+        <p>Conecte seu WhatsApp ao bot</p>
+
+        <div id="status" class="status waiting">
+            <div class="spinner"></div>
+            <p>🔄 Verificando status...</p>
+        </div>
+
+        <div id="qr-section" style="display: none;">
+            <div class="qr-container">
+                <h3>📱 Escaneie o QR Code</h3>
+
+                <div class="qr-visual" id="qr-visual">
+                    <div class="spinner"></div>
+                    <p>Carregando QR Code...</p>
+                </div>
+
+                <button class="btn btn-small" onclick="toggleText()">📄 Ver Código Texto</button>
+                <div id="qr-text" class="qr-text">Aguardando...</div>
+            </div>
+        </div>
+
+        <div id="ready-section" style="display: none;">
+            <div class="status ready">
+                <h3>✅ Bot Conectado!</h3>
+                <p>Seu WhatsApp Bot está funcionando corretamente.</p>
+            </div>
+        </div>
+
+        <button class="btn" onclick="checkStatus()">🔄 Atualizar Status</button>
+
+        <div id="debug" class="debug"></div>
+    </div>
+
+    <script>
+        let refreshInterval;
+        let currentQR = null;
+
+        function toggleText() {
+            const textDiv = document.getElementById('qr-text');
+            const btn = event.target;
+
+            if (textDiv.style.display === 'none' || textDiv.style.display === '') {
+                textDiv.style.display = 'block';
+                btn.textContent = '📄 Ocultar Código Texto';
+            } else {
+                textDiv.style.display = 'none';
+                btn.textContent = '📄 Ver Código Texto';
+            }
+        }
+
+        function displayQR(qrData) {
+            console.log('Exibindo QR Code:', qrData.substring(0, 30) + '...');
+
+            const visualDiv = document.getElementById('qr-visual');
+            const textDiv = document.getElementById('qr-text');
+
+            // Atualizar texto
+            textDiv.textContent = qrData;
+
+            // Gerar QR usando API externa (mais confiável)
+            const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=' + encodeURIComponent(qrData);
+
+            visualDiv.innerHTML = `
+                <img src="${qrUrl}"
+                     class="qr-image"
+                     alt="QR Code WhatsApp"
+                     onload="console.log('QR Code carregado!')"
+                     onerror="showError()">
+            `;
+        }
+
+        function showError() {
+            const visualDiv = document.getElementById('qr-visual');
+            visualDiv.innerHTML = `
+                <div style="padding: 20px; color: #666;">
+                    <p>❌ Erro ao carregar QR visual</p>
+                    <p>Use o código texto abaixo</p>
+                </div>
+            `;
+            // Forçar mostrar texto
+            document.getElementById('qr-text').style.display = 'block';
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+
+                const statusDiv = document.getElementById('status');
+                const qrSection = document.getElementById('qr-section');
+                const readySection = document.getElementById('ready-section');
+                const debugDiv = document.getElementById('debug');
+
+                // Debug
+                debugDiv.innerHTML = `
+                    <strong>Debug:</strong>
+                    Ready: ${data.ready} |
+                    QR Required: ${data.qrRequired} |
+                    Status: ${data.status} |
+                    Time: ${new Date().toLocaleTimeString()}
+                `;
+
+                if (data.ready) {
+                    // Bot conectado
+                    statusDiv.style.display = 'none';
+                    qrSection.style.display = 'none';
+                    readySection.style.display = 'block';
+
+                    if (refreshInterval) {
+                        clearInterval(refreshInterval);
+                        refreshInterval = null;
+                    }
+
+                } else if (data.qrRequired) {
+                    // Precisa de QR
+                    statusDiv.className = 'status waiting';
+                    statusDiv.innerHTML = '<p>📱 QR Code necessário - Escaneie com seu celular</p>';
+                    qrSection.style.display = 'block';
+                    readySection.style.display = 'none';
+
+                    // Buscar QR Code
+                    try {
+                        const qrResponse = await fetch('/qr');
+                        const qrData = await qrResponse.json();
+
+                        if (qrData.success && qrData.qr && qrData.qr !== currentQR) {
+                            currentQR = qrData.qr;
+                            console.log('Novo QR Code recebido!');
+                            displayQR(qrData.qr);
+                        }
+                    } catch (err) {
+                        console.error('Erro ao buscar QR:', err);
+                        showError();
+                    }
+
+                } else {
+                    // Conectando
+                    statusDiv.className = 'status waiting';
+                    statusDiv.innerHTML = `
+                        <div class="spinner"></div>
+                        <p>⏳ ${data.message || 'Bot conectando...'}</p>
+                    `;
+                    qrSection.style.display = 'none';
+                    readySection.style.display = 'none';
+                }
+
+            } catch (error) {
+                console.error('Erro na API:', error);
+                document.getElementById('status').innerHTML = '<p>❌ Erro de conexão</p>';
+            }
+        }
+
+        // Iniciar
+        checkStatus();
+        refreshInterval = setInterval(checkStatus, 3000);
+
+        // Parar quando aba não visível
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                if (refreshInterval) clearInterval(refreshInterval);
+            } else {
+                if (!refreshInterval) refreshInterval = setInterval(checkStatus, 3000);
+            }
+        });
+    </script>
+</body>
+
+</html>

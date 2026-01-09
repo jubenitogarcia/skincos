@@ -1,0 +1,16 @@
+{
+  "name": "skincos-backend-node",
+  "private": true,
+  "type": "module",
+  "description": "Backend Node workspace helper (opt-in).",
+  "packageManager": "pnpm@8.15.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "install:workspace": "pnpm -r install",
+    "list": "pnpm -r list --depth 0",
+    "why": "pnpm -r why"
+  }
+}
+

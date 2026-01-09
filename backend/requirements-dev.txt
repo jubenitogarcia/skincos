@@ -1,0 +1,18 @@
+# Development dependencies for SKINCOS backend
+black>=22.0.0
+isort>=5.10.0
+flake8>=6.0.0
+mypy>=1.0.0
+pytest>=7.0.0
+pytest-mock>=3.10.0
+pytest-cov>=4.0.0
+pre-commit>=3.0.0
+
+# Additional linting tools
+flake8-docstrings
+flake8-bugbear
+bandit>=1.7.0
+
+# Type stubs
+types-requests
+types-python-dateutil

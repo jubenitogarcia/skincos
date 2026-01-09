@@ -99,4 +99,4 @@ jobs:
           AI_MODELS_STRONG: ${{ inputs.ai-models-strong }}
           AI_MODELS_DEFAULT: ${{ inputs.ai-models-default }}
         run: |
-          node scripts/ai-improve-runner.js
+          node backend/tools/scripts/ai-improve-runner.js

@@ -1,0 +1,170 @@
+name: Processar Inscrições Sprinta (Otimizado)
+
+on:
+    # Dispara automaticamente quando um arquivo CSV é adicionado na pasta inscricoes/
+    push:
+        paths:
+            - "inscricoes/*.csv"
+
+    # Mantém opção manual para testes
+    workflow_dispatch:
+        inputs:
+            csv_file:
+                description: "Nome do arquivo CSV na pasta inscricoes/"
+                required: true
+                type: string
+
+# Configuração de concorrência para evitar execuções simultâneas
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    process-inscricoes:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10 # Timeout de segurança
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 2 # Reduzido de 0 para 2 (mais rápido)
+
+            # =========================================================================
+            # OTIMIZAÇÃO 1: Cache do Python e dependências
+            # Reduz ~30-45s de instalação de dependências
+            # =========================================================================
+            - name: Set up Python with cache
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+                  cache: "pip" # Cache automático de dependências pip
+                  cache-dependency-path: "requirements.txt"
+
+            # =========================================================================
+            # OTIMIZAÇÃO 2: Cache do Chrome/ChromeDriver
+            # Reduz ~60-90s de instalação do Chrome
+            # =========================================================================
+            - name: Cache Chrome installation
+              id: cache-chrome
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      /opt/google/chrome
+                      /usr/bin/google-chrome
+                      /usr/bin/google-chrome-stable
+                  key: chrome-${{ runner.os }}-stable
+                  restore-keys: |
+                      chrome-${{ runner.os }}-
+
+            - name: Install Chrome (only if not cached)
+              if: steps.cache-chrome.outputs.cache-hit != 'true'
+              run: |
+                  wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+                  sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+                  sudo apt-get update
+                  sudo apt-get install -y google-chrome-stable
+                  echo "✅ Chrome instalado"
+
+            - name: Verify Chrome installation
+              run: |
+                  google-chrome --version || echo "⚠️  Chrome não encontrado no PATH"
+
+            # =========================================================================
+            # OTIMIZAÇÃO 3: Instalação paralela de dependências Python
+            # =========================================================================
+            - name: Install Python dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install --no-cache-dir -r requirements.txt
+                  echo "✅ Dependências instaladas"
+
+            # =========================================================================
+            # OTIMIZAÇÃO 4: Cache do perfil do Chrome (sessão persistente)
+            # Mantém login entre execuções - economiza ~10-15s
+            # =========================================================================
+            - name: Cache Chrome profile
+              uses: actions/cache@v4
+              with:
+                  path: chrome_profile_sprinta
+                  key: chrome-profile-${{ runner.os }}-${{ hashFiles('sprinta_automation.py') }}
+                  restore-keys: |
+                      chrome-profile-${{ runner.os }}-
+
+            - name: Detectar arquivo CSV mais recente
+              id: detect-csv
+              run: |
+                  if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+                    CSV_FILE="inscricoes/${{ github.event.inputs.csv_file }}"
+                  else
+                    CSV_FILE=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep "inscricoes/.*\.csv" | head -1)
+                  fi
+
+                  echo "csv_file=$CSV_FILE" >> $GITHUB_OUTPUT
+                  echo "📄 Processando arquivo: $CSV_FILE"
+
+                  BASENAME=$(basename "$CSV_FILE" .csv)
+                  echo "basename=$BASENAME" >> $GITHUB_OUTPUT
+                  echo "📝 Nome base: $BASENAME"
+
+            # =========================================================================
+            # EXECUÇÃO DA AUTOMAÇÃO
+            # =========================================================================
+            - name: Executar automação
+              env:
+                  SPRINTA_EMAIL: ${{ secrets.SPRINTA_EMAIL }}
+                  SPRINTA_PASSWORD: ${{ secrets.SPRINTA_PASSWORD }}
+                  WIX_WEBHOOK_URL: ${{ secrets.WIX_WEBHOOK_URL }}
+                  # Variáveis de otimização
+                  PYTHONUNBUFFERED: 1 # Output em tempo real
+                  PIP_NO_CACHE_DIR: 1 # Não cachear pip dentro da execução
+              run: |
+                  CSV_FILE="${{ steps.detect-csv.outputs.csv_file }}"
+                  BASENAME="${{ steps.detect-csv.outputs.basename }}"
+
+                  if [ ! -f "$CSV_FILE" ]; then
+                    echo "❌ Arquivo CSV não encontrado: $CSV_FILE"
+                    exit 1
+                  fi
+
+                  echo "✅ Arquivo encontrado: $CSV_FILE"
+                  echo "🚀 Iniciando processamento..."
+                  echo "⏱️  Timestamp: $(date +%Y-%m-%d\ %H:%M:%S)"
+
+                  # Executar com webhook se configurado
+                  if [ ! -z "$WIX_WEBHOOK_URL" ]; then
+                    echo "🔔 Webhook Wix configurado"
+                    python sprinta_automation.py "$CSV_FILE" \
+                      --submission-id "$BASENAME" \
+                      --webhook-url "$WIX_WEBHOOK_URL"
+                  else
+                    echo "⚠️  Executando sem webhook"
+                    python sprinta_automation.py "$CSV_FILE"
+                  fi
+
+                  echo "⏱️  Concluído: $(date +%Y-%m-%d\ %H:%M:%S)"
+
+            # =========================================================================
+            # UPLOAD DE ARTEFATOS (Otimizado)
+            # =========================================================================
+            - name: Upload results
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: checkout-urls-${{ steps.detect-csv.outputs.basename }}
+                  path: |
+                      checkout_urls.json
+                      checkout_urls.csv
+                  retention-days: 30
+                  compression-level: 6 # Comprimir mais rápido
+
+            # =========================================================================
+            # ESTATÍSTICAS DE TEMPO (Opcional - para monitoramento)
+            # =========================================================================
+            - name: Report timing
+              if: always()
+              run: |
+                  echo "📊 Estatísticas de execução:"
+                  echo "- Runner: ${{ runner.os }}"
+                  echo "- Python: $(python --version)"
+                  echo "- Chrome: $(google-chrome --version)"

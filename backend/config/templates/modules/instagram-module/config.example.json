@@ -1,0 +1,39 @@
+{
+  "accounts": [
+    {
+      "account_id": null,
+      "added_at": null,
+      "is_active": null,
+      "session_file": null,
+      "status": null,
+      "username": null
+    }
+  ],
+  "api": {
+    "development_mode": null,
+    "host": null,
+    "port": null
+  },
+  "automation": {
+    "delay_between_actions": null,
+    "enable_smart_delays": null,
+    "max_follows_per_day": null,
+    "max_likes_per_day": null
+  },
+  "downloader": {
+    "download_highlights": null,
+    "download_posts": null,
+    "download_stories": null,
+    "max_concurrent_downloads": null
+  },
+  "osint": {
+    "enable_advanced_osint": null,
+    "enable_toutatis": null,
+    "output_format": null
+  },
+  "security": {
+    "rotate_user_agents": null,
+    "session_persistence": null,
+    "use_proxy": null
+  }
+}

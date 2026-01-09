@@ -1,0 +1,265 @@
+╔═══════════════════════════════════════════════════════════════╗
+║        🔧 CONFIGURAÇÃO NGROK - PASSO A PASSO VISUAL          ║
+╚═══════════════════════════════════════════════════════════════╝
+
+STATUS ATUAL:
+✅ Ngrok instalado com sucesso!
+⏳ Precisa configurar authtoken (1 minuto)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASSO 1: CRIAR CONTA (GRÁTIS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Abra no navegador:
+   https://dashboard.ngrok.com/signup
+
+2. Escolha uma opção de cadastro:
+
+   ┌─────────────────────────────────────────┐
+   │                                         │
+   │   [G] Sign up with Google  ⭐ RÁPIDO!  │
+   │                                         │
+   │   [GitHub] Sign up with GitHub          │
+   │                                         │
+   │   [Email] Sign up with Email            │
+   │                                         │
+   └─────────────────────────────────────────┘
+
+3. Complete o cadastro (30 segundos)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASSO 2: COPIAR AUTHTOKEN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Após login, você verá esta tela:
+
+┌──────────────────────────────────────────────────────────┐
+│ ngrok                                    [Your Account ▼]│
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Getting Started                                         │
+│  ───────────────                                         │
+│                                                          │
+│  1. Install ngrok                      ✅ Já feito!     │
+│                                                          │
+│  2. Connect your account                                 │
+│                                                          │
+│     Run this command in your terminal:                   │
+│                                                          │
+│     ┌────────────────────────────────────────────────┐  │
+│     │ ngrok config add-authtoken 2abc...xyz123       │  │
+│     │                                                │  │
+│     │ [📋 Copy]  ← CLIQUE AQUI!                     │  │
+│     └────────────────────────────────────────────────┘  │
+│                                                          │
+│  3. Fire it up                                           │
+│     ngrok http 80                                        │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+
+👉 CLIQUE NO BOTÃO [📋 Copy] para copiar o comando!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASSO 3: CONFIGURAR NO TERMINAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Volte para o terminal
+
+2. Cole o comando que você copiou:
+
+   ngrok config add-authtoken SEU_TOKEN_AQUI
+
+   Exemplo real:
+   ngrok config add-authtoken 2abcdefGHI_JKLmnopqrstuvwxyz123456
+
+3. Pressione ENTER
+
+4. Você verá:
+   ✅ Authtoken saved to configuration file: /Users/jubenitogarcia/.config/ngrok/ngrok.yml
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASSO 4: INICIAR NGROK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ IMPORTANTE: ANTES de iniciar ngrok, certifique-se que o webhook
+                está rodando em outro terminal!
+
+Terminal 1 (deve estar rodando):
+   python webhook_server.py
+
+Terminal 2 (este aqui):
+   ngrok http 5001
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASSO 5: COPIAR URL PÚBLICA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Após executar "ngrok http 5001", você verá:
+
+┌──────────────────────────────────────────────────────────┐
+│ ngrok                                                    │
+│                                                          │
+│ Session Status                online                    │
+│ Account                       Seu Nome (Plan: Free)     │
+│ Version                       3.30.0                    │
+│ Region                        United States (us)        │
+│ Latency                       51ms                      │
+│ Web Interface                 http://127.0.0.1:4040    │
+│ Forwarding                    https://abc123.ngrok.io → │
+│                               http://localhost:5001     │
+│                                                          │
+│ Connections                   ttl     opn     rt1   rt5 │
+│                               0       0       0.00  0.00│
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+
+✅ COPIE ESTA URL: https://abc123.ngrok.io
+   (Sua URL será diferente!)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASSO 6: USAR NO WIX
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No código Velo do Wix, atualize:
+
+// backend/sendToWebhook.jsw
+const WEBHOOK_URL = 'https://abc123.ngrok.io/webhook/sprinta';
+                     ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+                     COLE SUA URL AQUI!
+
+const WEBHOOK_SECRET = 'change-this-secret';  // Mesmo do .env
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧪 TESTAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Antes de integrar com Wix, teste se está funcionando:
+
+Terminal 3 (novo terminal):
+   curl https://sua-url.ngrok.io/health
+
+Resposta esperada:
+   {"status":"healthy"}
+
+Ou teste com o cliente Python:
+   python webhook_client_test.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ IMPORTANTE - MANTENHA RODANDO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Para o sistema funcionar, você precisa manter DOIS terminais abertos:
+
+Terminal 1:
+   $ python webhook_server.py
+   Status: ✅ RODANDO (não feche!)
+
+Terminal 2:
+   $ ngrok http 5001
+   Status: ✅ RODANDO (não feche!)
+
+Se fechar qualquer um, o Wix não conseguirá enviar dados!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 MONITORAR REQUISIÇÕES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ngrok tem uma interface web para monitorar requisições:
+
+Abra no navegador:
+   http://127.0.0.1:4040
+
+Você verá:
+   • Todas as requisições recebidas
+   • Headers completos
+   • Body das requisições
+   • Respostas enviadas
+   • Tempo de resposta
+
+Útil para debug! 🔧
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 CHECKLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Antes de ir para produção:
+
+Terminal:
+  [ ] Webhook server rodando (terminal 1)
+  [ ] Ngrok rodando (terminal 2)
+  [ ] URL HTTPS copiada
+
+Configuração:
+  [ ] WEBHOOK_SECRET configurado no .env
+  [ ] URL ngrok atualizada no código Wix
+  [ ] WEBHOOK_SECRET igual no Wix e no .env
+
+Teste:
+  [ ] curl https://sua-url.ngrok.io/health funcionando
+  [ ] python webhook_client_test.py funcionando
+  [ ] Teste do formulário Wix funcionando
+
+Monitoramento:
+  [ ] Interface ngrok aberta: http://127.0.0.1:4040
+  [ ] Logs do webhook visíveis no terminal 1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Erro: "authentication failed"
+→ Execute: ngrok config add-authtoken SEU_TOKEN
+
+Erro: "port 5001 is not available"
+→ Webhook server não está rodando
+→ Execute: python webhook_server.py (terminal 1)
+
+Erro: "connection refused"
+→ Verifique se ambos estão rodando
+→ Terminal 1: python webhook_server.py
+→ Terminal 2: ngrok http 5001
+
+Wix não consegue enviar:
+→ Verifique se URL no Wix está atualizada
+→ Verifique se tem HTTPS:// (não HTTP://)
+→ Verifique WEBHOOK_SECRET idêntico
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 DICAS PRO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. URL Customizada (Plano Pago):
+   Sem plano: https://abc123.ngrok.io (muda sempre)
+   Com plano: https://sprinta.ngrok.app (fixo!)
+
+2. Usar tmux/screen:
+   Manter terminais rodando mesmo fechando terminal
+   $ tmux
+   $ python webhook_server.py
+   (CTRL+B depois D para desanexar)
+
+3. Logs em arquivo:
+   python webhook_server.py > webhook.log 2>&1 &
+
+4. Produção:
+   Para 24/7, use Heroku/AWS (veja WEBHOOK_SERVER.md)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 PRÓXIMOS PASSOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. ⏳ Criar conta ngrok
+2. ⏳ Configurar authtoken
+3. ⏳ Iniciar webhook + ngrok
+4. ⏳ Copiar URL HTTPS
+5. ⏳ Atualizar código Wix
+6. ⏳ Testar integração
+7. ⏳ Considerar deploy produção (Heroku)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+👉 COMECE AGORA: https://dashboard.ngrok.com/signup
+
+╔═══════════════════════════════════════════════════════════════╗
+║  Depois de configurar, me avise para testarmos juntos!       ║
+╚═══════════════════════════════════════════════════════════════╝

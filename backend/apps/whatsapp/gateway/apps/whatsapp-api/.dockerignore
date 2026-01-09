@@ -1,0 +1,55 @@
+# Node modules
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Environment files (except example)
+.env
+.env.local
+.env.production
+!.env.example
+
+# Logs
+*.log
+logs
+
+# Runtime data
+*.pid
+*.out
+
+# Coverage
+coverage
+.nyc_output
+
+# WhatsApp session data
+.wwebjs_auth
+.wwebjs_cache
+storage
+
+# Development files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+tests
+*.test.js
+*.spec.js
+
+# Build artifacts
+dist
+build
+.next

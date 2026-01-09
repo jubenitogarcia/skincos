@@ -1,0 +1,127 @@
+═══════════════════════════════════════════════════════════════
+            🎉 ACTUAL BUDGET - INSTALADO COM SUCESSO! 🎉
+═══════════════════════════════════════════════════════════════
+
+📍 Localização: backend/apps/actual-server (dentro do repo skincos)
+🟢 Status: RODANDO AUTOMATICAMENTE EM BACKGROUND
+
+═══════════════════════════════════════════════════════════════
+                    🚀 INÍCIO RÁPIDO
+═══════════════════════════════════════════════════════════════
+
+🎯 SERVIÇO AUTOMÁTICO (JÁ INSTALADO E RODANDO!)
+
+   O Actual Budget está configurado para:
+   ✅ Rodar automaticamente em segundo plano
+   ✅ Iniciar quando você ligar o computador
+   ✅ Reiniciar automaticamente se houver problemas
+
+   Para gerenciar o serviço:
+   cd backend/apps/actual-server
+   ./service-manager.sh
+
+▶ OPÇÃO 1: Menu Interativo
+   cd backend/apps/actual-server
+   ./manage-actual-budget.sh
+
+   Este script oferece um menu com as seguintes opções:
+   • Iniciar/Parar servidor
+   • Verificar status
+   • Ver logs
+   • Fazer backup
+   • Restaurar backup
+   • Atualizar versão
+   • E muito mais!
+
+▶ OPÇÃO 2: Script de Inicialização Rápida
+   cd backend/apps/actual-server
+   ./start-actual-budget.sh
+
+▶ OPÇÃO 3: Comando Manual
+   cd backend/apps/actual-server
+   yarn start
+
+═══════════════════════════════════════════════════════════════
+                    🌐 ACESSAR O APLICATIVO
+═══════════════════════════════════════════════════════════════
+
+O servidor está SEMPRE RODANDO em segundo plano!
+Basta abrir seu navegador e acessar:
+
+   👉 http://localhost:5006
+
+Não precisa iniciar nada manualmente! ✨
+
+═══════════════════════════════════════════════════════════════
+                    ⚙️ COMANDOS ÚTEIS
+═══════════════════════════════════════════════════════════════
+
+Gerenciar serviço automático:
+   cd backend/apps/actual-server
+   ./service-manager.sh
+
+Ver status do serviço:
+   launchctl list | grep actualbudget
+
+Ver logs em tempo real:
+   tail -f backend/apps/actual-server/logs/actual-budget-stdout.log
+
+Parar o serviço:
+   launchctl stop com.actualbudget.server
+
+Iniciar o serviço:
+   launchctl start com.actualbudget.server
+
+Resetar senha:
+   cd backend/apps/actual-server
+   yarn reset-password
+
+Fazer backup:
+   ./service-manager.sh  (opção 6 do menu manage-actual-budget.sh)
+
+Atualizar para última versão:
+   cd backend/apps/actual-server
+   git pull origin master
+   yarn install
+
+═══════════════════════════════════════════════════════════════
+                    📁 ARQUIVOS IMPORTANTES
+═══════════════════════════════════════════════════════════════
+
+• server-files/              → Seus dados financeiros
+• logs/                      → Logs do serviço automático
+• GUIA-INSTALACAO-PT.md      → Documentação completa em português
+• SERVICO-AUTOMATICO.md      → Guia do serviço de inicialização
+• service-manager.sh         → Gerenciador do serviço (NOVO!)
+• manage-actual-budget.sh    → Menu de gerenciamento
+• start-actual-budget.sh     → Script de inicialização
+• ~/Library/LaunchAgents/    → Configuração do serviço automático
+  com.actualbudget.server.plist
+
+═══════════════════════════════════════════════════════════════
+                    💡 DICAS
+═══════════════════════════════════════════════════════════════
+
+✓ O servidor roda automaticamente em segundo plano 24/7
+✓ Inicia automaticamente quando você liga o computador
+✓ Reinicia sozinho se houver qualquer problema
+✓ Use ./service-manager.sh para gerenciar o serviço
+✓ Faça backups regulares da pasta server-files/
+✓ Use o menu interativo para facilitar o gerenciamento
+✓ Todos os dados ficam no seu computador (local-first)
+✓ Logs automáticos em backend/apps/actual-server/logs/
+✓ Consulte SERVICO-AUTOMATICO.md para mais informações
+
+═══════════════════════════════════════════════════════════════
+                    🆘 PRECISA DE AJUDA?
+═══════════════════════════════════════════════════════════════
+
+• Documentação: https://actualbudget.org/docs/
+• GitHub: https://github.com/actualbudget/actual
+• Discord: https://discord.com/invite/pRYNYr4W5A
+
+═══════════════════════════════════════════════════════════════
+
+                    Aproveite o Actual Budget! 💰📊
+
+═══════════════════════════════════════════════════════════════

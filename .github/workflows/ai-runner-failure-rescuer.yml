@@ -52,4 +52,4 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          node scripts/ai-runner-failure-analyzer.js
+          node backend/tools/scripts/ai-runner-failure-analyzer.js

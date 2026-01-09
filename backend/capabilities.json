@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "core": {
+    "crm": {
+      "id": "crm",
+      "path": "frontend",
+      "kind": "core",
+      "ports": { "frontend": 5173, "api": 8099 }
+    }
+  },
+  "capabilities": [
+    {
+      "id": "whatsapp-official",
+      "label": "WhatsApp (Official Module)",
+      "path": "backend/apps/whatsapp/official-module",
+      "kind": "service",
+      "ports": { "base": 3001, "range": "3001-3009" },
+      "health": { "path": "/health" },
+      "notes": "Multi-canal via /whatsapp/:channelId/* e /api/channel-manager/*; compat legacy: /status, /qr, /qr.html"
+    },
+    {
+      "id": "whatsapp-gateway",
+      "label": "WhatsApp (Gateway Legacy)",
+      "path": "backend/apps/whatsapp/gateway",
+      "kind": "service",
+      "ports": { "base": 3001, "range": "3001-3009" },
+      "health": { "path": "/health", "alt": "/status" },
+      "notes": "API legacy completa (/status, /qr.html, etc) + scripts e docker-compose"
+    },
+    {
+      "id": "scraper",
+      "label": "Scraper (Espaço Facial)",
+      "path": "backend/apps/automations/scraper",
+      "kind": "automation",
+      "notes": "Usa config.local.json (ignorado). Entrypoint: backend/scripts/dev.sh scraper"
+    },
+    {
+      "id": "sprinta",
+      "label": "Sprinta (Legacy + v2)",
+      "path": "backend/apps/automations/sprinta",
+      "kind": "automation",
+      "notes": "Entrypoint: backend/scripts/dev.sh sprinta (legacy|v2)"
+    },
+    {
+      "id": "scheduled-posting",
+      "label": "Scheduled Posting",
+      "path": "backend/apps/automations/scheduled_posting",
+      "kind": "automation",
+      "notes": "Entrypoint: backend/scripts/dev.sh scheduled-posting. Config/paths em backend/libs/scheduler_config.py e estado local em backend/var/scheduled_posting/."
+    },
+    {
+      "id": "xiaomi-token-extractor",
+      "label": "Xiaomi Token Extractor",
+      "path": "backend/tools/scripts/xiaomi",
+      "kind": "utility",
+      "notes": "Entrypoint: backend/scripts/dev.sh xiaomi-token"
+    },
+    {
+      "id": "agent-zero",
+      "label": "Agent Zero",
+      "path": "backend/apps/agent-zero",
+      "kind": "agent",
+      "ports": { "default": 50001 },
+      "health": { "path": "/agent-zero/debug/ping" },
+      "notes": "Entrypoint: backend/scripts/dev.sh agent. Canonical: backend/apps/agent-zero/ (UI/API integrada em backend/apps/agent-zero/integrated/)."
+    },
+    {
+      "id": "sales-chart-messenger",
+      "label": "Sales Chart Messenger",
+      "path": "backend/apps/automations/sales_chart_messenger",
+      "kind": "service",
+      "notes": "Automação Google Sheets/Drive -> WhatsApp. Entrypoint: backend/scripts/dev.sh sales-chart-messenger ou backend/apps/automations/sales_chart_messenger/scripts/run.sh"
+    },
+    {
+      "id": "actual-server",
+      "label": "Actual Server",
+      "path": "backend/apps/actual-server",
+      "kind": "service",
+      "ports": { "default": 5006 },
+      "health": { "path": "/health" },
+      "notes": "Entrypoint: backend/scripts/dev.sh actual-server"
+    },
+    {
+      "id": "chat-module",
+      "label": "Chat Module",
+      "path": "backend/apps/whatsapp/chat-module",
+      "kind": "service",
+      "notes": "Pacotes (opc.): backend/apps/whatsapp/chat-module/{whatsapp-core,whatsapp-api,whatsapp-ui}"
+    },
+    {
+      "id": "instagram-module",
+      "label": "Instagram Module",
+      "path": "backend/apps/instagram/module",
+      "kind": "service",
+      "ports": { "default": 3103 },
+      "health": { "path": "/health" },
+      "notes": "Config em config.local.json (ignorado) e API Node em instagram_api_server.js (porta default 3103 para evitar conflito com WhatsApp instances)."
+    }
+  ]
+}

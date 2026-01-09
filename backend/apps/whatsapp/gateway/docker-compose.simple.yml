@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # API WhatsApp Principal
+  whatsapp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple-puppeteer
+    container_name: whatsapp-api-prod
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - API_PORT=3000
+      - DEBUG=1
+    volumes:
+      - whatsapp_auth_data:/app/.wwebjs_auth
+      - whatsapp_temp_videos:/app/temp_videos
+      - whatsapp_logs_data:/app/logs
+    ports:
+      - "3000:3000"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik-proxy
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_config_data:/etc/traefik
+      - traefik_logs_data:/var/log/traefik
+    networks:
+      - whatsapp-network
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+  # Watchtower para auto-update
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower-whatsapp
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - whatsapp-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Redis para cache
+  redis:
+    image: redis:7-alpine
+    container_name: redis-whatsapp
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  whatsapp_auth_data:
+    driver: local
+  whatsapp_temp_videos:
+    driver: local
+  whatsapp_logs_data:
+    driver: local
+  traefik_config_data:
+    driver: local
+  traefik_logs_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  whatsapp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  traefik:
+    external: true

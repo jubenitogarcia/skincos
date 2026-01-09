@@ -1,0 +1,23 @@
+# Automação Espaço Facial - Dependências
+# Sistema de coleta de dados via navegador e atualização do Google Sheets
+
+# Selenium para automação web
+selenium==4.15.2
+webdriver-manager==4.0.1
+
+# Google Sheets API
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+google-api-python-client==2.108.0
+googleapis-common-protos==1.61.0
+
+# Manipulação de planilhas Excel (opcional)
+openpyxl==3.1.2
+
+# Requisições HTTP
+requests==2.31.0
+
+# Utilitários adicionais
+urllib3>=1.26.0
+certifi>=2023.0.0

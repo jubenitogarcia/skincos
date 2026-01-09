@@ -1,0 +1,226 @@
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║        ✅ ACTUAL BUDGET - INSTALAÇÃO COMPLETA E FUNCIONANDO      ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+DATA: 10 de outubro de 2025
+LOCALIZAÇÃO: backend/apps/actual-server (dentro do repo skincos)
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      📋 CHECKLIST DE INSTALAÇÃO                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+✅ Repositório clonado do GitHub
+✅ Dependências instaladas (yarn install)
+✅ Migrações do banco de dados executadas
+✅ Servidor testado e funcionando
+✅ Scripts de gerenciamento criados
+✅ Serviço automático configurado (launchd)
+✅ Serviço carregado e rodando em background
+✅ Inicialização automática configurada
+✅ Logs configurados e funcionando
+✅ Documentação completa em português criada
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      🎯 STATUS ATUAL                             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+🟢 SERVIDOR: RODANDO
+🟢 PORTA: 5006
+🟢 URL: http://localhost:5006
+🟢 SERVIÇO AUTOMÁTICO: ATIVO
+🟢 INICIALIZAÇÃO AUTOMÁTICA: CONFIGURADA
+🟢 LOGS: HABILITADOS
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      📁 ARQUIVOS CRIADOS                         ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📄 Scripts de Gerenciamento:
+   • start-actual-budget.sh      → Script de inicialização rápida
+   • manage-actual-budget.sh     → Menu interativo completo
+   • service-manager.sh          → Gerenciador do serviço automático
+
+📄 Documentação:
+   • LEIA-ME.txt                 → Guia rápido de referência
+   • GUIA-INSTALACAO-PT.md       → Documentação completa
+   • SERVICO-AUTOMATICO.md       → Guia do serviço automático
+   • INSTALACAO-COMPLETA.txt     → Este arquivo
+
+📄 Configuração do Sistema:
+   • ~/Library/LaunchAgents/com.actualbudget.server.plist
+     → Configuração do serviço de inicialização automática
+
+📂 Diretórios:
+   • server-files/               → Dados financeiros
+   • logs/                       → Logs do serviço
+     - actual-budget-stdout.log  → Saída padrão
+     - actual-budget-stderr.log  → Erros
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      🚀 COMO USAR                                ║
+╚══════════════════════════════════════════════════════════════════╝
+
+🌟 MÉTODO MAIS SIMPLES (RECOMENDADO):
+
+   Abra seu navegador e acesse:
+   👉 http://localhost:5006
+
+   Pronto! Não precisa fazer mais nada.
+   O servidor já está rodando automaticamente! ✨
+
+🔧 GERENCIAR O SERVIÇO:
+
+   Terminal → Execute:
+   cd backend/apps/actual-server
+   ./service-manager.sh
+
+   Menu disponível:
+   1) Instalar serviço (inicialização automática)
+   2) Desinstalar serviço
+   3) Iniciar serviço
+   4) Parar serviço
+   5) Reiniciar serviço
+   6) Ver status do serviço
+   7) Ver logs (stdout)
+   8) Ver logs (stderr)
+   9) Limpar logs
+   10) Testar configuração
+   11) Abrir no navegador
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      ⚙️ COMANDOS RÁPIDOS                         ║
+╚══════════════════════════════════════════════════════════════════╝
+
+# Ver status do serviço
+launchctl list | grep actualbudget
+
+# Parar serviço
+launchctl stop com.actualbudget.server
+
+# Iniciar serviço
+launchctl start com.actualbudget.server
+
+# Ver logs em tempo real
+tail -f backend/apps/actual-server/logs/actual-budget-stdout.log
+
+# Verificar se está rodando
+lsof -Pi :5006 -sTCP:LISTEN
+
+# Abrir no navegador
+open http://localhost:5006
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      🔄 O QUE FOI CONFIGURADO                    ║
+╚══════════════════════════════════════════════════════════════════╝
+
+✅ INICIALIZAÇÃO AUTOMÁTICA
+   • O Actual Budget inicia quando você faz login no macOS
+   • Configurado via launchd (sistema nativo do macOS)
+   • Não precisa abrir terminal ou executar scripts
+
+✅ EXECUÇÃO EM BACKGROUND
+   • Roda silenciosamente em segundo plano
+   • Não abre janelas ou terminais
+   • Consome poucos recursos
+
+✅ AUTO-RECUPERAÇÃO
+   • Se o servidor cair, reinicia automaticamente
+   • Aguarda 30 segundos antes de tentar reiniciar
+   • Evita loops infinitos de reinicialização
+
+✅ LOGS AUTOMÁTICOS
+   • Todas as operações são registradas
+   • stdout.log → saída normal do programa
+   • stderr.log → erros e avisos
+   • Útil para debug e monitoramento
+
+✅ DELAY DE INICIALIZAÇÃO
+   • Aguarda 10 segundos após login
+   • Garante que a rede esteja disponível
+   • Evita erros de conexão no boot
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      🎓 PRIMEIRO USO                             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+1. Abra seu navegador
+2. Acesse: http://localhost:5006
+3. Crie uma senha para proteger seus dados
+4. Comece a usar o Actual Budget!
+
+Na primeira vez:
+• Você verá a tela de configuração inicial
+• Será solicitado criar uma senha (importante!)
+• Depois disso, você pode criar seu primeiro orçamento
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      💾 BACKUP                                   ║
+╚══════════════════════════════════════════════════════════════════╝
+
+IMPORTANTE: Faça backups regulares!
+
+Seus dados estão em:
+backend/apps/actual-server/server-files/
+
+Fazer backup manual:
+cd backend/apps/actual-server
+tar -czf ~/backup-actual-$(date +%Y%m%d).tar.gz server-files/
+
+Ou use o menu interativo:
+./manage-actual-budget.sh → Opção 6 (Backup de dados)
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      🔒 SEGURANÇA                                ║
+╚══════════════════════════════════════════════════════════════════╝
+
+✓ Dados locais: Tudo fica no seu computador
+✓ Senha protegida: Configure uma senha forte
+✓ Sem cloud: Seus dados não vão para nenhum servidor externo
+✓ Open source: Código auditável e transparente
+✓ Privacidade: Ninguém tem acesso aos seus dados financeiros
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      📚 DOCUMENTAÇÃO                             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Guias Locais (no seu computador):
+• LEIA-ME.txt              → Referência rápida
+• GUIA-INSTALACAO-PT.md    → Documentação completa
+• SERVICO-AUTOMATICO.md    → Serviço de inicialização
+
+Documentação Oficial:
+• https://actualbudget.org/docs/
+
+Comunidade:
+• Discord: https://discord.com/invite/pRYNYr4W5A
+• GitHub: https://github.com/actualbudget/actual
+
+╔══════════════════════════════════════════════════════════════════╗
+║                      🎉 PRONTO PARA USAR!                        ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Tudo está funcionando e configurado! 🚀
+
+O Actual Budget está:
+✅ Instalado
+✅ Rodando automaticamente
+✅ Configurado para iniciar com o sistema
+✅ Pronto para gerenciar suas finanças
+
+Próximos passos:
+1. Abra http://localhost:5006
+2. Configure sua senha
+3. Crie seu primeiro orçamento
+4. Comece a organizar suas finanças!
+
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║              Aproveite o Actual Budget! 💰📊✨                    ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Para qualquer dúvida ou problema:
+cd backend/apps/actual-server
+./service-manager.sh

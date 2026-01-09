@@ -19,17 +19,11 @@ jobs:
           token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Initialize submodules (best-effort)
-        continue-on-error: true
-        run: |
-          set -euxo pipefail
-          if [ -n "${{ secrets.GH_TOKEN }}" ]; then
-            git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
-            git submodule sync --recursive || true
-            git submodule update --init --recursive || true
-          else
-            echo "GH_TOKEN not set; skipping submodule init"
-          fi
+	      - name: Initialize submodules (best-effort)
+	        continue-on-error: true
+	        run: |
+	          set -euxo pipefail
+	          echo "No submodules expected in this monorepo; skipping."
 
       - name: Generate next-steps suggestion
         id: gen
@@ -45,10 +39,13 @@ jobs:
             echo "$SUMMARY"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          PLAN=""
-          echo "$DIFF_FILES" | grep -q "comprehensive-crm-so/" && PLAN+=$'• CRM FE/API changed: validate orchestrator endpoints, unread counts, and global search.\n' || true
-          echo "$DIFF_FILES" | grep -q "whatsapp-gateway/" && PLAN+=$'• Gateway changed: run e2e multi-instance smoke; validate /v1/search and /v1/chats/unread-counts.\n' || true
-          echo "$DIFF_FILES" | grep -q "broadhub/\|a0/" && PLAN+=$'• Other modules touched: run their local scripts and basic health checks.\n' || true
+	          PLAN=""
+	          echo "$DIFF_FILES" | grep -q "^frontend/" && PLAN+=$'• Frontend changed: run CRM UI smoke + check build.\n' || true
+	          echo "$DIFF_FILES" | grep -q "^backend/apps/crm-api/" && PLAN+=$'• CRM API changed: run basic API health + smoke endpoints.\n' || true
+	          echo "$DIFF_FILES" | grep -q "^backend/apps/whatsapp/" && PLAN+=$'• WhatsApp changed: run e2e multi-instance health + smoke.\n' || true
+	          echo "$DIFF_FILES" | grep -q "^backend/apps/agent-zero/" && PLAN+=$'• Agent Zero changed: run local startup + basic health checks.\n' || true
+	          echo "$DIFF_FILES" | grep -q "^backend/apps/automations/" && PLAN+=$'• Automations changed: run runner diagnose/test flows.\n' || true
+	          echo "$DIFF_FILES" | grep -q "^backend/scripts/" && PLAN+=$'• Orchestration changed: run backend/scripts/doctor.sh.\n' || true
           [ -z "$PLAN" ] && PLAN=$'• No module-specific changes detected; consider adding tests or docs.\n'
           {
             echo "plan<<EOF"
@@ -61,10 +58,10 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Run e2e smoke (CI mode)
-        run: |
-          bash scripts/e2e.sh ci-smoke
-        continue-on-error: true
+	      - name: Run e2e smoke (CI mode)
+	        run: |
+	          bash backend/scripts/e2e.sh ci-smoke
+	        continue-on-error: true
 
       - name: Open issue with next steps
         uses: actions/github-script@v7

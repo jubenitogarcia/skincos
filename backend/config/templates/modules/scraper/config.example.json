@@ -1,0 +1,37 @@
+{
+  "app_config": {
+    "spreadsheet_id": "YOUR_SPREADSHEET_ID",
+    "sheet_name": "Comercial",
+    "scopes": [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/spreadsheets.readonly",
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file"
+    ],
+    "data_mapping": {
+      "vendas_bss": "B2",
+      "vendas_nh": "C2",
+      "vendas_rj": "D2",
+      "data_atualizacao": "A1"
+    }
+  },
+  "espaco_facial": {
+    "login_url": "https://sistema.espafacial.com.br",
+    "username": "user@example.com",
+    "password": "CHANGE_ME",
+    "timeout": 30,
+    "wait_time": 10
+  },
+  "google_service_account": {
+    "type": "service_account",
+    "project_id": "YOUR_PROJECT_ID",
+    "private_key_id": "",
+    "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+    "client_email": "service-account@YOUR_PROJECT_ID.iam.gserviceaccount.com",
+    "client_id": "",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": ""
+  }
+}

@@ -1,0 +1,163 @@
+╔═══════════════════════════════════════════════════════════════╗
+║                  🚀 GUIA RÁPIDO - WIX + WEBHOOK               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+✅ WEBHOOK SERVER ESTÁ RODANDO!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📡 URLs DISPONÍVEIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Local (apenas seu computador):
+  http://localhost:5001/webhook/sprinta
+
+Rede local (outros dispositivos na mesma rede):
+  http://192.168.15.14:5001/webhook/sprinta
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌍 PARA WIX ACESSAR, VOCÊ PRECISA DE URL PÚBLICA (HTTPS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+OPÇÃO 1: Ngrok (Teste Rápido - GRÁTIS) ⭐ RECOMENDADO PARA TESTE
+────────────────────────────────────────────────────────────────
+
+1. Instalar ngrok:
+   brew install ngrok
+
+2. Criar conta grátis:
+   https://ngrok.com/
+
+3. Configurar token (fornecido no dashboard):
+   ngrok config add-authtoken SEU_TOKEN_AQUI
+
+4. Expor webhook:
+   ngrok http 5001
+
+5. Copiar URL fornecida (ex: https://abc123.ngrok.io)
+
+6. Usar no Wix:
+   URL: https://abc123.ngrok.io/webhook/sprinta
+   Header: X-Secret-Token: change-this-secret
+
+
+OPÇÃO 2: Heroku (Produção 24/7 - $5/mês)
+────────────────────────────────────────
+
+1. Criar Procfile:
+   echo "web: gunicorn webhook_server:app" > Procfile
+
+2. Adicionar gunicorn:
+   echo "gunicorn>=21.2.0" >> requirements.txt
+
+3. Deploy:
+   heroku create sprinta-webhook
+   heroku config:set GITHUB_TOKEN=ghp_seu_token
+   heroku config:set WEBHOOK_SECRET=seu-secret
+   git add .
+   git commit -m "Deploy webhook"
+   git push heroku main
+
+4. Usar no Wix:
+   URL: https://sprinta-webhook.herokuapp.com/webhook/sprinta
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💻 CÓDIGO WIX (VELO)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Veja arquivo completo: WIX_INTEGRATION.md
+
+RESUMO:
+
+1. Ativar Dev Mode no Wix
+
+2. Criar arquivo: backend/sendToWebhook.jsw
+
+3. Copiar código do WIX_INTEGRATION.md
+
+4. Atualizar constantes:
+   const WEBHOOK_URL = 'https://sua-url-ngrok.com/webhook/sprinta';
+   const WEBHOOK_SECRET = 'change-this-secret';
+
+5. No formulário, chamar:
+   import { sendToSprintaWebhook } from 'backend/sendToWebhook';
+
+   // Ao submeter:
+   const result = await sendToSprintaWebhook([participante]);
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧪 TESTAR WEBHOOK (AGORA)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Em outro terminal:
+
+python webhook_client_test.py
+
+Ou:
+
+python webhook_client_test.py participants.csv
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ SIM, VOCÊ ENTENDEU CORRETAMENTE!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+O Wix pode enviar CSV direto para essa URL! ✅
+
+Basta:
+1. Manter "python webhook_server.py" rodando ✅
+2. Expor com ngrok (para ter HTTPS) ✅
+3. Configurar código Velo no Wix ✅
+
+FLUXO:
+  Formulário Wix
+     ↓ (HTTP POST)
+  Webhook Server (você mantém rodando)
+     ↓ (aciona)
+  GitHub Actions
+     ↓ (processa)
+  URLs de Checkout
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 SEGURANÇA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IMPORTANTE: Altere o WEBHOOK_SECRET para algo seguro!
+
+No arquivo .env:
+  WEBHOOK_SECRET=crie-um-secret-bem-longo-e-aleatorio-12345abcde
+
+No código Wix:
+  const WEBHOOK_SECRET = 'mesmo-secret-do-env';
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 DOCUMENTAÇÃO COMPLETA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WIX_INTEGRATION.md       - Guia completo Wix + Webhook
+WEBHOOK_SERVER.md        - Documentação webhook server
+README.md                - Visão geral do projeto
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 PRÓXIMOS PASSOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. ✅ Webhook rodando (FEITO!)
+
+2. ⏳ Expor com ngrok:
+   ngrok http 5001
+
+3. ⏳ Testar com webhook_client_test.py
+
+4. ⏳ Configurar código Velo no Wix
+
+5. ⏳ Testar formulário Wix
+
+6. ⏳ Deploy em produção (Heroku)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 DICA: Mantenha este terminal aberto! O webhook precisa estar
+         rodando para receber requisições do Wix.
+
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅ Tudo pronto para integrar com Wix!                        ║
+╚═══════════════════════════════════════════════════════════════╝

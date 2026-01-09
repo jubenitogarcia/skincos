@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-# Delegates to unified E2E entry-point
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$ROOT_DIR/scripts/e2e.sh" smoke "$@"

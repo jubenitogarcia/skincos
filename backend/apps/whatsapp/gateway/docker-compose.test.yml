@@ -1,0 +1,66 @@
+# Testing Environment Override
+# Usage: docker-compose -f docker-compose.base.yml -f docker-compose.test.yml up
+
+services:
+  whatsapp-api:
+    build:
+      target: test
+    container_name: whatsapp-api-test
+    environment:
+      - NODE_ENV=test
+      - DEBUG=whatsapp:test
+      - PORT=3001
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--headless=new
+    command: ["npm", "run", "test"]
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    profiles:
+      - test
+
+  redis:
+    container_name: redis-test
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    profiles:
+      - test
+
+  # Test database for integration tests
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: postgres-test
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=whatsapp_test
+      - POSTGRES_USER=test
+      - POSTGRES_PASSWORD=test
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - whatsapp-network
+    profiles:
+      - test
+
+  # Mock services for testing
+  mock-agent-zero:
+    image: mockserver/mockserver:latest
+    container_name: mock-agent-zero
+    restart: unless-stopped
+    environment:
+      - MOCKSERVER_PROPERTY_FILE=/config/mockserver.properties
+    ports:
+      - "50001:1080"
+    volumes:
+      - ./tests/mocks:/config:ro
+    networks:
+      - whatsapp-network
+    profiles:
+      - test
+
+volumes:
+  postgres_test_data:
+    driver: local

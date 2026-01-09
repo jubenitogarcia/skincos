@@ -1,0 +1,142 @@
+name: Processar Inscrições Sprinta
+
+on:
+  # Permite acionamento manual com upload de arquivo CSV
+  workflow_dispatch:
+    inputs:
+      csv_content:
+        description: "Conteúdo do CSV (copie e cole)"
+        required: true
+        type: string
+
+  # Permite acionamento via API externa (webhook)
+  repository_dispatch:
+    types: [process-inscricoes]
+
+jobs:
+  process-participants:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Instalar ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Preparar arquivo CSV
+        run: |
+          # Se veio do workflow_dispatch (manual)
+          if [ -n "${{ github.event.inputs.csv_content }}" ]; then
+            echo "${{ github.event.inputs.csv_content }}" > participants.csv
+          fi
+
+          # Se veio do repository_dispatch (API)
+          if [ -n "${{ github.event.client_payload.csv_content }}" ]; then
+            echo "${{ github.event.client_payload.csv_content }}" > participants.csv
+          fi
+
+          # Se veio do repository_dispatch com base64
+          if [ -n "${{ github.event.client_payload.csv_base64 }}" ]; then
+            echo "${{ github.event.client_payload.csv_base64 }}" | base64 -d > participants.csv
+          fi
+
+          echo "Conteúdo do CSV:"
+          cat participants.csv
+
+      - name: Configurar credenciais Sprinta
+        run: |
+          # Credenciais devem estar nos Secrets do GitHub
+          echo "EMAIL=${{ secrets.SPRINTA_EMAIL }}" >> $GITHUB_ENV
+          echo "PASSWORD=${{ secrets.SPRINTA_PASSWORD }}" >> $GITHUB_ENV
+
+      - name: Executar automação (modo rápido)
+        run: |
+          # Executar em modo headless (sem interface gráfica)
+          export HEADLESS=true
+          python sprinta_automation.py
+        env:
+          SPRINTA_EMAIL: ${{ secrets.SPRINTA_EMAIL }}
+          SPRINTA_PASSWORD: ${{ secrets.SPRINTA_PASSWORD }}
+
+      - name: Ler URLs de checkout geradas
+        id: checkout_urls
+        run: |
+          python << 'PYTHON_SCRIPT'
+          import csv
+          import json
+
+          urls = []
+          with open('checkout_urls.csv', 'r', encoding='utf-8') as f:
+              reader = csv.DictReader(f)
+              for row in reader:
+                  urls.append({
+                      'email': row['email'],
+                      'checkout_url': row['checkout_url']
+                  })
+
+          # Salva como JSON para retornar
+          with open('checkout_urls.json', 'w') as f:
+              json.dump(urls, f, indent=2)
+
+          # Também cria output para o GitHub Actions
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f'urls={json.dumps(urls)}\n')
+          PYTHON_SCRIPT
+
+      - name: Upload resultados como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-urls
+          path: |
+            checkout_urls.csv
+            checkout_urls.json
+
+      - name: Comentar resultados (se veio de issue)
+        if: github.event.client_payload.issue_number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const urls = JSON.parse(fs.readFileSync('checkout_urls.json', 'utf8'));
+
+            let comment = '✅ **Processamento concluído!**\n\n';
+            comment += '📋 **URLs de Checkout geradas:**\n\n';
+
+            urls.forEach((item, index) => {
+              comment += `${index + 1}. **${item.email}**\n`;
+              comment += `   🔗 ${item.checkout_url}\n\n`;
+            });
+
+            comment += '---\n';
+            comment += `⏱️ Tempo total: ${{ job.duration }}\n`;
+            comment += `📦 Participantes processados: ${urls.length}`;
+
+            github.rest.issues.createComment({
+              issue_number: ${{ github.event.client_payload.issue_number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Enviar webhook de retorno (se configurado)
+        if: github.event.client_payload.callback_url
+        run: |
+          curl -X POST "${{ github.event.client_payload.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d @checkout_urls.json

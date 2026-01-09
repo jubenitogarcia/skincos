@@ -1,16 +1,21 @@
 SHELL := /bin/bash
 
-.PHONY: dev-all e2e-smoke e2e-ci e2e-health
+.PHONY: dev backend-dev backend-status backend-health backend-compile backend-unit
 
-dev-all:
-	@chmod +x scripts/dev-all-watch.sh || true
-	@scripts/dev-all-watch.sh
+dev: backend-dev
 
-e2e-smoke:
-	@bash scripts/e2e.sh smoke
+backend-dev:
+	@make -C backend dev
 
-e2e-ci:
-	@bash scripts/e2e.sh ci-smoke
+backend-status:
+	@bash ./backend/scripts/status.sh
 
-e2e-health:
-	@bash scripts/e2e.sh health
+backend-health:
+	@bash ./backend/scripts/test.sh repo-health
+
+backend-compile:
+	@bash ./backend/scripts/test.sh compile
+
+backend-unit:
+	@bash ./backend/scripts/test.sh unit
+

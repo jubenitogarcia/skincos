@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Integration Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn {
+            background: #25D366;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover { background: #128C7E; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.connecting { background: #fff3cd; color: #856404; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        #log { 
+            background: #f8f9fa; 
+            padding: 10px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            font-size: 12px; 
+            height: 200px; 
+            overflow-y: auto; 
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 WhatsApp Integration Test</h1>
+    
+    <div class="test-section">
+        <h2>📊 Status</h2>
+        <div id="status" class="status disconnected">❌ Desconectado</div>
+        <button class="btn" onclick="checkStatus()">🔄 Verificar Status</button>
+    </div>
+
+    <div class="test-section">
+        <h2>🚀 Conexão</h2>
+        <button class="btn" id="connectBtn" onclick="startConnection()">🚀 Iniciar Conexão</button>
+        <button class="btn" onclick="disconnect()">🔌 Desconectar</button>
+    </div>
+
+    <div class="test-section">
+        <h2>📱 Enviar Mensagem Teste</h2>
+        <input type="tel" id="testPhone" placeholder="+55 11 99999-9999" value="+55 11 99999-9999">
+        <input type="text" id="testMessage" placeholder="Mensagem de teste" value="Olá! Esta é uma mensagem de teste.">
+        <button class="btn" onclick="sendTestMessage()">📤 Enviar</button>
+    </div>
+
+    <div class="test-section">
+        <h2>📋 Log</h2>
+        <div id="log"></div>
+        <button class="btn" onclick="clearLog()">🗑️ Limpar Log</button>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3001';
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        async function checkStatus() {
+            try {
+                log('🔍 Verificando status...');
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+                
+                const statusDiv = document.getElementById('status');
+                const connectBtn = document.getElementById('connectBtn');
+                
+                if (data.ready) {
+                    statusDiv.textContent = `✅ Conectado: ${data.user}`;
+                    statusDiv.className = 'status connected';
+                    connectBtn.textContent = '✅ Conectado';
+                    connectBtn.disabled = true;
+                    log(`✅ Status: Conectado como ${data.user}`);
+                } else if (data.qrRequired) {
+                    statusDiv.textContent = '📱 QR Code necessário';
+                    statusDiv.className = 'status connecting';
+                    connectBtn.textContent = '📱 QR Necessário';
+                    connectBtn.disabled = true;
+                    log('📱 Status: QR Code necessário');
+                } else {
+                    statusDiv.textContent = '❌ Desconectado';
+                    statusDiv.className = 'status disconnected';
+                    connectBtn.textContent = '🚀 Iniciar Conexão';
+                    connectBtn.disabled = false;
+                    log('❌ Status: Desconectado');
+                }
+                
+                log(`📊 Dados completos: ${JSON.stringify(data)}`);
+            } catch (error) {
+                log(`❌ Erro ao verificar status: ${error.message}`);
+            }
+        }
+
+        async function startConnection() {
+            try {
+                log('🚀 Iniciando conexão...');
+                const connectBtn = document.getElementById('connectBtn');
+                connectBtn.textContent = '⏳ Conectando...';
+                connectBtn.disabled = true;
+                
+                const response = await fetch(`${API_BASE}/start`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✅ Conexão iniciada com sucesso');
+                    
+                    // Check status every 2 seconds
+                    const statusCheck = setInterval(() => {
+                        checkStatus().then(() => {
+                            // Stop checking if connected
+                            const statusDiv = document.getElementById('status');
+                            if (statusDiv.className.includes('connected')) {
+                                clearInterval(statusCheck);
+                                log('🎉 Conexão estabelecida com sucesso!');
+                            }
+                        });
+                    }, 2000);
+                    
+                } else {
+                    log(`❌ Erro ao iniciar conexão: ${data.error}`);
+                    connectBtn.textContent = '🚀 Iniciar Conexão';
+                    connectBtn.disabled = false;
+                }
+            } catch (error) {
+                log(`❌ Erro ao iniciar conexão: ${error.message}`);
+                const connectBtn = document.getElementById('connectBtn');
+                connectBtn.textContent = '🚀 Iniciar Conexão';
+                connectBtn.disabled = false;
+            }
+        }
+
+        async function disconnect() {
+            try {
+                log('🔌 Desconectando...');
+                const response = await fetch(`${API_BASE}/logout`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✅ Desconectado com sucesso');
+                    checkStatus();
+                } else {
+                    log(`❌ Erro ao desconectar: ${data.error}`);
+                }
+            } catch (error) {
+                log(`❌ Erro ao desconectar: ${error.message}`);
+            }
+        }
+
+        async function sendTestMessage() {
+            try {
+                const phone = document.getElementById('testPhone').value;
+                const message = document.getElementById('testMessage').value;
+                
+                if (!phone || !message) {
+                    log('❌ Telefone e mensagem são obrigatórios');
+                    return;
+                }
+                
+                log(`📤 Enviando mensagem para ${phone}...`);
+                
+                const response = await fetch(`${API_BASE}/send-message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ number: phone, message: message })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log(`✅ Mensagem enviada com sucesso para ${data.to}`);
+                } else {
+                    log(`❌ Erro ao enviar mensagem: ${data.error}`);
+                }
+            } catch (error) {
+                log(`❌ Erro ao enviar mensagem: ${error.message}`);
+            }
+        }
+
+        // Initialize
+        log('🧪 Página de teste carregada');
+        checkStatus();
+    </script>
+</body>
+</html>

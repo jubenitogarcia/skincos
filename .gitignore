@@ -12,14 +12,11 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-package-lock.json
 
-# Environment files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# Environment files (never commit real envs)
+.env*
+!.env.example
+!.env.*.example
 
 # Logs
 logs/
@@ -33,12 +30,19 @@ pids/
 
 # Cache directories
 .cache/
+.config/
 .config/chromium/
 .config/pulse/
 .local/
 .vite/
+.wa-sessions/
 .wwebjs_cache/
 .wwebjs_auth/
+.wwebjs_auth_local_*/
+.chrome_profile_*/
+.chrome_profile*/
+.chrome-profile*/
+backend/apps/whatsapp/gateway/.local_instance_*.port
 
 # Replit specific
 .replit
@@ -49,6 +53,7 @@ cookies.txt
 .agent_state_*.bin
 agent_state*.json
 repl_state.bin
+backend/apps/agent-zero/queue_shadowed*.disabled
 
 # Python
 __pycache__/
@@ -56,6 +61,10 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.venv/
+.venv*/
+venv/
+venv*/
 build/
 develop-eggs/
 dist/
@@ -66,7 +75,16 @@ lib/
 lib64/
 parts/
 sdist/
+# Local runtime state (do not commit)
+backend/var/
+# Legacy/compat (avoid using; prefer backend/var/)
 var/
+backend/config/*.local.*
+backend/config/*.local.json
+backend/config/*.local.env
+config/*.local.*
+config/*.local.json
+config/*.local.env
 wheels/
 *.egg-info/
 .installed.cfg
@@ -79,3 +97,76 @@ wheels/
 temp/
 *.tmp
 *.temp
+*.out
+
+backend/apps/automations/scraper/config.json
+backend/apps/automations/scraper/config.*.json
+backend/apps/automations/scraper/config.local.json
+backend/apps/instagram/module/config/config.json
+backend/apps/instagram/module/config/config.*.json
+backend/apps/instagram/module/config/config.local.json
+backend/apps/instagram/module/sessions/
+backend/apps/instagram/module/downloads/
+backend/apps/instagram/module/background_results/
+
+# WhatsApp (official module)
+backend/apps/whatsapp/official-module/.master-key
+# WhatsApp gateway (pnpm monorepo; avoid npm lockfiles)
+backend/apps/whatsapp/gateway/package-lock.json
+
+# Legacy automation artifacts (historical)
+config.json
+config_prod.json
+credentials.json
+google_credentials.json
+*.key
+*.pem
+.pre-commit-cache/
+.tox/
+.nox/
+.ruff_cache/
+bandit-report.json
+.bandit
+coverage.xml
+.turbo/
+.rush/
+.pnp/
+.pnp.js
+
+# Former backup modules (legacy paths)
+# NOTE: perfis/dados locais (potencialmente sensíveis) devem ficar em `var/` (já ignorado).
+backend/OpenAI/
+
+
+# Sprinta (local state)
+backend/apps/automations/sprinta/**/.chrome-profile*/
+backend/apps/automations/sprinta/**/chrome_profile_sprinta/
+backend/apps/automations/sprinta/**/.venv*/
+backend/apps/automations/sprinta/**/.venv311/
+backend/apps/automations/sprinta/**/__pycache__/
+backend/apps/automations/sprinta/**/logs/
+backend/apps/automations/sprinta/**/.DS_Store
+backend/apps/automations/sprinta/**/.env
+backend/apps/automations/sprinta/**/inscricoes/
+backend/apps/automations/sprinta/**/resultados/
+backend/apps/automations/sprinta/**/participants.csv
+backend/apps/automations/sprinta/**/participants_*.csv
+backend/apps/automations/sprinta/**/checkout_urls.csv
+
+# Actual Server (Actual Budget)
+backend/apps/actual-server/node_modules/
+
+# pnpm-only backend apps (avoid reintroducing npm lockfiles)
+backend/apps/crm-api/package-lock.json
+backend/apps/whatsapp/official-module/package-lock.json
+backend/apps/whatsapp/official/package-lock.json
+backend/apps/actual-server/logs/
+backend/apps/actual-server/server-files/
+backend/apps/actual-server/user-files/
+backend/apps/actual-server/actual-data/
+backend/apps/actual-server/actual-budget.log
+backend/apps/actual-server/.yarn/install-state.gz
+
+# Tools: Xiaomi token extractor (downloaded artifacts)
+backend/tools/xiaomi/*.zip
+backend/tools/xiaomi/token_extractor_docker/

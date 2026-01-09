@@ -43,4 +43,4 @@ jobs:
           AI_ENDPOINT: ${{ inputs.ai-endpoint }}
           AI_TOKEN: ${{ inputs.ai-token }}
           AI_MODEL: ${{ inputs.ai-model }}
-        run: node scripts/ai-workflows-improver.js
+        run: node backend/tools/scripts/ai-workflows-improver.js

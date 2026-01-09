@@ -1,0 +1,260 @@
+import { fetch } from 'wix-fetch';
+import wixData from 'wix-data';
+
+/**
+ * ===============================================
+ * RECEPTOR DE WEBHOOK - GITHUB ACTIONS → WIX
+ * ===============================================
+ *
+ * Este endpoint recebe os resultados do processamento
+ * diretamente do GitHub Actions quando a automação é concluída.
+ *
+ * Configurar em: Backend → http-functions.js
+ *
+ * Endpoint: POST /github-webhook-result
+ */
+
+/**
+ * Handler do webhook que recebe resultados do GitHub Actions
+ *
+ * @param {Object} request - Requisição HTTP do GitHub Actions
+ * @returns {Object} Resposta HTTP
+ */
+export async function post_githubWebhookResult(request) {
+
+  console.log('🔔 Webhook recebido do GitHub Actions!');
+
+  try {
+    // 1️⃣ Parsear o body JSON
+    const payload = await request.body.json();
+
+    console.log('📦 Payload recebido:', JSON.stringify(payload, null, 2));
+
+    // 2️⃣ Validar estrutura
+    if (!payload || typeof payload !== 'object') {
+      console.error('❌ Payload inválido');
+      return {
+        status: 400,
+        body: {
+          error: 'Invalid payload'
+        }
+      };
+    }
+
+    // 3️⃣ Processar resultados
+    if (payload.success && payload.results && Array.isArray(payload.results)) {
+
+      console.log(`✅ Processamento bem-sucedido! ${payload.results.length} participante(s)`);
+
+      // Atualizar cada participante no banco de dados
+      for (const resultado of payload.results) {
+        try {
+          await atualizarParticipante(resultado);
+        } catch (error) {
+          console.error(`⚠️ Erro ao atualizar ${resultado.email}:`, error.message);
+        }
+      }
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          message: 'Resultados processados com sucesso',
+          processed: payload.results.length
+        }
+      };
+
+    } else if (payload.success === false) {
+
+      // ❌ ERRO no processamento
+      console.error('❌ Erro reportado pelo GitHub Actions:', payload.error);
+
+      // Notificar sobre falha (você pode enviar email, etc)
+      await notificarFalha(payload);
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          message: 'Notificação de erro recebida'
+        }
+      };
+
+    } else {
+      console.warn('⚠️ Payload com formato inesperado');
+      return {
+        status: 400,
+        body: {
+          error: 'Unexpected payload format'
+        }
+      };
+    }
+
+  } catch (error) {
+    console.error('❌ Erro ao processar webhook:', error);
+
+    return {
+      status: 500,
+      body: {
+        error: 'Internal server error',
+        message: error.message
+      }
+    };
+  }
+}
+
+/**
+ * Atualiza participante no banco de dados Wix
+ */
+async function atualizarParticipante(resultado) {
+
+  console.log(`📝 Atualizando participante: ${resultado.email}`);
+
+  try {
+    // Buscar participante por email
+    const queryResult = await wixData.query("Participants")
+      .eq("email", resultado.email)
+      .find();
+
+    if (queryResult.items.length === 0) {
+      console.warn(`⚠️ Participante não encontrado: ${resultado.email}`);
+      return;
+    }
+
+    const participante = queryResult.items[0];
+
+    // Atualizar com checkout URL
+    await wixData.update("Participants", {
+      _id: participante._id,
+      checkoutUrl: resultado.checkout_url,
+      status: resultado.success ? "checkout_ready" : "processing_failed",
+      errorMessage: resultado.error || null,
+      discountApplied: resultado.discount_applied || null,
+      processedAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    console.log(`✅ Participante atualizado: ${resultado.email}`);
+
+  } catch (error) {
+    console.error(`❌ Erro ao atualizar banco de dados:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Notifica sobre falha no processamento
+ */
+async function notificarFalha(payload) {
+  console.error('📧 Notificando falha no processamento:', payload);
+
+  // AQUI: Adicionar lógica de notificação
+  // - Enviar email para admin
+  // - Criar registro de erro
+  // - Enviar mensagem Slack, etc.
+
+  // Exemplo: salvar no banco de dados
+  try {
+    await wixData.insert("ProcessingErrors", {
+      filename: payload.filename,
+      error: payload.error,
+      timestamp: payload.timestamp || new Date(),
+      createdAt: new Date()
+    });
+  } catch (error) {
+    console.error('Erro ao salvar log de falha:', error);
+  }
+}
+
+
+/**
+ * ===============================================
+ * FUNÇÃO DE SUBMISSÃO DO FORMULÁRIO (ATUALIZADA)
+ * ===============================================
+ *
+ * Esta função continua igual, mas agora não precisa mais
+ * fazer polling - o webhook receberá o resultado automaticamente!
+ */
+
+export async function enviarInscricaoParaGitHub(dadosParticipante) {
+
+  // ========================================
+  // CONFIGURAÇÃO - PREENCHA COM SEUS DADOS
+  // ========================================
+
+  const GITHUB_TOKEN = 'SEU_GITHUB_TOKEN_AQUI';  // Token com permissão repo
+  const GITHUB_OWNER = 'jubenitogarcia';
+  const GITHUB_REPO = 'Sprinta-Scraper';
+  const BRANCH = 'main';
+
+  try {
+    // 1️⃣ Salvar no banco ANTES de processar
+    const saved = await wixData.insert("Participants", {
+      ...dadosParticipante,
+      status: "processing",
+      createdAt: new Date()
+    });
+
+    console.log('💾 Participante salvo no Wix:', saved._id);
+
+    // 2️⃣ Gerar CSV
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `inscricao_${timestamp}.csv`;
+
+    const csvContent = `name;email;phone;cpf;bday;gender;shirt_size;team
+${dadosParticipante.name};${dadosParticipante.email};${dadosParticipante.phone};${dadosParticipante.cpf};${dadosParticipante.bday};${dadosParticipante.gender};${dadosParticipante.shirtSize};${dadosParticipante.team || 'Espaço Facial'}`;
+
+    // 3️⃣ Converter para Base64
+    const base64Content = Buffer.from(csvContent).toString('base64');
+
+    console.log('📤 Enviando CSV para GitHub:', filename);
+
+    // 4️⃣ Criar arquivo via GitHub API
+    const response = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/inscricoes/${filename}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${GITHUB_TOKEN}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: `feat: nova inscrição - ${dadosParticipante.email}`,
+          content: base64Content,
+          branch: BRANCH
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`GitHub API error (${response.status}): ${errorData}`);
+    }
+
+    const result = await response.json();
+
+    console.log('✅ CSV commitado com sucesso!');
+    console.log('🔗 Commit:', result.commit.sha);
+
+    // 5️⃣ Retornar sucesso (webhook receberá o resultado automaticamente!)
+    return {
+      success: true,
+      participantId: saved._id,
+      filename: filename,
+      commitSha: result.commit.sha,
+      message: 'Inscrição enviada! Aguarde o processamento...',
+      info: 'O resultado será atualizado automaticamente quando o processamento for concluído.'
+    };
+
+  } catch (error) {
+    console.error('❌ Erro ao enviar para GitHub:', error);
+
+    return {
+      success: false,
+      error: error.message,
+      message: 'Erro ao processar inscrição. Tente novamente.'
+    };
+  }
+}

@@ -1,0 +1,71 @@
+# Dockerfile otimizado com FFmpeg para otimização de vídeos
+FROM node:18-slim
+
+# Instalar dependências básicas primeiro
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    ca-certificates \
+    procps \
+    curl \
+    ffmpeg \
+    apt-transport-https \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar Google Chrome de forma mais robusta
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
+    && sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar fontes necessárias
+RUN apt-get update && apt-get install -y \
+    fonts-liberation \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    fonts-kacst \
+    fonts-freefont-ttf \
+    libxss1 \
+    libgconf-2-4 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verificar se o Chrome foi instalado corretamente
+RUN which google-chrome-stable || echo "Chrome not found!" \
+    && google-chrome-stable --version || echo "Chrome version check failed!"
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Criar diretório para vídeos temporários
+RUN mkdir -p temp_videos
+
+# Copiar package.json e instalar dependências primeiro (para cache)
+COPY package*.json ./
+
+# Copiar scripts de instalação
+COPY install_puppeteer.sh ./
+
+# Instalar dependências do Node.js
+RUN npm install
+
+# Configurar Puppeteer e baixar Chromium
+RUN chmod +x install_puppeteer.sh && ./install_puppeteer.sh
+
+# Copiar resto dos arquivos
+COPY . .
+
+# Expor porta
+EXPOSE 3001
+
+# Comando de inicialização
+CMD ["node", "bot_com_api.js"]

@@ -1,0 +1,175 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                   DIAGNÓSTICO: Erro "submission_id não disponível"        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ ❌ SITUAÇÃO ATUAL (COM ERRO)                                              │
+└───────────────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Google Sheets (SEM coluna ID)                               │
+   ├─────────────┬─────────┬──────────┬─────────┬────────────────┤
+   │ DATA        │ NOME    │ EMAIL    │ TELEFONE│ ...            │
+   ├─────────────┼─────────┼──────────┼─────────┼────────────────┤
+   │ 2025-10-05  │ Julian  │ julian@  │ 519...  │ ...            │
+   └─────────────┴─────────┴──────────┴─────────┴────────────────┘
+                              │
+                              │ Exporta CSV (SEM coluna ID)
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ CSV Exportado                                                │
+   │                                                              │
+   │ DATA,NOME,EMAIL,TELEFONE,...                                │
+   │ 2025-10-05,Julian,julian@...,519...,...                     │
+   │                                                              │
+   │ ❌ Coluna ID ausente!                                        │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              │ GitHub Actions processa
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Python Automation                                            │
+   │                                                              │
+   │ participant.get("submission_id")  # ❌ None                 │
+   │                                                              │
+   │ ⚠️  Aviso: submission_id não disponível                      │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              │ Tenta salvar CSV
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Salvar checkout_urls.csv                                     │
+   │                                                              │
+   │ fieldnames = ["email", "checkout_url"]  # ❌ Incompleto     │
+   │                                                              │
+   │ ❌ Erro: dict contains fields not in fieldnames:            │
+   │    'name', 'submission_id'                                   │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+                    ❌ Process exit code 1
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ ✅ SOLUÇÃO (SEM ERRO)                                                     │
+└───────────────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Google Sheets (COM coluna ID)                               │
+   ├─────────────┬──────────────┬─────────┬──────────┬──────────┤
+   │ DATA        │ ID           │ NOME    │ EMAIL    │ ...      │
+   ├─────────────┼──────────────┼─────────┼──────────┼──────────┤
+   │ 2025-10-05  │ inscricao_001│ Julian  │ julian@  │ ...      │
+   └─────────────┴──────────────┴─────────┴──────────┴──────────┘
+                              │
+                              │ Google Apps Script
+                              │ ├─> Gera ID único ✅
+                              │ ├─> Salva na coluna B ✅
+                              │ └─> Exporta CSV com ID ✅
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ CSV Exportado                                                │
+   │                                                              │
+   │ DATA,ID,NOME,EMAIL,TELEFONE,...                             │
+   │ 2025-10-05,inscricao_001,Julian,julian@...,519...,...       │
+   │                                                              │
+   │ ✅ Coluna ID presente!                                       │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              │ GitHub Actions processa
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Python Automation                                            │
+   │                                                              │
+   │ participant.get("submission_id")  # ✅ "inscricao_001"      │
+   │                                                              │
+   │ ✅ submission_id disponível                                  │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              │ Gera checkout e aplica cupom
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Enviar Webhook para Wix                                      │
+   │                                                              │
+   │ {                                                            │
+   │   "submissionId": "inscricao_001",  ✅                       │
+   │   "success": true,                                           │
+   │   "redirectUrl": "https://checkout.sprinta.com.br/..."      │
+   │ }                                                            │
+   │                                                              │
+   │ ✅ Webhook enviado! Status: 200                              │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              │ Salva CSV
+                              ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │ Salvar checkout_urls.csv                                     │
+   │                                                              │
+   │ fieldnames = [                                               │
+   │   "email",                                                   │
+   │   "checkout_url",                                            │
+   │   "submission_id",  ✅ ADICIONADO                            │
+   │   "name"            ✅ ADICIONADO                            │
+   │ ]                                                            │
+   │                                                              │
+   │ ✅ CSV salvo sem erros                                       │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+                    ✅ Process exit code 0
+
+
+═══════════════════════════════════════════════════════════════════════════
+                            RESUMO DA CORREÇÃO
+═══════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ PROBLEMA 1: CSV sem coluna ID                                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ❌ ANTES: CSV não tinha coluna ID                                       │
+│ ✅ DEPOIS: Google Apps Script adiciona coluna ID automaticamente        │
+│                                                                          │
+│ IMPLEMENTAÇÃO:                                                           │
+│ 1. Adicionar coluna B (ID) no Google Sheets                             │
+│ 2. Instalar GOOGLE_APPS_SCRIPT_COMPLETO.js                              │
+│ 3. Configurar trigger automático                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ PROBLEMA 2: Fieldnames incompletos no CSV                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ❌ ANTES: fieldnames = ["email", "checkout_url"]                        │
+│ ✅ DEPOIS: fieldnames = ["email", "checkout_url",                       │
+│                          "submission_id", "name"]                        │
+│                                                                          │
+│ STATUS: ✅ JÁ CORRIGIDO no sprinta_automation.py                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════
+                              PRÓXIMOS PASSOS
+═══════════════════════════════════════════════════════════════════════════
+
+☐ 1. Abrir Google Sheets
+☐ 2. Adicionar coluna B com header "ID"
+☐ 3. Extensions → Apps Script
+☐ 4. Colar código de GOOGLE_APPS_SCRIPT_COMPLETO.js
+☐ 5. Configurar GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO
+☐ 6. Triggers → Add Trigger → onFormSubmit → On form submit
+☐ 7. Executar testarExportacao() para validar
+☐ 8. Fazer submissão de teste no formulário
+☐ 9. Verificar logs no GitHub Actions
+☐ 10. Confirmar webhook recebido no Wix
+
+
+═══════════════════════════════════════════════════════════════════════════
+                          DOCUMENTAÇÃO DISPONÍVEL
+═══════════════════════════════════════════════════════════════════════════
+
+📄 DEBUG_SUBMISSION_ID_ERROR.md     │ Análise detalhada do erro
+📄 SOLUCAO_SUBMISSION_ID.md         │ Resumo da solução
+📄 GOOGLE_APPS_SCRIPT_COMPLETO.js   │ Script completo para Google Sheets
+📄 FORMATO_CSV_NOVO.md              │ Formato CSV esperado
+📄 WEBHOOK_APOS_CUPOM.md            │ Documentação do webhook
+
+═══════════════════════════════════════════════════════════════════════════

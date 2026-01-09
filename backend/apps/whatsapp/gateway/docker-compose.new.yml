@@ -1,0 +1,190 @@
+version: '3.8'
+
+services:
+  # WhatsApp API Principal
+  whatsapp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple-puppeteer
+    container_name: whatsapp-api-prod
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - .:/app
+      - whatsapp_auth:/app/.wwebjs_auth
+      - whatsapp_temp:/app/temp_videos
+      - whatsapp_logs:/app/logs
+    working_dir: /app
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - TZ=America/Sao_Paulo
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whatsapp-api.rule=Host(`whatsapp.localhost`) || PathPrefix(`/api`)"
+      - "traefik.http.routers.whatsapp-api.service=whatsapp-api"
+      - "traefik.http.services.whatsapp-api.loadbalancer.server.port=3001"
+      - "traefik.http.routers.whatsapp-api.middlewares=whatsapp-auth"
+      - "traefik.http.middlewares.whatsapp-auth.basicauth.users=admin:$$2y$$10$$KzRW8vQ8xC5fN5E2VH8kUOEo7l.bQ8rVjxXKCM7QkOhZW8yJ6QgD."
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - traefik
+
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik-proxy
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@localhost"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.addEntryPointsLabels=true"
+      - "--metrics.prometheus.addServicesLabels=true"
+      - "--ping=true"
+    ports:
+      - "80:80"      # HTTP
+      - "443:443"    # HTTPS
+      - "8080:8080"  # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_data:/letsencrypt
+      - traefik_logs:/var/log/traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=dashboard-auth"
+      - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$2y$$10$$KzRW8vQ8xC5fN5E2VH8kUOEo7l.bQ8rVjxXKCM7QkOhZW8yJ6QgD."
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Watchtower - Auto-updater
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower-whatsapp
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_REMOVE_VOLUMES=true
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_POLL_INTERVAL=21600  # 6 horas
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_NOTIFICATIONS=shoutrrr
+      - WATCHTOWER_NOTIFICATION_URL=logger://
+      - WATCHTOWER_ROLLING_RESTART=true
+      - TZ=America/Sao_Paulo
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Não atualizar o próprio watchtower
+    networks:
+      - whatsapp-network
+
+  # Portainer - Gerenciamento Docker
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer-whatsapp
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.localhost`)"
+      - "traefik.http.routers.portainer.service=portainer"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      - "traefik.http.routers.portainer.middlewares=portainer-auth"
+      - "traefik.http.middlewares.portainer-auth.basicauth.users=admin:$$2y$$10$$KzRW8vQ8xC5fN5E2VH8kUOEo7l.bQ8rVjxXKCM7QkOhZW8yJ6QgD."
+      - "com.centurylinklabs.watchtower.enable=false"
+    networks:
+      - whatsapp-network
+
+  # Redis para cache (opcional)
+  redis:
+    image: redis:7-alpine
+    container_name: redis-whatsapp
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass whatsapp123
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - whatsapp-network
+
+  # Nginx para servir arquivos estáticos (opcional)
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-whatsapp
+    restart: unless-stopped
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nginx.rule=Host(`static.localhost`)"
+      - "traefik.http.routers.nginx.service=nginx"
+      - "traefik.http.services.nginx.loadbalancer.server.port=80"
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - whatsapp-network
+
+networks:
+  whatsapp-network:
+    driver: bridge
+    name: whatsapp-network
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  whatsapp_auth:
+    name: whatsapp_auth_data
+    driver: local
+  whatsapp_temp:
+    name: whatsapp_temp_videos
+    driver: local
+  whatsapp_logs:
+    name: whatsapp_logs_data
+    driver: local
+  traefik_data:
+    name: traefik_config_data
+    driver: local
+  traefik_logs:
+    name: traefik_logs_data
+    driver: local
+  portainer_data:
+    name: portainer_data
+    driver: local
+  redis_data:
+    name: redis_data
+    driver: local
