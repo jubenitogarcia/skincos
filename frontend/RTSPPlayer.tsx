@@ -12,6 +12,8 @@ import {
 } from '@phosphor-icons/react'
 
 interface RTSPPlayerProps {
+  // Browser players can't consume RTSP directly. Provide an HLS URL (.m3u8),
+  // typically proxied by the CRM backend (same-origin) for simplicity.
   streamUrl: string
   isConnected: boolean
   onPlayStateChange?: (isPlaying: boolean) => void
@@ -42,10 +44,7 @@ export function RTSPPlayer({
       hlsRef.current = null
     }
 
-    // For RTSP streams, we need to convert them to HLS
-    // In production, you would use FFmpeg or similar to convert RTSP to HLS
-    // For this demo, we'll simulate the HLS stream URL conversion
-    const hlsUrl = convertRTSPToHLS(streamUrl)
+    const hlsUrl = streamUrl
 
     if (Hls.isSupported()) {
       const hls = new Hls({
@@ -85,7 +84,7 @@ export function RTSPPlayer({
 
       hls.on(Hls.Events.FRAG_LOADED, () => {
         // Fragment loaded successfully
-        if (error) setError(null)
+        setError(null)
       })
 
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -110,24 +109,7 @@ export function RTSPPlayer({
         hlsRef.current = null
       }
     }
-  }, [streamUrl, isConnected, error, onError])
-
-  // Convert RTSP URL to HLS (this is a simulation)
-  // In real implementation, you'd have a media server doing this conversion
-  const convertRTSPToHLS = (rtspUrl: string): string => {
-    // For demo purposes, we'll use a test HLS stream
-    // In production, this would be your media server endpoint
-    // Example: http://your-media-server:8080/hls/camera1/index.m3u8
-    
-    // Test HLS streams for development
-    const testStreams = [
-      'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-      'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'
-    ]
-    
-    // Return a test stream for now
-    return testStreams[0]
-  }
+  }, [streamUrl, isConnected, onError])
 
   const togglePlay = async () => {
     const video = videoRef.current

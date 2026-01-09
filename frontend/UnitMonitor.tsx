@@ -26,7 +26,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Toaster } from '@/sonner'
 
 import { CameraFavorites } from '@/CameraFavorites'
-import { CameraDiscovery } from '@/CameraDiscovery'
 import { ComprehensiveTestRunner } from '@/ComprehensiveTestRunner'
 import { CrossPlatformRecordingTest } from '@/CrossPlatformRecordingTest'
 import { GoogleHomeCameraRecordingTest } from '@/GoogleHomeCameraRecordingTest'
@@ -34,7 +33,6 @@ import { GoogleHomeCameraTest } from '@/GoogleHomeCameraTest'
 import { GoogleHomeTest } from '@/GoogleHomeTest'
 import { GoogleHomeWebView } from '@/GoogleHomeWebView'
 import { RealWorldCameraTest } from '@/RealWorldCameraTest'
-import { RecordingManager } from '@/RecordingManager'
 import { RTSPPlayer } from '@/RTSPPlayer'
 import { ScreenRecorder } from '@/ScreenRecorder'
 import { ScreenRecordingTest } from '@/ScreenRecordingTest'
@@ -77,6 +75,55 @@ interface LogEntry {
   timestamp: string
   level: 'INFO' | 'WARNING' | 'ERROR' | 'STATUS'
   message: string
+}
+
+interface RtspCameraConfig {
+  id: string
+  name: string
+  rtspUrl: string
+  enabled?: boolean
+}
+
+interface RtspRecordingConfig {
+  segmentSeconds: number
+  retentionDays: number
+}
+
+interface StreamingStatus {
+  ok: boolean
+  running: boolean
+  pid: number | null
+  startedAt: string | null
+  lastError: string | null
+  streams: Array<{
+    unit: string
+    cameraId: string
+    name: string
+    pathKey: string
+    hlsUrlDirect: string
+    hlsUrlProxy: string
+  }>
+}
+
+interface RtspRecorderStatus {
+  unit: string
+  cameraId: string
+  pid: number | null
+  startedAt: string | null
+  segmentSeconds: number
+  outDir: string
+  logFile: string
+  lastError: string | null
+}
+
+interface RecordingSegment {
+  unit: string
+  cameraId: string
+  filename: string
+  createdAt: string
+  sizeBytes: number
+  playbackUrl: string
+  downloadUrl: string
 }
 
 const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
@@ -123,6 +170,21 @@ function isElectron(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronAPI
 }
 
+function maskRtspUrl(input: string): string {
+  const s = String(input || '').trim()
+  const schemeIdx = s.indexOf('://')
+  if (schemeIdx < 0) return s
+  const afterScheme = schemeIdx + 3
+  const atIdx = s.indexOf('@', afterScheme)
+  if (atIdx < 0) return s
+  const auth = s.slice(afterScheme, atIdx)
+  const colonIdx = auth.indexOf(':')
+  if (colonIdx < 0) return s
+  const user = auth.slice(0, colonIdx)
+  const rest = s.slice(atIdx)
+  return s.slice(0, afterScheme) + `${user}:***` + rest
+}
+
 export function UnitMonitor() {
   const [selectedUnit, setSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
   const [customUnit, setCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
@@ -132,6 +194,11 @@ export function UnitMonitor() {
     DEFAULT_RECORDING_SETTINGS
   )
   const [favorites, setFavorites] = useKV<CameraFavorite[]>(`unit-monitor:favorites:${unitKey}`, [])
+  const [cameras, setCameras] = useKV<RtspCameraConfig[]>(`unit-monitor:cameras:${unitKey}`, [])
+  const [rtspRecordingConfig, setRtspRecordingConfig] = useKV<RtspRecordingConfig>(
+    `unit-monitor:rtsp-recording:${unitKey}`,
+    { segmentSeconds: 60, retentionDays: 7 }
+  )
 
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [recordings, setRecordings] = useState<RecordingMeta[]>([])
@@ -147,8 +214,18 @@ export function UnitMonitor() {
   const [mainTab, setMainTab] = useState<'home' | 'rtsp' | 'tests' | 'guides' | 'logs'>('home')
   const [opsTab, setOpsTab] = useState<'favorites' | 'settings' | 'recordings'>('favorites')
 
-  const [rtspStreamUrl, setRtspStreamUrl] = useState('')
-  const [rtspConnected, setRtspConnected] = useState(false)
+  const [streamingStatus, setStreamingStatus] = useState<StreamingStatus | null>(null)
+  const [rtspRecorders, setRtspRecorders] = useState<RtspRecorderStatus[]>([])
+  const [rtspSegments, setRtspSegments] = useState<RecordingSegment[]>([])
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('')
+  const [playbackUrl, setPlaybackUrl] = useState<string>('')
+  const [cameraEditor, setCameraEditor] = useState<RtspCameraConfig>({
+    id: '',
+    name: '',
+    rtspUrl: '',
+    enabled: true
+  })
+  const [editingCameraId, setEditingCameraId] = useState<string | null>(null)
 
   const recordTimerRef = useRef<number | null>(null)
 
@@ -162,6 +239,126 @@ export function UnitMonitor() {
       message
     }
     setLogs((prev) => [...prev.slice(-199), entry])
+  }
+
+  const upsertCamera = () => {
+    const id = cameraEditor.id.trim()
+    const name = cameraEditor.name.trim()
+    const rtspUrl = cameraEditor.rtspUrl.trim()
+    if (!id) return toast.error('Camera ID obrigatório')
+    if (!rtspUrl) return toast.error('RTSP URL obrigatório')
+
+    setCameras((prev) => {
+      const list = Array.isArray(prev) ? prev.slice() : []
+      const idx = list.findIndex((c) => c.id === (editingCameraId || id))
+      const next: RtspCameraConfig = { id, name: name || id, rtspUrl, enabled: cameraEditor.enabled !== false }
+      if (idx >= 0) {
+        list[idx] = next
+      } else {
+        if (list.some((c) => c.id === id)) {
+          toast.error('Já existe uma câmera com esse ID')
+          return list
+        }
+        list.push(next)
+      }
+      return list
+    })
+
+    setEditingCameraId(null)
+    setCameraEditor({ id: '', name: '', rtspUrl: '', enabled: true })
+    toast.success('Câmera atualizada')
+  }
+
+  const editCamera = (cam: RtspCameraConfig) => {
+    setEditingCameraId(cam.id)
+    setCameraEditor({ ...cam, enabled: cam.enabled !== false })
+  }
+
+  const deleteCamera = (cameraId: string) => {
+    setCameras((prev) => (Array.isArray(prev) ? prev.filter((c) => c.id !== cameraId) : []))
+    if (selectedCameraId === cameraId) setSelectedCameraId('')
+    toast.success('Câmera removida')
+  }
+
+  const refreshStreamingStatus = async () => {
+    const data = await apiJson<StreamingStatus>('/api/unit-monitor/streaming/status')
+    setStreamingStatus(data)
+  }
+
+  const refreshRtspRecorders = async () => {
+    const data = await apiJson<{ ok: boolean; recorders: RtspRecorderStatus[] }>(
+      '/api/unit-monitor/rtsp/recorders'
+    )
+    setRtspRecorders(Array.isArray(data?.recorders) ? data.recorders : [])
+  }
+
+  const loadRtspSegments = async (unit: string, cameraId: string) => {
+    if (!unit || !cameraId) return
+    const data = await apiJson<{ ok: boolean; segments: RecordingSegment[] }>(
+      `/api/unit-monitor/rtsp/recordings?unit=${encodeURIComponent(unit)}&cameraId=${encodeURIComponent(cameraId)}&limit=500`
+    )
+    setRtspSegments(Array.isArray(data?.segments) ? data.segments : [])
+  }
+
+  const startStreamingGateway = async () => {
+    try {
+      await saveServerState()
+      await apiJson('/api/unit-monitor/streaming/start', { method: 'POST' })
+      addLog('STATUS', 'Streaming gateway iniciado (MediaMTX)')
+      await refreshStreamingStatus()
+    } catch (error) {
+      addLog('ERROR', `Falha ao iniciar streaming gateway: ${error}`)
+      toast.error('Falha ao iniciar streaming gateway')
+    }
+  }
+
+  const stopStreamingGateway = async () => {
+    try {
+      await apiJson('/api/unit-monitor/streaming/stop', { method: 'POST' })
+      addLog('STATUS', 'Streaming gateway parado (MediaMTX)')
+      await refreshStreamingStatus()
+    } catch (error) {
+      addLog('ERROR', `Falha ao parar streaming gateway: ${error}`)
+      toast.error('Falha ao parar streaming gateway')
+    }
+  }
+
+  const startRtspRecording = async () => {
+    if (!effectiveUnit || !selectedCameraId) {
+      toast.error('Selecione unidade e câmera')
+      return
+    }
+    try {
+      await saveServerState()
+      await apiJson('/api/unit-monitor/rtsp/recorders/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          unit: effectiveUnit,
+          cameraId: selectedCameraId,
+          segmentSeconds: rtspRecordingConfig.segmentSeconds
+        })
+      })
+      addLog('STATUS', `Gravação RTSP iniciada (${effectiveUnit}/${selectedCameraId})`)
+      await refreshRtspRecorders()
+    } catch (error) {
+      addLog('ERROR', `Falha ao iniciar gravação RTSP: ${error}`)
+      toast.error('Falha ao iniciar gravação')
+    }
+  }
+
+  const stopRtspRecording = async () => {
+    if (!effectiveUnit || !selectedCameraId) return
+    try {
+      await apiJson('/api/unit-monitor/rtsp/recorders/stop', {
+        method: 'POST',
+        body: JSON.stringify({ unit: effectiveUnit, cameraId: selectedCameraId })
+      })
+      addLog('STATUS', `Gravação RTSP parada (${effectiveUnit}/${selectedCameraId})`)
+      await refreshRtspRecorders()
+    } catch (error) {
+      addLog('ERROR', `Falha ao parar gravação RTSP: ${error}`)
+      toast.error('Falha ao parar gravação')
+    }
   }
 
   const loadRecordings = async () => {
@@ -180,7 +377,15 @@ export function UnitMonitor() {
     if (!effectiveUnit) return
     setServerStatus('unknown')
     try {
-      const data = await apiJson<{ ok: boolean; config?: { recording?: RecordingSettings; favorites?: CameraFavorite[] } }>(
+      const data = await apiJson<{
+        ok: boolean
+        config?: {
+          recording?: RecordingSettings
+          favorites?: CameraFavorite[]
+          cameras?: RtspCameraConfig[]
+          rtspRecording?: Partial<RtspRecordingConfig>
+        }
+      }>(
         `/api/unit-monitor/state?unit=${encodeURIComponent(effectiveUnit)}`
       )
       if (data?.config?.recording) {
@@ -188,6 +393,12 @@ export function UnitMonitor() {
       }
       if (Array.isArray(data?.config?.favorites)) {
         setFavorites(data.config!.favorites!)
+      }
+      if (Array.isArray(data?.config?.cameras)) {
+        setCameras(data.config!.cameras!)
+      }
+      if (data?.config?.rtspRecording) {
+        setRtspRecordingConfig((prev) => ({ ...prev, ...data.config!.rtspRecording! }))
       }
       setServerStatus('connected')
       addLog('STATUS', `Config carregada do servidor (${effectiveUnit})`)
@@ -206,7 +417,9 @@ export function UnitMonitor() {
           unit: effectiveUnit,
           config: {
             recording: recordingSettings,
-            favorites
+            favorites,
+            cameras,
+            rtspRecording: rtspRecordingConfig
           }
         })
       })
@@ -298,6 +511,28 @@ export function UnitMonitor() {
   }, [effectiveUnit])
 
   useEffect(() => {
+    if (selectedCameraId) return
+    const first = Array.isArray(cameras) ? cameras.find((c) => c?.id) : null
+    if (first?.id) setSelectedCameraId(first.id)
+  }, [cameras, selectedCameraId])
+
+  useEffect(() => {
+    if (mainTab !== 'rtsp') return
+
+    refreshStreamingStatus().catch(() => {})
+    refreshRtspRecorders().catch(() => {})
+    if (effectiveUnit && selectedCameraId) loadRtspSegments(effectiveUnit, selectedCameraId).catch(() => {})
+
+    const t = window.setInterval(() => {
+      refreshStreamingStatus().catch(() => {})
+      refreshRtspRecorders().catch(() => {})
+      if (effectiveUnit && selectedCameraId) loadRtspSegments(effectiveUnit, selectedCameraId).catch(() => {})
+    }, 5000)
+
+    return () => window.clearInterval(t)
+  }, [mainTab, effectiveUnit, selectedCameraId])
+
+  useEffect(() => {
     if (!isRecording) {
       if (recordTimerRef.current) window.clearInterval(recordTimerRef.current)
       recordTimerRef.current = null
@@ -325,6 +560,24 @@ export function UnitMonitor() {
   const handleFavoriteClick = (favorite: CameraFavorite) => {
     addLog('INFO', `Favorito acionado: ${favorite.name}`)
   }
+
+  const normalizedUnit = useMemo(() => (effectiveUnit || '').toLowerCase(), [effectiveUnit])
+
+  const selectedCamera = useMemo(() => {
+    if (!selectedCameraId) return null
+    return (Array.isArray(cameras) ? cameras : []).find((c) => c.id === selectedCameraId) || null
+  }, [cameras, selectedCameraId])
+
+  const selectedStream = useMemo(() => {
+    const list = streamingStatus?.streams || []
+    return list.find((s) => s.unit === normalizedUnit && s.cameraId === selectedCameraId) || null
+  }, [streamingStatus, normalizedUnit, selectedCameraId])
+
+  const selectedRecorder = useMemo(() => {
+    return (Array.isArray(rtspRecorders) ? rtspRecorders : []).find(
+      (r) => r.unit === normalizedUnit && r.cameraId === selectedCameraId
+    ) || null
+  }, [rtspRecorders, normalizedUnit, selectedCameraId])
 
   const recordingControls = (
     <div className="flex items-center gap-3">
@@ -653,49 +906,334 @@ export function UnitMonitor() {
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <Camera className="w-5 h-5" />
-                RTSP Monitoring
+                Unit Monitor (RTSP)
               </CardTitle>
               <CardDescription className="text-blue-200/70">
-                Fluxo RTSP/HLS para cameras IP (simulado). Use para preparar pipeline de streaming.
+                Live (HLS via MediaMTX) + gravação server-side (ffmpeg) + playback no CRM.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex flex-col md:flex-row gap-3">
-                <Input
-                  value={rtspStreamUrl}
-                  onChange={(e) => setRtspStreamUrl(e.target.value)}
-                  placeholder="rtsp://<ip>/stream"
-                  className="flex-1"
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => setRtspConnected((prev) => !prev)}
-                >
-                  {rtspConnected ? 'Desconectar' : 'Conectar'}
-                </Button>
-              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        <span>Streaming gateway (MediaMTX)</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={streamingStatus?.running ? 'default' : 'outline'}>
+                            {streamingStatus?.running ? 'RUNNING' : 'STOPPED'}
+                          </Badge>
+                          {streamingStatus?.pid ? (
+                            <Badge variant="secondary">PID {streamingStatus.pid}</Badge>
+                          ) : null}
+                        </div>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {streamingStatus?.lastError ? (
+                        <div className="text-xs text-red-400">Erro: {streamingStatus.lastError}</div>
+                      ) : null}
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => refreshStreamingStatus().catch(() => {})} variant="outline">
+                          Atualizar
+                        </Button>
+                        {!streamingStatus?.running ? (
+                          <Button size="sm" onClick={startStreamingGateway}>
+                            Iniciar
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" onClick={stopStreamingGateway}>
+                            Parar
+                          </Button>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Dica: salve a config da unidade (câmeras + retenção) antes de iniciar.
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <RTSPPlayer
-                  streamUrl={rtspStreamUrl}
-                  isConnected={rtspConnected}
-                  onError={(err) => addLog('ERROR', `RTSP: ${err}`)}
-                />
-                <CameraDiscovery
-                  onCameraSelect={(camera) => {
-                    setRtspStreamUrl(`rtsp://${camera.ip}/live`)
-                    addLog('INFO', `Camera RTSP selecionada: ${camera.name}`)
-                  }}
-                  onLog={addLog}
-                />
-              </div>
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Câmeras (RTSP)</CardTitle>
+                      <CardDescription className="text-xs">
+                        Exemplo Tapo: <span className="font-mono">rtsp://user:pass@IP:554/stream1</span>
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <ScrollArea className="h-56">
+                        <div className="space-y-2">
+                          {(cameras || []).map((cam) => (
+                            <div
+                              key={cam.id}
+                              className={`rounded-lg border p-2 ${selectedCameraId === cam.id ? 'border-primary' : 'border-border'}`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium truncate">
+                                    {cam.name || cam.id}{' '}
+                                    <span className="text-xs text-muted-foreground">({cam.id})</span>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground font-mono truncate">
+                                    {maskRtspUrl(cam.rtspUrl)}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Switch
+                                    checked={cam.enabled !== false}
+                                    onCheckedChange={(checked) =>
+                                      setCameras((prev) =>
+                                        (prev || []).map((c) => (c.id === cam.id ? { ...c, enabled: checked } : c))
+                                      )}
+                                  />
+                                  <Button size="sm" variant="outline" onClick={() => setSelectedCameraId(cam.id)}>
+                                    Ver
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => editCamera(cam)}>
+                                    Editar
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => deleteCamera(cam.id)}>
+                                    Remover
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {!cameras?.length ? (
+                            <div className="text-center py-6 text-muted-foreground text-sm">
+                              Nenhuma câmera configurada ainda.
+                            </div>
+                          ) : null}
+                        </div>
+                      </ScrollArea>
 
-              <RecordingManager
-                isConnected={rtspConnected}
-                streamUrl={rtspStreamUrl}
-                onRecordingStateChange={(rec) => addLog('STATUS', rec ? 'RTSP recording ON' : 'RTSP recording OFF')}
-                onLog={(level, message) => addLog(level, message)}
-              />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-sm">ID</Label>
+                          <Input
+                            value={cameraEditor.id}
+                            onChange={(e) => setCameraEditor((p) => ({ ...p, id: e.target.value }))}
+                            placeholder="ex: cam1"
+                            disabled={!!editingCameraId}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm">Nome</Label>
+                          <Input
+                            value={cameraEditor.name}
+                            onChange={(e) => setCameraEditor((p) => ({ ...p, name: e.target.value }))}
+                            placeholder="ex: Recepção"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-sm">RTSP URL</Label>
+                        <Input
+                          value={cameraEditor.rtspUrl}
+                          onChange={(e) => setCameraEditor((p) => ({ ...p, rtspUrl: e.target.value }))}
+                          placeholder="rtsp://user:pass@IP:554/stream1"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Enabled</Label>
+                        <Switch
+                          checked={cameraEditor.enabled !== false}
+                          onCheckedChange={(checked) => setCameraEditor((p) => ({ ...p, enabled: checked }))}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={upsertCamera}>
+                          {editingCameraId ? 'Salvar edição' : 'Adicionar'}
+                        </Button>
+                        {editingCameraId ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingCameraId(null)
+                              setCameraEditor({ id: '', name: '', rtspUrl: '', enabled: true })
+                            }}
+                          >
+                            Cancelar
+                          </Button>
+                        ) : null}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        <span>Live view</span>
+                        {selectedStream?.hlsUrlProxy ? (
+                          <a className="text-xs underline" href={selectedStream.hlsUrlProxy} target="_blank" rel="noreferrer">
+                            m3u8
+                          </a>
+                        ) : null}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex flex-col md:flex-row gap-2">
+                        <Select value={selectedCameraId || ''} onValueChange={(v) => setSelectedCameraId(v)}>
+                          <SelectTrigger className="flex-1">
+                            <SelectValue placeholder="Selecione uma câmera" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(cameras || []).map((cam) => (
+                              <SelectItem key={cam.id} value={cam.id}>
+                                {cam.name || cam.id}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button size="sm" variant="outline" onClick={() => refreshStreamingStatus().catch(() => {})}>
+                          Atualizar
+                        </Button>
+                      </div>
+
+                      {!streamingStatus?.running ? (
+                        <div className="text-sm text-muted-foreground">
+                          Gateway parado. Clique em <span className="font-medium">Iniciar</span> para gerar HLS.
+                        </div>
+                      ) : null}
+                      {streamingStatus?.running && !selectedStream ? (
+                        <div className="text-sm text-muted-foreground">
+                          Stream ainda não disponível para essa câmera. Verifique se a câmera está enabled e se a config foi salva no servidor.
+                        </div>
+                      ) : null}
+
+                      <RTSPPlayer
+                        streamUrl={selectedStream?.hlsUrlProxy || ''}
+                        isConnected={!!streamingStatus?.running && !!selectedStream?.hlsUrlProxy}
+                        onError={(err) => addLog('ERROR', `Live: ${err}`)}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Gravação + Playback</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-sm">Segmento (seg)</Label>
+                          <Input
+                            type="number"
+                            min="5"
+                            max="3600"
+                            value={rtspRecordingConfig.segmentSeconds}
+                            onChange={(e) =>
+                              setRtspRecordingConfig((p) => ({
+                                ...p,
+                                segmentSeconds: Math.max(5, Math.min(3600, parseInt(e.target.value || '60', 10) || 60))
+                              }))}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm">Retenção (dias)</Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            max="3650"
+                            value={rtspRecordingConfig.retentionDays}
+                            onChange={(e) =>
+                              setRtspRecordingConfig((p) => ({
+                                ...p,
+                                retentionDays: Math.max(0, Math.min(3650, parseInt(e.target.value || '7', 10) || 7))
+                              }))}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs text-muted-foreground">
+                          {selectedRecorder ? (
+                            <>
+                              Gravando • PID {selectedRecorder.pid} • desde{' '}
+                              {selectedRecorder.startedAt ? new Date(selectedRecorder.startedAt).toLocaleString() : '-'}
+                            </>
+                          ) : (
+                            'Parado'
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => refreshRtspRecorders().catch(() => {})}>
+                            Status
+                          </Button>
+                          {!selectedRecorder ? (
+                            <Button size="sm" onClick={startRtspRecording} disabled={!selectedCamera}>
+                              Iniciar gravação
+                            </Button>
+                          ) : (
+                            <Button size="sm" variant="outline" onClick={stopRtspRecording}>
+                              Parar gravação
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-medium">Arquivos ({rtspSegments.length})</div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => (effectiveUnit && selectedCameraId ? loadRtspSegments(effectiveUnit, selectedCameraId) : Promise.resolve())}
+                          disabled={!effectiveUnit || !selectedCameraId}
+                        >
+                          Atualizar
+                        </Button>
+                      </div>
+
+                      <ScrollArea className="h-44">
+                        <div className="space-y-2">
+                          {rtspSegments.map((seg) => (
+                            <div
+                              key={seg.filename}
+                              className="rounded-lg border border-border p-2 hover:bg-muted/50 cursor-pointer"
+                              onClick={() => setPlaybackUrl(seg.playbackUrl)}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-xs font-mono truncate">{seg.filename}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {new Date(seg.createdAt).toLocaleString()} • {formatBytes(seg.sizeBytes)}
+                                  </div>
+                                </div>
+                                <a
+                                  className="text-xs underline"
+                                  href={seg.downloadUrl}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  baixar
+                                </a>
+                              </div>
+                            </div>
+                          ))}
+                          {rtspSegments.length === 0 ? (
+                            <div className="text-center py-6 text-muted-foreground text-sm">
+                              Nenhum arquivo ainda. Inicie a gravação e aguarde o primeiro segmento.
+                            </div>
+                          ) : null}
+                        </div>
+                      </ScrollArea>
+
+                      {playbackUrl ? (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">Playback</div>
+                          <video
+                            controls
+                            className="w-full rounded-lg bg-black"
+                            src={playbackUrl}
+                          />
+                        </div>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

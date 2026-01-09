@@ -580,11 +580,333 @@ const UNIT_MONITOR_FILE = process.env.CRM_UNIT_MONITOR_FILE || path.join(CORE_ST
 let unitMonitorState = { units: {}, recordings: [] }
 let saveUnitMonitorTimer = null
 
+// Unit Monitor streaming (RTSP -> HLS) via MediaMTX (mediamtx)
+const MEDIAMTX_BIN = process.env.CRM_UNIT_MONITOR_MEDIAMTX_BIN || 'mediamtx'
+const MEDIAMTX_CONFIG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_CONFIG ||
+    path.join(CORE_STATE_DIR, 'unit_monitor_mediamtx.yml')
+const MEDIAMTX_LOG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_LOG ||
+    path.join(VAR_DIR, 'logs', 'crm', 'unit_monitor_mediamtx.out')
+const MEDIAMTX_HLS_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_HLS_TARGET || 'http://127.0.0.1:8888'
+
+// Unit Monitor server-side recording (RTSP -> segmented MP4) via ffmpeg
+const UNIT_MONITOR_RECORDINGS_DIR = process.env.CRM_UNIT_MONITOR_RECORDINGS_DIR ||
+    path.join(VAR_DIR, 'recordings', 'unit-monitor')
+const FFMPEG_BIN = process.env.CRM_UNIT_MONITOR_FFMPEG_BIN || process.env.FFMPEG_BIN || 'ffmpeg'
+
+let mediamtxProc = null
+let mediamtxProcFds = { out: null, err: null }
+let mediamtxRuntime = { running: false, pid: null, startedAt: null, lastError: null, configPath: MEDIAMTX_CONFIG_FILE }
+
+let unitMonitorRecorders = new Map() // key -> { proc, pid, unit, cameraId, rtspUrl, outDir, logFile, startedAt, segmentSeconds, lastError }
+
 function normalizeUnitKey(value) {
     const v = String(value || '').trim()
     if (!v) return ''
     return v.toLowerCase()
 }
+
+function safeKey(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80)
+}
+
+function yamlQuote(value) {
+    const s = String(value ?? '')
+    const escaped = s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return `"${escaped}"`
+}
+
+function listUnitMonitorCameras() {
+    const units = unitMonitorState.units && typeof unitMonitorState.units === 'object' ? unitMonitorState.units : {}
+    const out = []
+    for (const [unitKey, entry] of Object.entries(units)) {
+        const unit = normalizeUnitKey(unitKey)
+        const config = entry?.config && typeof entry.config === 'object' ? entry.config : {}
+        const cameras = Array.isArray(config.cameras) ? config.cameras : []
+        for (const cam of cameras) {
+            const id = String(cam?.id || '').trim()
+            const name = String(cam?.name || '').trim()
+            const rtspUrl = String(cam?.rtspUrl || '').trim()
+            const enabled = cam?.enabled !== false
+            if (!unit || !id || !rtspUrl) continue
+            out.push({ unit, id, name: name || id, rtspUrl, enabled })
+        }
+    }
+    return out
+}
+
+function findUnitMonitorCamera(unit, cameraId) {
+    const u = normalizeUnitKey(unit)
+    const id = String(cameraId || '').trim()
+    if (!u || !id) return null
+    return listUnitMonitorCameras().find(c => c.unit === u && c.id === id) || null
+}
+
+function cameraToMediamtxPath(camera) {
+    const u = safeKey(camera.unit || 'unit')
+    const c = safeKey(camera.id || 'cam')
+    return `u_${u}__c_${c}`
+}
+
+function getUnitMonitorRtspRecordingConfig(unit) {
+    const u = normalizeUnitKey(unit)
+    const entry = u ? (unitMonitorState.units || {})[u] : null
+    const config = entry?.config && typeof entry.config === 'object' ? entry.config : {}
+    const rec = config?.rtspRecording && typeof config.rtspRecording === 'object' ? config.rtspRecording : {}
+
+    const segmentSeconds = Math.max(5, Math.min(60 * 60, Number(rec.segmentSeconds || 60) || 60))
+    const retentionDays = Math.max(0, Math.min(3650, Number(rec.retentionDays || 7) || 7))
+    return { segmentSeconds, retentionDays }
+}
+
+async function writeMediamtxConfig() {
+    await fs.mkdir(path.dirname(MEDIAMTX_LOG_FILE), { recursive: true }).catch(() => {})
+    const cameras = listUnitMonitorCameras().filter(c => c.enabled)
+    if (cameras.length === 0) {
+        const err = new Error('No enabled cameras configured')
+        err.code = 'NO_CAMERAS'
+        throw err
+    }
+
+    // Prefer broad compatibility over ultra-low latency (LL-HLS requires HTTPS).
+    const lines = []
+    lines.push('logLevel: info')
+    lines.push('logDestinations: [stdout]')
+    lines.push('hls: yes')
+    lines.push('hlsAddress: 127.0.0.1:8888')
+    lines.push('hlsEncryption: no')
+    lines.push("hlsAllowOrigins: ['*']")
+    lines.push('hlsVariant: mpegts')
+    lines.push('hlsSegmentCount: 6')
+    lines.push('hlsSegmentDuration: 2s')
+    lines.push('webrtc: no')
+    lines.push('paths:')
+    for (const cam of cameras) {
+        const p = cameraToMediamtxPath(cam)
+        lines.push(`  ${p}:`)
+        lines.push(`    source: ${yamlQuote(cam.rtspUrl)}`)
+        lines.push('    sourceOnDemand: yes')
+        lines.push('    sourceOnDemandStartTimeout: 20s')
+        lines.push('    sourceOnDemandCloseAfter: 20s')
+    }
+    const config = lines.join('\n') + '\n'
+    await fs.writeFile(MEDIAMTX_CONFIG_FILE, config)
+    return { cameras, configPath: MEDIAMTX_CONFIG_FILE }
+}
+
+async function stopMediamtx() {
+    if (!mediamtxProc) {
+        mediamtxRuntime.running = false
+        mediamtxRuntime.pid = null
+        return { ok: true, stopped: false }
+    }
+    try {
+        mediamtxProc.kill('SIGINT')
+    } catch { /* ignore */ }
+    mediamtxProc = null
+    mediamtxRuntime.running = false
+    mediamtxRuntime.pid = null
+    if (mediamtxProcFds.out) { try { fsSync.closeSync(mediamtxProcFds.out) } catch { /* ignore */ } }
+    if (mediamtxProcFds.err) { try { fsSync.closeSync(mediamtxProcFds.err) } catch { /* ignore */ } }
+    mediamtxProcFds = { out: null, err: null }
+    return { ok: true, stopped: true }
+}
+
+async function startMediamtx() {
+    await stopMediamtx()
+    const { cameras, configPath } = await writeMediamtxConfig()
+    mediamtxRuntime.lastError = null
+    mediamtxRuntime.configPath = configPath
+
+    mediamtxProcFds.out = fsSync.openSync(MEDIAMTX_LOG_FILE, 'a')
+    mediamtxProcFds.err = fsSync.openSync(MEDIAMTX_LOG_FILE, 'a')
+    mediamtxProc = spawn(MEDIAMTX_BIN, [configPath], {
+        stdio: ['ignore', mediamtxProcFds.out, mediamtxProcFds.err],
+        env: process.env
+    })
+    mediamtxRuntime.running = true
+    mediamtxRuntime.pid = mediamtxProc.pid
+    mediamtxRuntime.startedAt = new Date().toISOString()
+
+    mediamtxProc.on('exit', (code, signal) => {
+        mediamtxRuntime.running = false
+        mediamtxRuntime.pid = null
+        mediamtxRuntime.lastError = code ? `Exited with code ${code}` : (signal ? `Exited with signal ${signal}` : null)
+        mediamtxProc = null
+        if (mediamtxProcFds.out) { try { fsSync.closeSync(mediamtxProcFds.out) } catch { /* ignore */ } }
+        if (mediamtxProcFds.err) { try { fsSync.closeSync(mediamtxProcFds.err) } catch { /* ignore */ } }
+        mediamtxProcFds = { out: null, err: null }
+    })
+
+    return { ok: true, started: true, camerasEnabled: cameras.length, pid: mediamtxRuntime.pid }
+}
+
+function unitMonitorRecorderKey(unit, cameraId) {
+    return `${normalizeUnitKey(unit)}:${String(cameraId || '').trim()}`
+}
+
+async function startUnitMonitorRecorder({ unit, cameraId, segmentSeconds }) {
+    const u = normalizeUnitKey(unit)
+    const id = String(cameraId || '').trim()
+    if (!u || !id) {
+        const err = new Error('Missing unit or cameraId')
+        err.code = 'BAD_REQUEST'
+        throw err
+    }
+
+    const key = unitMonitorRecorderKey(u, id)
+    if (unitMonitorRecorders.has(key)) {
+        const err = new Error('Recorder already running')
+        err.code = 'ALREADY_RUNNING'
+        throw err
+    }
+
+    const cam = findUnitMonitorCamera(u, id)
+    if (!cam) {
+        const err = new Error('Camera not found in config')
+        err.code = 'CAM_NOT_FOUND'
+        throw err
+    }
+
+    const cfg = getUnitMonitorRtspRecordingConfig(u)
+    const seg = Math.max(5, Math.min(60 * 60, Number(segmentSeconds || cfg.segmentSeconds) || cfg.segmentSeconds))
+
+    const outDir = path.join(UNIT_MONITOR_RECORDINGS_DIR, safeKey(u), safeKey(id))
+    await fs.mkdir(outDir, { recursive: true }).catch(() => {})
+
+    const logDir = path.dirname(MEDIAMTX_LOG_FILE)
+    await fs.mkdir(logDir, { recursive: true }).catch(() => {})
+    const logFile = path.join(logDir, `unit_monitor_ffmpeg_${safeKey(u)}_${safeKey(id)}.out`)
+    const fd = fsSync.openSync(logFile, 'a')
+
+    const outputTemplate = path.join(outDir, '%Y%m%d_%H%M%S.mp4')
+    const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-fflags', '+genpts',
+        '-rtsp_transport', 'tcp',
+        '-i', cam.rtspUrl,
+        '-c', 'copy',
+        '-f', 'segment',
+        '-segment_time', String(seg),
+        '-reset_timestamps', '1',
+        '-strftime', '1',
+        outputTemplate
+    ]
+
+    const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', fd, fd], env: process.env })
+    const startedAt = new Date().toISOString()
+    const entry = {
+        proc,
+        pid: proc.pid,
+        unit: u,
+        cameraId: id,
+        rtspUrl: cam.rtspUrl,
+        outDir,
+        logFile,
+        startedAt,
+        segmentSeconds: seg,
+        lastError: null
+    }
+    unitMonitorRecorders.set(key, entry)
+
+    proc.on('exit', (code, signal) => {
+        const current = unitMonitorRecorders.get(key)
+        if (current) {
+            current.lastError = code ? `Exited with code ${code}` : (signal ? `Exited with signal ${signal}` : null)
+        }
+        unitMonitorRecorders.delete(key)
+        try { fsSync.closeSync(fd) } catch { /* ignore */ }
+    })
+
+    return { ok: true, started: true, key, pid: proc.pid, startedAt, segmentSeconds: seg, outDir, logFile }
+}
+
+async function stopUnitMonitorRecorder({ unit, cameraId }) {
+    const u = normalizeUnitKey(unit)
+    const id = String(cameraId || '').trim()
+    if (!u || !id) return { ok: true, stopped: false }
+    const key = unitMonitorRecorderKey(u, id)
+    const entry = unitMonitorRecorders.get(key)
+    if (!entry) return { ok: true, stopped: false }
+    try { entry.proc.kill('SIGINT') } catch { /* ignore */ }
+    unitMonitorRecorders.delete(key)
+    return { ok: true, stopped: true }
+}
+
+async function listUnitMonitorRecordingSegments({ unit, cameraId, limit = 500 }) {
+    const u = normalizeUnitKey(unit)
+    const id = String(cameraId || '').trim()
+    if (!u || !id) return []
+    const outDir = path.join(UNIT_MONITOR_RECORDINGS_DIR, safeKey(u), safeKey(id))
+    let files = []
+    try {
+        files = await fs.readdir(outDir)
+    } catch {
+        return []
+    }
+    const mp4s = files.filter(f => f.endsWith('.mp4'))
+    const entries = []
+    for (const filename of mp4s) {
+        const absPath = path.join(outDir, filename)
+        try {
+            const st = await fs.stat(absPath)
+            if (!st.isFile()) continue
+            const relPath = path.relative(UNIT_MONITOR_RECORDINGS_DIR, absPath)
+            const fileId = encodeURIComponent(relPath)
+            entries.push({
+                unit: u,
+                cameraId: id,
+                filename,
+                sizeBytes: st.size,
+                createdAt: st.mtime.toISOString(),
+                playbackUrl: `/api/unit-monitor/rtsp/recordings/file?file=${fileId}`,
+                downloadUrl: `/api/unit-monitor/rtsp/recordings/file?file=${fileId}&download=1`
+            })
+        } catch { /* ignore */ }
+    }
+    entries.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    return entries.slice(0, Math.max(1, Math.min(5000, Number(limit) || 500)))
+}
+
+async function cleanupUnitMonitorSegments() {
+    const units = unitMonitorState.units && typeof unitMonitorState.units === 'object' ? unitMonitorState.units : {}
+    const now = Date.now()
+    for (const [unitKey, entry] of Object.entries(units)) {
+        const unit = normalizeUnitKey(unitKey)
+        if (!unit) continue
+        const cfg = getUnitMonitorRtspRecordingConfig(unit)
+        if (!cfg.retentionDays || cfg.retentionDays <= 0) continue
+        const cutoffMs = now - cfg.retentionDays * 24 * 60 * 60 * 1000
+
+        const config = entry?.config && typeof entry.config === 'object' ? entry.config : {}
+        const cameras = Array.isArray(config.cameras) ? config.cameras : []
+        for (const cam of cameras) {
+            const id = String(cam?.id || '').trim()
+            if (!id) continue
+            const outDir = path.join(UNIT_MONITOR_RECORDINGS_DIR, safeKey(unit), safeKey(id))
+            let files = []
+            try { files = await fs.readdir(outDir) } catch { continue }
+            for (const filename of files) {
+                if (!filename.endsWith('.mp4')) continue
+                const absPath = path.join(outDir, filename)
+                try {
+                    const st = await fs.stat(absPath)
+                    if (!st.isFile()) continue
+                    if (st.mtimeMs < cutoffMs) {
+                        await fs.unlink(absPath).catch(() => {})
+                    }
+                } catch { /* ignore */ }
+            }
+        }
+    }
+}
+
+setInterval(() => { cleanupUnitMonitorSegments().catch(() => {}) }, 60 * 60 * 1000).unref()
 
 async function loadUnitMonitorState() {
     try {
@@ -668,6 +990,120 @@ app.get('/api/unit-monitor/recordings', async (req, res) => {
     const all = Array.isArray(unitMonitorState.recordings) ? unitMonitorState.recordings : []
     const filtered = unit ? all.filter(r => r.unit === unit) : all
     res.json({ ok: true, unit: unit || null, recordings: filtered })
+})
+
+// HLS proxy (same-origin for CRM UI)
+app.use('/api/unit-monitor/hls', createProxyMiddleware({
+    target: MEDIAMTX_HLS_TARGET,
+    changeOrigin: true,
+    ws: false,
+    logLevel: 'silent',
+    pathRewrite: { '^/api/unit-monitor/hls': '' }
+}))
+
+app.get('/api/unit-monitor/streaming/status', async (req, res) => {
+    const cameras = listUnitMonitorCameras().filter(c => c.enabled)
+    const streams = cameras.map((c) => {
+        const pathKey = cameraToMediamtxPath(c)
+        const hlsUrlDirect = `${MEDIAMTX_HLS_TARGET.replace(/\/$/, '')}/${pathKey}/index.m3u8`
+        const hlsUrlProxy = `/api/unit-monitor/hls/${pathKey}/index.m3u8`
+        return { unit: c.unit, cameraId: c.id, name: c.name, pathKey, hlsUrlDirect, hlsUrlProxy }
+    })
+    res.json({
+        ok: true,
+        running: !!mediamtxRuntime.running,
+        pid: mediamtxRuntime.pid,
+        startedAt: mediamtxRuntime.startedAt,
+        lastError: mediamtxRuntime.lastError,
+        configPath: mediamtxRuntime.configPath,
+        hlsTarget: MEDIAMTX_HLS_TARGET,
+        hlsProxyBase: '/api/unit-monitor/hls',
+        streams
+    })
+})
+
+app.post('/api/unit-monitor/streaming/start', async (req, res) => {
+    try {
+        const result = await startMediamtx()
+        res.json({ ok: true, ...result })
+    } catch (e) {
+        mediamtxRuntime.running = false
+        mediamtxRuntime.pid = null
+        mediamtxRuntime.lastError = e?.message || String(e)
+        res.status(500).json({ ok: false, error: mediamtxRuntime.lastError })
+    }
+})
+
+app.post('/api/unit-monitor/streaming/stop', async (req, res) => {
+    const result = await stopMediamtx()
+    res.json({ ok: true, ...result })
+})
+
+// RTSP recordings (server-side)
+app.get('/api/unit-monitor/rtsp/recorders', async (req, res) => {
+    const recorders = Array.from(unitMonitorRecorders.values()).map(r => ({
+        unit: r.unit,
+        cameraId: r.cameraId,
+        pid: r.pid,
+        startedAt: r.startedAt,
+        segmentSeconds: r.segmentSeconds,
+        outDir: r.outDir,
+        logFile: r.logFile,
+        lastError: r.lastError
+    }))
+    res.json({ ok: true, count: recorders.length, recorders })
+})
+
+app.post('/api/unit-monitor/rtsp/recorders/start', async (req, res) => {
+    try {
+        const unit = normalizeUnitKey(req.body?.unit || '')
+        const cameraId = String(req.body?.cameraId || '').trim()
+        const segmentSeconds = Number(req.body?.segmentSeconds || 0) || undefined
+        const result = await startUnitMonitorRecorder({ unit, cameraId, segmentSeconds })
+        res.json({ ok: true, ...result })
+    } catch (e) {
+        res.status(400).json({ ok: false, error: e?.message || String(e), code: e?.code || null })
+    }
+})
+
+app.post('/api/unit-monitor/rtsp/recorders/stop', async (req, res) => {
+    const unit = normalizeUnitKey(req.body?.unit || '')
+    const cameraId = String(req.body?.cameraId || '').trim()
+    const result = await stopUnitMonitorRecorder({ unit, cameraId })
+    res.json({ ok: true, ...result })
+})
+
+app.get('/api/unit-monitor/rtsp/recordings', async (req, res) => {
+    const unit = normalizeUnitKey(req.query?.unit || '')
+    const cameraId = String(req.query?.cameraId || '').trim()
+    const limit = Number(req.query?.limit || 500) || 500
+    const cfg = getUnitMonitorRtspRecordingConfig(unit)
+    const segments = await listUnitMonitorRecordingSegments({ unit, cameraId, limit })
+    res.json({ ok: true, unit, cameraId, config: cfg, segments })
+})
+
+app.get('/api/unit-monitor/rtsp/recordings/file', async (req, res) => {
+    const file = String(req.query?.file || '')
+    if (!file) return res.status(400).json({ ok: false, error: 'Missing file' })
+    let rel = file
+    try { rel = decodeURIComponent(file) } catch { /* ignore */ }
+    if (rel.includes('\0')) return res.status(400).json({ ok: false, error: 'Invalid file' })
+    const absPath = path.resolve(UNIT_MONITOR_RECORDINGS_DIR, rel)
+    const base = path.resolve(UNIT_MONITOR_RECORDINGS_DIR)
+    if (!absPath.startsWith(base + path.sep)) {
+        return res.status(400).json({ ok: false, error: 'Invalid file path' })
+    }
+    try {
+        const st = await fs.stat(absPath)
+        if (!st.isFile()) return res.status(404).json({ ok: false, error: 'Not found' })
+    } catch {
+        return res.status(404).json({ ok: false, error: 'Not found' })
+    }
+    if (String(req.query?.download || '') === '1') {
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(absPath)}"`)
+    }
+    res.setHeader('Content-Type', 'video/mp4')
+    res.sendFile(absPath)
 })
 
 // Persistent suppression store (conversationId -> resumeAt ISO)
