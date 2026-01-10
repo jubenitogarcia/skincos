@@ -395,8 +395,10 @@ export function UnitMonitor() {
     enabled: true
   })
   const [editingCameraId, setEditingCameraId] = useState<string | null>(null)
-  const [liveMode, setLiveMode] = useKV<'auto' | 'webrtc' | 'hls'>(`unit-monitor:live-mode:${unitKey}`, 'auto')
-  const [autoLiveFallback, setAutoLiveFallback] = useState<'webrtc' | 'hls'>('webrtc')
+  const [liveTransport, setLiveTransport] = useState<'webrtc' | 'hls'>('webrtc')
+  const [webrtcProbe, setWebrtcProbe] = useState(false)
+  const [, setWebrtcFailures] = useState(0)
+  const [webrtcRetryAt, setWebrtcRetryAt] = useState(0)
 
   const recordTimerRef = useRef<number | null>(null)
 
@@ -779,9 +781,19 @@ export function UnitMonitor() {
   }, [cameras, selectedCameraId])
 
   useEffect(() => {
-    if (liveMode !== 'auto') return
-    setAutoLiveFallback('webrtc')
-  }, [liveMode, selectedCameraId, effectiveUnit, streamingStatus?.running])
+    setLiveTransport('webrtc')
+    setWebrtcProbe(false)
+    setWebrtcFailures(0)
+    setWebrtcRetryAt(0)
+  }, [selectedCameraId, effectiveUnit])
+
+  useEffect(() => {
+    if (!streamingStatus?.running) return
+    setLiveTransport('webrtc')
+    setWebrtcProbe(false)
+    setWebrtcFailures(0)
+    setWebrtcRetryAt(0)
+  }, [streamingStatus?.running])
 
   useEffect(() => {
     if (mainTab !== 'rtsp') return
@@ -842,6 +854,60 @@ export function UnitMonitor() {
     const list = streamingStatus?.streams || []
     return list.find((s) => s.unit === normalizedUnit && s.cameraId === selectedCameraId) || null
   }, [streamingStatus, normalizedUnit, selectedCameraId])
+
+  const hlsUrl = selectedStream?.hlsUrlProxy || ''
+  const whepUrl = selectedStream?.webrtcUrlProxy || ''
+  const canWebrtc = !!streamingStatus?.running && !!whepUrl
+  const canHls = !!streamingStatus?.running && !!hlsUrl
+  const showWebrtc = liveTransport === 'webrtc' && canWebrtc
+  const showHls = !showWebrtc
+  const shouldConnectWebrtc = canWebrtc && (showWebrtc || webrtcProbe)
+
+  const getWebrtcRetryDelayMs = (failures: number) => {
+    const steps = [10_000, 30_000, 60_000, 120_000, 300_000]
+    const idx = Math.max(0, Math.min(steps.length - 1, Number(failures || 0) - 1))
+    return steps[idx]
+  }
+
+  const handleWebrtcReady = () => {
+    // If we were in fallback, switch back to WebRTC automatically.
+    if (liveTransport === 'hls') addLog('STATUS', 'WebRTC voltou — alternando para tempo real')
+    setWebrtcProbe(false)
+    setWebrtcFailures(0)
+    setWebrtcRetryAt(0)
+    setLiveTransport('webrtc')
+  }
+
+  const handleWebrtcError = (err: string) => {
+    addLog('WARNING', `WebRTC: ${err}`)
+    if (!webrtcProbe && liveTransport === 'webrtc') toast.error('WebRTC falhou — usando HLS (com delay)')
+    setWebrtcProbe(false)
+    setLiveTransport('hls')
+    setWebrtcFailures((prev) => {
+      const next = Math.min((Number(prev || 0) || 0) + 1, 5)
+      const delayMs = getWebrtcRetryDelayMs(next)
+      setWebrtcRetryAt(Date.now() + delayMs)
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (mainTab !== 'rtsp') return
+    if (liveTransport !== 'hls') return
+    if (webrtcProbe) return
+    if (!canWebrtc) return
+
+    const now = Date.now()
+    const when = webrtcRetryAt ? Math.max(now, webrtcRetryAt) : now
+    const delay = Math.max(0, when - now)
+    const t = window.setTimeout(() => setWebrtcProbe(true), delay)
+    return () => window.clearTimeout(t)
+  }, [mainTab, liveTransport, webrtcProbe, canWebrtc, webrtcRetryAt])
+
+  useEffect(() => {
+    if (mainTab === 'rtsp') return
+    setWebrtcProbe(false)
+  }, [mainTab])
 
   const selectedRecorder = useMemo(() => {
     return (Array.isArray(rtspRecorders) ? rtspRecorders : []).find(
@@ -1540,86 +1606,55 @@ export function UnitMonitor() {
 	                        </div>
 	                      </CardTitle>
 	                    </CardHeader>
-	                    <CardContent className="space-y-3">
-	                      <div className="flex flex-col md:flex-row gap-2">
-	                        <Select value={selectedCameraId || ''} onValueChange={(v) => setSelectedCameraId(v)}>
-	                          <SelectTrigger className="flex-1">
-	                            <SelectValue placeholder="Selecione uma câmera" />
-	                          </SelectTrigger>
-	                          <SelectContent>
-	                            {(cameras || []).map((cam) => (
-	                              <SelectItem key={cam.id} value={cam.id}>
-	                                {cam.name || cam.id}
-	                              </SelectItem>
-	                            ))}
-	                          </SelectContent>
-	                        </Select>
-		                        <Select value={liveMode} onValueChange={(v) => setLiveMode(v as 'auto' | 'webrtc' | 'hls')}>
-	                          <SelectTrigger className="w-full md:w-[180px]">
-	                            <SelectValue placeholder="Modo" />
-	                          </SelectTrigger>
-	                          <SelectContent>
-	                            <SelectItem value="auto">Auto (WebRTC → HLS)</SelectItem>
-	                            <SelectItem value="webrtc">WebRTC (tempo real)</SelectItem>
-	                            <SelectItem value="hls">HLS (com delay)</SelectItem>
-	                          </SelectContent>
-	                        </Select>
-	                        <Button size="sm" variant="outline" onClick={() => refreshStreamingStatus().catch(() => {})}>
-	                          Atualizar
-	                        </Button>
-	                      </div>
+		                    <CardContent className="space-y-3">
+		                      <div className="flex flex-col md:flex-row gap-2">
+		                        <Select value={selectedCameraId || ''} onValueChange={(v) => setSelectedCameraId(v)}>
+		                          <SelectTrigger className="flex-1">
+		                            <SelectValue placeholder="Selecione uma câmera" />
+		                          </SelectTrigger>
+		                          <SelectContent>
+		                            {(cameras || []).map((cam) => (
+		                              <SelectItem key={cam.id} value={cam.id}>
+		                                {cam.name || cam.id}
+		                              </SelectItem>
+		                            ))}
+		                          </SelectContent>
+		                        </Select>
+		                        <Button size="sm" variant="outline" onClick={() => refreshStreamingStatus().catch(() => {})}>
+		                          Atualizar
+		                        </Button>
+		                      </div>
 
-		                      {liveMode === 'auto' ? (
-		                        <div className="flex items-center justify-between gap-3">
-		                          <div className="text-xs text-muted-foreground">
-		                            {autoLiveFallback === 'webrtc'
-		                              ? (selectedStream?.webrtcUrlProxy
-		                                ? 'Auto: WebRTC (tempo real)'
-		                                : 'Auto: WebRTC indisponível, usando HLS (com delay)')
-		                              : 'Auto: fallback para HLS (com delay)'}
-		                          </div>
-		                          {(autoLiveFallback === 'hls' || !selectedStream?.webrtcUrlProxy) ? (
-		                            <Button size="sm" variant="outline" onClick={() => setAutoLiveFallback('webrtc')}>
-		                              Tentar WebRTC novamente
-		                            </Button>
-		                          ) : null}
+		                      {!streamingStatus?.running ? (
+		                        <div className="text-sm text-muted-foreground">
+		                          Gateway parado. Clique em <span className="font-medium">Iniciar</span> para habilitar live (WebRTC/HLS).
 		                        </div>
-		                      ) : null}
-
-	                      {!streamingStatus?.running ? (
-	                        <div className="text-sm text-muted-foreground">
-	                          Gateway parado. Clique em <span className="font-medium">Iniciar</span> para habilitar live (WebRTC/HLS).
-	                        </div>
 	                      ) : null}
 	                      {streamingStatus?.running && !selectedStream ? (
 	                        <div className="text-sm text-muted-foreground">
-	                          Stream ainda não disponível para essa câmera. Verifique se a câmera está enabled e se a config foi salva no servidor.
-	                        </div>
-	                      ) : null}
+		                          Stream ainda não disponível para essa câmera. Verifique se a câmera está enabled e se a config foi salva no servidor.
+		                        </div>
+		                      ) : null}
 
-	                      {((liveMode === 'auto' ? autoLiveFallback : liveMode) === 'webrtc' && !!selectedStream?.webrtcUrlProxy) ? (
-	                        <WebRTCPlayer
-	                          whepUrl={selectedStream?.webrtcUrlProxy || ''}
-	                          isConnected={!!streamingStatus?.running && !!selectedStream?.webrtcUrlProxy}
-	                          onError={(err) => {
-	                            addLog('WARNING', `WebRTC: ${err}`)
-	                            if (liveMode === 'auto' && autoLiveFallback !== 'hls') {
-	                              toast.error('WebRTC falhou — usando HLS (com delay)')
-	                              setAutoLiveFallback('hls')
-	                              return
-	                            }
-	                            toast.error(`WebRTC: ${err}`)
-	                          }}
-	                        />
-	                      ) : (
-	                        <RTSPPlayer
-	                          streamUrl={selectedStream?.hlsUrlProxy || ''}
-	                          isConnected={!!streamingStatus?.running && !!selectedStream?.hlsUrlProxy}
-	                          onError={(err) => addLog('ERROR', `Live(HLS): ${err}`)}
-	                        />
-	                      )}
-	                    </CardContent>
-	                  </Card>
+		                      <div className="relative">
+		                        <div className={showWebrtc ? '' : 'absolute inset-0 opacity-0 pointer-events-none'}>
+		                          <WebRTCPlayer
+		                            whepUrl={whepUrl}
+		                            isConnected={shouldConnectWebrtc}
+		                            onReady={handleWebrtcReady}
+		                            onError={handleWebrtcError}
+		                          />
+		                        </div>
+		                        {showHls ? (
+		                          <RTSPPlayer
+		                            streamUrl={hlsUrl}
+		                            isConnected={canHls}
+		                            onError={(err) => addLog('ERROR', `Live(HLS): ${err}`)}
+		                          />
+		                        ) : null}
+		                      </div>
+		                    </CardContent>
+		                  </Card>
 
                   <Card>
                     <CardHeader className="pb-3">

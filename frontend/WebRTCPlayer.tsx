@@ -14,6 +14,7 @@ interface WebRTCPlayerProps {
   whepUrl: string
   isConnected: boolean
   onPlayStateChange?: (isPlaying: boolean) => void
+  onReady?: () => void
   onError?: (error: string) => void
 }
 
@@ -38,11 +39,12 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 2500): P
   })
 }
 
-export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError }: WebRTCPlayerProps) {
+export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady, onError }: WebRTCPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const onErrorRef = useRef(onError)
   const onPlayStateChangeRef = useRef(onPlayStateChange)
+  const onReadyRef = useRef(onReady)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(75)
@@ -57,6 +59,10 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
   useEffect(() => {
     onPlayStateChangeRef.current = onPlayStateChange
   }, [onPlayStateChange])
+
+  useEffect(() => {
+    onReadyRef.current = onReady
+  }, [onReady])
 
   useEffect(() => {
     const video = videoRef.current
@@ -147,6 +153,9 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
         onLoadedData = () => {
           if (firstFrameTimeout) window.clearTimeout(firstFrameTimeout)
           firstFrameTimeout = null
+          if (!cancelled && !failed && v && v.videoWidth > 0) {
+            onReadyRef.current?.()
+          }
           if (v) v.removeEventListener('loadeddata', onLoadedData as any)
         }
         if (v) v.addEventListener('loadeddata', onLoadedData as any)
@@ -341,7 +350,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
         <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded px-3 py-1 text-white text-xs">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${isPlaying ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span>WebRTC {isPlaying ? 'Live' : 'Idle'}</span>
+            <span>WebRTC (tempo real)</span>
           </div>
         </div>
       )}
