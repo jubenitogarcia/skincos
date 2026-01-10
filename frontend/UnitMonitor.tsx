@@ -78,9 +78,16 @@ interface LogEntry {
 }
 
 interface RtspCameraConfig {
-  id: string
-  name: string
-  rtspUrl: string
+  id?: string
+  name?: string
+  // Basic mode (recommended)
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  streamPath?: string // e.g. "stream1" or "/stream1"
+  // Advanced mode (power users)
+  rtspUrl?: string
   enabled?: boolean
 }
 
@@ -185,6 +192,39 @@ function maskRtspUrl(input: string): string {
   return s.slice(0, afterScheme) + `${user}:***` + rest
 }
 
+function safeIdPart(input: string): string {
+  return String(input || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60)
+}
+
+function normalizeStreamPath(input: string): string {
+  const s = String(input || '').trim()
+  if (!s) return 'stream1'
+  return s.startsWith('/') ? s.slice(1) : s
+}
+
+function buildRtspUrlFromParts(cam: RtspCameraConfig): string {
+  const host = String(cam.host || '').trim()
+  if (!host) return ''
+  const port = Number(cam.port || 554) || 554
+  const username = String(cam.username || '').trim()
+  const password = String(cam.password || '').trim()
+  const stream = normalizeStreamPath(cam.streamPath || 'stream1')
+  const auth = username && password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : ''
+  return `rtsp://${auth}${host}:${port}/${stream}`
+}
+
+function deriveCameraId(cam: RtspCameraConfig): string {
+  const host = safeIdPart(cam.host || '')
+  const stream = safeIdPart(normalizeStreamPath(cam.streamPath || 'stream1'))
+  if (host) return `cam_${host}_${stream || 'stream1'}`
+  return `cam_${Date.now()}`
+}
+
 export function UnitMonitor() {
   const [selectedUnit, setSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
   const [customUnit, setCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
@@ -219,9 +259,15 @@ export function UnitMonitor() {
   const [rtspSegments, setRtspSegments] = useState<RecordingSegment[]>([])
   const [selectedCameraId, setSelectedCameraId] = useState<string>('')
   const [playbackUrl, setPlaybackUrl] = useState<string>('')
+  const [cameraEditorAdvanced, setCameraEditorAdvanced] = useState(false)
   const [cameraEditor, setCameraEditor] = useState<RtspCameraConfig>({
     id: '',
     name: '',
+    host: '',
+    port: 554,
+    username: '',
+    password: '',
+    streamPath: 'stream1',
     rtspUrl: '',
     enabled: true
   })
@@ -242,16 +288,38 @@ export function UnitMonitor() {
   }
 
   const upsertCamera = () => {
-    const id = cameraEditor.id.trim()
-    const name = cameraEditor.name.trim()
-    const rtspUrl = cameraEditor.rtspUrl.trim()
-    if (!id) return toast.error('Camera ID obrigatório')
-    if (!rtspUrl) return toast.error('RTSP URL obrigatório')
+    const name = String(cameraEditor.name || '').trim()
+    const enabled = cameraEditor.enabled !== false
+
+    const basicRtspUrl = buildRtspUrlFromParts(cameraEditor)
+    const advancedRtspUrl = String(cameraEditor.rtspUrl || '').trim()
+    const rtspUrl = cameraEditorAdvanced ? advancedRtspUrl : basicRtspUrl
+    if (cameraEditorAdvanced && !rtspUrl) return toast.error('RTSP URL obrigatório')
+    if (!cameraEditorAdvanced) {
+      if (!String(cameraEditor.host || '').trim()) return toast.error('IP/Host obrigatório')
+      if (!String(cameraEditor.username || '').trim()) return toast.error('Usuário obrigatório')
+      if (!String(cameraEditor.password || '').trim()) return toast.error('Senha obrigatória')
+    }
+
+    const id = String(cameraEditor.id || '').trim() || deriveCameraId(cameraEditor)
 
     setCameras((prev) => {
       const list = Array.isArray(prev) ? prev.slice() : []
       const idx = list.findIndex((c) => c.id === (editingCameraId || id))
-      const next: RtspCameraConfig = { id, name: name || id, rtspUrl, enabled: cameraEditor.enabled !== false }
+      const next: RtspCameraConfig = {
+        id,
+        name: name || id,
+        enabled,
+        ...(cameraEditorAdvanced
+          ? { rtspUrl }
+          : {
+              host: String(cameraEditor.host || '').trim(),
+              port: Number(cameraEditor.port || 554) || 554,
+              username: String(cameraEditor.username || '').trim(),
+              password: String(cameraEditor.password || '').trim(),
+              streamPath: normalizeStreamPath(cameraEditor.streamPath || 'stream1')
+            })
+      }
       if (idx >= 0) {
         list[idx] = next
       } else {
@@ -265,13 +333,37 @@ export function UnitMonitor() {
     })
 
     setEditingCameraId(null)
-    setCameraEditor({ id: '', name: '', rtspUrl: '', enabled: true })
+    setCameraEditorAdvanced(false)
+    setCameraEditor({
+      id: '',
+      name: '',
+      host: '',
+      port: 554,
+      username: '',
+      password: '',
+      streamPath: 'stream1',
+      rtspUrl: '',
+      enabled: true
+    })
     toast.success('Câmera atualizada')
   }
 
   const editCamera = (cam: RtspCameraConfig) => {
-    setEditingCameraId(cam.id)
-    setCameraEditor({ ...cam, enabled: cam.enabled !== false })
+    const id = String(cam.id || '').trim()
+    setEditingCameraId(id)
+    const hasParts = !!(cam.host || (cam as any).ip || cam.username || cam.password || cam.streamPath)
+    setCameraEditorAdvanced(!hasParts && !!cam.rtspUrl)
+    setCameraEditor({
+      id,
+      name: String(cam.name || '').trim(),
+      host: String(cam.host || (cam as any).ip || '').trim(),
+      port: Number(cam.port || 554) || 554,
+      username: String(cam.username || '').trim(),
+      password: String(cam.password || '').trim(),
+      streamPath: normalizeStreamPath(cam.streamPath || 'stream1'),
+      rtspUrl: String(cam.rtspUrl || '').trim(),
+      enabled: cam.enabled !== false
+    })
   }
 
   const deleteCamera = (cameraId: string) => {
@@ -938,9 +1030,11 @@ export function UnitMonitor() {
                           Atualizar
                         </Button>
                         {!streamingStatus?.running ? (
-                          <Button size="sm" onClick={startStreamingGateway}>
-                            Iniciar
-                          </Button>
+                          <>
+                            <Button size="sm" onClick={startStreamingGateway}>
+                              Salvar e iniciar
+                            </Button>
+                          </>
                         ) : (
                           <Button size="sm" variant="outline" onClick={stopStreamingGateway}>
                             Parar
@@ -965,17 +1059,17 @@ export function UnitMonitor() {
                         <div className="space-y-2">
                           {(cameras || []).map((cam) => (
                             <div
-                              key={cam.id}
+                              key={cam.id || `${cam.host || cam.rtspUrl || 'cam'}-${Math.random()}`}
                               className={`rounded-lg border p-2 ${selectedCameraId === cam.id ? 'border-primary' : 'border-border'}`}
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0">
                                   <div className="text-sm font-medium truncate">
-                                    {cam.name || cam.id}{' '}
-                                    <span className="text-xs text-muted-foreground">({cam.id})</span>
+                                    {cam.name || cam.id || 'Câmera'}{' '}
+                                    {cam.id ? <span className="text-xs text-muted-foreground">({cam.id})</span> : null}
                                   </div>
                                   <div className="text-xs text-muted-foreground font-mono truncate">
-                                    {maskRtspUrl(cam.rtspUrl)}
+                                    {maskRtspUrl(cam.rtspUrl || buildRtspUrlFromParts(cam))}
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -992,7 +1086,7 @@ export function UnitMonitor() {
                                   <Button size="sm" variant="outline" onClick={() => editCamera(cam)}>
                                     Editar
                                   </Button>
-                                  <Button size="sm" variant="outline" onClick={() => deleteCamera(cam.id)}>
+                                  <Button size="sm" variant="outline" onClick={() => deleteCamera(String(cam.id || ''))}>
                                     Remover
                                   </Button>
                                 </div>
@@ -1011,29 +1105,102 @@ export function UnitMonitor() {
                         <div>
                           <Label className="text-sm">ID</Label>
                           <Input
-                            value={cameraEditor.id}
+                            value={String(cameraEditor.id || '')}
                             onChange={(e) => setCameraEditor((p) => ({ ...p, id: e.target.value }))}
-                            placeholder="ex: cam1"
+                            placeholder="(opcional) ex: tapo_92"
                             disabled={!!editingCameraId}
                           />
                         </div>
                         <div>
                           <Label className="text-sm">Nome</Label>
                           <Input
-                            value={cameraEditor.name}
+                            value={String(cameraEditor.name || '')}
                             onChange={(e) => setCameraEditor((p) => ({ ...p, name: e.target.value }))}
                             placeholder="ex: Recepção"
                           />
                         </div>
                       </div>
-                      <div>
-                        <Label className="text-sm">RTSP URL</Label>
-                        <Input
-                          value={cameraEditor.rtspUrl}
-                          onChange={(e) => setCameraEditor((p) => ({ ...p, rtspUrl: e.target.value }))}
-                          placeholder="rtsp://user:pass@IP:554/stream1"
-                        />
+
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Modo avançado (URL completa)</Label>
+                        <Switch checked={cameraEditorAdvanced} onCheckedChange={setCameraEditorAdvanced} />
                       </div>
+
+                      {cameraEditorAdvanced ? (
+                        <div>
+                          <Label className="text-sm">RTSP URL</Label>
+                          <Input
+                            value={String(cameraEditor.rtspUrl || '')}
+                            onChange={(e) => setCameraEditor((p) => ({ ...p, rtspUrl: e.target.value }))}
+                            placeholder="rtsp://user:pass@IP:554/stream1"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <Label className="text-sm">IP / Host</Label>
+                              <Input
+                                value={String(cameraEditor.host || '')}
+                                onChange={(e) => setCameraEditor((p) => ({ ...p, host: e.target.value }))}
+                                placeholder="192.168.15.92"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm">Porta</Label>
+                              <Input
+                                type="number"
+                                min="1"
+                                max="65535"
+                                value={Number(cameraEditor.port || 554)}
+                                onChange={(e) =>
+                                  setCameraEditor((p) => ({
+                                    ...p,
+                                    port: Math.max(1, Math.min(65535, parseInt(e.target.value || '554', 10) || 554))
+                                  }))}
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <Label className="text-sm">Usuário</Label>
+                              <Input
+                                value={String(cameraEditor.username || '')}
+                                onChange={(e) => setCameraEditor((p) => ({ ...p, username: e.target.value }))}
+                                placeholder="skincos"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm">Senha</Label>
+                              <Input
+                                type="password"
+                                value={String(cameraEditor.password || '')}
+                                onChange={(e) => setCameraEditor((p) => ({ ...p, password: e.target.value }))}
+                                placeholder="••••••••"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="text-sm">Stream</Label>
+                            <Select
+                              value={normalizeStreamPath(cameraEditor.streamPath || 'stream1')}
+                              onValueChange={(value) => setCameraEditor((p) => ({ ...p, streamPath: value }))}
+                            >
+                              <SelectTrigger className="mt-1">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="stream1">stream1 (main)</SelectItem>
+                                <SelectItem value="stream2">stream2 (sub)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono">
+                            Preview: {maskRtspUrl(buildRtspUrlFromParts(cameraEditor))}
+                          </div>
+                        </>
+                      )}
+
                       <div className="flex items-center justify-between">
                         <Label className="text-sm">Enabled</Label>
                         <Switch
@@ -1051,7 +1218,18 @@ export function UnitMonitor() {
                             variant="outline"
                             onClick={() => {
                               setEditingCameraId(null)
-                              setCameraEditor({ id: '', name: '', rtspUrl: '', enabled: true })
+                              setCameraEditorAdvanced(false)
+                              setCameraEditor({
+                                id: '',
+                                name: '',
+                                host: '',
+                                port: 554,
+                                username: '',
+                                password: '',
+                                streamPath: 'stream1',
+                                rtspUrl: '',
+                                enabled: true
+                              })
                             }}
                           >
                             Cancelar

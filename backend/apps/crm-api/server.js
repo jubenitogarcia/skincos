@@ -620,6 +620,21 @@ function yamlQuote(value) {
     return `"${escaped}"`
 }
 
+function buildRtspUrlFromParts({ host, port, username, password, streamPath }) {
+    const h = String(host || '').trim()
+    if (!h) return ''
+    const p = Number(port || 554) || 554
+
+    let sp = String(streamPath || '').trim()
+    if (!sp) sp = 'stream1'
+    if (!sp.startsWith('/')) sp = '/' + sp
+
+    const u = String(username || '').trim()
+    const pw = String(password || '').trim()
+    const auth = u && pw ? `${encodeURIComponent(u)}:${encodeURIComponent(pw)}@` : ''
+    return `rtsp://${auth}${h}:${p}${sp}`
+}
+
 function listUnitMonitorCameras() {
     const units = unitMonitorState.units && typeof unitMonitorState.units === 'object' ? unitMonitorState.units : {}
     const out = []
@@ -628,9 +643,20 @@ function listUnitMonitorCameras() {
         const config = entry?.config && typeof entry.config === 'object' ? entry.config : {}
         const cameras = Array.isArray(config.cameras) ? config.cameras : []
         for (const cam of cameras) {
-            const id = String(cam?.id || '').trim()
+            const host = String(cam?.host || cam?.ip || '').trim()
+            const port = Number(cam?.port || 554) || 554
+            const username = String(cam?.username || '').trim()
+            const password = String(cam?.password || '').trim()
+            const streamPath = String(cam?.streamPath || cam?.path || cam?.stream || '').trim()
+
+            let id = String(cam?.id || '').trim()
+            if (!id && host) {
+                const sp = streamPath || 'stream1'
+                id = `cam_${safeKey(host)}_${safeKey(sp)}`
+            }
             const name = String(cam?.name || '').trim()
-            const rtspUrl = String(cam?.rtspUrl || '').trim()
+            const rtspUrl = String(cam?.rtspUrl || '').trim() ||
+                buildRtspUrlFromParts({ host, port, username, password, streamPath })
             const enabled = cam?.enabled !== false
             if (!unit || !id || !rtspUrl) continue
             out.push({ unit, id, name: name || id, rtspUrl, enabled })
