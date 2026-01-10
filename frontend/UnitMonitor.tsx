@@ -96,6 +96,21 @@ interface RtspRecordingConfig {
   retentionDays: number
 }
 
+type OperatingDayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
+interface OperatingHoursDay {
+  day: OperatingDayKey
+  enabled: boolean
+  start: string // HH:MM
+  end: string // HH:MM
+}
+
+interface OperatingHoursConfig {
+  enabled: boolean
+  timezone: string
+  days: OperatingHoursDay[]
+}
+
 interface StreamingStatus {
   ok: boolean
   running: boolean
@@ -139,6 +154,30 @@ const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   autoRecord: false,
   recordingPath: 'Downloads (Browser)',
   maxDuration: 30
+}
+
+function getDefaultTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
+function makeDefaultOperatingHours(timezone: string = getDefaultTimeZone()): OperatingHoursConfig {
+  return {
+    enabled: true,
+    timezone,
+    days: [
+      { day: 'mon', enabled: true, start: '09:00', end: '18:00' },
+      { day: 'tue', enabled: true, start: '09:00', end: '18:00' },
+      { day: 'wed', enabled: true, start: '09:00', end: '18:00' },
+      { day: 'thu', enabled: true, start: '09:00', end: '18:00' },
+      { day: 'fri', enabled: true, start: '09:00', end: '18:00' },
+      { day: 'sat', enabled: true, start: '09:00', end: '13:00' },
+      { day: 'sun', enabled: false, start: '09:00', end: '13:00' }
+    ]
+  }
 }
 
 const DEFAULT_UNITS = [
@@ -225,6 +264,78 @@ function deriveCameraId(cam: RtspCameraConfig): string {
   return `cam_${Date.now()}`
 }
 
+const OPERATING_DAY_ORDER: OperatingDayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const OPERATING_DAY_LABEL: Record<OperatingDayKey, string> = {
+  mon: 'Seg',
+  tue: 'Ter',
+  wed: 'Qua',
+  thu: 'Qui',
+  fri: 'Sex',
+  sat: 'Sáb',
+  sun: 'Dom'
+}
+
+function parseTimeToMinutes(value: string): number | null {
+  const s = String(value || '').trim()
+  const m = s.match(/^(\d{2}):(\d{2})$/)
+  if (!m) return null
+  const hh = Number(m[1])
+  const mm = Number(m[2])
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
+  return hh * 60 + mm
+}
+
+function getZonedNowParts(timezone: string): { day: OperatingDayKey; minutes: number } | null {
+  const tz = String(timezone || '').trim() || 'UTC'
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    })
+    const parts = dtf.formatToParts(new Date())
+    const weekday = parts.find((p) => p.type === 'weekday')?.value || ''
+    const hour = parts.find((p) => p.type === 'hour')?.value || ''
+    const minute = parts.find((p) => p.type === 'minute')?.value || ''
+    const dayMap: Record<string, OperatingDayKey> = {
+      Mon: 'mon',
+      Tue: 'tue',
+      Wed: 'wed',
+      Thu: 'thu',
+      Fri: 'fri',
+      Sat: 'sat',
+      Sun: 'sun'
+    }
+    const day = dayMap[weekday]
+    const hh = Number(hour)
+    const mm = Number(minute)
+    if (!day || !Number.isFinite(hh) || !Number.isFinite(mm)) return null
+    return { day, minutes: hh * 60 + mm }
+  } catch {
+    return null
+  }
+}
+
+function isNowWithinOperatingHours(cfg: OperatingHoursConfig): boolean | null {
+  if (!cfg?.enabled) return null
+  const now = getZonedNowParts(cfg.timezone)
+  if (!now) return null
+  const dayCfg = (cfg.days || []).find((d) => d.day === now.day)
+  if (!dayCfg?.enabled) return false
+
+  const start = parseTimeToMinutes(dayCfg.start)
+  const end = parseTimeToMinutes(dayCfg.end)
+  if (start == null || end == null) return null
+  if (start === end) return false
+
+  if (start < end) return now.minutes >= start && now.minutes < end
+  // crosses midnight
+  return now.minutes >= start || now.minutes < end
+}
+
 export function UnitMonitor() {
   const [selectedUnit, setSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
   const [customUnit, setCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
@@ -239,6 +350,10 @@ export function UnitMonitor() {
     `unit-monitor:rtsp-recording:${unitKey}`,
     { segmentSeconds: 60, retentionDays: 7 }
   )
+  const [operatingHours, setOperatingHours] = useKV<OperatingHoursConfig>(
+    `unit-monitor:operating-hours:${unitKey}`,
+    makeDefaultOperatingHours()
+  )
 
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [recordings, setRecordings] = useState<RecordingMeta[]>([])
@@ -250,6 +365,7 @@ export function UnitMonitor() {
 
   const [isRecording, setIsRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const [clockTick, setClockTick] = useState(0)
 
   const [mainTab, setMainTab] = useState<'home' | 'rtsp' | 'tests' | 'guides' | 'logs'>('home')
   const [opsTab, setOpsTab] = useState<'favorites' | 'settings' | 'recordings'>('favorites')
@@ -372,6 +488,41 @@ export function UnitMonitor() {
     toast.success('Câmera removida')
   }
 
+  const updateOperatingDay = (day: OperatingDayKey, patch: Partial<OperatingHoursDay>) => {
+    setOperatingHours((prev) => {
+      const currentDays = Array.isArray(prev?.days) ? prev.days.slice() : []
+      const idx = currentDays.findIndex((d) => d.day === day)
+      const fallback: OperatingHoursDay = { day, enabled: false, start: '09:00', end: '18:00' }
+      const current = idx >= 0 ? currentDays[idx] : fallback
+      const next = { ...current, ...patch, day }
+      if (idx >= 0) currentDays[idx] = next
+      else currentDays.push(next)
+      currentDays.sort(
+        (a, b) => OPERATING_DAY_ORDER.indexOf(a.day) - OPERATING_DAY_ORDER.indexOf(b.day)
+      )
+      return { ...prev, days: currentDays }
+    })
+  }
+
+  const copyDayHours = (from: OperatingDayKey, targets: OperatingDayKey[]) => {
+    setOperatingHours((prev) => {
+      const days = Array.isArray(prev?.days) ? prev.days.slice() : []
+      const source = days.find((d) => d.day === from) || { day: from, enabled: true, start: '09:00', end: '18:00' }
+      const sourcePayload = { enabled: source.enabled, start: source.start, end: source.end }
+
+      for (const t of targets) {
+        const idx = days.findIndex((d) => d.day === t)
+        const cur = idx >= 0 ? days[idx] : { day: t, enabled: false, start: '09:00', end: '18:00' }
+        const next = { ...cur, ...sourcePayload, day: t }
+        if (idx >= 0) days[idx] = next
+        else days.push(next)
+      }
+
+      days.sort((a, b) => OPERATING_DAY_ORDER.indexOf(a.day) - OPERATING_DAY_ORDER.indexOf(b.day))
+      return { ...prev, days }
+    })
+  }
+
   const refreshStreamingStatus = async () => {
     const data = await apiJson<StreamingStatus>('/api/unit-monitor/streaming/status')
     setStreamingStatus(data)
@@ -476,6 +627,7 @@ export function UnitMonitor() {
           favorites?: CameraFavorite[]
           cameras?: RtspCameraConfig[]
           rtspRecording?: Partial<RtspRecordingConfig>
+          operatingHours?: Partial<OperatingHoursConfig>
         }
       }>(
         `/api/unit-monitor/state?unit=${encodeURIComponent(effectiveUnit)}`
@@ -491,6 +643,9 @@ export function UnitMonitor() {
       }
       if (data?.config?.rtspRecording) {
         setRtspRecordingConfig((prev) => ({ ...prev, ...data.config!.rtspRecording! }))
+      }
+      if (data?.config?.operatingHours) {
+        setOperatingHours((prev) => ({ ...prev, ...data.config!.operatingHours! }))
       }
       setServerStatus('connected')
       addLog('STATUS', `Config carregada do servidor (${effectiveUnit})`)
@@ -511,7 +666,8 @@ export function UnitMonitor() {
             recording: recordingSettings,
             favorites,
             cameras,
-            rtspRecording: rtspRecordingConfig
+            rtspRecording: rtspRecordingConfig,
+            operatingHours
           }
         })
       })
@@ -596,6 +752,11 @@ export function UnitMonitor() {
   }, [])
 
   useEffect(() => {
+    const t = window.setInterval(() => setClockTick((v) => v + 1), 30000)
+    return () => window.clearInterval(t)
+  }, [])
+
+  useEffect(() => {
     if (!effectiveUnit) return
     loadServerState().catch(() => {})
     loadRecordings().catch(() => {})
@@ -654,6 +815,9 @@ export function UnitMonitor() {
   }
 
   const normalizedUnit = useMemo(() => (effectiveUnit || '').toLowerCase(), [effectiveUnit])
+  const operatingWithin = useMemo(() => {
+    return isNowWithinOperatingHours(operatingHours)
+  }, [operatingHours, clockTick])
 
   const selectedCamera = useMemo(() => {
     if (!selectedCameraId) return null
@@ -921,6 +1085,109 @@ export function UnitMonitor() {
                             }))}
                           className="mt-1"
                         />
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Horário de funcionamento</CardTitle>
+                      <CardDescription className="text-xs">
+                        Usado para disparar eventos (motion/people) e clips fora do expediente.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Ativar controle por horário</Label>
+                        <Switch
+                          checked={operatingHours.enabled}
+                          onCheckedChange={(checked) => setOperatingHours((p) => ({ ...p, enabled: checked }))}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-sm">Fuso horário (IANA)</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={operatingHours.timezone || ''}
+                            onChange={(e) => setOperatingHours((p) => ({ ...p, timezone: e.target.value }))}
+                            placeholder="America/Sao_Paulo"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setOperatingHours((p) => ({ ...p, timezone: getDefaultTimeZone() }))}
+                          >
+                            Auto
+                          </Button>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Ex.: <span className="font-mono">America/Sao_Paulo</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-muted-foreground">Status agora</div>
+                        {operatingHours.enabled ? (
+                          operatingWithin === null ? (
+                            <Badge variant="outline">Indefinido</Badge>
+                          ) : operatingWithin ? (
+                            <Badge variant="default">Em expediente</Badge>
+                          ) : (
+                            <Badge variant="secondary">Fora do expediente</Badge>
+                          )
+                        ) : (
+                          <Badge variant="outline">Desativado</Badge>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => copyDayHours('mon', ['tue', 'wed', 'thu', 'fri'])}
+                        >
+                          Copiar Seg → Semana
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => copyDayHours('mon', ['tue', 'wed', 'thu', 'fri', 'sat', 'sun'])}
+                        >
+                          Copiar Seg → Todos
+                        </Button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {OPERATING_DAY_ORDER.map((day) => {
+                          const cfg =
+                            (operatingHours.days || []).find((d) => d.day === day) ||
+                            ({ day, enabled: false, start: '09:00', end: '18:00' } as OperatingHoursDay)
+                          return (
+                            <div key={day} className="flex items-center gap-2">
+                              <div className="w-10 text-sm font-medium">{OPERATING_DAY_LABEL[day]}</div>
+                              <Switch
+                                checked={cfg.enabled}
+                                onCheckedChange={(checked) => updateOperatingDay(day, { enabled: checked })}
+                              />
+                              <Input
+                                type="time"
+                                value={cfg.start}
+                                disabled={!cfg.enabled}
+                                onChange={(e) => updateOperatingDay(day, { start: e.target.value })}
+                                className="w-28"
+                              />
+                              <span className="text-xs text-muted-foreground">–</span>
+                              <Input
+                                type="time"
+                                value={cfg.end}
+                                disabled={!cfg.enabled}
+                                onChange={(e) => updateOperatingDay(day, { end: e.target.value })}
+                                className="w-28"
+                              />
+                            </div>
+                          )
+                        })}
                       </div>
                     </CardContent>
                   </Card>
