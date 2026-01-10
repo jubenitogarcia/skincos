@@ -588,6 +588,8 @@ const MEDIAMTX_LOG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_LOG ||
     path.join(VAR_DIR, 'logs', 'crm', 'unit_monitor_mediamtx.out')
 const MEDIAMTX_HLS_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_HLS_TARGET || 'http://127.0.0.1:8888'
 const MEDIAMTX_HLS_SEGMENT_DURATION = process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_DURATION || '4s'
+const MEDIAMTX_PID_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_PID_FILE ||
+    path.join(CORE_STATE_DIR, 'unit_monitor_mediamtx.pid')
 
 // Unit Monitor server-side recording (RTSP -> segmented MP4) via ffmpeg
 const UNIT_MONITOR_RECORDINGS_DIR = process.env.CRM_UNIT_MONITOR_RECORDINGS_DIR ||
@@ -703,6 +705,10 @@ async function writeMediamtxConfig() {
     const lines = []
     lines.push('logLevel: info')
     lines.push('logDestinations: [stdout]')
+    // We only need HLS output; disable servers we don't need to avoid port conflicts.
+    lines.push('rtsp: no')
+    lines.push('rtmp: no')
+    lines.push('srt: no')
     lines.push('hls: yes')
     lines.push('hlsAddress: 127.0.0.1:8888')
     lines.push('hlsEncryption: no')
@@ -726,26 +732,150 @@ async function writeMediamtxConfig() {
     return { cameras, configPath: MEDIAMTX_CONFIG_FILE }
 }
 
+async function isPidRunning(pid) {
+    const p = Number(pid || 0)
+    if (!p) return false
+    try {
+        process.kill(p, 0)
+        return true
+    } catch {
+        return false
+    }
+}
+
+async function readMediamtxPidFile() {
+    try {
+        const raw = await fs.readFile(MEDIAMTX_PID_FILE, 'utf-8')
+        const pid = Number(String(raw || '').trim())
+        return Number.isFinite(pid) ? pid : null
+    } catch {
+        return null
+    }
+}
+
+async function findMediamtxPidsFromProcessList() {
+    // Best-effort: find any mediamtx process started with our config file.
+    // This fixes the "backend restarted, child still running" scenario.
+    try {
+        const out = await new Promise((resolve) => {
+            const chunks = []
+            const p = spawn('ps', ['-axo', 'pid=,command='], { stdio: ['ignore', 'pipe', 'ignore'] })
+            p.stdout.on('data', (d) => chunks.push(d))
+            p.on('close', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+            p.on('error', () => resolve(''))
+        })
+        const pids = []
+        for (const line of String(out || '').split('\n')) {
+            const m = line.trim().match(/^(\d+)\s+(.*)$/)
+            if (!m) continue
+            const pid = Number(m[1])
+            const cmd = m[2] || ''
+            if (!pid || !cmd) continue
+            if (!cmd.includes('mediamtx')) continue
+            if (!cmd.includes(MEDIAMTX_CONFIG_FILE)) continue
+            pids.push(pid)
+        }
+        return pids
+    } catch {
+        return []
+    }
+}
+
+async function listMediamtxCandidatePids() {
+    const candidates = new Set()
+    const pidFromFile = await readMediamtxPidFile()
+    if (pidFromFile) candidates.add(pidFromFile)
+    for (const pid of await findMediamtxPidsFromProcessList()) candidates.add(pid)
+    return Array.from(candidates).filter(Boolean)
+}
+
+async function writeMediamtxPidFile(pid) {
+    try { await fs.writeFile(MEDIAMTX_PID_FILE, String(pid)) } catch { /* ignore */ }
+}
+
+async function clearMediamtxPidFile() {
+    try { await fs.unlink(MEDIAMTX_PID_FILE) } catch { /* ignore */ }
+}
+
+async function waitForExit(proc, timeoutMs = 4000) {
+    if (!proc) return { exited: true, code: null, signal: null }
+    return await new Promise((resolve) => {
+        let done = false
+        const t = setTimeout(() => {
+            if (done) return
+            done = true
+            resolve({ exited: false, code: null, signal: null })
+        }, timeoutMs)
+        proc.once('exit', (code, signal) => {
+            if (done) return
+            done = true
+            clearTimeout(t)
+            resolve({ exited: true, code, signal })
+        })
+    })
+}
+
 async function stopMediamtx() {
-    if (!mediamtxProc) {
+    const proc = mediamtxProc
+
+    // If server restarted, we may have lost the child handle: try PID file.
+    if (!proc) {
+        const candidates = await listMediamtxCandidatePids()
+        let stoppedAny = false
+        for (const pid of candidates) {
+            if (!await isPidRunning(pid)) continue
+            stoppedAny = true
+            try { process.kill(pid, 'SIGINT') } catch { /* ignore */ }
+            for (let i = 0; i < 12; i++) {
+                if (!await isPidRunning(pid)) break
+                await new Promise(r => setTimeout(r, 250))
+            }
+            if (await isPidRunning(pid)) {
+                try { process.kill(pid, 'SIGKILL') } catch { /* ignore */ }
+            }
+        }
+        await clearMediamtxPidFile()
+        mediamtxRuntime.running = false
+        mediamtxRuntime.pid = null
+        return { ok: true, stopped: stoppedAny, pids: candidates }
+    }
+
+    if (!proc) {
         mediamtxRuntime.running = false
         mediamtxRuntime.pid = null
         return { ok: true, stopped: false }
     }
-    try {
-        mediamtxProc.kill('SIGINT')
-    } catch { /* ignore */ }
+
+    try { proc.kill('SIGINT') } catch { /* ignore */ }
+    const res = await waitForExit(proc, 4000)
+    if (!res.exited) {
+        try { proc.kill('SIGKILL') } catch { /* ignore */ }
+        await waitForExit(proc, 2000)
+    }
+
     mediamtxProc = null
     mediamtxRuntime.running = false
     mediamtxRuntime.pid = null
+    await clearMediamtxPidFile()
+
     if (mediamtxProcFds.out) { try { fsSync.closeSync(mediamtxProcFds.out) } catch { /* ignore */ } }
     if (mediamtxProcFds.err) { try { fsSync.closeSync(mediamtxProcFds.err) } catch { /* ignore */ } }
     mediamtxProcFds = { out: null, err: null }
-    return { ok: true, stopped: true }
+    return { ok: true, stopped: true, forced: !res.exited }
 }
 
 async function startMediamtx() {
     await stopMediamtx()
+    // Guard: ensure no leftover process is still holding ports.
+    const leftovers = []
+    for (const pid of await listMediamtxCandidatePids()) {
+        if (await isPidRunning(pid)) leftovers.push(pid)
+    }
+    if (leftovers.length > 0) {
+        const err = new Error(`MediaMTX still running (pids: ${leftovers.join(', ')})`)
+        err.code = 'MEDIAMTX_STILL_RUNNING'
+        throw err
+    }
     const { cameras, configPath } = await writeMediamtxConfig()
     mediamtxRuntime.lastError = null
     mediamtxRuntime.configPath = configPath
@@ -759,12 +889,14 @@ async function startMediamtx() {
     mediamtxRuntime.running = true
     mediamtxRuntime.pid = mediamtxProc.pid
     mediamtxRuntime.startedAt = new Date().toISOString()
+    await writeMediamtxPidFile(mediamtxRuntime.pid)
 
     mediamtxProc.on('exit', (code, signal) => {
         mediamtxRuntime.running = false
         mediamtxRuntime.pid = null
         mediamtxRuntime.lastError = code ? `Exited with code ${code}` : (signal ? `Exited with signal ${signal}` : null)
         mediamtxProc = null
+        clearMediamtxPidFile().catch(() => {})
         if (mediamtxProcFds.out) { try { fsSync.closeSync(mediamtxProcFds.out) } catch { /* ignore */ } }
         if (mediamtxProcFds.err) { try { fsSync.closeSync(mediamtxProcFds.err) } catch { /* ignore */ } }
         mediamtxProcFds = { out: null, err: null }
