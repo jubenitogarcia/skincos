@@ -689,6 +689,7 @@ async function writeMediamtxConfig() {
         const p = cameraToMediamtxPath(cam)
         lines.push(`  ${p}:`)
         lines.push(`    source: ${yamlQuote(cam.rtspUrl)}`)
+        lines.push('    sourceProtocol: tcp')
         lines.push('    sourceOnDemand: yes')
         lines.push('    sourceOnDemandStartTimeout: 20s')
         lines.push('    sourceOnDemandCloseAfter: 20s')
