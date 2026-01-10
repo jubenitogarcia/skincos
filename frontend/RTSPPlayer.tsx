@@ -29,7 +29,7 @@ export function RTSPPlayer({
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isMuted, setIsMuted] = useState(false)
+  const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(75)
   const [error, setError] = useState<string | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -46,11 +46,27 @@ export function RTSPPlayer({
 
     const hlsUrl = streamUrl
 
+    const attemptAutoplay = async () => {
+      try {
+        if (!video.muted) {
+          video.muted = true
+          setIsMuted(true)
+        }
+        await video.play()
+        setIsPlaying(true)
+        onPlayStateChange?.(true)
+      } catch {
+        // Autoplay can be blocked; user can press play manually.
+      }
+    }
+
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 90
+        lowLatencyMode: false,
+        backBufferLength: 30,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 10
       })
 
       hlsRef.current = hls
@@ -60,6 +76,7 @@ export function RTSPPlayer({
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log('HLS manifest parsed, ready to play')
         setError(null)
+        attemptAutoplay().catch(() => {})
       })
 
       hls.on(Hls.Events.ERROR, (event, data) => {
@@ -93,6 +110,7 @@ export function RTSPPlayer({
       video.addEventListener('loadedmetadata', () => {
         console.log('Native HLS loaded')
         setError(null)
+        attemptAutoplay().catch(() => {})
       })
       video.addEventListener('error', (e) => {
         setError('Video playback error')

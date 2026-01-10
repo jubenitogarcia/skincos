@@ -587,6 +587,7 @@ const MEDIAMTX_CONFIG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_CONFIG ||
 const MEDIAMTX_LOG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_LOG ||
     path.join(VAR_DIR, 'logs', 'crm', 'unit_monitor_mediamtx.out')
 const MEDIAMTX_HLS_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_HLS_TARGET || 'http://127.0.0.1:8888'
+const MEDIAMTX_HLS_SEGMENT_DURATION = process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_DURATION || '4s'
 
 // Unit Monitor server-side recording (RTSP -> segmented MP4) via ffmpeg
 const UNIT_MONITOR_RECORDINGS_DIR = process.env.CRM_UNIT_MONITOR_RECORDINGS_DIR ||
@@ -708,14 +709,14 @@ async function writeMediamtxConfig() {
     lines.push("hlsAllowOrigins: ['*']")
     lines.push('hlsVariant: mpegts')
     lines.push('hlsSegmentCount: 6')
-    lines.push('hlsSegmentDuration: 2s')
+    lines.push(`hlsSegmentDuration: ${MEDIAMTX_HLS_SEGMENT_DURATION}`)
     lines.push('webrtc: no')
     lines.push('paths:')
     for (const cam of cameras) {
         const p = cameraToMediamtxPath(cam)
         lines.push(`  ${p}:`)
         lines.push(`    source: ${yamlQuote(cam.rtspUrl)}`)
-        lines.push('    sourceProtocol: tcp')
+        lines.push('    rtspTransport: tcp')
         lines.push('    sourceOnDemand: yes')
         lines.push('    sourceOnDemandStartTimeout: 20s')
         lines.push('    sourceOnDemandCloseAfter: 20s')
@@ -1025,7 +1026,21 @@ app.use('/api/unit-monitor/hls', createProxyMiddleware({
     changeOrigin: true,
     ws: false,
     logLevel: 'silent',
-    pathRewrite: { '^/api/unit-monitor/hls': '' }
+    pathRewrite: { '^/api/unit-monitor/hls': '' },
+    on: {
+        proxyRes: (proxyRes, req, res) => {
+            try {
+                const u = String(req?.url || '')
+                if (u.endsWith('.m3u8') || u.endsWith('.ts') || u.endsWith('.mp4')) {
+                    const cc = 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
+                    proxyRes.headers['cache-control'] = cc
+                    res.setHeader('Cache-Control', cc)
+                    res.setHeader('Pragma', 'no-cache')
+                    res.setHeader('Expires', '0')
+                }
+            } catch { /* ignore */ }
+        }
+    }
 }))
 
 app.get('/api/unit-monitor/streaming/status', async (req, res) => {
