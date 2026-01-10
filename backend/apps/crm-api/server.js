@@ -587,6 +587,7 @@ const MEDIAMTX_CONFIG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_CONFIG ||
 const MEDIAMTX_LOG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_LOG ||
     path.join(VAR_DIR, 'logs', 'crm', 'unit_monitor_mediamtx.out')
 const MEDIAMTX_HLS_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_HLS_TARGET || 'http://127.0.0.1:8888'
+const MEDIAMTX_WEBRTC_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_WEBRTC_TARGET || 'http://127.0.0.1:8889'
 const MEDIAMTX_HLS_SEGMENT_DURATION = process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_DURATION || '4s'
 const MEDIAMTX_PID_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_PID_FILE ||
     path.join(CORE_STATE_DIR, 'unit_monitor_mediamtx.pid')
@@ -716,7 +717,10 @@ async function writeMediamtxConfig() {
     lines.push('hlsVariant: mpegts')
     lines.push('hlsSegmentCount: 6')
     lines.push(`hlsSegmentDuration: ${MEDIAMTX_HLS_SEGMENT_DURATION}`)
-    lines.push('webrtc: no')
+    lines.push('webrtc: yes')
+    lines.push('webrtcAddress: 127.0.0.1:8889')
+    lines.push('webrtcEncryption: no')
+    lines.push("webrtcAllowOrigins: ['*']")
     lines.push('paths:')
     for (const cam of cameras) {
         const p = cameraToMediamtxPath(cam)
@@ -1175,13 +1179,33 @@ app.use('/api/unit-monitor/hls', createProxyMiddleware({
     }
 }))
 
+// WebRTC (WHEP) proxy (same-origin for CRM UI)
+app.use('/api/unit-monitor/webrtc', createProxyMiddleware({
+    target: MEDIAMTX_WEBRTC_TARGET,
+    changeOrigin: true,
+    ws: false,
+    logLevel: 'silent',
+    pathRewrite: { '^/api/unit-monitor/webrtc': '' }
+}))
+
 app.get('/api/unit-monitor/streaming/status', async (req, res) => {
     const cameras = listUnitMonitorCameras().filter(c => c.enabled)
     const streams = cameras.map((c) => {
         const pathKey = cameraToMediamtxPath(c)
         const hlsUrlDirect = `${MEDIAMTX_HLS_TARGET.replace(/\/$/, '')}/${pathKey}/index.m3u8`
         const hlsUrlProxy = `/api/unit-monitor/hls/${pathKey}/index.m3u8`
-        return { unit: c.unit, cameraId: c.id, name: c.name, pathKey, hlsUrlDirect, hlsUrlProxy }
+        const webrtcUrlDirect = `${MEDIAMTX_WEBRTC_TARGET.replace(/\/$/, '')}/${pathKey}/whep`
+        const webrtcUrlProxy = `/api/unit-monitor/webrtc/${pathKey}/whep`
+        return {
+            unit: c.unit,
+            cameraId: c.id,
+            name: c.name,
+            pathKey,
+            hlsUrlDirect,
+            hlsUrlProxy,
+            webrtcUrlDirect,
+            webrtcUrlProxy
+        }
     })
     res.json({
         ok: true,
@@ -1192,6 +1216,8 @@ app.get('/api/unit-monitor/streaming/status', async (req, res) => {
         configPath: mediamtxRuntime.configPath,
         hlsTarget: MEDIAMTX_HLS_TARGET,
         hlsProxyBase: '/api/unit-monitor/hls',
+        webrtcTarget: MEDIAMTX_WEBRTC_TARGET,
+        webrtcProxyBase: '/api/unit-monitor/webrtc',
         streams
     })
 })
