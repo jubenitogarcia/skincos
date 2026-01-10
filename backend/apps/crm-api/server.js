@@ -588,7 +588,7 @@ const MEDIAMTX_LOG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_LOG ||
     path.join(VAR_DIR, 'logs', 'crm', 'unit_monitor_mediamtx.out')
 const MEDIAMTX_HLS_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_HLS_TARGET || 'http://127.0.0.1:8888'
 const MEDIAMTX_WEBRTC_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_WEBRTC_TARGET || 'http://127.0.0.1:8889'
-const MEDIAMTX_HLS_SEGMENT_DURATION = process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_DURATION || '4s'
+const MEDIAMTX_HLS_SEGMENT_DURATION = process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_DURATION || '1s'
 const MEDIAMTX_PID_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_PID_FILE ||
     path.join(CORE_STATE_DIR, 'unit_monitor_mediamtx.pid')
 
@@ -715,7 +715,7 @@ async function writeMediamtxConfig() {
     lines.push('hlsEncryption: no')
     lines.push("hlsAllowOrigins: ['*']")
     lines.push('hlsVariant: mpegts')
-    lines.push('hlsSegmentCount: 6')
+    lines.push('hlsSegmentCount: 3')
     lines.push(`hlsSegmentDuration: ${MEDIAMTX_HLS_SEGMENT_DURATION}`)
     lines.push('webrtc: yes')
     lines.push('webrtcAddress: 127.0.0.1:8889')

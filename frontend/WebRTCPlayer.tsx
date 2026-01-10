@@ -41,12 +41,22 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 2500): P
 export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError }: WebRTCPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
+  const onErrorRef = useRef(onError)
+  const onPlayStateChangeRef = useRef(onPlayStateChange)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(75)
   const [error, setError] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
+
+  useEffect(() => {
+    onPlayStateChangeRef.current = onPlayStateChange
+  }, [onPlayStateChange])
 
   useEffect(() => {
     const video = videoRef.current
@@ -66,6 +76,10 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
     }
 
     let cancelled = false
+    let failed = false
+    let firstFrameTimeout: number | null = null
+    let connectTimeout: number | null = null
+    let onLoadedData: (() => void) | null = null
     const pc = new RTCPeerConnection()
     pcRef.current = pc
 
@@ -80,9 +94,10 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
     }
 
     const fail = (msg: string) => {
-      if (cancelled) return
+      if (cancelled || failed) return
+      failed = true
       setError(msg)
-      onError?.(msg)
+      onErrorRef.current?.(msg)
     }
 
     pc.oniceconnectionstatechange = () => {
@@ -127,8 +142,22 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
           void videoRef.current.play().catch(() => {})
         }
 
+        // If we don't receive any frames soon, treat this as a failure (black screen) and allow fallback.
+        const v = videoRef.current
+        onLoadedData = () => {
+          if (firstFrameTimeout) window.clearTimeout(firstFrameTimeout)
+          firstFrameTimeout = null
+          if (v) v.removeEventListener('loadeddata', onLoadedData as any)
+        }
+        if (v) v.addEventListener('loadeddata', onLoadedData as any)
+        firstFrameTimeout = window.setTimeout(() => {
+          if (cancelled) return
+          const ok = !!v && v.videoWidth > 0 && v.readyState >= 2
+          if (!ok) fail('WebRTC: sem frames de vídeo')
+        }, 8000)
+
         // If we don't get connected soon, trigger fallback upstream.
-        window.setTimeout(() => {
+        connectTimeout = window.setTimeout(() => {
           if (cancelled) return
           const ok = pc.connectionState === 'connected' || pc.iceConnectionState === 'connected'
           if (!ok) fail('WebRTC timeout')
@@ -140,6 +169,11 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
 
     return () => {
       cancelled = true
+      if (firstFrameTimeout) window.clearTimeout(firstFrameTimeout)
+      if (connectTimeout) window.clearTimeout(connectTimeout)
+      if (videoRef.current && onLoadedData) {
+        try { videoRef.current.removeEventListener('loadeddata', onLoadedData as any) } catch { /* ignore */ }
+      }
       if (pcRef.current) {
         try {
           pcRef.current.close()
@@ -154,7 +188,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
         videoRef.current.srcObject = null
       }
     }
-  }, [whepUrl, isConnected, onError, retryNonce])
+  }, [whepUrl, isConnected, retryNonce])
 
   const togglePlay = async () => {
     const video = videoRef.current
@@ -163,11 +197,11 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
       if (isPlaying) {
         video.pause()
         setIsPlaying(false)
-        onPlayStateChange?.(false)
+        onPlayStateChangeRef.current?.(false)
       } else {
         await video.play()
         setIsPlaying(true)
-        onPlayStateChange?.(true)
+        onPlayStateChangeRef.current?.(true)
       }
     } catch (err) {
       setError('Playback control error')
@@ -214,7 +248,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onError 
     video.pause()
     video.currentTime = 0
     setIsPlaying(false)
-    onPlayStateChange?.(false)
+    onPlayStateChangeRef.current?.(false)
   }
 
   useEffect(() => {

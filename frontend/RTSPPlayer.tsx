@@ -28,11 +28,22 @@ export function RTSPPlayer({
 }: RTSPPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const onErrorRef = useRef(onError)
+  const onPlayStateChangeRef = useRef(onPlayStateChange)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(75)
   const [error, setError] = useState<string | null>(null)
+  const [retryNonce, setRetryNonce] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
+
+  useEffect(() => {
+    onPlayStateChangeRef.current = onPlayStateChange
+  }, [onPlayStateChange])
 
   useEffect(() => {
     const video = videoRef.current
@@ -54,7 +65,7 @@ export function RTSPPlayer({
         }
         await video.play()
         setIsPlaying(true)
-        onPlayStateChange?.(true)
+        onPlayStateChangeRef.current?.(true)
       } catch {
         // Autoplay can be blocked; user can press play manually.
       }
@@ -64,9 +75,11 @@ export function RTSPPlayer({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 30,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 10
+        backBufferLength: 10,
+        maxBufferLength: 10,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 5,
+        maxLiveSyncPlaybackRate: 1.5
       })
 
       hlsRef.current = hls
@@ -85,15 +98,17 @@ export function RTSPPlayer({
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
               setError('Network error - check stream URL and connection')
-              onError?.('Network error accessing stream')
+              try { hls.startLoad() } catch { /* ignore */ }
+              onErrorRef.current?.('Network error accessing stream')
               break
             case Hls.ErrorTypes.MEDIA_ERROR:
               setError('Media error - stream format may be unsupported')
-              onError?.('Media decoding error')
+              try { hls.recoverMediaError() } catch { /* ignore */ }
+              onErrorRef.current?.('Media decoding error')
               break
             default:
               setError('Fatal streaming error occurred')
-              onError?.('Fatal streaming error')
+              onErrorRef.current?.('Fatal streaming error')
               break
           }
         }
@@ -114,11 +129,11 @@ export function RTSPPlayer({
       })
       video.addEventListener('error', (e) => {
         setError('Video playback error')
-        onError?.('Video playback error')
+        onErrorRef.current?.('Video playback error')
       })
     } else {
       setError('HLS not supported in this browser')
-      onError?.('HLS not supported in this browser')
+      onErrorRef.current?.('HLS not supported in this browser')
     }
 
     return () => {
@@ -127,7 +142,7 @@ export function RTSPPlayer({
         hlsRef.current = null
       }
     }
-  }, [streamUrl, isConnected, onError])
+  }, [streamUrl, isConnected, retryNonce])
 
   const togglePlay = async () => {
     const video = videoRef.current
@@ -258,7 +273,10 @@ export function RTSPPlayer({
               variant="outline" 
               size="sm" 
               className="mt-4"
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                setError(null)
+                setRetryNonce((v) => v + 1)
+              }}
             >
               Retry Connection
             </Button>
