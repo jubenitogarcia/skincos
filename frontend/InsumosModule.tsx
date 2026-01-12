@@ -183,6 +183,8 @@ export function InsumosModule() {
   const [healthLoading, setHealthLoading] = React.useState(true)
 
   const [unidade, setUnidade] = React.useState<'novo-hamburgo' | 'barra-shopping-sul'>('novo-hamburgo')
+  const [transferFrom, setTransferFrom] = React.useState<'novo-hamburgo' | 'barra-shopping-sul'>('novo-hamburgo')
+  const [transferTo, setTransferTo] = React.useState<'novo-hamburgo' | 'barra-shopping-sul'>('barra-shopping-sul')
   const [csrfToken, setCsrfToken] = React.useState<string | null>(null)
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
@@ -235,6 +237,11 @@ export function InsumosModule() {
 
   const canUseApi = !!health?.ok && !!health?.sheetsConfigured
   const isAuthed = !!user?.username
+
+  React.useEffect(() => {
+    setTransferFrom(unidade)
+    setTransferTo(unidade === 'novo-hamburgo' ? 'barra-shopping-sul' : 'novo-hamburgo')
+  }, [unidade])
 
   const refreshCsrf = React.useCallback(async () => {
     try {
@@ -441,6 +448,52 @@ export function InsumosModule() {
     ]
   )
 
+  const runTransfer = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    const codigoBarras = quickCodigo.trim()
+    if (!codigoBarras) return toast.error('Informe o código de barras')
+
+    if (transferFrom === transferTo) return toast.error('Origem e destino devem ser diferentes')
+
+    setQuickActionLoading(true)
+    try {
+      const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
+      await apiJson('/insumos/transferir', {
+        method: 'POST',
+        body: {
+          codigoBarras,
+          quantidade,
+          fromUnidade: transferFrom,
+          toUnidade: transferTo,
+          observacoes: quickObs
+        },
+        csrfToken,
+        retryOnCsrf: refreshCsrf
+      })
+      toast.success('Transferência registrada')
+
+      // Refresh what the user is seeing (estoque + movimentações)
+      await Promise.allSettled([loadInsumos(), loadMovimentacoes(), loadOverview()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuickActionLoading(false)
+    }
+  }, [
+    canUseApi,
+    csrfToken,
+    isAuthed,
+    loadInsumos,
+    loadMovimentacoes,
+    loadOverview,
+    quickCodigo,
+    quickObs,
+    quickQuantidade,
+    refreshCsrf,
+    transferFrom,
+    transferTo
+  ])
+
   React.useEffect(() => {
     void loadHealth()
     void loadMe()
@@ -586,6 +639,32 @@ export function InsumosModule() {
                   <Input value={quickNovoEstoque} onChange={(e) => setQuickNovoEstoque(e.target.value)} type="number" placeholder="(somente ajuste)" />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Origem</div>
+                  <Select value={transferFrom} onValueChange={(v) => setTransferFrom(v as any)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
+                      <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Destino</div>
+                  <Select value={transferTo} onValueChange={(v) => setTransferTo(v as any)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
+                      <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Motivo (ajuste)</div>
                 <Input value={quickMotivo} onChange={(e) => setQuickMotivo(e.target.value)} />
@@ -596,7 +675,7 @@ export function InsumosModule() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Button onClick={() => runQuickAction('ENTRADA')} disabled={quickActionLoading || !isAuthed}>
                 Entrada
               </Button>
@@ -605,6 +684,9 @@ export function InsumosModule() {
               </Button>
               <Button variant="outline" onClick={() => runQuickAction('AJUSTE')} disabled={quickActionLoading || !isAuthed}>
                 Ajuste
+              </Button>
+              <Button variant="secondary" onClick={runTransfer} disabled={quickActionLoading || !isAuthed}>
+                Transferir
               </Button>
             </div>
 
