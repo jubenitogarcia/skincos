@@ -59,6 +59,7 @@ const NotificationTester = lazy(() => import('@/NotificationTester').then(m => (
 const CapabilitiesCenter = lazy(() => import('@/CapabilitiesCenter').then(m => ({ default: m.CapabilitiesCenter })))
 const JobsCenter = lazy(() => import('@/JobsCenter').then(m => ({ default: m.JobsCenter })))
 const UnitMonitor = lazy(() => import('@/UnitMonitor').then(m => ({ default: m.UnitMonitor })))
+const InsumosModule = lazy(() => import('@/InsumosModule').then(m => ({ default: m.InsumosModule })))
 
 // TODO: Add remaining modules if needed
 
@@ -72,6 +73,7 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
     { key: 'capabilities', label: 'Plataforma', icon: '🧭', component: <CapabilitiesCenter /> },
     { key: 'jobs', label: 'Execuções', icon: '🏃', component: <JobsCenter /> },
     { key: 'unit-monitor', label: 'Unit Monitor', icon: '📹', component: <UnitMonitor /> },
+    { key: 'insumos', label: 'Insumos', icon: '🧴', component: <InsumosModule /> },
     { key: 'dashboard', label: 'Analítica', icon: '📊', component: <ReportsDashboard /> },
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
@@ -119,12 +121,16 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 
 export default function AppFunctionalNeatlab() {
     const { isAuthenticated, user, signOut } = useAuth()
+
+    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
+
     // Persist active module to survive remounts/reloads and avoid accidental resets
     const [active, setActive] = useState<string>(() => {
         try {
             const saved = localStorage.getItem('app.activeModule')
-            return saved || 'capabilities'
-        } catch { return 'capabilities' }
+            const candidate = saved || 'unit-monitor'
+            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : 'unit-monitor'
+        } catch { return 'unit-monitor' }
     })
     const [search, setSearch] = useState('')
     console.log('AppFunctionalNeatlab render, active=', active)
@@ -134,7 +140,7 @@ export default function AppFunctionalNeatlab() {
         try {
             const params = new URLSearchParams(window.location.search)
             const requested = params.get('module') || params.get('tab')
-            if (requested && modules.some((m) => m.key === requested)) {
+            if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((m) => m.key === requested)) {
                 setActive(requested)
             }
         } catch { /* ignore */ }
@@ -146,10 +152,15 @@ export default function AppFunctionalNeatlab() {
         try { localStorage.setItem('app.activeModule', active) } catch { /* ignore */ }
     }, [active])
 
-    const filteredModules = useMemo(() => modules.filter(m =>
+    const modulesSorted = useMemo(() => {
+        const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
+        return [...modules].sort((a, b) => collator.compare(a.label, b.label))
+    }, [])
+
+    const filteredModules = useMemo(() => modulesSorted.filter(m =>
         m.label.toLowerCase().includes(search.toLowerCase()) ||
         m.key.includes(search.toLowerCase())
-    ), [search])
+    ), [modulesSorted, search])
 
     // Resolve active module once for rendering content independently of sidebar filtering
     const activeModule = useMemo(() => modules.find(m => m.key === active), [active])
@@ -171,10 +182,10 @@ export default function AppFunctionalNeatlab() {
                         <div className="absolute top-2/3 left-1/2 w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
                     </div>
                 </div>
-                
+
                 {/* Grid pattern overlay */}
                 <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDYwIDAgTCAwIDAgMCA2MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwgMjU1LCAyNTUsIDAuMDMpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-20"></div>
-                
+
                 <div className="relative z-10 flex h-screen">
                     {/* Premium Sidebar */}
                     <div className="w-80 glass-morphism border-r border-white/10 backdrop-blur-2xl flex flex-col">
@@ -193,7 +204,7 @@ export default function AppFunctionalNeatlab() {
                                     <p className="text-xs text-blue-300/80 truncate">CRM Enterprise</p>
                                 </div>
                             </div>
-                            
+
                             {/* User Info */}
                             <div className="glass-morphism rounded-xl p-3 border border-white/10">
                                 <div className="flex items-center gap-3">
@@ -204,9 +215,9 @@ export default function AppFunctionalNeatlab() {
                                         <p className="font-semibold text-white text-sm leading-tight truncate">{user?.name || 'Usuário'}</p>
                                         <p className="text-xs text-blue-300/70 truncate">{user?.email}</p>
                                     </div>
-                                    <button 
-                                        onClick={signOut} 
-                                        className="text-xs text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105" 
+                                    <button
+                                        onClick={signOut}
+                                        className="text-xs text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105"
                                         title="Sair"
                                     >
                                         ⏻
@@ -214,38 +225,57 @@ export default function AppFunctionalNeatlab() {
                                 </div>
                             </div>
                         </div>
-                        
+
                         {/* Navigation */}
                         <div className="flex-1 overflow-y-auto p-4 space-y-2">
                             {filteredModules.map((m, index) => (
-                                <button
-                                    key={m.key}
-                                    onClick={() => setActive(m.key)}
-                                    className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 animate-slide-up`}
-                                    style={{ animationDelay: `${index * 50}ms` }}
-                                >
-                                    <div className={`flex items-center gap-3 px-4 py-3 relative z-10 transition-all duration-300 ${
-                                        active === m.key 
-                                            ? 'text-white transform scale-[1.02]' 
-                                            : 'text-blue-100/80 hover:text-white hover:transform hover:scale-[1.01]'
-                                    }`}>
-                                        <span className="text-lg leading-none flex-shrink-0 transition-transform duration-300 group-hover:scale-110">{m.icon}</span>
-                                        <span className="truncate font-medium text-sm">{m.label}</span>
-                                        {active === m.key && (
-                                            <div className="ml-auto w-2 h-2 rounded-full bg-white animate-pulse"></div>
-                                        )}
-                                    </div>
-                                    
-                                    {/* Active state background */}
-                                    {active === m.key ? (
-                                        <div className="absolute inset-0 bg-gradient-blue rounded-xl shadow-premium animate-scale-in"></div>
-                                    ) : (
-                                        <div className="absolute inset-0 bg-white/[0.05] hover:bg-white/[0.12] rounded-xl transition-all duration-300 opacity-0 group-hover:opacity-100"></div>
-                                    )}
-                                </button>
+                                (() => {
+                                    const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
+                                    const isActive = active === m.key
+                                    return (
+                                        <button
+                                            key={m.key}
+                                            onClick={() => {
+                                                if (isLocked) return
+                                                setActive(m.key)
+                                            }}
+                                            disabled={isLocked}
+                                            aria-disabled={isLocked}
+                                            title={isLocked ? 'Em breve' : undefined}
+                                            className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 animate-slide-up ${isLocked ? 'opacity-50 cursor-not-allowed' : ''
+                                                }`}
+                                            style={{ animationDelay: `${index * 50}ms` }}
+                                        >
+                                            <div className={`flex items-center gap-3 px-4 py-3 relative z-10 transition-all duration-300 ${isActive
+                                                    ? 'text-white transform scale-[1.02]'
+                                                    : isLocked
+                                                        ? 'text-blue-100/60'
+                                                        : 'text-blue-100/80 hover:text-white hover:transform hover:scale-[1.01]'
+                                                }`}>
+                                                <span className="text-lg leading-none flex-shrink-0 transition-transform duration-300 group-hover:scale-110">{m.icon}</span>
+                                                <span className="truncate font-medium text-sm">{m.label}</span>
+                                                {isLocked ? (
+                                                    <span className="ml-auto text-sm text-blue-100/80" aria-hidden>
+                                                        🔒
+                                                    </span>
+                                                ) : isActive ? (
+                                                    <div className="ml-auto w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                                                ) : null}
+                                            </div>
+
+                                            {/* Active state background */}
+                                            {isActive ? (
+                                                <div className="absolute inset-0 bg-gradient-blue rounded-xl shadow-premium animate-scale-in"></div>
+                                            ) : (
+                                                <div className={`absolute inset-0 bg-white/[0.05] rounded-xl transition-all duration-300 ${isLocked ? 'opacity-0' : 'hover:bg-white/[0.12] opacity-0 group-hover:opacity-100'
+                                                    }`}></div>
+                                            )}
+                                        </button>
+                                    )
+                                })()
                             ))}
                         </div>
-                        
+
                         {/* Footer */}
                         <div className="p-4 border-t border-white/10">
                             <div className="flex items-center gap-2 text-xs text-blue-300/60">
@@ -273,7 +303,7 @@ export default function AppFunctionalNeatlab() {
                                         <span className="text-xs text-green-300 font-medium">Sistema Online</span>
                                     </div>
                                 </div>
-                                
+
                                 <div className="flex items-center gap-4">
                                     {/* Premium Search */}
                                     <div className="relative">
@@ -285,7 +315,7 @@ export default function AppFunctionalNeatlab() {
                                         />
                                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-300/60 text-lg">🔍</span>
                                         {search && (
-                                            <button 
+                                            <button
                                                 onClick={() => setSearch('')}
                                                 className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-300/60 hover:text-white transition-colors"
                                             >
@@ -293,10 +323,10 @@ export default function AppFunctionalNeatlab() {
                                             </button>
                                         )}
                                     </div>
-                                    
+
                                     {/* Premium Notifications */}
-                                    <Button 
-                                        variant="outline" 
+                                    <Button
+                                        variant="outline"
                                         className="relative bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
                                     >
                                         <span className="text-lg">🔔</span>
@@ -304,10 +334,10 @@ export default function AppFunctionalNeatlab() {
                                             3
                                         </Badge>
                                     </Button>
-                                    
+
                                     {/* Settings Button */}
-                                    <Button 
-                                        variant="outline" 
+                                    <Button
+                                        variant="outline"
                                         className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
                                     >
                                         <span className="text-lg">⚙️</span>
@@ -341,7 +371,7 @@ export default function AppFunctionalNeatlab() {
                         <main className="flex-1 overflow-auto p-8 relative">
                             {/* Content Background */}
                             <div className="absolute inset-0 bg-white/[0.02] backdrop-blur-sm"></div>
-                            
+
                             <div className="relative z-10">
                                 <div className="hidden">{search}</div>
                                 <ErrorBoundary>

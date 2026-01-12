@@ -1,0 +1,19 @@
+{
+    "name": "@skincos/insumos-worker",
+    "private": true,
+    "type": "module",
+    "description": "Insumos API (Cloudflare Worker) - incorporated into skincos",
+    "scripts": {
+        "dev": "wrangler dev --config wrangler.toml",
+        "deploy": "wrangler deploy --config wrangler.toml",
+        "d1:migrate": "wrangler d1 migrations apply skincos-db --config wrangler.toml",
+        "lint": "echo \"(todo)\""
+    },
+    "devDependencies": {
+        "wrangler": "^3.22.4"
+    },
+    "dependencies": {
+        "bcryptjs": "^2.4.3",
+        "qrcode-generator": "^1.4.4"
+    }
+}

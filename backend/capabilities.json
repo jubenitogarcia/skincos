@@ -5,17 +5,35 @@
       "id": "crm",
       "path": "frontend",
       "kind": "core",
-      "ports": { "frontend": 5173, "api": 8099 }
+      "ports": {
+        "frontend": 5173,
+        "api": 8099
+      }
     }
   },
   "capabilities": [
+    {
+      "id": "insumos",
+      "label": "Insumos (Cloudflare Worker)",
+      "path": "backend/apps/insumos",
+      "kind": "service",
+      "health": {
+        "path": "/health"
+      },
+      "notes": "API Cloudflare em https://api.skincos.com.br/insumos (proxy same-origin: /api/insumos/* via CRM API)."
+    },
     {
       "id": "whatsapp-official",
       "label": "WhatsApp (Official Module)",
       "path": "backend/apps/whatsapp/official-module",
       "kind": "service",
-      "ports": { "base": 3001, "range": "3001-3009" },
-      "health": { "path": "/health" },
+      "ports": {
+        "base": 3001,
+        "range": "3001-3009"
+      },
+      "health": {
+        "path": "/health"
+      },
       "notes": "Multi-canal via /whatsapp/:channelId/* e /api/channel-manager/*; compat legacy: /status, /qr, /qr.html"
     },
     {
@@ -23,8 +41,14 @@
       "label": "WhatsApp (Gateway Legacy)",
       "path": "backend/apps/whatsapp/gateway",
       "kind": "service",
-      "ports": { "base": 3001, "range": "3001-3009" },
-      "health": { "path": "/health", "alt": "/status" },
+      "ports": {
+        "base": 3001,
+        "range": "3001-3009"
+      },
+      "health": {
+        "path": "/health",
+        "alt": "/status"
+      },
       "notes": "API legacy completa (/status, /qr.html, etc) + scripts e docker-compose"
     },
     {
@@ -60,8 +84,12 @@
       "label": "Agent Zero",
       "path": "backend/apps/agent-zero",
       "kind": "agent",
-      "ports": { "default": 50001 },
-      "health": { "path": "/agent-zero/debug/ping" },
+      "ports": {
+        "default": 50001
+      },
+      "health": {
+        "path": "/agent-zero/debug/ping"
+      },
       "notes": "Entrypoint: backend/scripts/dev.sh agent. Canonical: backend/apps/agent-zero/ (UI/API integrada em backend/apps/agent-zero/integrated/)."
     },
     {
@@ -76,8 +104,12 @@
       "label": "Actual Server",
       "path": "backend/apps/actual-server",
       "kind": "service",
-      "ports": { "default": 5006 },
-      "health": { "path": "/health" },
+      "ports": {
+        "default": 5006
+      },
+      "health": {
+        "path": "/health"
+      },
       "notes": "Entrypoint: backend/scripts/dev.sh actual-server"
     },
     {
@@ -92,8 +124,12 @@
       "label": "Instagram Module",
       "path": "backend/apps/instagram/module",
       "kind": "service",
-      "ports": { "default": 3103 },
-      "health": { "path": "/health" },
+      "ports": {
+        "default": 3103
+      },
+      "health": {
+        "path": "/health"
+      },
       "notes": "Config em config.local.json (ignorado) e API Node em instagram_api_server.js (porta default 3103 para evitar conflito com WhatsApp instances)."
     }
   ]

@@ -219,6 +219,20 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+// -------------------------------------------------------------
+// Insumos API proxy (same-origin for CRM UI)
+// -------------------------------------------------------------
+// Cloudflare target (default production). Override for local testing.
+const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || 'https://api.skincos.com.br'
+
+app.use('/api/insumos', createProxyMiddleware({
+    target: INSUMOS_API_TARGET,
+    changeOrigin: true,
+    ws: false,
+    logLevel: 'silent',
+    pathRewrite: { '^/api/insumos': '/insumos' }
+}))
+
 // JSON parse errors (express.json)
 app.use((err, req, res, next) => {
     if (err && err instanceof SyntaxError && err.status === 400 && 'body' in err) {
@@ -694,7 +708,7 @@ function getUnitMonitorRtspRecordingConfig(unit) {
 }
 
 async function writeMediamtxConfig() {
-    await fs.mkdir(path.dirname(MEDIAMTX_LOG_FILE), { recursive: true }).catch(() => {})
+    await fs.mkdir(path.dirname(MEDIAMTX_LOG_FILE), { recursive: true }).catch(() => { })
     const cameras = listUnitMonitorCameras().filter(c => c.enabled)
     if (cameras.length === 0) {
         const err = new Error('No enabled cameras configured')
@@ -900,7 +914,7 @@ async function startMediamtx() {
         mediamtxRuntime.pid = null
         mediamtxRuntime.lastError = code ? `Exited with code ${code}` : (signal ? `Exited with signal ${signal}` : null)
         mediamtxProc = null
-        clearMediamtxPidFile().catch(() => {})
+        clearMediamtxPidFile().catch(() => { })
         if (mediamtxProcFds.out) { try { fsSync.closeSync(mediamtxProcFds.out) } catch { /* ignore */ } }
         if (mediamtxProcFds.err) { try { fsSync.closeSync(mediamtxProcFds.err) } catch { /* ignore */ } }
         mediamtxProcFds = { out: null, err: null }
@@ -940,10 +954,10 @@ async function startUnitMonitorRecorder({ unit, cameraId, segmentSeconds }) {
     const seg = Math.max(5, Math.min(60 * 60, Number(segmentSeconds || cfg.segmentSeconds) || cfg.segmentSeconds))
 
     const outDir = path.join(UNIT_MONITOR_RECORDINGS_DIR, safeKey(u), safeKey(id))
-    await fs.mkdir(outDir, { recursive: true }).catch(() => {})
+    await fs.mkdir(outDir, { recursive: true }).catch(() => { })
 
     const logDir = path.dirname(MEDIAMTX_LOG_FILE)
-    await fs.mkdir(logDir, { recursive: true }).catch(() => {})
+    await fs.mkdir(logDir, { recursive: true }).catch(() => { })
     const logFile = path.join(logDir, `unit_monitor_ffmpeg_${safeKey(u)}_${safeKey(id)}.out`)
     const fd = fsSync.openSync(logFile, 'a')
 
@@ -1062,7 +1076,7 @@ async function cleanupUnitMonitorSegments() {
                     const st = await fs.stat(absPath)
                     if (!st.isFile()) continue
                     if (st.mtimeMs < cutoffMs) {
-                        await fs.unlink(absPath).catch(() => {})
+                        await fs.unlink(absPath).catch(() => { })
                     }
                 } catch { /* ignore */ }
             }
@@ -1070,7 +1084,7 @@ async function cleanupUnitMonitorSegments() {
     }
 }
 
-setInterval(() => { cleanupUnitMonitorSegments().catch(() => {}) }, 60 * 60 * 1000).unref()
+setInterval(() => { cleanupUnitMonitorSegments().catch(() => { }) }, 60 * 60 * 1000).unref()
 
 async function loadUnitMonitorState() {
     try {
@@ -1866,17 +1880,17 @@ app.delete('/api/conversations/:id/human-intervention', async (req, res) => {
 const CHANNELS_RANGE = Array.from({ length: 9 }, (_, i) => i + 1) // Channels 1-9
 const PORTS_RANGE_GATEWAY = { min: 3001, max: 3001 } // Single official module port 3001
 
-	// Persisted metadata for gateway instances (friendly names, last-contact, etc.)
-	const WA_INSTANCES_META_FILE =
-	    process.env.CRM_WA_INSTANCES_META ||
-	    process.env.WA_INSTANCES_META_FILE ||
-	    path.join(VAR_DIR, 'core', 'wa_instances_meta.json')
-	// Workspace path for the legacy gateway scripts/assets (now lives under whatsapp/gateway/)
-	const WA_GATEWAY_DIR = process.env.CRM_WA_GATEWAY_DIR ||
-	    process.env.WA_GATEWAY_DIR ||
-	    path.join(BACKEND_ROOT, 'apps', 'whatsapp', 'gateway')
-	// Schema: { instances: { [inst:number]: { name?: string, createdAt?: string, lastContactName?: string, lastContactPhone?: string, lastContactAt?: string } } }
-	let waInstancesMeta = { instances: {} }
+// Persisted metadata for gateway instances (friendly names, last-contact, etc.)
+const WA_INSTANCES_META_FILE =
+    process.env.CRM_WA_INSTANCES_META ||
+    process.env.WA_INSTANCES_META_FILE ||
+    path.join(VAR_DIR, 'core', 'wa_instances_meta.json')
+// Workspace path for the legacy gateway scripts/assets (now lives under whatsapp/gateway/)
+const WA_GATEWAY_DIR = process.env.CRM_WA_GATEWAY_DIR ||
+    process.env.WA_GATEWAY_DIR ||
+    path.join(BACKEND_ROOT, 'apps', 'whatsapp', 'gateway')
+// Schema: { instances: { [inst:number]: { name?: string, createdAt?: string, lastContactName?: string, lastContactPhone?: string, lastContactAt?: string } } }
+let waInstancesMeta = { instances: {} }
 async function loadWaInstancesMeta() {
     try {
         const raw = await fs.readFile(WA_INSTANCES_META_FILE, 'utf-8')

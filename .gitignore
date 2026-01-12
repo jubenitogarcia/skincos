@@ -18,6 +18,11 @@ yarn-error.log*
 !.env.example
 !.env.*.example
 
+# Cloudflare Wrangler local dev vars (may contain secrets)
+.dev.vars
+.dev.vars.*
+.wrangler/
+
 # Logs
 logs/
 *.log

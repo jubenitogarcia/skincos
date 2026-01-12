@@ -19,6 +19,7 @@ Commands:
   stop              Stop all modules
   watch             Start CRM + WhatsApp + Actual + Agent + Instagram (foreground)
   crm               Start only CRM (frontend+api)
+  insumos            Insumos (Cloudflare Worker) helper
   gateway           Start WhatsApp gateway watcher
   official          Start WhatsApp official watcher
   agent             Start Agent Zero (webui)
@@ -510,6 +511,8 @@ case "$cmd" in
     cmd_watch "$@" ;;
   crm)
     exec "$ROOT_DIR/frontend/restart_crm.sh" "$@" ;;
+  insumos)
+    exec "$ROOT_DIR/backend/scripts/insumos.sh" "$@" ;;
   gateway)
     instance=1
     quiet=0

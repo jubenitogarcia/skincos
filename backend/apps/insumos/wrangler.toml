@@ -1,0 +1,43 @@
+name = "skincos-insumos"
+main = "workers/index.js"
+compatibility_date = "2024-11-20"
+routes = ["api.skincos.com.br/insumos/*"]
+
+[triggers]
+crons = ["0 * * * *"]
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[durable_objects.bindings]]
+name = "JOB_QUEUE"
+class_name = "JobQueue"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JobQueue"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-db"
+database_id = "13e59612-99ba-450e-9014-ddefbee72965"
+
+[vars]
+APP_ORIGIN = "https://app.skincos.com.br"
+# Configure your own Google Sheet id (or via Cloudflare dashboard vars).
+SPREADSHEET_ID = "your-spreadsheet-id"
+SHEET_RANGE = "Insumos!A:Z"
+USER_SHEET_RANGE = "Usuarios!A:Z"
+MOVIMENTACOES_RANGE = "Movimentacoes!A:Z"
+# Google Sheet tab id for the "Insumos" sheet (used for row deletion).
+SHEET_ID = "your-sheet-tab-id"
+# Configure your own Google service account email (or via Cloudflare dashboard vars).
+GOOGLE_SERVICE_ACCOUNT_EMAIL = "your-service-account@your-project.iam.gserviceaccount.com"
+
+# Secrets (set via wrangler secret put):
+# GOOGLE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
