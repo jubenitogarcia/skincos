@@ -88,7 +88,7 @@ export async function handleAuthRoutes({
     // POST /auth/login
     if (url.pathname === "/auth/login" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
-        const usernameInput = (body.username || body.user || '').toString().trim();
+        const usernameInput = (body.username || body.user || body.email || '').toString().trim();
         const password = (body.password || body.senha || '').toString();
 
         if (!usernameInput || !password) {
@@ -98,7 +98,12 @@ export async function handleAuthRoutes({
         try {
             const userRows = await readSheet(spreadsheetId, userRange, accessToken);
             const users = parseUsers(userRows);
-            const userDb = users.find((u) => u.username.toLowerCase() === usernameInput.toLowerCase());
+            const identifier = usernameInput.toLowerCase();
+            const userDb = users.find((u) => {
+                const uName = (u.username || '').toLowerCase();
+                const uEmail = (u.email || '').toLowerCase();
+                return uName === identifier || (uEmail && uEmail === identifier);
+            });
             if (!userDb) {
                 return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
             }

@@ -53,20 +53,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = replitAuth?.isAuthenticated || false
   const shouldShowLoadingOverlay = isLoading && !isNoAuthMode()
 
-  const signIn = async () => {
+  const signIn = async (email: string, password: string) => {
     if (isNoAuthMode()) {
       logNoAuthMode('AuthContext.signIn', 'Bypassing login redirect - already authenticated in NO_AUTH mode')
       return Promise.resolve()
     }
-    window.location.href = '/api/login'
+    const res = await fetch('/api/insumos/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, password })
+    })
+    const text = await res.text()
+    let json: any = null
+    try { json = text ? JSON.parse(text) : null } catch { json = null }
+    if (!res.ok) {
+      throw new Error(json?.error || json?.message || `HTTP ${res.status}`)
+    }
+    // Refresh app state so useReplitAuth can pick up the new session cookie.
+    window.location.href = '/'
   }
 
-  const signUp = async () => {
+  const signUp = async (_name: string, _email: string, _password: string) => {
     if (isNoAuthMode()) {
       logNoAuthMode('AuthContext.signUp', 'Bypassing signup redirect - already authenticated in NO_AUTH mode')
       return Promise.resolve()
     }
-    window.location.href = '/api/login'
+    throw new Error('Criação de conta ainda não está disponível no CRM. Peça para um admin cadastrar no módulo Insumos.')
   }
 
   const signOut = () => {
@@ -74,7 +87,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logNoAuthMode('AuthContext.signOut', 'Bypassing logout redirect - staying authenticated in NO_AUTH mode')
       return
     }
-    window.location.href = '/api/logout'
+    fetch('/api/insumos/auth/logout', { method: 'POST', credentials: 'include' })
+      .catch(() => null)
+      .finally(() => { window.location.href = '/' })
   }
 
   const updateProfile = () => {

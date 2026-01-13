@@ -27,11 +27,11 @@ export function useReplitAuth() {
   }
   
   const { data: user, isLoading, error } = useQuery({
-    queryKey: ["/api/auth/user"],
+    queryKey: ["/api/insumos/auth/me"],
     queryFn: async () => {
       console.log('[useReplitAuth] 📡 Fetching user authentication status...')
       
-      const response = await fetch('/api/auth/user', {
+      const response = await fetch('/api/insumos/auth/me', {
         credentials: 'include' // Important for cookies/sessions
       });
       
@@ -46,9 +46,20 @@ export function useReplitAuth() {
         throw new Error(`Authentication check failed: ${response.statusText}`);
       }
       
-      const userData = await response.json();
-      console.log('[useReplitAuth] ✅ User authenticated:', userData)
-      return userData;
+      const me = await response.json().catch(() => null) as any;
+      const insumosUser = me?.user || null;
+      if (!insumosUser) return null;
+
+      const mapped = {
+        id: String(insumosUser.username || insumosUser.email || ''),
+        name: String(insumosUser.displayName || insumosUser.name || insumosUser.username || insumosUser.email || ''),
+        email: String(insumosUser.email || ''),
+        createdAt: String(insumosUser.createdAt || new Date().toISOString()),
+        avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
+      };
+
+      console.log('[useReplitAuth] ✅ User authenticated:', mapped)
+      return mapped;
     },
     retry: false, // Don't retry on 401
     staleTime: 5 * 60 * 1000, // 5 minutes
