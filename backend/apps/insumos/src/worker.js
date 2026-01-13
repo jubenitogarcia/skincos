@@ -1074,7 +1074,7 @@ export default {
         } catch {
             // ignore
         }
-        const appOrigin = env.APP_ORIGIN || "https://app.skincos.com.br";
+        const appOrigin = env.APP_ORIGIN || "https://crm.skincos.com.br";
         const unidade = url.searchParams.get('unidade') || 'novo-hamburgo';
         const cookies = parseCookies(request.headers.get('cookie') || '');
         const ip = getClientIp(request);
