@@ -16,7 +16,7 @@ Para o CRM conseguir chamar `/api/*` em produção (sem precisar de um Node serv
 
 - Proxy Insumos: `frontend/functions/api/insumos/[[path]].ts`
 - Health: `frontend/functions/api/health.ts`
-- Rotas: `frontend/public/_routes.json` (inclui `/api/*`)
+- Rotas: `frontend/public/_routes.json` (inclui apenas `/api/health` e `/api/insumos/*`)
 
 Obs: o deploy do Pages (incluindo `functions/`) acontece automaticamente via integração Git↔Cloudflare Pages.
 
