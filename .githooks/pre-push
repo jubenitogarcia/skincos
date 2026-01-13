@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Auto-deploy Insumos Worker when pushing updates to `main`.
+#
+# Opt-outs:
+#   SKINCOS_SKIP_DEPLOY=1        -> skip everything
+#   SKINCOS_AUTO_DEPLOY=0        -> skip everything
+#   SKINCOS_AUTO_MIGRATE=1       -> also apply D1 migrations (best effort)
+#   SKINCOS_DEPLOY_STRICT=0      -> do not block push if deploy fails
+
+REMOTE_NAME="${1:-}"
+REMOTE_URL="${2:-}"
+
+if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-1}" == "0" ]]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${REPO_ROOT:-}" ]]; then
+  exit 0
+fi
+cd "$REPO_ROOT"
+
+should_deploy=0
+should_migrate=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Only target pushes to `main` (production).
+  [[ "$remote_ref" == "refs/heads/main" ]] || continue
+  [[ "$local_ref" == "refs/heads/main" ]] || continue
+
+  # If remote SHA is unknown (new branch), just deploy.
+  if [[ "$remote_sha" =~ ^0{40}$ ]]; then
+    should_deploy=1
+    continue
+  fi
+
+  changed="$(git diff --name-only "$remote_sha..$local_sha" 2>/dev/null || true)"
+  if echo "$changed" | grep -qE '^(backend/apps/insumos/|backend/pnpm-lock\.yaml)'; then
+    should_deploy=1
+  fi
+  if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^backend/apps/insumos/migrations/'; then
+    should_migrate=1
+  fi
+done
+
+if [[ "$should_deploy" != "1" ]]; then
+  exit 0
+fi
+
+echo "[skincos] Detected Insumos changes on main; deploying worker..."
+
+strict="${SKINCOS_DEPLOY_STRICT:-1}"
+
+if [[ "$should_migrate" == "1" ]]; then
+  echo "[skincos] Applying D1 migrations (best effort)..."
+  ./backend/scripts/dev.sh insumos migrate || true
+fi
+
+if [[ "$strict" == "0" ]]; then
+  ./backend/scripts/dev.sh insumos deploy || {
+    echo "[skincos] WARN: deploy failed, but push will continue (SKINCOS_DEPLOY_STRICT=0)."
+    exit 0
+  }
+else
+  ./backend/scripts/dev.sh insumos deploy
+fi
+
+echo "[skincos] Insumos deploy done."
+

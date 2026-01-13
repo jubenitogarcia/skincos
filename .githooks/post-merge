@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Auto-deploy Insumos Worker after `git pull` (merge/ff) updates `main`.
+# See `.githooks/pre-push` for opt-outs.
+
+if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-1}" == "0" ]]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${REPO_ROOT:-}" ]]; then
+  exit 0
+fi
+cd "$REPO_ROOT"
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+[[ "$branch" == "main" ]] || exit 0
+
+base="${ORIG_HEAD:-}"
+if [[ -z "${base:-}" ]]; then
+  base="$(git rev-parse ORIG_HEAD 2>/dev/null || true)"
+fi
+[[ -n "${base:-}" ]] || exit 0
+
+changed="$(git diff --name-only "$base..HEAD" 2>/dev/null || true)"
+if ! echo "$changed" | grep -qE '^(backend/apps/insumos/|backend/pnpm-lock\.yaml)'; then
+  exit 0
+fi
+
+echo "[skincos] Pull updated Insumos; deploying worker..."
+
+if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^backend/apps/insumos/migrations/'; then
+  echo "[skincos] Applying D1 migrations (best effort)..."
+  ./backend/scripts/dev.sh insumos migrate || true
+fi
+
+strict="${SKINCOS_DEPLOY_STRICT:-1}"
+if [[ "$strict" == "0" ]]; then
+  ./backend/scripts/dev.sh insumos deploy || {
+    echo "[skincos] WARN: deploy failed, continuing (SKINCOS_DEPLOY_STRICT=0)."
+    exit 0
+  }
+else
+  ./backend/scripts/dev.sh insumos deploy
+fi
+
+echo "[skincos] Insumos deploy done."
+
