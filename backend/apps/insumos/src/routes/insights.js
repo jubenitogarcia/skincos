@@ -1,5 +1,137 @@
 // @ts-nocheck
 
+function toDateOrNull(v) {
+    if (!v) return null;
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+}
+
+function yyyyMmDd(d) {
+    return d.toISOString().slice(0, 10);
+}
+
+function startOfWeekMonday(d) {
+    const out = new Date(d);
+    const day = out.getUTCDay(); // 0=Sun..6=Sat
+    const diff = (day === 0 ? -6 : 1 - day);
+    out.setUTCDate(out.getUTCDate() + diff);
+    out.setUTCHours(0, 0, 0, 0);
+    return out;
+}
+
+function bucketKeyForDate(d, groupBy) {
+    if (groupBy === 'month') return d.toISOString().slice(0, 7); // YYYY-MM
+    if (groupBy === 'week') return yyyyMmDd(startOfWeekMonday(d));
+    return yyyyMmDd(d);
+}
+
+function normalizeTipo(tipo) {
+    return String(tipo || '').toUpperCase().replace('Í', 'I');
+}
+
+function safeNumber(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function computeTrends({ movimentos, insumoByCode, groupBy, from, to, unidade }) {
+    const byBucket = new Map();
+    const totals = { entradaQtd: 0, saidaQtd: 0, ajusteQtd: 0, entradaValor: 0, saidaValor: 0 };
+
+    for (const m of movimentos) {
+        if (unidade && String(m.unidade || '') !== String(unidade)) continue;
+        const d = toDateOrNull(m.dataHora);
+        if (!d) continue;
+        if (from && d < from) continue;
+        if (to && d > to) continue;
+
+        const key = bucketKeyForDate(d, groupBy);
+        const item = insumoByCode.get(String(m.codigoBarras || '').trim()) || null;
+        const preco = safeNumber(item?.precoCusto);
+        const qty = safeNumber(m.quantidade);
+        const val = qty * preco;
+        const tipo = normalizeTipo(m.tipo);
+
+        const agg = byBucket.get(key) || {
+            bucket: key,
+            entradaQtd: 0,
+            saidaQtd: 0,
+            ajusteQtd: 0,
+            entradaValor: 0,
+            saidaValor: 0
+        };
+
+        if (tipo === 'ENTRADA') {
+            agg.entradaQtd += qty;
+            agg.entradaValor += val;
+            totals.entradaQtd += qty;
+            totals.entradaValor += val;
+        } else if (tipo === 'SAIDA' || tipo === 'SAÍDA') {
+            agg.saidaQtd += qty;
+            agg.saidaValor += val;
+            totals.saidaQtd += qty;
+            totals.saidaValor += val;
+        } else if (tipo === 'AJUSTE') {
+            agg.ajusteQtd += qty;
+            totals.ajusteQtd += qty;
+        }
+
+        byBucket.set(key, agg);
+    }
+
+    const buckets = Array.from(byBucket.values()).sort((a, b) => String(a.bucket).localeCompare(String(b.bucket)));
+    return {
+        unidade,
+        groupBy,
+        from: from ? from.toISOString() : null,
+        to: to ? to.toISOString() : null,
+        totals: {
+            ...totals,
+            saldoQtd: totals.entradaQtd - totals.saidaQtd,
+            saldoValor: totals.entradaValor - totals.saidaValor
+        },
+        buckets
+    };
+}
+
+function computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode }) {
+    const byCat = new Map();
+    const only = mode === 'saida' ? 'SAIDA' : mode === 'entrada' ? 'ENTRADA' : null;
+
+    for (const m of movimentos) {
+        if (unidade && String(m.unidade || '') !== String(unidade)) continue;
+        const d = toDateOrNull(m.dataHora);
+        if (!d) continue;
+        if (from && d < from) continue;
+        if (to && d > to) continue;
+        const tipo = normalizeTipo(m.tipo);
+        if (only && tipo !== only) continue;
+
+        const code = String(m.codigoBarras || '').trim();
+        const item = insumoByCode.get(code) || null;
+        const categoria = String(item?.categoria || 'Outros').trim() || 'Outros';
+        const preco = safeNumber(item?.precoCusto);
+        const qty = safeNumber(m.quantidade);
+        const val = qty * preco;
+
+        const agg = byCat.get(categoria) || { categoria, qtd: 0, valor: 0, movimentos: 0 };
+        agg.qtd += qty;
+        agg.valor += val;
+        agg.movimentos += 1;
+        byCat.set(categoria, agg);
+    }
+
+    const categories = Array.from(byCat.values()).sort((a, b) => (b.valor || 0) - (a.valor || 0));
+    return {
+        unidade,
+        from: from ? from.toISOString() : null,
+        to: to ? to.toISOString() : null,
+        mode: mode || 'all',
+        categories
+    };
+}
+
 export async function handleInsightsRoutes({
     request,
     url,
@@ -8,10 +140,14 @@ export async function handleInsightsRoutes({
     spreadsheetId,
     accessToken,
     sheetRange,
+    movimentacoesRange,
+    movimentacoesSheetName,
     unidade,
+    ensureHeaderColumns,
     readSheet,
     parseInsumos,
     normalizeInsumos,
+    parseMovimentacoes,
     buildActionables,
     buildRoi,
     buildQualityReport,
@@ -51,13 +187,125 @@ export async function handleInsightsRoutes({
         }
     }
     if (url.pathname === "/analytics/trends") {
-        return withCORS(JSON.stringify({ data: [] }), { status: 200 }, appOrigin);
+        try {
+            await ensureHeaderColumns({
+                spreadsheetId,
+                sheetName: movimentacoesSheetName,
+                accessToken,
+                requiredHeaders: ['UNIDADE']
+            });
+
+            const days = Math.max(1, Math.min(366, parseInt(url.searchParams.get('days') || '30', 10) || 30));
+            const groupBy = (url.searchParams.get('groupBy') || 'day').toLowerCase();
+            const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
+            const now = new Date();
+            const from = toDateOrNull(url.searchParams.get('from')) || toDateOrNull(url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
+            const to = toDateOrNull(url.searchParams.get('to')) || toDateOrNull(url.searchParams.get('ate')) || now;
+
+            const [insumosRaw, movRaw] = await Promise.all([
+                readSheet(spreadsheetId, sheetRange, accessToken),
+                readSheet(spreadsheetId, movimentacoesRange, accessToken),
+            ]);
+            const insumos = normalizeInsumos(parseInsumos(insumosRaw), unidade);
+            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
+            const movimentos = parseMovimentacoes(movRaw);
+
+            const data = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade });
+            return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
     }
     if (url.pathname === "/analytics/category-turnover") {
-        return withCORS(JSON.stringify({ data: [] }), { status: 200 }, appOrigin);
+        try {
+            await ensureHeaderColumns({
+                spreadsheetId,
+                sheetName: movimentacoesSheetName,
+                accessToken,
+                requiredHeaders: ['UNIDADE']
+            });
+
+            const days = Math.max(1, Math.min(366, parseInt(url.searchParams.get('days') || '30', 10) || 30));
+            const now = new Date();
+            const from = toDateOrNull(url.searchParams.get('from')) || toDateOrNull(url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
+            const to = toDateOrNull(url.searchParams.get('to')) || toDateOrNull(url.searchParams.get('ate')) || now;
+            const mode = (url.searchParams.get('mode') || 'saida').toLowerCase(); // saida|entrada|all
+
+            const [insumosRaw, movRaw] = await Promise.all([
+                readSheet(spreadsheetId, sheetRange, accessToken),
+                readSheet(spreadsheetId, movimentacoesRange, accessToken),
+            ]);
+            const insumos = normalizeInsumos(parseInsumos(insumosRaw), unidade);
+            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
+            const movimentos = parseMovimentacoes(movRaw);
+
+            const data = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode });
+            return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
     }
     if (url.pathname === "/analytics/report" && request.method === "POST") {
-        return withCORS(JSON.stringify({ data: [] }), { status: 200 }, appOrigin);
+        try {
+            await ensureHeaderColumns({
+                spreadsheetId,
+                sheetName: movimentacoesSheetName,
+                accessToken,
+                requiredHeaders: ['UNIDADE']
+            });
+
+            const body = await request.json().catch(() => ({}));
+            const groupBy = String(body.groupBy || url.searchParams.get('groupBy') || 'day').toLowerCase();
+            const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
+            const days = Math.max(1, Math.min(366, parseInt(body.days || url.searchParams.get('days') || '30', 10) || 30));
+            const now = new Date();
+            const from = toDateOrNull(body.from || body.de || url.searchParams.get('from') || url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
+            const to = toDateOrNull(body.to || body.ate || url.searchParams.get('to') || url.searchParams.get('ate')) || now;
+            const mode = String(body.mode || url.searchParams.get('mode') || 'saida').toLowerCase();
+
+            const [insumosRaw, movRaw] = await Promise.all([
+                readSheet(spreadsheetId, sheetRange, accessToken),
+                readSheet(spreadsheetId, movimentacoesRange, accessToken),
+            ]);
+            const insumos = normalizeInsumos(parseInsumos(insumosRaw), unidade);
+            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
+            const movimentos = parseMovimentacoes(movRaw);
+
+            const trends = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade });
+            const turnover = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode });
+
+            // Top produtos por valor (turnover)
+            const byProduct = new Map();
+            for (const m of movimentos) {
+                if (unidade && String(m.unidade || '') !== String(unidade)) continue;
+                const d = toDateOrNull(m.dataHora);
+                if (!d) continue;
+                if (from && d < from) continue;
+                if (to && d > to) continue;
+                const tipo = normalizeTipo(m.tipo);
+                if (mode === 'saida' && tipo !== 'SAIDA') continue;
+                if (mode === 'entrada' && tipo !== 'ENTRADA') continue;
+
+                const code = String(m.codigoBarras || '').trim();
+                const item = insumoByCode.get(code) || null;
+                const produto = String(item?.produto || m.produto || code || '-');
+                const categoria = String(item?.categoria || 'Outros');
+                const preco = safeNumber(item?.precoCusto);
+                const qty = safeNumber(m.quantidade);
+                const val = qty * preco;
+                const agg = byProduct.get(code) || { codigoBarras: code, produto, categoria, qtd: 0, valor: 0, movimentos: 0 };
+                agg.qtd += qty;
+                agg.valor += val;
+                agg.movimentos += 1;
+                byProduct.set(code, agg);
+            }
+            const topProdutos = Array.from(byProduct.values()).sort((a, b) => (b.valor || 0) - (a.valor || 0)).slice(0, 25);
+
+            const data = { unidade, from: from.toISOString(), to: to.toISOString(), groupBy: group, mode, trends, turnover, topProdutos };
+            return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
     }
     if (url.pathname === "/analytics/stock-distribution") {
         const rows = await readSheet(spreadsheetId, sheetRange, accessToken);

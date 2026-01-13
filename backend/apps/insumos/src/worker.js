@@ -583,6 +583,31 @@ function buildQualityReport(itens, unidade, limitIssues = 500) {
     return { generatedAt: new Date().toISOString(), unidade, summary, issues: capped };
 }
 
+// User sheet may include an optional column "UNIDADES" (comma/semicolon separated).
+// If empty (or "*"), user can access all units.
+function normalizeUnidadeName(value) {
+    const s = String(value || '').trim().toLowerCase();
+    if (!s) return '';
+    if (s === '*' || s === 'all' || s === 'todas') return '*';
+    if (s === 'novo-hamburgo' || s === 'novohamburgo' || s === 'novo hamburgo' || s === 'nh') return 'novo-hamburgo';
+    if (s === 'barra-shopping-sul' || s === 'barrashoppingsul' || s === 'barra shopping sul' || s === 'bss') return 'barra-shopping-sul';
+    const compact = s.replace(/[\s_-]+/g, '');
+    if (compact.includes('novohamburgo')) return 'novo-hamburgo';
+    if (compact.includes('barrashoppingsul')) return 'barra-shopping-sul';
+    return s;
+}
+
+function parseAllowedUnits(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return [];
+    const parts = text
+        .split(/[,;|]/g)
+        .map((p) => normalizeUnidadeName(p))
+        .filter(Boolean);
+    if (parts.includes('*')) return [];
+    return Array.from(new Set(parts.filter((u) => UNIDADES.includes(u))));
+}
+
 function parseUsers(rows) {
     if (!rows || rows.length < 2) return [];
     const headers = rows[0].map(h => (h || '').toLowerCase());
@@ -591,6 +616,7 @@ function parseUsers(rows) {
         headers.forEach((h, i) => {
             obj[h] = row[i] ?? '';
         });
+        const rawUnits = obj.unidades || obj.unidades_permitidas || obj.allowed_units || '';
         return {
             username: (obj.username || '').trim(),
             displayName: obj.display_name || obj.username || '',
@@ -600,7 +626,8 @@ function parseUsers(rows) {
             createdAt: obj.created_at || '',
             updatedAt: obj.updated_at || '',
             passwordHash: obj.password_hash || '',
-            photoUrl: obj.photo_url || ''
+            photoUrl: obj.photo_url || '',
+            allowedUnits: parseAllowedUnits(rawUnits),
         };
     });
 }
@@ -747,6 +774,7 @@ function buildUserResponseFromSheetRow(row, headerMap) {
         email: (get('email') || '').toString(),
         role: (get('role') || 'CONSULTOR').toString(),
         photoUrl: (get('photo_url') || '').toString(),
+        allowedUnits: parseAllowedUnits(get('unidades') || get('unidades_permitidas') || get('allowed_units') || ''),
     };
 }
 
@@ -1222,6 +1250,14 @@ export default {
             return sessionUser;
         };
 
+        const hasUnitAccess = (u, unit) => {
+            if (!u) return false;
+            if (String(u.role || '').toUpperCase() === 'ADMIN') return true;
+            const allowed = Array.isArray(u.allowedUnits) ? u.allowedUnits.filter(Boolean) : [];
+            if (!allowed.length) return true;
+            return allowed.includes(unit);
+        };
+
         const requireRoles = async (allowedRoles) => {
             const u = await loadSessionUser();
             if (!u) {
@@ -1239,6 +1275,16 @@ export default {
                     ok: false,
                     response: withCORS(
                         JSON.stringify({ success: false, error: 'Sem permissão', code: 'RBAC_DENIED', role: u.role }),
+                        { status: 403 },
+                        appOrigin
+                    )
+                };
+            }
+            if (!hasUnitAccess(u, unidade)) {
+                return {
+                    ok: false,
+                    response: withCORS(
+                        JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits: u.allowedUnits || [] }),
                         { status: 403 },
                         appOrigin
                     )
@@ -1285,6 +1331,13 @@ export default {
                 return withCORS(
                     JSON.stringify({ error: "Not authenticated" }),
                     { status: 401, headers: deleteAuthCookies({ secure: isSecureContext }) },
+                    appOrigin
+                );
+            }
+            if (!hasUnitAccess(u, unidade)) {
+                return withCORS(
+                    JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits: u.allowedUnits || [] }),
+                    { status: 403 },
                     appOrigin
                 );
             }
@@ -1442,10 +1495,14 @@ export default {
             spreadsheetId,
             accessToken,
             sheetRange,
+            movimentacoesRange,
+            movimentacoesSheetName,
             unidade,
+            ensureHeaderColumns,
             readSheet,
             parseInsumos,
             normalizeInsumos,
+            parseMovimentacoes,
             buildActionables,
             buildRoi,
             buildQualityReport,

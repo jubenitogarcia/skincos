@@ -1,8 +1,10 @@
 import React from 'react'
 import { toast } from 'sonner'
+import { Avatar, AvatarFallback, AvatarImage } from '@/avatar'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
@@ -31,6 +33,7 @@ type InsumosUser = {
   email?: string
   role?: string
   photoUrl?: string
+  allowedUnits?: string[]
 }
 
 type Insumo = {
@@ -159,6 +162,54 @@ type ApiError = {
   message?: string
   success?: boolean
   code?: string
+}
+
+type OfflineQueueItem = {
+  id: string
+  ts: number
+  path: string
+  method: string
+  body?: unknown
+}
+
+async function fileToCompressedDataUrl(
+  file: File,
+  opts: { maxDimension: number; quality: number; maxDataUrlLength: number }
+): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result || ''))
+    r.onerror = () => reject(r.error || new Error('Falha ao ler imagem'))
+    r.readAsDataURL(file)
+  })
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Falha ao carregar imagem'))
+    image.src = dataUrl
+  })
+
+  const max = Math.max(32, opts.maxDimension)
+  const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1))
+  const targetW = Math.max(1, Math.round((img.width || 1) * scale))
+  const targetH = Math.max(1, Math.round((img.height || 1) * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = targetW
+  canvas.height = targetH
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas indisponível')
+  ctx.drawImage(img, 0, 0, targetW, targetH)
+
+  let out = canvas.toDataURL('image/jpeg', Math.min(1, Math.max(0.2, opts.quality)))
+  if (out.length > opts.maxDataUrlLength) {
+    out = canvas.toDataURL('image/jpeg', 0.6)
+  }
+  if (out.length > opts.maxDataUrlLength) {
+    throw new Error('Imagem grande demais. Use uma foto menor.')
+  }
+  return out
 }
 
 function fmtMoneyBRL(value: number) {
@@ -412,7 +463,9 @@ export function InsumosModule() {
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
 
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'insumos' | 'mov' | 'insights' | 'backup' | 'audit'>('overview')
+  const [activeTab, setActiveTab] = React.useState<
+    'overview' | 'insumos' | 'lotes' | 'mov' | 'insights' | 'perfil' | 'backup' | 'audit'
+  >('overview')
 
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
@@ -437,11 +490,31 @@ export function InsumosModule() {
   const [createDataValidade, setCreateDataValidade] = React.useState('')
   const [createLoading, setCreateLoading] = React.useState(false)
 
+  const [lotFiltroCategoria, setLotFiltroCategoria] = React.useState('')
+  const [lotFiltroValidade, setLotFiltroValidade] = React.useState<'TODOS' | 'OK' | 'VENCENDO' | 'EXPIRADO' | 'SEM_VALIDADE'>('TODOS')
+  const [lotBusca, setLotBusca] = React.useState('')
+  const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
+  const [lotSelecionado, setLotSelecionado] = React.useState<Insumo | null>(null)
+  const [lotEditLote, setLotEditLote] = React.useState('')
+  const [lotEditValidade, setLotEditValidade] = React.useState('')
+  const [lotSaving, setLotSaving] = React.useState(false)
+
+  const [profileSaving, setProfileSaving] = React.useState(false)
+  const [profileDisplayName, setProfileDisplayName] = React.useState('')
+  const [profileEmail, setProfileEmail] = React.useState('')
+  const [profileUsername, setProfileUsername] = React.useState('')
+  const [profilePhotoUrl, setProfilePhotoUrl] = React.useState('')
+  const [profileCurrentPassword, setProfileCurrentPassword] = React.useState('')
+  const [profileNewPassword, setProfileNewPassword] = React.useState('')
+
   const [movimentacoes, setMovimentacoes] = React.useState<Movimentacao[]>([])
   const [movLoading, setMovLoading] = React.useState(false)
   const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA'>('TODOS')
   const [movDe, setMovDe] = React.useState('')
   const [movAte, setMovAte] = React.useState('')
+  const [movPagina, setMovPagina] = React.useState(1)
+  const [movLimite, setMovLimite] = React.useState(50)
+  const [movTotal, setMovTotal] = React.useState<number | null>(null)
 
   const [backupItems, setBackupItems] = React.useState<BackupSnapshot[]>([])
   const [backupLoading, setBackupLoading] = React.useState(false)
@@ -468,17 +541,30 @@ export function InsumosModule() {
   const [insightsQuality, setInsightsQuality] = React.useState<QualityReport | null>(null)
   const [insightsStockDist, setInsightsStockDist] = React.useState<StockDistributionItem[]>([])
   const [insightsMovReport, setInsightsMovReport] = React.useState<MovReport | null>(null)
+  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
+  const [insightsTurnover, setInsightsTurnover] = React.useState<any | null>(null)
   const [qrText, setQrText] = React.useState('')
   const [alertasStatus, setAlertasStatus] = React.useState<'TODOS' | EstoqueStatus>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
+  const [offlineQueueCount, setOfflineQueueCount] = React.useState(0)
 
   const canUseApi = !!health?.ok && !!health?.sheetsConfigured
   const isAuthed = !!user?.username
+  const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
+
+  React.useEffect(() => {
+    if (!allowedUnits.length) return
+    if (allowedUnits.includes(unidade)) return
+    setUnidade(allowedUnits[0] as any)
+  }, [allowedUnits.join('|'), unidade])
 
   React.useEffect(() => {
     setTransferFrom(unidade)
-    setTransferTo(unidade === 'novo-hamburgo' ? 'barra-shopping-sul' : 'novo-hamburgo')
+    setTransferTo((prev) => {
+      if (prev !== unidade) return prev
+      return unidade === 'novo-hamburgo' ? 'barra-shopping-sul' : 'novo-hamburgo'
+    })
   }, [unidade])
 
   const refreshCsrf = React.useCallback(async () => {
@@ -494,6 +580,110 @@ export function InsumosModule() {
       return null
     }
   }, [])
+
+  const OFFLINE_QUEUE_KEY = 'skincos.insumos.offlineQueue.v1'
+
+  const readOfflineQueue = React.useCallback((): OfflineQueueItem[] => {
+    try {
+      if (typeof window === 'undefined') return []
+      const raw = window.localStorage.getItem(OFFLINE_QUEUE_KEY)
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? (parsed as OfflineQueueItem[]) : []
+    } catch {
+      return []
+    }
+  }, [])
+
+  const writeOfflineQueue = React.useCallback((items: OfflineQueueItem[]) => {
+    try {
+      if (typeof window === 'undefined') return
+      window.localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(items))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const refreshOfflineQueueCount = React.useCallback(() => {
+    const items = readOfflineQueue()
+    setOfflineQueueCount(items.length)
+  }, [readOfflineQueue])
+
+  const isNetworkError = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e)
+    return e instanceof TypeError || /Failed to fetch|NetworkError|fetch failed/i.test(msg)
+  }
+
+  const enqueueOffline = React.useCallback(
+    (item: Omit<OfflineQueueItem, 'id' | 'ts'>) => {
+      const queue = readOfflineQueue()
+      const rec: OfflineQueueItem = { id: (globalThis.crypto?.randomUUID?.() as any) || String(Date.now()), ts: Date.now(), ...item }
+      const next = [...queue, rec].slice(-200) // cap to avoid exploding localStorage
+      writeOfflineQueue(next)
+      setOfflineQueueCount(next.length)
+      return rec
+    },
+    [readOfflineQueue, writeOfflineQueue]
+  )
+
+  const syncOfflineQueue = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    const queue = readOfflineQueue()
+    if (!queue.length) return
+    let remaining = [...queue]
+
+    for (const item of queue) {
+      try {
+        await apiJson(item.path, {
+          method: item.method,
+          body: item.body,
+          csrfToken,
+          retryOnCsrf: refreshCsrf
+        })
+        remaining = remaining.filter((q) => q.id !== item.id)
+        writeOfflineQueue(remaining)
+        setOfflineQueueCount(remaining.length)
+      } catch (e) {
+        if (isNetworkError(e)) break
+        toast.error(e instanceof Error ? e.message : String(e))
+        break
+      }
+    }
+  }, [canUseApi, csrfToken, isAuthed, readOfflineQueue, refreshCsrf, writeOfflineQueue])
+
+  const mutateJson = React.useCallback(
+    async <T,>(
+      path: string,
+      opts: { method?: string; body?: unknown; queueLabel?: string },
+      extra?: { needsCsrf?: boolean }
+    ): Promise<T | { queued: true }> => {
+      const method = (opts.method || 'POST').toUpperCase()
+      try {
+        return await apiJson<T>(path, {
+          method,
+          body: opts.body,
+          csrfToken: extra?.needsCsrf === false ? undefined : csrfToken,
+          retryOnCsrf: extra?.needsCsrf === false ? undefined : refreshCsrf
+        })
+      } catch (e) {
+        if (isNetworkError(e) && method !== 'GET') {
+          enqueueOffline({ path, method, body: opts.body })
+          toast.message(`${opts.queueLabel || 'Operação'} salva na fila offline.`)
+          return { queued: true } as any
+        }
+        throw e
+      }
+    },
+    [csrfToken, enqueueOffline, refreshCsrf]
+  )
+
+  React.useEffect(() => {
+    refreshOfflineQueueCount()
+    const onOnline = () => {
+      void syncOfflineQueue()
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [refreshOfflineQueueCount, syncOfflineQueue])
 
   const loadHealth = React.useCallback(async () => {
     setHealthLoading(true)
@@ -523,6 +713,82 @@ export function InsumosModule() {
     }
   }, [])
 
+  React.useEffect(() => {
+    setProfileDisplayName(user?.displayName || user?.username || '')
+    setProfileEmail(user?.email || '')
+    setProfileUsername(user?.username || '')
+    setProfilePhotoUrl(user?.photoUrl || '')
+    setProfileCurrentPassword('')
+    setProfileNewPassword('')
+  }, [user?.displayName, user?.email, user?.photoUrl, user?.username])
+
+  const openLotDialog = React.useCallback((i: Insumo) => {
+    setLotSelecionado(i)
+    setLotEditLote(String(i.lote || ''))
+    setLotEditValidade(i.dataValidade ? String(i.dataValidade) : '')
+    setLotDialogOpen(true)
+  }, [])
+
+  const saveLot = React.useCallback(async () => {
+    if (!lotSelecionado?.registro) {
+      toast.error('Registro do insumo ausente.')
+      return
+    }
+    if (!canUseApi || !isAuthed) return
+    setLotSaving(true)
+    try {
+      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
+        method: 'PUT',
+        body: { lote: lotEditLote.trim(), dataValidade: lotEditValidade.trim() || '' },
+        queueLabel: 'Atualização de lote/validade'
+      })
+      toast.success('Lote/validade atualizados.')
+      setLotDialogOpen(false)
+      await Promise.allSettled([loadInsumos(), loadOverview()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLotSaving(false)
+    }
+  }, [canUseApi, isAuthed, loadInsumos, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, unidade])
+
+  const updateProfile = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    setProfileSaving(true)
+    try {
+      const payload: any = {
+        displayName: profileDisplayName.trim(),
+        email: profileEmail.trim(),
+        photoUrl: profilePhotoUrl || '',
+        newUsername: profileUsername.trim()
+      }
+      if (profileNewPassword.trim()) payload.newPassword = profileNewPassword.trim()
+      if (profileCurrentPassword.trim()) payload.currentPassword = profileCurrentPassword.trim()
+      const out = await apiJson<{ success?: boolean; user?: InsumosUser; csrfToken?: string }>(`/auth/profile`, {
+        method: 'PUT',
+        body: payload
+      })
+      setUser(out?.user || null)
+      setCsrfToken(out?.csrfToken || null)
+      setProfileCurrentPassword('')
+      setProfileNewPassword('')
+      toast.success('Perfil atualizado.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProfileSaving(false)
+    }
+  }, [
+    canUseApi,
+    isAuthed,
+    profileCurrentPassword,
+    profileDisplayName,
+    profileEmail,
+    profileNewPassword,
+    profilePhotoUrl,
+    profileUsername
+  ])
+
   const logout = React.useCallback(async () => {
     // Logout do CRM também encerra a sessão do Insumos (same cookie).
     signOut()
@@ -542,26 +808,40 @@ export function InsumosModule() {
     }
   }, [canUseApi, isAuthed, unidade])
 
-  const loadMovimentacoes = React.useCallback(async () => {
+  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
     if (!canUseApi || !isAuthed) return
     setMovLoading(true)
     try {
+      const pagina = Math.max(1, opts?.pagina ?? movPagina)
+      const limite = Math.max(1, Math.min(200, opts?.limite ?? movLimite))
       const params = new URLSearchParams()
       params.set('unidade', unidade)
-      params.set('limite', '200')
+      params.set('limite', String(limite))
+      params.set('pagina', String(pagina))
       if (movTipo !== 'TODOS') params.set('tipo', movTipo)
       if (movDe) params.set('de', movDe)
       if (movAte) params.set('ate', movAte)
-      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(`/movimentacoes?${params.toString()}`)
+      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
+        `/movimentacoes?${params.toString()}`
+      )
       const list = (out as any)?.movimentos ?? out?.data
       setMovimentacoes(Array.isArray(list) ? list : [])
+      const total = Number((out as any)?.resumo?.totalMovimentacoes)
+      setMovTotal(Number.isFinite(total) ? total : null)
+      setMovPagina(pagina)
+      setMovLimite(limite)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setMovimentacoes([])
+      setMovTotal(null)
     } finally {
       setMovLoading(false)
     }
-  }, [canUseApi, isAuthed, movAte, movDe, movTipo, unidade])
+  }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, unidade])
+
+  React.useEffect(() => {
+    setMovPagina(1)
+  }, [unidade, movAte, movDe, movLimite, movTipo])
 
   const loadBackups = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -691,12 +971,26 @@ export function InsumosModule() {
       if (movDe) movParams.set('de', movDe)
       if (movAte) movParams.set('ate', movAte)
 
-      const [alertas, roi, quality, dist, movReport] = await Promise.all([
+      const trendsParams = new URLSearchParams(base.toString())
+      trendsParams.set('groupBy', 'day')
+      trendsParams.set('days', '30')
+      if (movDe) trendsParams.set('from', movDe)
+      if (movAte) trendsParams.set('to', movAte)
+
+      const turnoverParams = new URLSearchParams(base.toString())
+      turnoverParams.set('days', '30')
+      turnoverParams.set('mode', 'saida')
+      if (movDe) turnoverParams.set('from', movDe)
+      if (movAte) turnoverParams.set('to', movAte)
+
+      const [alertas, roi, quality, dist, movReport, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
         apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${base.toString()}`),
         apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '200' }).toString()}`),
         apiJson<StockDistributionItem[]>(`/analytics/stock-distribution?${base.toString()}`),
-        apiJson<{ success?: boolean; data?: MovReport }>(`/relatorios/movimentacoes?${movParams.toString()}`)
+        apiJson<{ success?: boolean; data?: MovReport }>(`/relatorios/movimentacoes?${movParams.toString()}`),
+        apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`),
+        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverParams.toString()}`)
       ])
 
       setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
@@ -704,6 +998,8 @@ export function InsumosModule() {
       setInsightsQuality(quality?.data || null)
       setInsightsStockDist(Array.isArray(dist) ? dist : [])
       setInsightsMovReport(movReport?.data || null)
+      setInsightsTrends(trends?.data || null)
+      setInsightsTurnover(turnover?.data || null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setInsightsAlertas([])
@@ -711,6 +1007,8 @@ export function InsumosModule() {
       setInsightsQuality(null)
       setInsightsStockDist([])
       setInsightsMovReport(null)
+      setInsightsTrends(null)
+      setInsightsTurnover(null)
     } finally {
       setInsightsLoading(false)
     }
@@ -727,21 +1025,19 @@ export function InsumosModule() {
         if (kind === 'AJUSTE') {
           const novoEstoque = Number.isFinite(Number(quickNovoEstoque)) ? Number(quickNovoEstoque) : null
           if (novoEstoque === null) return toast.error('Informe o novo estoque')
-          await apiJson('/insumos/ajuste', {
+          await mutateJson('/insumos/ajuste', {
             method: 'POST',
             body: { codigoBarras, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
-            csrfToken,
-            retryOnCsrf: refreshCsrf
+            queueLabel: 'Ajuste'
           })
           toast.success('Ajuste registrado')
         } else {
           const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
           const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
-          await apiJson(path, {
+          await mutateJson(path, {
             method: 'POST',
             body: { codigoBarras, quantidade, observacoes: quickObs },
-            csrfToken,
-            retryOnCsrf: refreshCsrf
+            queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
           })
           toast.success(kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
         }
@@ -755,16 +1051,15 @@ export function InsumosModule() {
     },
     [
       canUseApi,
-      csrfToken,
       isAuthed,
       loadInsumos,
       loadMovimentacoes,
+      mutateJson,
       quickCodigo,
       quickMotivo,
       quickNovoEstoque,
       quickObs,
-      quickQuantidade,
-      refreshCsrf
+      quickQuantidade
     ]
   )
 
@@ -778,7 +1073,7 @@ export function InsumosModule() {
     setQuickActionLoading(true)
     try {
       const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
-      await apiJson('/insumos/transferir', {
+      await mutateJson('/insumos/transferir', {
         method: 'POST',
         body: {
           codigoBarras,
@@ -787,8 +1082,7 @@ export function InsumosModule() {
           toUnidade: transferTo,
           observacoes: quickObs
         },
-        csrfToken,
-        retryOnCsrf: refreshCsrf
+        queueLabel: 'Transferência'
       })
       toast.success('Transferência registrada')
 
@@ -801,15 +1095,14 @@ export function InsumosModule() {
     }
   }, [
     canUseApi,
-    csrfToken,
     isAuthed,
     loadInsumos,
     loadMovimentacoes,
     loadOverview,
+    mutateJson,
     quickCodigo,
     quickObs,
     quickQuantidade,
-    refreshCsrf,
     transferFrom,
     transferTo
   ])
@@ -823,11 +1116,13 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
     if (activeTab === 'overview') void loadOverview()
     if (activeTab === 'insumos') void loadInsumos()
+    if (activeTab === 'lotes') void loadInsumos()
     if (activeTab === 'mov') void loadMovimentacoes()
     if (activeTab === 'insights') void loadInsights()
+    if (activeTab === 'perfil') void loadMe()
     if (activeTab === 'backup') void loadBackups()
     if (activeTab === 'audit') void loadAudit()
-  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadInsights, loadMovimentacoes, loadOverview])
+  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadInsights, loadMe, loadMovimentacoes, loadOverview])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
@@ -840,6 +1135,40 @@ export function InsumosModule() {
       return hay.includes(q)
     })
   }, [insumos, insumosQuery])
+
+  const lotCategorias = React.useMemo(() => {
+    return Array.from(new Set((insumos || []).map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+    )
+  }, [insumos])
+
+  const lotResumo = React.useMemo(() => {
+    const base = { ok: 0, vencendo: 0, expirado: 0, sem: 0 }
+    for (const i of insumos || []) {
+      const st = String(i.statusValidade?.status || '').toUpperCase()
+      if (!i.dataValidade) base.sem += 1
+      else if (st === 'EXPIRADO') base.expirado += 1
+      else if (st === 'VENCENDO') base.vencendo += 1
+      else base.ok += 1
+    }
+    return base
+  }, [insumos])
+
+  const insumosLoteFiltrados = React.useMemo(() => {
+    const q = lotBusca.trim().toLowerCase()
+    return (insumos || []).filter((i) => {
+      if (lotFiltroCategoria && String(i.categoria || '') !== lotFiltroCategoria) return false
+      const st = String(i.statusValidade?.status || 'OK').toUpperCase()
+      if (lotFiltroValidade === 'SEM_VALIDADE') {
+        if (i.dataValidade) return false
+      } else if (lotFiltroValidade !== 'TODOS') {
+        if (!st || st !== lotFiltroValidade) return false
+      }
+      if (!q) return true
+      const hay = [i.produto, i.marca, i.categoria, i.codigoBarras, i.lote, i.dataValidade].filter(Boolean).join(' ').toLowerCase()
+      return hay.includes(q)
+    })
+  }, [insumos, lotBusca, lotFiltroCategoria, lotFiltroValidade])
 
   const overviewStockDistPie = React.useMemo(() => {
     if (!overviewStockDist.length) return []
@@ -883,6 +1212,7 @@ export function InsumosModule() {
             <span className="font-mono">/api/insumos/*</span>
             {health?.ok ? <Badge variant={health.ok ? 'default' : 'destructive'}>{health.ok ? 'Online' : 'Offline'}</Badge> : null}
             {isAuthed ? <Badge variant="default">Autenticado</Badge> : <Badge variant="secondary">Desconectado</Badge>}
+            {offlineQueueCount > 0 ? <Badge variant="secondary">Fila offline: {offlineQueueCount}</Badge> : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -891,10 +1221,19 @@ export function InsumosModule() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="novo-hamburgo">Unidade: Novo Hamburgo</SelectItem>
-              <SelectItem value="barra-shopping-sul">Unidade: Barra Shopping Sul</SelectItem>
+              {!allowedUnits.length || allowedUnits.includes('novo-hamburgo') ? (
+                <SelectItem value="novo-hamburgo">Unidade: Novo Hamburgo</SelectItem>
+              ) : null}
+              {!allowedUnits.length || allowedUnits.includes('barra-shopping-sul') ? (
+                <SelectItem value="barra-shopping-sul">Unidade: Barra Shopping Sul</SelectItem>
+              ) : null}
             </SelectContent>
           </Select>
+          {offlineQueueCount > 0 ? (
+            <Button variant="outline" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
+              Sincronizar
+            </Button>
+          ) : null}
           <Button onClick={loadHealth} disabled={healthLoading}>
             {healthLoading ? 'Atualizando…' : 'Atualizar'}
           </Button>
@@ -997,8 +1336,12 @@ export function InsumosModule() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
-                      <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
+                      {!allowedUnits.length || allowedUnits.includes('novo-hamburgo') ? (
+                        <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
+                      ) : null}
+                      {!allowedUnits.length || allowedUnits.includes('barra-shopping-sul') ? (
+                        <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
+                      ) : null}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1009,8 +1352,12 @@ export function InsumosModule() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
-                      <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
+                      {!allowedUnits.length || allowedUnits.includes('novo-hamburgo') ? (
+                        <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
+                      ) : null}
+                      {!allowedUnits.length || allowedUnits.includes('barra-shopping-sul') ? (
+                        <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
+                      ) : null}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1068,8 +1415,10 @@ export function InsumosModule() {
             <TabsList className="bg-black/20 flex flex-wrap">
               <TabsTrigger value="overview">Visão geral</TabsTrigger>
               <TabsTrigger value="insumos">Insumos</TabsTrigger>
+              <TabsTrigger value="lotes">Lotes</TabsTrigger>
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
+              <TabsTrigger value="perfil">Perfil</TabsTrigger>
               <TabsTrigger value="backup">Backup</TabsTrigger>
               <TabsTrigger value="audit">Auditoria</TabsTrigger>
             </TabsList>
@@ -1305,6 +1654,186 @@ export function InsumosModule() {
               </div>
             </TabsContent>
 
+            <TabsContent value="lotes" className="mt-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-base text-white font-semibold">Rastreamento de lotes & validade</div>
+                  <div className="text-sm text-blue-100/70">Controle simples e operacional (OK / Vencendo / Expirado).</div>
+                </div>
+                <Button variant="secondary" onClick={loadInsumos} disabled={insumosLoading || !isAuthed}>
+                  {insumosLoading ? 'Atualizando…' : 'Atualizar'}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-sm">✅ Dentro do prazo</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-lg text-blue-50 font-mono">{lotResumo.ok}</div>
+                    <div className="text-xs text-blue-200/60">status OK</div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-sm">⚠️ Vencendo</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-lg text-blue-50 font-mono">{lotResumo.vencendo}</div>
+                    <div className="text-xs text-blue-200/60">janela próxima</div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-sm">❌ Expirado</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-lg text-blue-50 font-mono">{lotResumo.expirado}</div>
+                    <div className="text-xs text-blue-200/60">risco</div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-sm">🧾 Sem validade</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-lg text-blue-50 font-mono">{lotResumo.sem}</div>
+                    <div className="text-xs text-blue-200/60">dados incompletos</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">Filtros</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+                    <Select value={lotFiltroCategoria} onValueChange={setLotFiltroCategoria}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Todas" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">Todas</SelectItem>
+                        {lotCategorias.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Validade</div>
+                    <Select value={lotFiltroValidade} onValueChange={(v) => setLotFiltroValidade(v as any)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="TODOS">Todos</SelectItem>
+                        <SelectItem value="OK">OK</SelectItem>
+                        <SelectItem value="VENCENDO">Vencendo</SelectItem>
+                        <SelectItem value="EXPIRADO">Expirado</SelectItem>
+                        <SelectItem value="SEM_VALIDADE">Sem validade</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Busca</div>
+                    <Input value={lotBusca} onChange={(e) => setLotBusca(e.target.value)} placeholder="produto, código, lote..." />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">Itens ({insumosLoteFiltrados.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {!insumosLoteFiltrados.length ? (
+                    <div className="text-sm text-blue-100/70">Nenhum item para os filtros.</div>
+                  ) : (
+                    <div className="overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-blue-200/70">
+                          <tr className="border-b border-white/10">
+                            <th className="text-left py-2 pr-3">Produto</th>
+                            <th className="text-left py-2 pr-3">Lote</th>
+                            <th className="text-left py-2 pr-3">Validade</th>
+                            <th className="text-left py-2 pr-3">Status</th>
+                            <th className="text-right py-2">Estoque</th>
+                            <th className="text-right py-2 pl-3">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-blue-50/90">
+                          {insumosLoteFiltrados.map((i) => {
+                            const st = String(i.statusValidade?.status || (i.dataValidade ? 'OK' : '—')).toUpperCase()
+                            const badgeVariant = st === 'EXPIRADO' ? 'destructive' : st === 'VENCENDO' ? 'secondary' : 'default'
+                            return (
+                              <tr key={String(i.registro || i.codigoBarras)} className="border-b border-white/5 hover:bg-white/5">
+                                <td className="py-2 pr-3">
+                                  <div className="font-medium">{i.produto || '-'}</div>
+                                  <div className="text-xs text-blue-200/60">{i.categoria || ''}</div>
+                                </td>
+                                <td className="py-2 pr-3">
+                                  <span className="font-mono">{i.lote ? String(i.lote) : '-'}</span>
+                                </td>
+                                <td className="py-2 pr-3">
+                                  <span className="font-mono">{i.dataValidade ? String(i.dataValidade) : '-'}</span>
+                                </td>
+                                <td className="py-2 pr-3">
+                                  <Badge variant={badgeVariant}>{st}</Badge>
+                                </td>
+                                <td className="py-2 text-right font-mono">{Number(i.estoqueAtual) || 0}</td>
+                                <td className="py-2 pl-3 text-right">
+                                  <Button variant="secondary" onClick={() => openLotDialog(i)} disabled={!isAuthed}>
+                                    Detalhes
+                                  </Button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
+                <DialogContent className="max-w-xl">
+                  <DialogHeader>
+                    <DialogTitle>Editar lote/validade</DialogTitle>
+                    <DialogDescription>
+                      {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Lote</div>
+                      <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Validade (YYYY-MM-DD)</div>
+                      <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 2026-12-31" />
+                    </div>
+                  </div>
+
+                  <DialogFooter>
+                    <Button variant="secondary" onClick={() => setLotDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button onClick={saveLot} disabled={lotSaving || !isAuthed}>
+                      {lotSaving ? 'Salvando…' : 'Salvar'}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </TabsContent>
+
             <TabsContent value="insumos" className="mt-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -1399,8 +1928,9 @@ export function InsumosModule() {
 
                         setCreateLoading(true)
                         try {
-                          await apiJson('/insumos', {
+                          await mutateJson('/insumos', {
                             method: 'POST',
+                            queueLabel: 'Cadastro de insumo',
                             body: {
                               codigoBarras,
                               produto,
@@ -1411,9 +1941,7 @@ export function InsumosModule() {
                               estoqueMinimo: Number(createEstoqueMinimo) || 0,
                               lote: createLote.trim(),
                               dataValidade: createDataValidade.trim()
-                            },
-                            csrfToken,
-                            retryOnCsrf: refreshCsrf
+                            }
                           })
                           toast.success('Insumo cadastrado')
                           setCreateCodigo('')
@@ -1558,9 +2086,62 @@ export function InsumosModule() {
                   <div className="text-xs text-blue-200/70 mb-1">Até</div>
                   <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="YYYY-MM-DD" />
                 </div>
-                <Button variant="secondary" onClick={loadMovimentacoes} disabled={movLoading || !isAuthed}>
+                <div className="w-40">
+                  <div className="text-xs text-blue-200/70 mb-1">Por página</div>
+                  <Select
+                    value={String(movLimite)}
+                    onValueChange={(v) => {
+                      const lim = Math.max(1, Math.min(200, parseInt(String(v), 10) || 50))
+                      void loadMovimentacoes({ pagina: 1, limite: lim })
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                      <SelectItem value="200">200</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button variant="secondary" onClick={() => void loadMovimentacoes()} disabled={movLoading || !isAuthed}>
                   {movLoading ? 'Carregando…' : 'Filtrar'}
                 </Button>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+                <div>
+                  Página <span className="font-mono">{movPagina}</span>
+                  {movTotal != null ? (
+                    <>
+                      {' '}
+                      de <span className="font-mono">{Math.max(1, Math.ceil(movTotal / movLimite))}</span> • total{' '}
+                      <span className="font-mono">{movTotal}</span>
+                    </>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => void loadMovimentacoes({ pagina: Math.max(1, movPagina - 1) })}
+                    disabled={movLoading || !isAuthed || movPagina <= 1}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void loadMovimentacoes({ pagina: movPagina + 1 })}
+                    disabled={
+                      movLoading ||
+                      !isAuthed ||
+                      (movTotal != null ? movPagina >= Math.max(1, Math.ceil(movTotal / movLimite)) : movimentacoes.length < movLimite)
+                    }
+                  >
+                    Próxima
+                  </Button>
+                </div>
               </div>
 
               <div className="overflow-auto rounded-xl border border-white/10">
@@ -1609,6 +2190,77 @@ export function InsumosModule() {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Tendências (30d)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {Array.isArray(insightsTrends?.buckets) && insightsTrends.buckets.length ? (
+                      <div className="h-[260px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={(insightsTrends.buckets || []).slice(-30)}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                            <XAxis dataKey="bucket" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                            <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                            <Tooltip />
+                            <Legend />
+                            <Bar dataKey="entradaQtd" name="Entradas" fill="#22c55e" />
+                            <Bar dataKey="saidaQtd" name="Saídas" fill="#ef4444" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+                    )}
+                    <div className="text-xs text-blue-200/60 mt-2">
+                      Saldo (qtd):{' '}
+                      <span className="font-mono">
+                        {insightsTrends?.totals ? Number(insightsTrends.totals.saldoQtd || 0).toFixed(0) : '-'}
+                      </span>
+                      {' • '}
+                      Saldo (valor):{' '}
+                      <span className="font-mono">
+                        {insightsTrends?.totals ? fmtMoneyBRL(Number(insightsTrends.totals.saldoValor || 0)) : '-'}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
+                      <div className="overflow-auto rounded-xl border border-white/10">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-black/30 text-blue-100/80">
+                            <tr>
+                              <th className="text-left p-3">Categoria</th>
+                              <th className="text-right p-3">Qtd</th>
+                              <th className="text-right p-3">Valor</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {(insightsTurnover.categories || []).slice(0, 10).map((c: any, idx: number) => (
+                              <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
+                                <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
+                                <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
+                                <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+                    )}
+                    <div className="text-xs text-blue-200/60">
+                      Dica: ajuste o período em “Movimentações” (De/Até) e recarregue os Insights.
+                    </div>
+                  </CardContent>
+                </Card>
+
                 <Card className="bg-black/20 border border-white/10">
                   <CardHeader>
                     <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
@@ -1930,6 +2582,103 @@ export function InsumosModule() {
               </div>
             </TabsContent>
 
+            <TabsContent value="perfil" className="mt-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-base text-white font-semibold">Minha conta</div>
+                  <div className="text-sm text-blue-100/70">Atualize dados do login do Insumos (mesma sessão do CRM).</div>
+                </div>
+                <Button variant="secondary" onClick={loadMe} disabled={authLoading}>
+                  {authLoading ? 'Atualizando…' : 'Recarregar'}
+                </Button>
+              </div>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">Perfil</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-12 w-12">
+                      <AvatarImage src={profilePhotoUrl || user?.photoUrl || ''} />
+                      <AvatarFallback>{String(profileDisplayName || profileUsername || 'US').slice(0, 2).toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <div className="text-sm text-blue-100/70">
+                      Logado como <span className="font-mono">{user?.username || '-'}</span> • {user?.role || '-'}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs text-blue-200/70 mb-1">Usuário (login)</div>
+                      <Input value={profileUsername} onChange={(e) => setProfileUsername(e.target.value)} disabled={!isAuthed} />
+                      <div className="text-xs text-blue-200/50 mt-1">Use letras, números, ponto, hífen ou underscore.</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blue-200/70 mb-1">Nome exibido</div>
+                      <Input value={profileDisplayName} onChange={(e) => setProfileDisplayName(e.target.value)} disabled={!isAuthed} />
+                    </div>
+                    <div>
+                      <div className="text-xs text-blue-200/70 mb-1">Email</div>
+                      <Input value={profileEmail} onChange={(e) => setProfileEmail(e.target.value)} disabled={!isAuthed} />
+                    </div>
+                    <div>
+                      <div className="text-xs text-blue-200/70 mb-1">Foto de perfil</div>
+                      <Input
+                        type="file"
+                        accept="image/*"
+                        disabled={!isAuthed}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0]
+                          if (!f) return
+                          try {
+                            const data = await fileToCompressedDataUrl(f, { maxDimension: 256, quality: 0.8, maxDataUrlLength: 45000 })
+                            setProfilePhotoUrl(data)
+                            toast.success('Imagem carregada.')
+                          } catch (err: any) {
+                            toast.error(err?.message || 'Não foi possível processar a imagem.')
+                          }
+                        }}
+                      />
+                      <div className="text-xs text-blue-200/50 mt-1">A imagem é compactada e salva como base64.</div>
+                    </div>
+                  </div>
+
+                  <Card className="bg-black/10 border border-white/10">
+                    <CardHeader>
+                      <CardTitle className="text-white text-sm">Trocar senha (opcional)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Senha atual</div>
+                        <Input
+                          type="password"
+                          value={profileCurrentPassword}
+                          onChange={(e) => setProfileCurrentPassword(e.target.value)}
+                          disabled={!isAuthed}
+                        />
+                      </div>
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Nova senha</div>
+                        <Input
+                          type="password"
+                          value={profileNewPassword}
+                          onChange={(e) => setProfileNewPassword(e.target.value)}
+                          disabled={!isAuthed}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <div className="flex justify-end">
+                    <Button onClick={updateProfile} disabled={profileSaving || !isAuthed}>
+                      {profileSaving ? 'Salvando…' : 'Salvar alterações'}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
             <TabsContent value="backup" className="mt-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm text-blue-100/70">Backup snapshot (D1) + restauração de Sheets (somente perfis autorizados).</div>
@@ -1938,11 +2687,7 @@ export function InsumosModule() {
                     onClick={async () => {
                       if (!isAuthed) return
                       try {
-                        await apiJson(`/backup/trigger?unidade=${encodeURIComponent(unidade)}`, {
-                          method: 'POST',
-                          csrfToken,
-                          retryOnCsrf: refreshCsrf
-                        })
+                        await mutateJson(`/backup/trigger?unidade=${encodeURIComponent(unidade)}`, { method: 'POST', queueLabel: 'Backup' })
                         toast.success('Backup disparado')
                         await loadBackups()
                       } catch (e) {
@@ -1974,11 +2719,10 @@ export function InsumosModule() {
                       onClick={async () => {
                         if (!backupRestoreId.trim()) return toast.error('Informe o id')
                         try {
-                          await apiJson('/backup/restore', {
+                          await mutateJson('/backup/restore', {
                             method: 'POST',
-                            body: { id: Number(backupRestoreId), confirm: 'RESTORE' },
-                            csrfToken,
-                            retryOnCsrf: refreshCsrf
+                            queueLabel: 'Restore',
+                            body: { id: Number(backupRestoreId), confirm: 'RESTORE' }
                           })
                           toast.success('Restore concluído')
                           await Promise.allSettled([loadBackups(), loadInsumos(), loadMovimentacoes()])
@@ -2004,11 +2748,10 @@ export function InsumosModule() {
                       variant="secondary"
                       onClick={async () => {
                         try {
-                          await apiJson('/backup/cleanup', {
+                          await mutateJson('/backup/cleanup', {
                             method: 'POST',
-                            body: { daysToKeep: Number(backupCleanupDays) || 30 },
-                            csrfToken,
-                            retryOnCsrf: refreshCsrf
+                            queueLabel: 'Limpeza de backups',
+                            body: { daysToKeep: Number(backupCleanupDays) || 30 }
                           })
                           toast.success('Limpeza executada')
                           await loadBackups()

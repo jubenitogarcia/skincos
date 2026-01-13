@@ -46,6 +46,7 @@ export async function handleAuthRoutes({
                 email: userDb.email,
                 role: userDb.role || "CONSULTOR",
                 photoUrl: userDb.photoUrl,
+                allowedUnits: userDb.allowedUnits || [],
             };
             const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
             return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
@@ -77,6 +78,7 @@ export async function handleAuthRoutes({
                 email: userDb.email,
                 role: userDb.role || "CONSULTOR",
                 photoUrl: userDb.photoUrl,
+                allowedUnits: userDb.allowedUnits || [],
             };
             const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
             return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
@@ -126,6 +128,7 @@ export async function handleAuthRoutes({
                 email: userDb.email,
                 role: userDb.role || "CONSULTOR",
                 photoUrl: userDb.photoUrl,
+                allowedUnits: userDb.allowedUnits || [],
             };
             const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
             return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);

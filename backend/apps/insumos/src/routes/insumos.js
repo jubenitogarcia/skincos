@@ -371,6 +371,18 @@ export async function handleInsumosRoutes({
             if (!UNIDADES.includes(fromUnidade) || !UNIDADES.includes(toUnidade)) {
                 return withCORS(JSON.stringify({ success: false, error: "Unidade inválida" }), { status: 400 }, appOrigin);
             }
+            const allowed = Array.isArray(auth.user.allowedUnits) ? auth.user.allowedUnits.filter(Boolean) : [];
+            const isAdmin = String(auth.user.role || '').toUpperCase() === 'ADMIN';
+            if (!isAdmin && allowed.length) {
+                const ok = allowed.includes(fromUnidade) && allowed.includes(toUnidade);
+                if (!ok) {
+                    return withCORS(
+                        JSON.stringify({ success: false, error: "Sem permissão para unidade", code: 'RBAC_UNIT_DENIED', allowedUnits: allowed }),
+                        { status: 403 },
+                        appOrigin
+                    );
+                }
+            }
 
             const values = await readSheet(spreadsheetId, sheetRange, accessToken);
             const headers = values[0] || [];
