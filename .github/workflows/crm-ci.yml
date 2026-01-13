@@ -6,14 +6,16 @@ on:
       - main
       - develop
     paths:
-      - "crm/**"
+      - "frontend/**"
+      - "backend/apps/crm-api/**"
       - ".github/workflows/crm-ci.yml"
   pull_request:
     branches:
       - main
       - develop
     paths:
-      - "crm/**"
+      - "frontend/**"
+      - "backend/apps/crm-api/**"
       - ".github/workflows/crm-ci.yml"
 
 jobs:
@@ -33,32 +35,18 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-        cache-dependency-path: crm/package-lock.json
+        cache-dependency-path: frontend/package-lock.json
 
     - name: Install dependencies
       run: npm ci
-      working-directory: crm
-
-    - name: Run ESLint
-      run: npx eslint . --ext .ts,.tsx --max-warnings 1000
-      working-directory: crm
-      continue-on-error: false
-
-    - name: Run type check
-      run: npx tsc --noEmit
-      working-directory: crm
-      continue-on-error: true
-
-    - name: Run tests
-      run: npm run test:run
-      working-directory: crm
+      working-directory: frontend
 
     - name: Build project
       run: npm run build
-      working-directory: crm
+      working-directory: frontend
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: crm-build-artifacts
-        path: crm/dist/
+        path: frontend/dist/

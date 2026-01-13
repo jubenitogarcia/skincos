@@ -7,14 +7,16 @@ on:
       - main
       - develop
     paths:
-      - "crm/**"
+      - "frontend/**"
+      - "backend/apps/crm-api/**"
       - ".github/workflows/crm-codeql.yml"
   pull_request:
     branches:
       - main
       - develop
     paths:
-      - "crm/**"
+      - "frontend/**"
+      - "backend/apps/crm-api/**"
       - ".github/workflows/crm-codeql.yml"
   schedule:
     # Executa semanalmente às quartas-feiras às 02:00 UTC
@@ -43,7 +45,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: crm/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -54,11 +56,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        working-directory: crm
+        working-directory: frontend
 
       - name: Build (CRM)
         run: npm run build
-        working-directory: crm
+        working-directory: frontend
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3

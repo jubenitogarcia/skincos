@@ -28,16 +28,19 @@ database_name = "skincos-db"
 database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 
 [vars]
-APP_ORIGIN = "https://app.skincos.com.br"
-# Configure your own Google Sheet id (or via Cloudflare dashboard vars).
-SPREADSHEET_ID = "your-spreadsheet-id"
+APP_ORIGIN = "https://crm.skincos.com.br"
 SHEET_RANGE = "Insumos!A:Z"
 USER_SHEET_RANGE = "Usuarios!A:Z"
 MOVIMENTACOES_RANGE = "Movimentacoes!A:Z"
-# Google Sheet tab id for the "Insumos" sheet (used for row deletion).
-SHEET_ID = "your-sheet-tab-id"
-# Configure your own Google service account email (or via Cloudflare dashboard vars).
-GOOGLE_SERVICE_ACCOUNT_EMAIL = "your-service-account@your-project.iam.gserviceaccount.com"
 
-# Secrets (set via wrangler secret put):
+# IMPORTANT:
+# Production-only vars/secrets should be configured in Cloudflare (Dashboard or `wrangler secret put`)
+# and preserved during deploys with `wrangler deploy --keep-vars`:
+# - SPREADSHEET_ID
+# - SHEET_ID
+# - GOOGLE_SERVICE_ACCOUNT_EMAIL
+# - GOOGLE_PRIVATE_KEY (secret)
+# - SESSION_SECRET (recommended)
+#
+# Secrets (set via `wrangler secret put`):
 # GOOGLE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"

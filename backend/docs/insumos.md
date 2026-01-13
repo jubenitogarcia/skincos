@@ -38,6 +38,8 @@ Preferir via scripts canônicos do monorepo:
 - `./backend/scripts/dev.sh insumos migrate` (env opcional: `INSUMOS_D1_DB`)
 - `./backend/scripts/dev.sh insumos deploy`
 
+Observação: o deploy usa `--keep-vars` para não apagar variáveis configuradas no Dashboard.
+
 Para usar o Worker local no CRM (proxy via CRM API), rode o Worker e aponte o target:
 
 - `INSUMOS_API_TARGET=http://127.0.0.1:8787 ./backend/scripts/dev.sh crm`
