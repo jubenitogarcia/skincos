@@ -101,6 +101,54 @@ type AuditRow = {
   idempotencyKey?: string
 }
 
+type EstoqueAlerta = {
+  codigoBarras?: string
+  produto?: string
+  categoria?: string
+  estoqueAtual?: number
+  estoqueMinimo?: number
+  diferenca?: number
+  percentual?: number | null
+  tipoAlerta?: string
+}
+
+type RoiInsights = {
+  unidade?: string
+  perdas?: {
+    valorExpirado?: number
+    valorRiscoVencendo?: number
+    itensExpirados?: number
+    itensVencendo?: number
+  }
+  ruptura?: { itensRuptura?: number }
+  produtividade?: { entrada?: number | null; baixa?: number | null }
+}
+
+type QualityIssue = {
+  severity?: 'CRITICAL' | 'WARN' | 'INFO' | string
+  code?: string
+  message?: string
+  registro?: string
+  codigoBarras?: string
+  produto?: string
+  unidade?: string
+  suggestion?: string
+}
+
+type QualityReport = {
+  generatedAt?: string
+  unidade?: string
+  summary?: { total?: number; bySeverity?: Record<string, number> }
+  issues?: QualityIssue[]
+}
+
+type StockDistributionItem = { name?: string; value?: number }
+
+type MovReport = {
+  resumo?: { totalEntradas?: number; totalSaidas?: number; totalMovimentacoes?: number }
+  movimentos?: Movimentacao[]
+}
+
 type ApiError = {
   error?: string
   message?: string
@@ -192,7 +240,7 @@ export function InsumosModule() {
   const [loginUsername, setLoginUsername] = React.useState('')
   const [loginPassword, setLoginPassword] = React.useState('')
 
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'insumos' | 'mov' | 'backup' | 'audit'>('overview')
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'insumos' | 'mov' | 'insights' | 'backup' | 'audit'>('overview')
 
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
@@ -234,6 +282,14 @@ export function InsumosModule() {
   const [overviewResumo, setOverviewResumo] = React.useState<EstoqueResumo | null>(null)
   const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
   const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
+
+  const [insightsLoading, setInsightsLoading] = React.useState(false)
+  const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
+  const [insightsRoi, setInsightsRoi] = React.useState<RoiInsights | null>(null)
+  const [insightsQuality, setInsightsQuality] = React.useState<QualityReport | null>(null)
+  const [insightsStockDist, setInsightsStockDist] = React.useState<StockDistributionItem[]>([])
+  const [insightsMovReport, setInsightsMovReport] = React.useState<MovReport | null>(null)
+  const [qrText, setQrText] = React.useState('')
 
   const canUseApi = !!health?.ok && !!health?.sheetsConfigured
   const isAuthed = !!user?.username
@@ -396,6 +452,44 @@ export function InsumosModule() {
     }
   }, [canUseApi, isAuthed, unidade])
 
+  const loadInsights = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    setInsightsLoading(true)
+    try {
+      const base = new URLSearchParams()
+      base.set('unidade', unidade)
+
+      const movParams = new URLSearchParams(base.toString())
+      movParams.set('limite', '200')
+      if (movTipo !== 'TODOS') movParams.set('tipo', movTipo)
+      if (movDe) movParams.set('de', movDe)
+      if (movAte) movParams.set('ate', movAte)
+
+      const [alertas, roi, quality, dist, movReport] = await Promise.all([
+        apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
+        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${base.toString()}`),
+        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '200' }).toString()}`),
+        apiJson<StockDistributionItem[]>(`/analytics/stock-distribution?${base.toString()}`),
+        apiJson<{ success?: boolean; data?: MovReport }>(`/relatorios/movimentacoes?${movParams.toString()}`)
+      ])
+
+      setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
+      setInsightsRoi(roi?.data || null)
+      setInsightsQuality(quality?.data || null)
+      setInsightsStockDist(Array.isArray(dist) ? dist : [])
+      setInsightsMovReport(movReport?.data || null)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+      setInsightsAlertas([])
+      setInsightsRoi(null)
+      setInsightsQuality(null)
+      setInsightsStockDist([])
+      setInsightsMovReport(null)
+    } finally {
+      setInsightsLoading(false)
+    }
+  }, [canUseApi, isAuthed, movAte, movDe, movTipo, unidade])
+
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE') => {
       if (!canUseApi || !isAuthed) return
@@ -504,9 +598,10 @@ export function InsumosModule() {
     if (activeTab === 'overview') void loadOverview()
     if (activeTab === 'insumos') void loadInsumos()
     if (activeTab === 'mov') void loadMovimentacoes()
+    if (activeTab === 'insights') void loadInsights()
     if (activeTab === 'backup') void loadBackups()
     if (activeTab === 'audit') void loadAudit()
-  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadMovimentacoes, loadOverview])
+  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadInsights, loadMovimentacoes, loadOverview])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
@@ -715,10 +810,11 @@ export function InsumosModule() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-            <TabsList className="bg-black/20">
+            <TabsList className="bg-black/20 flex flex-wrap">
               <TabsTrigger value="overview">Visão geral</TabsTrigger>
               <TabsTrigger value="insumos">Insumos</TabsTrigger>
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
+              <TabsTrigger value="insights">Insights</TabsTrigger>
               <TabsTrigger value="backup">Backup</TabsTrigger>
               <TabsTrigger value="audit">Auditoria</TabsTrigger>
             </TabsList>
@@ -1041,6 +1137,276 @@ export function InsumosModule() {
                     ) : null}
                   </tbody>
                 </table>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="insights" className="mt-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-blue-100/70">
+                  Relatórios, alertas e qualidade do cadastro (usa as mesmas datas/filtros de movimentações).
+                </div>
+                <Button variant="secondary" onClick={loadInsights} disabled={insightsLoading || !isAuthed}>
+                  {insightsLoading ? 'Carregando…' : 'Recarregar'}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="text-sm text-blue-100/70">
+                      Itens abaixo do mínimo: <span className="font-mono">{insightsAlertas.length}</span>
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-left p-3">Código</th>
+                            <th className="text-right p-3">Atual</th>
+                            <th className="text-right p-3">Mín</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {insightsAlertas.slice(0, 50).map((a, idx) => (
+                            <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3 text-blue-50">{a.produto || '-'}</td>
+                              <td className="p-3 font-mono text-blue-100/70">{a.codigoBarras || '-'}</td>
+                              <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
+                              <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
+                            </tr>
+                          ))}
+                          {!insightsAlertas.length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    <div className="text-sm text-blue-100/80">
+                      Expirados: <span className="font-mono">{insightsRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+                      {insightsRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(insightsRoi.perdas.valorExpirado) || 0) : '-'}
+                    </div>
+                    <div className="text-sm text-blue-100/80">
+                      Vencendo: <span className="font-mono">{insightsRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+                      {insightsRoi?.perdas?.valorRiscoVencendo != null
+                        ? fmtMoneyBRL(Number(insightsRoi.perdas.valorRiscoVencendo) || 0)
+                        : '-'}
+                    </div>
+                    <div className="text-sm text-blue-100/80">
+                      Rupturas (estoque 0): <span className="font-mono">{insightsRoi?.ruptura?.itensRuptura ?? '-'}</span>
+                    </div>
+                    <div className="text-xs text-blue-200/60 mt-2">
+                      Dica: use “Movimentações” para filtrar por data e baixar CSV.
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Qualidade do cadastro</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+                      <span>Total issues:</span>
+                      <span className="font-mono">{insightsQuality?.summary?.total ?? '-'}</span>
+                      {insightsQuality?.summary?.bySeverity ? (
+                        <>
+                          <Badge variant="destructive">CRIT {insightsQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
+                          <Badge variant="secondary">WARN {insightsQuality.summary.bySeverity.WARN ?? 0}</Badge>
+                          <Badge variant="default">INFO {insightsQuality.summary.bySeverity.INFO ?? 0}</Badge>
+                        </>
+                      ) : null}
+                      <span className="text-blue-200/60">
+                        (amostra: {Array.isArray(insightsQuality?.issues) ? insightsQuality!.issues!.length : 0})
+                      </span>
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Sev</th>
+                            <th className="text-left p-3">Código</th>
+                            <th className="text-left p-3">Mensagem</th>
+                            <th className="text-left p-3">Sugestão</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {(insightsQuality?.issues || []).slice(0, 40).map((it, idx) => {
+                            const sev = String(it.severity || '').toUpperCase()
+                            const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+                            return (
+                              <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
+                                <td className="p-3">
+                                  <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+                                </td>
+                                <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
+                                <td className="p-3 text-blue-50">
+                                  {it.message || '-'}
+                                  {(it.codigoBarras || it.produto) ? (
+                                    <div className="text-xs text-blue-200/60 mt-1">
+                                      {(it.codigoBarras ? `#${it.codigoBarras}` : '')}{it.codigoBarras && it.produto ? ' • ' : ''}{it.produto || ''}
+                                    </div>
+                                  ) : null}
+                                </td>
+                                <td className="p-3 text-blue-100/70">{it.suggestion || '-'}</td>
+                              </tr>
+                            )
+                          })}
+                          {!(insightsQuality?.issues || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem issues.' : 'Faça login para carregar.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Distribuição (por categoria)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Categoria</th>
+                            <th className="text-right p-3">Qtd</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {[...insightsStockDist]
+                            .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
+                            .slice(0, 12)
+                            .map((d, idx) => (
+                              <tr key={`${d.name || ''}-${idx}`} className="hover:bg-white/5">
+                                <td className="p-3 text-blue-50">{d.name || 'Outros'}</td>
+                                <td className="p-3 text-right text-blue-100/80">{d.value ?? 0}</td>
+                              </tr>
+                            ))}
+                          {!insightsStockDist.length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={2}>
+                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem dados.' : 'Faça login para carregar.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Relatório de movimentações</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="text-sm text-blue-100/80">
+                      Entradas: <span className="font-mono">{insightsMovReport?.resumo?.totalEntradas ?? '-'}</span> • Saídas:{' '}
+                      <span className="font-mono">{insightsMovReport?.resumo?.totalSaidas ?? '-'}</span> • Total:{' '}
+                      <span className="font-mono">{insightsMovReport?.resumo?.totalMovimentacoes ?? '-'}</span>
+                    </div>
+                    <div className="text-xs text-blue-200/60">
+                      Export:{' '}
+                      <a
+                        className="underline"
+                        href={`/api/insumos/export/movimentacoes.csv?${new URLSearchParams({
+                          unidade,
+                          ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+                          ...(movDe ? { de: movDe } : {}),
+                          ...(movAte ? { ate: movAte } : {})
+                        }).toString()}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        movimentacoes.csv (filtros atuais)
+                      </a>
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Data</th>
+                            <th className="text-left p-3">Tipo</th>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-right p-3">Qtd</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {(insightsMovReport?.movimentos || []).slice(0, 25).map((m, idx) => (
+                            <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
+                              <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
+                              <td className="p-3 text-blue-50">{m.produto || '-'}</td>
+                              <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
+                            </tr>
+                          ))}
+                          {!(insightsMovReport?.movimentos || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem dados.' : 'Faça login para carregar.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Ferramentas (export & QR)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="text-xs text-blue-200/60">
+                      Export:{' '}
+                      <a className="underline" href={`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`} target="_blank" rel="noreferrer">
+                        insumos.csv
+                      </a>{' '}
+                      •{' '}
+                      <a className="underline" href={`/api/insumos/export/movimentacoes.csv?unidade=${encodeURIComponent(unidade)}`} target="_blank" rel="noreferrer">
+                        movimentacoes.csv
+                      </a>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Gerar QR (texto livre)</div>
+                        <Input value={qrText} onChange={(e) => setQrText(e.target.value)} placeholder="ex.: CODIGO123" />
+                      </div>
+                      <div className="flex items-center justify-center rounded-xl border border-white/10 bg-black/20 min-h-[92px]">
+                        {qrText.trim() ? (
+                          <img
+                            src={`/api/insumos/qr?text=${encodeURIComponent(qrText.trim())}`}
+                            alt="QR"
+                            className="h-[84px] w-[84px]"
+                          />
+                        ) : (
+                          <div className="text-xs text-blue-100/60">Digite um texto para ver o QR.</div>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
 
