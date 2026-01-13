@@ -14,8 +14,8 @@ Opção A (recomendado): **Cloudflare Pages** conectado ao GitHub.
 
 Para o CRM conseguir chamar `/api/*` em produção (sem precisar de um Node server), usamos **Pages Functions**:
 
-- Proxy Insumos: `functions/api/insumos/[[path]].ts`
-- Health: `functions/api/health.ts`
+- Proxy Insumos: `frontend/functions/api/insumos/[[path]].ts`
+- Health: `frontend/functions/api/health.ts`
 - Rotas: `frontend/public/_routes.json` (inclui apenas `/api/health` e `/api/insumos/*`)
 
 Obs: o deploy do Pages (incluindo `functions/`) acontece automaticamente via integração Git↔Cloudflare Pages.
