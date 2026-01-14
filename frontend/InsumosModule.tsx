@@ -1711,12 +1711,15 @@ export function InsumosModule() {
                 <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                    <Select value={lotFiltroCategoria} onValueChange={setLotFiltroCategoria}>
+                    <Select
+                      value={lotFiltroCategoria || '__ALL__'}
+                      onValueChange={(v) => setLotFiltroCategoria(v === '__ALL__' ? '' : String(v))}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Todas" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Todas</SelectItem>
+                        <SelectItem value="__ALL__">Todas</SelectItem>
                         {lotCategorias.map((c) => (
                           <SelectItem key={c} value={c}>
                             {c}
