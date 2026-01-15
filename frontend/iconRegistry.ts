@@ -1,19 +1,46 @@
-import * as Phosphor from '@phosphor-icons/react'
+import type { ComponentType } from 'react'
+import {
+    CalendarDots,
+    CheckCircle,
+    CurrencyDollar,
+    FolderOpen,
+    FunnelSimple,
+    House,
+    Package,
+    Question,
+} from '@phosphor-icons/react'
 
-const aliases: Record<string, keyof typeof Phosphor> = {
+type IconComponent = ComponentType<{ className?: string }>
+
+const REGISTRY: Record<string, IconComponent> = {
+    CalendarDots,
+    CheckCircle,
+    CurrencyDollar,
+    FolderOpen,
+    FunnelSimple,
+    House,
+    Package,
+    Question,
+}
+
+const aliases: Record<string, keyof typeof REGISTRY> = {
     revenue: 'CurrencyDollar',
     currency: 'CurrencyDollar',
-    funnel: 'FunnelSimple'
+    funnel: 'FunnelSimple',
+    success: 'CheckCircle',
 }
 
-export function getIcon(name: string): any {
-    const key = aliases[name] || (name as keyof typeof Phosphor)
-    return (Phosphor as any)[key] || (Phosphor as any).Question
+export function getIcon(name?: string | null): IconComponent {
+    const raw = String(name || '').trim()
+    const key = (aliases[raw] || raw) as keyof typeof REGISTRY
+    return REGISTRY[key] || Question
 }
 
-export function validateIconName(name: string): boolean {
-    if (aliases[name]) return true
-    return Boolean((Phosphor as any)[name])
+export function validateIconName(name?: string | null): boolean {
+    const raw = String(name || '').trim()
+    if (!raw) return false
+    if (aliases[raw]) return true
+    return Boolean(REGISTRY[raw])
 }
 
 export function listRegisteredIcons(): string[] {

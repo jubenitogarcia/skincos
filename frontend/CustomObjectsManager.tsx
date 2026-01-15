@@ -527,7 +527,10 @@ export function CustomObjectsManager() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                       <div className={`p-2 rounded-lg bg-${object.color}-100`}>
-                        {getIcon(object.icon)}
+                        {(() => {
+                          const Icon = getIcon(object.icon)
+                          return <Icon className="h-6 w-6" />
+                        })()}
                       </div>
                       <div>
                         <CardTitle className="text-lg">{object.label}</CardTitle>

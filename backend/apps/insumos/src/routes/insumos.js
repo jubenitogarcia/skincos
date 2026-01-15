@@ -245,6 +245,154 @@ export async function handleInsumosRoutes({
         }
     }
 
+    // POST /insumos/transferir
+    if (url.pathname === "/insumos/transferir" && request.method === "POST") {
+        try {
+            const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+            if (!auth.ok) return auth.response;
+
+            const body = await request.json().catch(() => ({}));
+            const codigo = (body.codigoBarras || '').toString().trim();
+            const quantidade = Math.max(1, parseInt(body.quantidade, 10) || 0);
+            const fromUnidade = (body.fromUnidade || body.unidadeOrigem || body.from || '').toString().trim();
+            const toUnidade = (body.toUnidade || body.unidadeDestino || body.to || '').toString().trim();
+            const usuario = (body.usuario || auth.user.username || '').toString();
+            const observacoes = (body.observacoes || '').toString();
+
+            if (!codigo || !quantidade) {
+                return withCORS(JSON.stringify({ success: false, error: "Código e quantidade são obrigatórios" }), { status: 400 }, appOrigin);
+            }
+            if (!fromUnidade || !toUnidade) {
+                return withCORS(JSON.stringify({ success: false, error: "Unidade origem e destino são obrigatórias" }), { status: 400 }, appOrigin);
+            }
+            if (fromUnidade === toUnidade) {
+                return withCORS(JSON.stringify({ success: false, error: "Origem e destino devem ser diferentes" }), { status: 400 }, appOrigin);
+            }
+            if (!UNIDADES.includes(fromUnidade) || !UNIDADES.includes(toUnidade)) {
+                return withCORS(JSON.stringify({ success: false, error: "Unidade inválida" }), { status: 400 }, appOrigin);
+            }
+
+            const roleUpper = String(auth?.user?.role || '').toUpperCase();
+            const allowedUnits = Array.isArray(auth?.user?.allowedUnits) ? auth.user.allowedUnits.filter(Boolean) : [];
+            const hasUnitAccess = (u) => roleUpper === 'ADMIN' || allowedUnits.length === 0 || allowedUnits.includes(u);
+            if (!hasUnitAccess(fromUnidade) || !hasUnitAccess(toUnidade)) {
+                return withCORS(
+                    JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits }),
+                    { status: 403 },
+                    appOrigin
+                );
+            }
+
+            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
+            const headers = values[0] || [];
+            const headerMap = getHeaderMap(headers);
+            const codeIdx = headerMap['código'];
+            if (codeIdx === undefined) {
+                return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
+            }
+            const rowIndex = values.slice(1).findIndex((r) => ((r?.[codeIdx] || '').toString().trim() === codigo));
+            if (rowIndex === -1) {
+                return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
+            }
+
+            const fromKey = getInsumosUnidadeHeaderKey(fromUnidade);
+            const toKey = getInsumosUnidadeHeaderKey(toUnidade);
+            const fromIdx = headerMap[fromKey];
+            const toIdx = headerMap[toKey];
+            if (fromIdx === undefined || toIdx === undefined) {
+                return withCORS(JSON.stringify({ success: false, error: "Coluna de estoque da unidade não encontrada" }), { status: 500 }, appOrigin);
+            }
+
+            const absoluteRowNumber = rowIndex + 2;
+            const beforeRow = ensureRowLength(values[rowIndex + 1], headers.length);
+            const currentRow = [...beforeRow];
+
+            const estoqueAnteriorOrigem = parseInt(currentRow[fromIdx], 10) || 0;
+            const estoqueAnteriorDestino = parseInt(currentRow[toIdx], 10) || 0;
+            if (quantidade > estoqueAnteriorOrigem) {
+                return withCORS(JSON.stringify({ success: false, error: "Estoque insuficiente" }), { status: 400 }, appOrigin);
+            }
+
+            const estoqueNovoOrigem = estoqueAnteriorOrigem - quantidade;
+            const estoqueNovoDestino = estoqueAnteriorDestino + quantidade;
+            currentRow[fromIdx] = String(estoqueNovoOrigem);
+            currentRow[toIdx] = String(estoqueNovoDestino);
+            setIfPresent(currentRow, headerMap, 'data atualização', new Date().toISOString());
+
+            const range = `${insumosSheetName}!A${absoluteRowNumber}:${toA1Col(headers.length - 1)}${absoluteRowNumber}`;
+            await batchUpdate(spreadsheetId, [{ range, values: [currentRow] }], accessToken);
+
+            // Append movements (SAÍDA origem + ENTRADA destino)
+            await ensureHeaderColumns({
+                spreadsheetId,
+                sheetName: movimentacoesSheetName,
+                accessToken,
+                requiredHeaders: ['UNIDADE', 'UNIDADE ORIGEM', 'UNIDADE DESTINO', 'ID TRANSFERÊNCIA']
+            });
+            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!A1:Z1`, accessToken);
+            const movHeaders = movValues[0] || [];
+            const movMap = getHeaderMap(movHeaders);
+
+            const transferId = crypto.randomUUID();
+            const when = new Date().toISOString();
+            const produto = (headerMap['produto'] !== undefined ? currentRow[headerMap['produto']] : '') || '';
+
+            const buildMovRow = (tipo, unidadeRow, estoqueAnterior, estoqueNovo, obsPrefix) => {
+                const movRow = ensureRowLength([], movHeaders.length);
+                setIfPresent(movRow, movMap, 'id movimentação', crypto.randomUUID());
+                setIfPresent(movRow, movMap, 'data/hora', when);
+                setIfPresent(movRow, movMap, 'tipo', tipo);
+                setIfPresent(movRow, movMap, 'código de barras', codigo);
+                setIfPresent(movRow, movMap, 'produto', produto);
+                setIfPresent(movRow, movMap, 'quantidade', quantidade);
+                setIfPresent(movRow, movMap, 'estoque anterior', estoqueAnterior);
+                setIfPresent(movRow, movMap, 'estoque novo', estoqueNovo);
+                setIfPresent(movRow, movMap, 'unidade', unidadeRow);
+                setIfPresent(movRow, movMap, 'usuário', usuario);
+                setIfPresent(movRow, movMap, 'unidade origem', fromUnidade);
+                setIfPresent(movRow, movMap, 'unidade destino', toUnidade);
+                setIfPresent(movRow, movMap, 'id transferência', transferId);
+                const obs = `${obsPrefix}${observacoes ? ` | ${observacoes}` : ''}`;
+                setIfPresent(movRow, movMap, 'observações', obs);
+                return movRow;
+            };
+
+            const saidaRow = buildMovRow('SAÍDA', fromUnidade, estoqueAnteriorOrigem, estoqueNovoOrigem, `Transferência para ${toUnidade}`);
+            const entradaRow = buildMovRow('ENTRADA', toUnidade, estoqueAnteriorDestino, estoqueNovoDestino, `Transferência de ${fromUnidade}`);
+            await writeSheet(spreadsheetId, movimentacoesRange, [saidaRow, entradaRow], accessToken, 'APPEND');
+
+            await appendAuditLog({
+                env,
+                spreadsheetId,
+                accessToken,
+                actor: auth.user.username,
+                role: auth.user.role,
+                ip,
+                userAgent,
+                idempotencyKey,
+                action: 'TRANSFERENCIA',
+                entity: 'INSUMO',
+                entityId: codigo,
+                unidade: fromUnidade,
+                before: { fromUnidade, toUnidade, estoqueAnteriorOrigem, estoqueAnteriorDestino, row: beforeRow },
+                after: { quantidade, transferId, estoqueNovoOrigem, estoqueNovoDestino, row: currentRow }
+            });
+
+            ctx.waitUntil(enqueueNotificationsRefresh(env, fromUnidade));
+            ctx.waitUntil(enqueueNotificationsRefresh(env, toUnidade));
+            return withCORS(JSON.stringify({
+                success: true,
+                transferId,
+                estoqueAnteriorOrigem,
+                estoqueNovoOrigem,
+                estoqueAnteriorDestino,
+                estoqueNovoDestino,
+            }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
+    }
+
     // POST /insumos/ajuste
     if (url.pathname === "/insumos/ajuste" && request.method === "POST") {
         try {

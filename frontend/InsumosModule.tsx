@@ -1034,7 +1034,7 @@ export function InsumosModule() {
         if (kind === 'AJUSTE') {
           const novoEstoque = Number.isFinite(Number(quickNovoEstoque)) ? Number(quickNovoEstoque) : null
           if (novoEstoque === null) return toast.error('Informe o novo estoque')
-          await mutateJson('/insumos/ajuste', {
+          await mutateJson(`/insumos/ajuste?unidade=${encodeURIComponent(unidade)}`, {
             method: 'POST',
             body: { codigoBarras, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
             queueLabel: 'Ajuste'
@@ -1043,7 +1043,7 @@ export function InsumosModule() {
         } else {
           const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
           const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
-          await mutateJson(path, {
+          await mutateJson(`${path}?unidade=${encodeURIComponent(unidade)}`, {
             method: 'POST',
             body: { codigoBarras, quantidade, observacoes: quickObs },
             queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
@@ -1068,7 +1068,8 @@ export function InsumosModule() {
       quickMotivo,
       quickNovoEstoque,
       quickObs,
-      quickQuantidade
+      quickQuantidade,
+      unidade
     ]
   )
 
@@ -1082,7 +1083,7 @@ export function InsumosModule() {
     setQuickActionLoading(true)
     try {
       const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
-      await mutateJson('/insumos/transferir', {
+      await mutateJson(`/insumos/transferir?unidade=${encodeURIComponent(transferFrom)}`, {
         method: 'POST',
         body: {
           codigoBarras,
@@ -2044,7 +2045,7 @@ export function InsumosModule() {
 
                         setCreateLoading(true)
                         try {
-                          await mutateJson('/insumos', {
+                          await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                             method: 'POST',
                             queueLabel: 'Cadastro de insumo',
                             body: {
@@ -2835,7 +2836,7 @@ export function InsumosModule() {
                       onClick={async () => {
                         if (!backupRestoreId.trim()) return toast.error('Informe o id')
                         try {
-                          await mutateJson('/backup/restore', {
+                          await mutateJson(`/backup/restore?unidade=${encodeURIComponent(unidade)}`, {
                             method: 'POST',
                             queueLabel: 'Restore',
                             body: { id: Number(backupRestoreId), confirm: 'RESTORE' }
@@ -2864,7 +2865,7 @@ export function InsumosModule() {
                       variant="secondary"
                       onClick={async () => {
                         try {
-                          await mutateJson('/backup/cleanup', {
+                          await mutateJson(`/backup/cleanup?unidade=${encodeURIComponent(unidade)}`, {
                             method: 'POST',
                             queueLabel: 'Limpeza de backups',
                             body: { daysToKeep: Number(backupCleanupDays) || 30 }
