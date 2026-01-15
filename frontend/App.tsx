@@ -123,6 +123,18 @@ export default function AppFunctionalNeatlab() {
     const { isAuthenticated, user, signOut } = useAuth()
 
     const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
+    const [sidebarHover, setSidebarHover] = useState(false)
+    const [sidebarCanHover, setSidebarCanHover] = useState(false)
+
+    React.useEffect(() => {
+        try {
+            setSidebarCanHover(window.matchMedia('(hover: hover) and (pointer: fine)').matches)
+        } catch {
+            setSidebarCanHover(false)
+        }
+    }, [])
+
+    const sidebarExpanded = !sidebarCanHover || sidebarHover
 
     // Persist active module to survive remounts/reloads and avoid accidental resets
     const [active, setActive] = useState<string>(() => {
@@ -154,8 +166,13 @@ export default function AppFunctionalNeatlab() {
 
     const modulesSorted = useMemo(() => {
         const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
-        return [...modules].sort((a, b) => collator.compare(a.label, b.label))
-    }, [])
+        return [...modules].sort((a, b) => {
+            const aLocked = !UNLOCKED_MODULE_KEYS.has(a.key)
+            const bLocked = !UNLOCKED_MODULE_KEYS.has(b.key)
+            if (aLocked !== bLocked) return aLocked ? 1 : -1
+            return collator.compare(a.label, b.label)
+        })
+    }, [UNLOCKED_MODULE_KEYS])
 
     const filteredModules = useMemo(() => modulesSorted.filter(m =>
         m.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -188,10 +205,21 @@ export default function AppFunctionalNeatlab() {
 
                 <div className="relative z-10 flex h-screen">
                     {/* Premium Sidebar */}
-                    <div className="w-80 glass-morphism border-r border-white/10 backdrop-blur-2xl flex flex-col">
+                    <div
+                        className="glass-morphism border-r border-white/10 backdrop-blur-2xl flex flex-col transition-[width] duration-200 ease-out"
+                        style={{ width: sidebarExpanded ? '20rem' : '4.5rem' }}
+                        onMouseEnter={() => { if (sidebarCanHover) setSidebarHover(true) }}
+                        onMouseLeave={() => { if (sidebarCanHover) setSidebarHover(false) }}
+                        onFocusCapture={() => { if (sidebarCanHover) setSidebarHover(true) }}
+                        onBlurCapture={(e) => {
+                            if (!sidebarCanHover) return
+                            const next = (e.relatedTarget as Node | null)
+                            if (!next || !e.currentTarget.contains(next)) setSidebarHover(false)
+                        }}
+                    >
                         {/* Header with Corporate Branding */}
-                        <div className="p-6 border-b border-white/10">
-                            <div className="flex items-center gap-4 mb-4">
+                        <div className={`${sidebarExpanded ? 'p-6' : 'p-3'} border-b border-white/10`}>
+                            <div className={`flex items-center gap-4 mb-4 ${sidebarExpanded ? '' : 'justify-center'}`}>
                                 {/* Premium Logo */}
                                 <div className="relative">
                                     <div className="w-12 h-12 rounded-2xl bg-gradient-blue flex items-center justify-center shadow-premium border border-white/20">
@@ -199,25 +227,25 @@ export default function AppFunctionalNeatlab() {
                                         <div className="absolute -inset-1 bg-gradient-to-r from-brand-600 via-purple-600 to-cyan-600 rounded-2xl blur opacity-30 animate-pulse"></div>
                                     </div>
                                 </div>
-                                <div className="flex-1 min-w-0">
+                                <div className={`flex-1 min-w-0 ${sidebarExpanded ? '' : 'hidden'}`}>
                                     <h1 className="text-lg font-bold text-white leading-tight truncate">Espaço Facial</h1>
                                     <p className="text-xs text-blue-300/80 truncate">CRM Enterprise</p>
                                 </div>
                             </div>
 
                             {/* User Info */}
-                            <div className="glass-morphism rounded-xl p-3 border border-white/10">
-                                <div className="flex items-center gap-3">
+                            <div className={`glass-morphism rounded-xl border border-white/10 ${sidebarExpanded ? 'p-3' : 'p-2'}`}>
+                                <div className={`flex items-center gap-3 ${sidebarExpanded ? '' : 'justify-center'}`}>
                                     <div className="w-8 h-8 rounded-lg bg-gradient-blue flex items-center justify-center text-sm font-semibold text-white">
                                         {(user?.name || 'U').charAt(0).toUpperCase()}
                                     </div>
-                                    <div className="flex-1 min-w-0">
+                                    <div className={`flex-1 min-w-0 ${sidebarExpanded ? '' : 'hidden'}`}>
                                         <p className="font-semibold text-white text-sm leading-tight truncate">{user?.name || 'Usuário'}</p>
                                         <p className="text-xs text-blue-300/70 truncate">{user?.email}</p>
                                     </div>
                                     <button
                                         onClick={signOut}
-                                        className="text-xs text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105"
+                                        className={`${sidebarExpanded ? 'text-xs' : 'text-sm'} text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105`}
                                         title="Sair"
                                     >
                                         ⏻
@@ -227,7 +255,7 @@ export default function AppFunctionalNeatlab() {
                         </div>
 
                         {/* Navigation */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                        <div className={`flex-1 overflow-y-auto ${sidebarExpanded ? 'p-4' : 'p-2'} space-y-2`}>
                             {filteredModules.map((m, index) => (
                                 (() => {
                                     const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
@@ -241,26 +269,38 @@ export default function AppFunctionalNeatlab() {
                                             }}
                                             disabled={isLocked}
                                             aria-disabled={isLocked}
-                                            title={isLocked ? 'Em breve' : undefined}
+                                            title={isLocked ? `${m.label} (Em breve)` : m.label}
                                             className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 animate-slide-up ${isLocked ? 'opacity-50 cursor-not-allowed' : ''
                                                 }`}
                                             style={{ animationDelay: `${index * 50}ms` }}
                                         >
-                                            <div className={`flex items-center gap-3 px-4 py-3 relative z-10 transition-all duration-300 ${isActive
+                                            <div className={`flex items-center gap-3 ${sidebarExpanded ? 'px-4' : 'px-0 justify-center'} py-3 relative z-10 transition-all duration-300 ${isActive
                                                     ? 'text-white transform scale-[1.02]'
                                                     : isLocked
                                                         ? 'text-blue-100/60'
                                                         : 'text-blue-100/80 hover:text-white hover:transform hover:scale-[1.01]'
                                                 }`}>
                                                 <span className="text-lg leading-none flex-shrink-0 transition-transform duration-300 group-hover:scale-110">{m.icon}</span>
-                                                <span className="truncate font-medium text-sm">{m.label}</span>
-                                                {isLocked ? (
-                                                    <span className="ml-auto text-sm text-blue-100/80" aria-hidden>
-                                                        🔒
-                                                    </span>
-                                                ) : isActive ? (
-                                                    <div className="ml-auto w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                                                {sidebarExpanded ? (
+                                                    <span className="truncate font-medium text-sm">{m.label}</span>
                                                 ) : null}
+                                                {sidebarExpanded ? (
+                                                    isLocked ? (
+                                                        <span className="ml-auto text-sm text-blue-100/80" aria-hidden>
+                                                            🔒
+                                                        </span>
+                                                    ) : isActive ? (
+                                                        <div className="ml-auto w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                                                    ) : null
+                                                ) : (
+                                                    isLocked ? (
+                                                        <span className="absolute top-1 right-1 text-[10px] text-blue-100/80" aria-hidden>
+                                                            🔒
+                                                        </span>
+                                                    ) : isActive ? (
+                                                        <span className="absolute bottom-1 right-1 inline-block h-2 w-2 rounded-full bg-white animate-pulse" aria-hidden />
+                                                    ) : null
+                                                )}
                                             </div>
 
                                             {/* Active state background */}
@@ -277,10 +317,10 @@ export default function AppFunctionalNeatlab() {
                         </div>
 
                         {/* Footer */}
-                        <div className="p-4 border-t border-white/10">
-                            <div className="flex items-center gap-2 text-xs text-blue-300/60">
+                        <div className={`${sidebarExpanded ? 'p-4' : 'p-2'} border-t border-white/10`}>
+                            <div className={`flex items-center gap-2 text-xs text-blue-300/60 ${sidebarExpanded ? '' : 'justify-center'}`}>
                                 <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
-                                <span>v1.0.0 Enterprise Edition</span>
+                                {sidebarExpanded ? <span>v1.0.0 Enterprise Edition</span> : null}
                             </div>
                         </div>
                     </div>
