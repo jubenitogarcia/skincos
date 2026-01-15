@@ -77,9 +77,11 @@ interface RootProvidersProps {
 }
 
 export function RootProviders({ children }: RootProvidersProps) {
-  console.log('[RootProviders] 🏗️ Mounting with canonical order:', PROVIDERS_DIAGRAM.order)
-  console.log('[RootProviders] 📦 QueryClient instance:', !!queryClient)
-  console.log('[RootProviders] 🔧 DEV mode:', import.meta.env.DEV)
+  if (import.meta.env.DEV) {
+    console.log('[RootProviders] 🏗️ Mounting with canonical order:', PROVIDERS_DIAGRAM.order)
+    console.log('[RootProviders] 📦 QueryClient instance:', !!queryClient)
+    console.log('[RootProviders] 🔧 DEV mode:', import.meta.env.DEV)
+  }
   
   // Expose QueryClient globally for debugging
   React.useEffect(() => {
@@ -92,8 +94,12 @@ export function RootProviders({ children }: RootProvidersProps) {
   return (
     <QueryClientProvider client={queryClient}>
       {/* Provider verification components */}
-      <ProviderVerification />
-      <QueryClientDebugger />
+      {import.meta.env.DEV ? (
+        <>
+          <ProviderVerification />
+          <QueryClientDebugger />
+        </>
+      ) : null}
       <ContextErrorBoundary>
         <ErrorBoundary FallbackComponent={ErrorFallback}>
           <AuthProvider>
@@ -116,10 +122,10 @@ export function RootProviders({ children }: RootProvidersProps) {
 function QueryClientDebugger() {
   try {
     const queryClient = useQueryClient()
-    console.log('[QueryClientDebugger] ✅ QueryClient available in context:', !!queryClient)
+    if (import.meta.env.DEV) console.log('[QueryClientDebugger] ✅ QueryClient available in context:', !!queryClient)
     return null
   } catch (error) {
-    console.error('[QueryClientDebugger] ❌ QueryClient NOT available:', error)
+    if (import.meta.env.DEV) console.error('[QueryClientDebugger] ❌ QueryClient NOT available:', error)
     return null
   }
 }

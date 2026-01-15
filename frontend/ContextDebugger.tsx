@@ -11,8 +11,15 @@ interface DebugLog {
 // Global debug store
 const debugLogs: DebugLog[] = []
 const maxLogs = 100
+const CONTEXT_DEBUG_ENABLED = import.meta.env.DEV
 
 export function logContextEvent(provider: string, event: string, details: any, error = false) {
+  if (!CONTEXT_DEBUG_ENABLED) {
+    if (error && import.meta.env.DEV) {
+      console.error(`[${provider}] ${event}`, details)
+    }
+    return
+  }
   const log: DebugLog = {
     timestamp: new Date().toISOString(),
     provider,
@@ -37,6 +44,7 @@ export function logContextEvent(provider: string, event: string, details: any, e
 }
 
 export function ContextDebugger() {
+  if (!CONTEXT_DEBUG_ENABLED) return null
   const [logs, setLogs] = useState<DebugLog[]>([])
   const [isVisible, setIsVisible] = useState(false)
   

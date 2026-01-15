@@ -74,11 +74,12 @@ export function RTSPPlayer({
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: 10,
-        maxBufferLength: 10,
-        liveSyncDurationCount: 2,
-        liveMaxLatencyDurationCount: 5,
+        // Aim for lower latency when using short HLS segments.
+        lowLatencyMode: true,
+        backBufferLength: 0,
+        maxBufferLength: 3,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
         maxLiveSyncPlaybackRate: 1.5
       })
 

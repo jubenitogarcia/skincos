@@ -1,0 +1,29 @@
+# Local-only vars for `wrangler dev` (copy to `.dev.vars` and fill values)
+# IMPORTANT: `.dev.vars` is ignored by git.
+#
+# Sheets integration requires BOTH:
+# - GOOGLE_SERVICE_ACCOUNT_EMAIL (service account email)
+# - GOOGLE_PRIVATE_KEY (private key, with \n escapes)
+# - SPREADSHEET_ID (Google Sheet id)
+#
+# Example:
+# GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+
+SPREADSHEET_ID="your-spreadsheet-id"
+GOOGLE_SERVICE_ACCOUNT_EMAIL="your-service-account@your-project.iam.gserviceaccount.com"
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+# Optional overrides (defaults are in wrangler.toml)
+# SHEET_RANGE="Insumos!A:AZ"
+# USER_SHEET_RANGE="Usuarios!A:AZ"
+# MOVIMENTACOES_RANGE="Movimentacoes!A:AZ"
+# SHEET_ID="1511948550"
+
+# Local dev helpers
+# APP_ORIGIN="http://localhost:5173"
+# SESSION_SECRET="dev-only-secret"
+
+# Units (scales beyond 2 units)
+# UNIDADES="novo-hamburgo,barra-shopping-sul"
+# If your sheet uses non-standard headers for unit stock columns, map unit slug -> header key (lowercase).
+# UNIDADES_HEADERS_JSON="{\"barra-shopping-sul\":\"barrashoppingsul\",\"novo-hamburgo\":\"novo hamburgo\"}"

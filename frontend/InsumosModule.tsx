@@ -415,6 +415,7 @@ async function apiJson<T>(
     method?: string
     body?: unknown
     csrfToken?: string | null
+    idempotencyKey?: string | null
     signal?: AbortSignal
     retryOnCsrf?: () => Promise<string | null>
   } = {}
@@ -423,6 +424,7 @@ async function apiJson<T>(
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
+  if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey
 
   const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
   const res = await fetch(url, {
@@ -474,6 +476,7 @@ export function InsumosModule() {
   >('overview')
 
   const [quickCodigo, setQuickCodigo] = React.useState('')
+  const [quickScanOpen, setQuickScanOpen] = React.useState(false)
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
   const [quickNovoEstoque, setQuickNovoEstoque] = React.useState('')
   const [quickObs, setQuickObs] = React.useState('')
@@ -673,6 +676,7 @@ export function InsumosModule() {
           method: item.method,
           body: item.body,
           csrfToken,
+          idempotencyKey: item.id,
           retryOnCsrf: refreshCsrf
         })
         remaining = remaining.filter((q) => q.id !== item.id)
@@ -694,23 +698,29 @@ export function InsumosModule() {
       extra?: { needsCsrf?: boolean }
     ): Promise<T | { queued: true }> => {
       const method = (opts.method || 'POST').toUpperCase()
+      const idempotencyKey =
+        method === 'GET'
+          ? null
+          : (globalThis.crypto?.randomUUID?.() as any) || `${Date.now()}-${Math.random().toString(16).slice(2)}`
       try {
         return await apiJson<T>(path, {
           method,
           body: opts.body,
           csrfToken: extra?.needsCsrf === false ? undefined : csrfToken,
+          idempotencyKey,
           retryOnCsrf: extra?.needsCsrf === false ? undefined : refreshCsrf
         })
       } catch (e) {
         if (isNetworkError(e) && method !== 'GET') {
-          enqueueOffline({ path, method, body: opts.body })
+          const rec = enqueueOffline({ path, method, body: opts.body })
           toast.message(`${opts.queueLabel || 'Operação'} salva na fila offline.`)
+          if (offlineDialogOpen) setOfflineItems((prev) => [...prev, rec])
           return { queued: true } as any
         }
         throw e
       }
     },
-    [csrfToken, enqueueOffline, refreshCsrf]
+    [csrfToken, enqueueOffline, offlineDialogOpen, refreshCsrf]
   )
 
   React.useEffect(() => {
@@ -1457,7 +1467,12 @@ export function InsumosModule() {
             <div className="space-y-2">
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
+                <div className="flex items-center gap-2">
+                  <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
+                  <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
+                    {quickScanOpen ? 'Fechar' : 'Scan'}
+                  </Button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -1510,6 +1525,17 @@ export function InsumosModule() {
                 <Input value={quickObs} onChange={(e) => setQuickObs(e.target.value)} placeholder="opcional" />
               </div>
             </div>
+
+            {quickScanOpen ? (
+              <BarcodeScannerInline
+                onDetected={(code) => {
+                  setQuickCodigo(code)
+                  setQuickScanOpen(false)
+                  toast.success('Código detectado')
+                }}
+                onClose={() => setQuickScanOpen(false)}
+              />
+            ) : null}
 
             <div className="grid grid-cols-2 gap-2">
               <Button onClick={() => runQuickAction('ENTRADA')} disabled={quickActionLoading || !isAuthed}>
@@ -1741,6 +1767,7 @@ export function InsumosModule() {
                           className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                           onClick={() => {
                             if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+                            if (t.qty != null) setQuickQuantidade(String(t.qty))
                             if (t.from) setTransferFrom(String(t.from))
                             if (t.to) setTransferTo(String(t.to))
                           }}

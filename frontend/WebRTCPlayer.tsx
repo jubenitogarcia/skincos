@@ -86,6 +86,8 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady,
     let firstFrameTimeout: number | null = null
     let connectTimeout: number | null = null
     let onLoadedData: (() => void) | null = null
+    let firstFrameSeen = false
+    let videoFrameCbHandle: number | null = null
     const pc = new RTCPeerConnection()
     pcRef.current = pc
 
@@ -150,19 +152,38 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady,
 
         // If we don't receive any frames soon, treat this as a failure (black screen) and allow fallback.
         const v = videoRef.current
-        onLoadedData = () => {
+        const markReady = () => {
+          if (firstFrameSeen) return
+          firstFrameSeen = true
           if (firstFrameTimeout) window.clearTimeout(firstFrameTimeout)
           firstFrameTimeout = null
-          if (!cancelled && !failed && v && v.videoWidth > 0) {
-            onReadyRef.current?.()
-          }
-          if (v) v.removeEventListener('loadeddata', onLoadedData as any)
+          if (!cancelled && !failed) onReadyRef.current?.()
         }
-        if (v) v.addEventListener('loadeddata', onLoadedData as any)
+
+        // Prefer requestVideoFrameCallback when available (more reliable than loadeddata for "black frame" cases).
+        if (v && typeof (v as any).requestVideoFrameCallback === 'function') {
+          const cb = (_now: number, meta: any) => {
+            if (cancelled || failed) return
+            try {
+              const presented = Number(meta?.presentedFrames ?? 0) || 0
+              if (presented > 0 && v.videoWidth > 0) markReady()
+              videoFrameCbHandle = (v as any).requestVideoFrameCallback(cb)
+            } catch {
+              // ignore
+            }
+          }
+          videoFrameCbHandle = (v as any).requestVideoFrameCallback(cb)
+        } else {
+          onLoadedData = () => {
+            if (!cancelled && !failed && v && v.videoWidth > 0) markReady()
+            if (v) v.removeEventListener('loadeddata', onLoadedData as any)
+          }
+          if (v) v.addEventListener('loadeddata', onLoadedData as any)
+        }
+
         firstFrameTimeout = window.setTimeout(() => {
           if (cancelled) return
-          const ok = !!v && v.videoWidth > 0 && v.readyState >= 2
-          if (!ok) fail('WebRTC: sem frames de vídeo')
+          if (!firstFrameSeen) fail('WebRTC: sem frames de vídeo')
         }, 8000)
 
         // If we don't get connected soon, trigger fallback upstream.
@@ -183,6 +204,12 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady,
       if (videoRef.current && onLoadedData) {
         try { videoRef.current.removeEventListener('loadeddata', onLoadedData as any) } catch { /* ignore */ }
       }
+      try {
+        const v = videoRef.current as any
+        if (v && typeof v.cancelVideoFrameCallback === 'function' && videoFrameCbHandle != null) {
+          v.cancelVideoFrameCallback(videoFrameCbHandle)
+        }
+      } catch { /* ignore */ }
       if (pcRef.current) {
         try {
           pcRef.current.close()

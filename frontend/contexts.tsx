@@ -38,7 +38,7 @@ if (import.meta.hot) {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   logContextEvent('AuthProvider', 'INITIALIZING', { timestamp: Date.now() })
-  console.log('[AuthProvider] 🚀 Initializing AuthProvider...')
+  if (import.meta.env.DEV) console.log('[AuthProvider] 🚀 Initializing AuthProvider...')
 
   const replitAuth = useReplitAuth()
 
@@ -93,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const updateProfile = () => {
-    console.warn('Profile updates not yet implemented with Replit Auth')
+    if (import.meta.env.DEV) console.warn('Profile updates not yet implemented with Replit Auth')
   }
 
   const value: AuthContextValue = {
@@ -192,11 +192,11 @@ const LS_BIZ_ID_KEY = 'instagram-business-account-id'
 const LS_WA_BASE_KEY = 'whatsapp-base-url'
 
 export function IntegrationsProvider({ children }: { children: ReactNode }) {
-  console.log('[IntegrationsProvider] 🚀 Initializing IntegrationsProvider...')
+  if (import.meta.env.DEV) console.log('[IntegrationsProvider] 🚀 Initializing IntegrationsProvider...')
 
   if (typeof window !== 'undefined') {
     if (!(window as any).__INT_CTX_MOUNTED__) {
-      console.log('[IntegrationsProvider] ✅ Client-side mount detected')
+      if (import.meta.env.DEV) console.log('[IntegrationsProvider] ✅ Client-side mount detected')
         ; (window as any).__INT_CTX_MOUNTED__ = true
     }
     ; (window as any).__INTEGRATIONS_PROVIDER_MOUNTED__ = true
@@ -385,7 +385,7 @@ export function useNotificationsByCategory(category: string) {
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   logContextEvent('NotificationProvider', 'INITIALIZING', { timestamp: Date.now() })
-  console.log('[NotificationProvider] 🚀 Initializing NotificationProvider...')
+  if (import.meta.env.DEV) console.log('[NotificationProvider] 🚀 Initializing NotificationProvider...')
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

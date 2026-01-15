@@ -1593,6 +1593,14 @@ export function UnitMonitor() {
 	                      <CardTitle className="text-sm flex items-center justify-between">
 	                        <span>Live view</span>
 	                        <div className="flex items-center gap-2">
+	                          <Badge variant={liveTransport === 'webrtc' ? 'default' : 'secondary'}>
+	                            {liveTransport === 'webrtc' ? 'WebRTC' : 'HLS'}
+	                          </Badge>
+	                          {liveTransport === 'hls' && canWebrtc ? (
+	                            <Badge variant="outline">
+	                              tentando WebRTC{webrtcFailures ? ` (${webrtcFailures})` : ''}
+	                            </Badge>
+	                          ) : null}
 	                          {selectedStream?.webrtcUrlProxy ? (
 	                            <a className="text-xs underline" href={selectedStream.webrtcUrlProxy} target="_blank" rel="noreferrer">
 	                              whep

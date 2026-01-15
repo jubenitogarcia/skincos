@@ -2,11 +2,11 @@
 import './preamble'
 import { createRoot } from 'react-dom/client'
 try {
-  console.log('GitHub Spark Mock: Initialized')
+  if (import.meta.env.DEV) console.log('GitHub Spark Mock: Initialized')
   ;(window as any).sparkComponents = (window as any).sparkComponents || {}
   ;(window as any).sparkEvents = {
     emit: (event: string, data?: any) => {
-      console.log('Spark Event:', event, data)
+      if (import.meta.env.DEV) console.log('Spark Event:', event, data)
     },
     on: (event: string, callback: Function) => { },
     off: (event: string, callback: Function) => { }
@@ -67,7 +67,7 @@ if (!rootEl) {
   // Remove boot loader if present
   try { document.getElementById('boot')?.remove() } catch { }
   
-  console.log('[main.tsx] 🚀 Starting React application with RootProviders architecture...')
+  if (import.meta.env.DEV) console.log('[main.tsx] 🚀 Starting React application with RootProviders architecture...')
   
   createRoot(rootEl).render(
     <RootProviders>
@@ -75,5 +75,5 @@ if (!rootEl) {
     </RootProviders>
   )
   
-  console.log('[main.tsx] ✅ React root mounted with robust provider stack')
+  if (import.meta.env.DEV) console.log('[main.tsx] ✅ React root mounted with robust provider stack')
 }

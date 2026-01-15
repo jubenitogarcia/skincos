@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isNoAuthMode, getMockUser, logNoAuthMode } from '@/noAuthMode';
 
 export function useReplitAuth() {
-  console.log('[useReplitAuth] 🔍 Starting authentication check...')
+  if (import.meta.env.DEV) console.log('[useReplitAuth] 🔍 Starting authentication check...')
   
   // NO_AUTH MODE: Bypass authentication completely when in NO_AUTH mode
   if (isNoAuthMode()) {
@@ -21,28 +21,28 @@ export function useReplitAuth() {
   let queryClient: any = null
   try {
     queryClient = useQueryClient()
-    console.log('[useReplitAuth] ✅ QueryClient acessível:', !!queryClient)
+    if (import.meta.env.DEV) console.log('[useReplitAuth] ✅ QueryClient acessível:', !!queryClient)
   } catch (error) {
-    console.error('[useReplitAuth] ❌ QueryClient não disponível:', error)
+    if (import.meta.env.DEV) console.error('[useReplitAuth] ❌ QueryClient não disponível:', error)
   }
   
   const { data: user, isLoading, error } = useQuery({
     queryKey: ["/api/insumos/auth/me"],
     queryFn: async () => {
-      console.log('[useReplitAuth] 📡 Fetching user authentication status...')
+      if (import.meta.env.DEV) console.log('[useReplitAuth] 📡 Fetching user authentication status...')
       
       const response = await fetch('/api/insumos/auth/me', {
         credentials: 'include' // Important for cookies/sessions
       });
       
-      console.log('[useReplitAuth] 📊 Response status:', response.status, response.statusText)
+      if (import.meta.env.DEV) console.log('[useReplitAuth] 📊 Response status:', response.status, response.statusText)
       
       if (!response.ok) {
         if (response.status === 401) {
-          console.log('[useReplitAuth] 🚫 User not authenticated (401)')
+          if (import.meta.env.DEV) console.log('[useReplitAuth] 🚫 User not authenticated (401)')
           return null;
         }
-        console.log('[useReplitAuth] ❌ Authentication check failed:', response.statusText)
+        if (import.meta.env.DEV) console.log('[useReplitAuth] ❌ Authentication check failed:', response.statusText)
         throw new Error(`Authentication check failed: ${response.statusText}`);
       }
       
@@ -58,7 +58,7 @@ export function useReplitAuth() {
         avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
       };
 
-      console.log('[useReplitAuth] ✅ User authenticated:', mapped)
+      if (import.meta.env.DEV) console.log('[useReplitAuth] ✅ User authenticated:', mapped)
       return mapped;
     },
     retry: false, // Don't retry on 401
@@ -73,12 +73,14 @@ export function useReplitAuth() {
     error
   };
   
-  console.log('[useReplitAuth] 📋 Hook result:', {
-    hasUser: !!user,
-    isLoading,
-    isAuthenticated: !!user,
-    hasError: !!error
-  })
+  if (import.meta.env.DEV) {
+    console.log('[useReplitAuth] 📋 Hook result:', {
+      hasUser: !!user,
+      isLoading,
+      isAuthenticated: !!user,
+      hasError: !!error
+    })
+  }
   
   return result;
 }
