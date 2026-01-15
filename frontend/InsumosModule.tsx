@@ -17,6 +17,7 @@ type InsumosHealth = {
   runtime?: string
   dbConfigured?: boolean
   sheetsConfigured?: boolean
+  unidades?: string[]
   sheets?: {
     spreadsheetIdPresent?: boolean
     serviceAccountEmailPresent?: boolean
@@ -48,6 +49,7 @@ type Insumo = {
   estoqueMinimo?: number
   dataValidade?: string | null
   statusValidade?: { status?: string; dias?: number | null }
+  estoques?: Record<string, number>
 }
 
 type Movimentacao = {
@@ -60,7 +62,11 @@ type Movimentacao = {
   estoqueNovo?: number
   preco?: number
   unidade?: string
+  unidadeOrigem?: string
+  unidadeDestino?: string
+  transferId?: string
   usuario?: string
+  motivo?: string
   observacoes?: string
 }
 
@@ -456,9 +462,9 @@ export function InsumosModule() {
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
 
-  const [unidade, setUnidade] = React.useState<'novo-hamburgo' | 'barra-shopping-sul'>('novo-hamburgo')
-  const [transferFrom, setTransferFrom] = React.useState<'novo-hamburgo' | 'barra-shopping-sul'>('novo-hamburgo')
-  const [transferTo, setTransferTo] = React.useState<'novo-hamburgo' | 'barra-shopping-sul'>('barra-shopping-sul')
+  const [unidade, setUnidade] = React.useState<string>('novo-hamburgo')
+  const [transferFrom, setTransferFrom] = React.useState<string>('novo-hamburgo')
+  const [transferTo, setTransferTo] = React.useState<string>('barra-shopping-sul')
   const [csrfToken, setCsrfToken] = React.useState<string | null>(null)
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
@@ -485,6 +491,7 @@ export function InsumosModule() {
   const [createMarca, setCreateMarca] = React.useState('')
   const [createTipoUnidade, setCreateTipoUnidade] = React.useState('')
   const [createPrecoCusto, setCreatePrecoCusto] = React.useState('')
+  const [createEstoqueInicial, setCreateEstoqueInicial] = React.useState('0')
   const [createEstoqueMinimo, setCreateEstoqueMinimo] = React.useState('0')
   const [createLote, setCreateLote] = React.useState('')
   const [createDataValidade, setCreateDataValidade] = React.useState('')
@@ -509,7 +516,7 @@ export function InsumosModule() {
 
   const [movimentacoes, setMovimentacoes] = React.useState<Movimentacao[]>([])
   const [movLoading, setMovLoading] = React.useState(false)
-  const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA'>('TODOS')
+  const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'>('TODOS')
   const [movDe, setMovDe] = React.useState('')
   const [movAte, setMovAte] = React.useState('')
   const [movPagina, setMovPagina] = React.useState(1)
@@ -555,19 +562,40 @@ export function InsumosModule() {
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
 
+  const allUnidades = React.useMemo(() => {
+    const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
+    return fromHealth.length ? fromHealth : ['novo-hamburgo', 'barra-shopping-sul']
+  }, [Array.isArray(health?.unidades) ? health!.unidades!.join('|') : ''])
+
+  const unidadeOptions = React.useMemo(() => {
+    if (!allowedUnits.length) return allUnidades
+    const filtered = allUnidades.filter((u) => allowedUnits.includes(u))
+    return filtered.length ? filtered : allUnidades
+  }, [allUnidades.join('|'), allowedUnits.join('|')])
+
+  const unidadeLabel = React.useCallback((u: string) => {
+    return String(u || '')
+      .split('-')
+      .filter(Boolean)
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+      .join(' ')
+  }, [])
+
   React.useEffect(() => {
     if (!allowedUnits.length) return
     if (allowedUnits.includes(unidade)) return
-    setUnidade(allowedUnits[0] as any)
+    setUnidade(allowedUnits[0])
   }, [allowedUnits.join('|'), unidade])
 
   React.useEffect(() => {
     setTransferFrom(unidade)
     setTransferTo((prev) => {
-      if (prev !== unidade) return prev
-      return unidade === 'novo-hamburgo' ? 'barra-shopping-sul' : 'novo-hamburgo'
+      const candidates = unidadeOptions.filter((u) => u !== unidade)
+      if (!candidates.length) return unidade
+      if (prev && prev !== unidade && candidates.includes(prev)) return prev
+      return candidates[0]
     })
-  }, [unidade])
+  }, [unidade, unidadeOptions.join('|')])
 
   const refreshCsrf = React.useCallback(async () => {
     try {
@@ -1241,17 +1269,16 @@ export function InsumosModule() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={unidade} onValueChange={(v) => setUnidade(v as any)}>
+          <Select value={unidade} onValueChange={setUnidade}>
             <SelectTrigger className="w-56">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {!allowedUnits.length || allowedUnits.includes('novo-hamburgo') ? (
-                <SelectItem value="novo-hamburgo">Unidade: Novo Hamburgo</SelectItem>
-              ) : null}
-              {!allowedUnits.length || allowedUnits.includes('barra-shopping-sul') ? (
-                <SelectItem value="barra-shopping-sul">Unidade: Barra Shopping Sul</SelectItem>
-              ) : null}
+              {unidadeOptions.map((u) => (
+                <SelectItem key={u} value={u}>
+                  Unidade: {unidadeLabel(u)}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           {offlineQueueCount > 0 ? (
@@ -1445,33 +1472,31 @@ export function InsumosModule() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <div className="text-xs text-blue-200/70 mb-1">Origem</div>
-                  <Select value={transferFrom} onValueChange={(v) => setTransferFrom(v as any)}>
+                  <Select value={transferFrom} onValueChange={setTransferFrom}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {!allowedUnits.length || allowedUnits.includes('novo-hamburgo') ? (
-                        <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
-                      ) : null}
-                      {!allowedUnits.length || allowedUnits.includes('barra-shopping-sul') ? (
-                        <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
-                      ) : null}
+                      {unidadeOptions.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {unidadeLabel(u)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
                   <div className="text-xs text-blue-200/70 mb-1">Destino</div>
-                  <Select value={transferTo} onValueChange={(v) => setTransferTo(v as any)}>
+                  <Select value={transferTo} onValueChange={setTransferTo}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {!allowedUnits.length || allowedUnits.includes('novo-hamburgo') ? (
-                        <SelectItem value="novo-hamburgo">Novo Hamburgo</SelectItem>
-                      ) : null}
-                      {!allowedUnits.length || allowedUnits.includes('barra-shopping-sul') ? (
-                        <SelectItem value="barra-shopping-sul">Barra Shopping Sul</SelectItem>
-                      ) : null}
+                      {unidadeOptions.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {unidadeLabel(u)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1714,12 +1739,17 @@ export function InsumosModule() {
                         <button
                           key={`${t.codigoBarras}-${t.from}-${t.to}`}
                           className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                          onClick={() => { if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras)) }}
+                          onClick={() => {
+                            if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+                            if (t.from) setTransferFrom(String(t.from))
+                            if (t.to) setTransferTo(String(t.to))
+                          }}
                         >
                           <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
                           <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
                           <div className="text-xs text-blue-100/70 mt-1">
-                            <span className="font-mono">{t.from}</span> → <span className="font-mono">{t.to}</span> •{' '}
+                            <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+                            <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
                             <span className="font-mono">{t.qty ?? '-'}</span>
                           </div>
                         </button>
@@ -2010,6 +2040,10 @@ export function InsumosModule() {
                       <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="R$ 0,00" />
                     </div>
                     <div>
+                      <div className="text-xs text-blue-200/70 mb-1">Estoque inicial ({unidadeLabel(unidade)})</div>
+                      <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} type="number" min={0} />
+                    </div>
+                    <div>
                       <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
                       <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} type="number" min={0} />
                     </div>
@@ -2055,6 +2089,7 @@ export function InsumosModule() {
                               marca: createMarca.trim(),
                               tipoUnidade: createTipoUnidade.trim(),
                               precoCusto: createPrecoCusto.trim(),
+                              estoqueInicial: Number(createEstoqueInicial) || 0,
                               estoqueMinimo: Number(createEstoqueMinimo) || 0,
                               lote: createLote.trim(),
                               dataValidade: createDataValidade.trim()
@@ -2067,6 +2102,7 @@ export function InsumosModule() {
                           setCreateMarca('')
                           setCreateTipoUnidade('')
                           setCreatePrecoCusto('')
+                          setCreateEstoqueInicial('0')
                           setCreateEstoqueMinimo('0')
                           setCreateLote('')
                           setCreateDataValidade('')
@@ -2107,6 +2143,17 @@ export function InsumosModule() {
                       const min = Number(i.estoqueMinimo) || 0
                       const critico = min > 0 && estoque <= min
                       const valor = (Number(i.precoCusto) || 0) * estoque
+                      const otherStocks = i.estoques
+                        ? Object.entries(i.estoques)
+                            .filter(([u, v]) => u !== unidade && (Number(v) || 0) > 0)
+                            .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
+                        : []
+                      const otherSummary = otherStocks.length
+                        ? `${otherStocks
+                            .slice(0, 2)
+                            .map(([u, v]) => `${unidadeLabel(u)}: ${Number(v) || 0}`)
+                            .join(' • ')}${otherStocks.length > 2 ? ` • +${otherStocks.length - 2}` : ''}`
+                        : ''
 
                       return (
                         <tr key={`${i.registro || ''}-${i.codigoBarras || ''}`} className="hover:bg-white/5">
@@ -2145,6 +2192,7 @@ export function InsumosModule() {
                                 </Badge>
                               ) : null}
                             </div>
+                            {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
                           </td>
                           <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
                           <td className="p-3">
@@ -2192,6 +2240,7 @@ export function InsumosModule() {
                       <SelectItem value="TODOS">Todos</SelectItem>
                       <SelectItem value="ENTRADA">Entrada</SelectItem>
                       <SelectItem value="SAÍDA">Saída</SelectItem>
+                      <SelectItem value="AJUSTE">Ajuste</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -2270,7 +2319,9 @@ export function InsumosModule() {
                       <th className="text-left p-3">Produto</th>
                       <th className="text-left p-3">Código</th>
                       <th className="text-right p-3">Qtd</th>
+                      <th className="text-left p-3">Unidade</th>
                       <th className="text-left p-3">Usuário</th>
+                      <th className="text-left p-3">Detalhe</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -2281,12 +2332,25 @@ export function InsumosModule() {
                         <td className="p-3 text-blue-50">{m.produto || '-'}</td>
                         <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
                         <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
+                        <td className="p-3 text-blue-100/70">{m.unidade ? unidadeLabel(m.unidade) : '-'}</td>
                         <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
+                        <td className="p-3 text-blue-100/60">
+                          {m.transferId ? (
+                            <div>
+                              <div>Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}</div>
+                              <div className="font-mono text-xs">{m.transferId}</div>
+                            </div>
+                          ) : m.motivo ? (
+                            <span>Motivo: {m.motivo}</span>
+                          ) : (
+                            <span>{m.observacoes || '-'}</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {!movimentacoes.length ? (
                       <tr>
-                        <td className="p-3 text-blue-100/70" colSpan={6}>
+                        <td className="p-3 text-blue-100/70" colSpan={8}>
                           {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
                         </td>
                       </tr>

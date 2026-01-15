@@ -20,7 +20,82 @@ const ROLE_ORDER = ['CONSULTOR', 'OPERADOR', 'GERENTE', 'GESTOR', 'ADMIN'];
 const normalizeRole = (role) => (role || 'CONSULTOR').toString().trim().toUpperCase();
 const hasAnyRole = (role, allowed) => allowed.map(normalizeRole).includes(normalizeRole(role));
 
-const UNIDADES = ['novo-hamburgo', 'barra-shopping-sul'];
+const DEFAULT_UNIDADES = ['novo-hamburgo', 'barra-shopping-sul'];
+
+function safeJsonParse(raw) {
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+function slugifyUnidade(value) {
+    const s0 = String(value || '').trim().toLowerCase();
+    if (!s0) return '';
+    if (s0 === '*' || s0 === 'all' || s0 === 'todas') return '*';
+    if (s0 === 'novo-hamburgo' || s0 === 'novohamburgo' || s0 === 'novo hamburgo' || s0 === 'nh') return 'novo-hamburgo';
+    if (s0 === 'barra-shopping-sul' || s0 === 'barrashoppingsul' || s0 === 'barra shopping sul' || s0 === 'bss') return 'barra-shopping-sul';
+    const s = s0
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return s;
+}
+
+function getInsumosConfig(env) {
+    const unidadesRaw = String(env?.UNIDADES || '').trim();
+    const unidades = unidadesRaw
+        ? Array.from(
+            new Set(
+                unidadesRaw
+                    .split(/[,;|]/g)
+                    .map((u) => slugifyUnidade(u))
+                    .filter((u) => u && u !== '*')
+            )
+        )
+        : DEFAULT_UNIDADES;
+
+    const unitHeadersRaw = env?.UNIDADES_HEADERS_JSON || env?.UNIDADES_HEADERS || '';
+    const unitHeadersParsed = safeJsonParse(unitHeadersRaw);
+    const unidadeHeaders = {};
+    if (unitHeadersParsed && typeof unitHeadersParsed === 'object') {
+        for (const [k, v] of Object.entries(unitHeadersParsed)) {
+            const slug = slugifyUnidade(k);
+            const key = String(v || '').toLowerCase().trim();
+            if (slug && slug !== '*' && key) unidadeHeaders[slug] = key;
+        }
+    }
+
+    return { unidades, unidadeHeaders };
+}
+
+function getUnidadeHeaderCandidates(unidade, config) {
+    const slug = slugifyUnidade(unidade);
+    const out = [];
+    const custom = config?.unidadeHeaders?.[slug];
+    if (custom) out.push(String(custom).toLowerCase());
+    if (slug) {
+        const withSpaces = slug.replace(/-/g, ' ');
+        out.push(withSpaces);
+        out.push(slug.replace(/-/g, ''));
+        out.push(withSpaces.replace(/\s+/g, ''));
+    }
+    return Array.from(new Set(out.filter(Boolean)));
+}
+
+function getStockFromParsedRow(item, unidade, config) {
+    const candidates = getUnidadeHeaderCandidates(unidade, config);
+    for (const k of candidates) {
+        if (Object.prototype.hasOwnProperty.call(item, k)) {
+            const n = parseInt(item[k], 10);
+            return Number.isFinite(n) ? n : 0;
+        }
+    }
+    return 0;
+}
 
 export class RateLimiter {
     constructor(state, env) {
@@ -240,10 +315,11 @@ function parsePrice(value) {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function normalizeInsumos(rows, unidade = 'novo-hamburgo') {
-    const unidadeKey = unidade === 'barra-shopping-sul' ? 'barrashoppingsul' : 'novo hamburgo';
+function normalizeInsumos(rows, unidade = 'novo-hamburgo', config = { unidades: DEFAULT_UNIDADES, unidadeHeaders: { 'barra-shopping-sul': 'barrashoppingsul', 'novo-hamburgo': 'novo hamburgo' } }) {
+    const unidades = Array.isArray(config?.unidades) && config.unidades.length ? config.unidades : DEFAULT_UNIDADES;
     return rows.map((item, idx) => {
-        const estoqueAtual = parseInt(item[unidadeKey]) || 0;
+        const estoques = Object.fromEntries(unidades.map((u) => [u, getStockFromParsedRow(item, u, config)]));
+        const estoqueAtual = getStockFromParsedRow(item, unidade, config);
         const dataValidade = item['data validade'] || item.validade || null;
         return {
             registro: item.registro || String(idx + 1).padStart(3, '0'),
@@ -265,8 +341,9 @@ function normalizeInsumos(rows, unidade = 'novo-hamburgo') {
             statusValidade: calcularStatusValidade(dataValidade),
             dataCadastro: item['data cadastro'] || null,
             ultimaAtualizacao: item['data atualização'] || null,
-            novoHamburgo: parseInt(item['novo hamburgo']) || 0,
-            barraShoppingSul: parseInt(item['barrashoppingsul']) || 0
+            estoques,
+            novoHamburgo: getStockFromParsedRow(item, 'novo-hamburgo', config),
+            barraShoppingSul: getStockFromParsedRow(item, 'barra-shopping-sul', config),
         };
     });
 }
@@ -288,7 +365,8 @@ function stockDistribution(itens) {
     return Array.from(distMap.entries()).map(([name, value]) => ({ name, value }));
 }
 
-function buildActionables(itens, unidade) {
+function buildActionables(itens, unidade, config = { unidades: DEFAULT_UNIDADES, unidadeHeaders: { 'barra-shopping-sul': 'barrashoppingsul', 'novo-hamburgo': 'novo hamburgo' } }) {
+    const unidades = Array.isArray(config?.unidades) && config.unidades.length ? config.unidades : DEFAULT_UNIDADES;
     const reposicao = itens
         .filter((i) => (Number(i.estoqueMinimo) || 0) > 0 && (Number(i.estoqueAtual) || 0) <= (Number(i.estoqueMinimo) || 0))
         .map((i) => {
@@ -308,24 +386,32 @@ function buildActionables(itens, unidade) {
         .sort((a, b) => (a.estoqueAtual - a.estoqueMinimo) - (b.estoqueAtual - b.estoqueMinimo))
         .slice(0, 50);
 
-    const otherUnidade = unidade === 'novo-hamburgo' ? 'barra-shopping-sul' : 'novo-hamburgo';
     const transferencias = itens
         .map((i) => {
             const minimo = Number(i.estoqueMinimo) || 0;
-            const estoqueDestino = Number(i.estoqueAtual) || 0;
-            const estoqueOrigem = unidade === 'novo-hamburgo'
-                ? Number(i.barraShoppingSul) || 0
-                : Number(i.novoHamburgo) || 0;
-
+            const estoqueDestino = Number(i?.estoques?.[unidade] ?? i.estoqueAtual) || 0;
             const need = Math.max(0, minimo - estoqueDestino);
-            const surplus = Math.max(0, estoqueOrigem - minimo);
-            const qty = Math.min(need, surplus);
-            if (qty <= 0) return null;
+            if (need <= 0) return null;
+
+            let bestFrom = null;
+            let bestSurplus = 0;
+            for (const u of unidades) {
+                if (u === unidade) continue;
+                const estoqueOrigem = Number(i?.estoques?.[u] ?? 0) || 0;
+                const surplus = Math.max(0, estoqueOrigem - minimo);
+                if (surplus > bestSurplus) {
+                    bestSurplus = surplus;
+                    bestFrom = u;
+                }
+            }
+            if (!bestFrom || bestSurplus <= 0) return null;
+
+            const qty = Math.min(need, bestSurplus);
             return {
                 codigoBarras: i.codigoBarras,
                 produto: i.produto,
                 categoria: i.categoria,
-                from: otherUnidade,
+                from: bestFrom,
                 to: unidade,
                 qty,
                 estimatedValue: (Number(i.precoCusto) || 0) * qty
@@ -585,27 +671,15 @@ function buildQualityReport(itens, unidade, limitIssues = 500) {
 
 // User sheet may include an optional column "UNIDADES" (comma/semicolon separated).
 // If empty (or "*"), user can access all units.
-function normalizeUnidadeName(value) {
-    const s = String(value || '').trim().toLowerCase();
-    if (!s) return '';
-    if (s === '*' || s === 'all' || s === 'todas') return '*';
-    if (s === 'novo-hamburgo' || s === 'novohamburgo' || s === 'novo hamburgo' || s === 'nh') return 'novo-hamburgo';
-    if (s === 'barra-shopping-sul' || s === 'barrashoppingsul' || s === 'barra shopping sul' || s === 'bss') return 'barra-shopping-sul';
-    const compact = s.replace(/[\s_-]+/g, '');
-    if (compact.includes('novohamburgo')) return 'novo-hamburgo';
-    if (compact.includes('barrashoppingsul')) return 'barra-shopping-sul';
-    return s;
-}
-
 function parseAllowedUnits(raw) {
     const text = String(raw || '').trim();
     if (!text) return [];
     const parts = text
         .split(/[,;|]/g)
-        .map((p) => normalizeUnidadeName(p))
+        .map((p) => slugifyUnidade(p))
         .filter(Boolean);
     if (parts.includes('*')) return [];
-    return Array.from(new Set(parts.filter((u) => UNIDADES.includes(u))));
+    return Array.from(new Set(parts));
 }
 
 function parseUsers(rows) {
@@ -782,12 +856,12 @@ function getHeaderMap(headerRow) {
     return Object.fromEntries((headerRow || []).map((h, i) => [String(h || '').toLowerCase(), i]));
 }
 
-function getInsumosUnidadeHeaderKey(unidade) {
-    return unidade === 'barra-shopping-sul' ? 'barrashoppingsul' : 'novo hamburgo';
+function getInsumosUnidadeHeaderKeys(unidade, config) {
+    return getUnidadeHeaderCandidates(unidade, config);
 }
 
 async function ensureHeaderColumns({ spreadsheetId, sheetName, accessToken, requiredHeaders }) {
-    const headerValues = await readSheet(spreadsheetId, `${sheetName}!A1:Z1`, accessToken);
+    const headerValues = await readSheet(spreadsheetId, `${sheetName}!1:1`, accessToken);
     const current = (headerValues?.[0] || []).filter((h) => String(h || '').trim() !== '');
     const currentLower = current.map((h) => String(h).toLowerCase());
     const toAdd = requiredHeaders.filter((h) => !currentLower.includes(String(h).toLowerCase()));
@@ -852,7 +926,7 @@ async function appendAuditLog({ env, spreadsheetId, accessToken, actor, role, ip
         ]
     });
 
-    const headers = (await readSheet(spreadsheetId, `${AUDIT_SHEET_NAME}!A1:Z1`, accessToken))?.[0] || [];
+    const headers = (await readSheet(spreadsheetId, `${AUDIT_SHEET_NAME}!1:1`, accessToken))?.[0] || [];
     const map = getHeaderMap(headers);
     const row = ensureRowLength([], headers.length);
     setIfPresent(row, map, 'timestamp', ts);
@@ -868,7 +942,7 @@ async function appendAuditLog({ env, spreadsheetId, accessToken, actor, role, ip
     setIfPresent(row, map, 'before_json', safeJson(before));
     setIfPresent(row, map, 'after_json', safeJson(after));
 
-    await writeSheet(spreadsheetId, `${AUDIT_SHEET_NAME}!A:Z`, [row], accessToken, 'APPEND');
+    await writeSheet(spreadsheetId, `${AUDIT_SHEET_NAME}!A:AZ`, [row], accessToken, 'APPEND');
 }
 
 function computeNotificationsForUnidade(insumos, unidade) {
@@ -975,16 +1049,18 @@ async function refreshNotificationsSnapshotInD1({ env, unidade }) {
     if (!env?.DB) return;
     if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) return;
 
+    const config = getInsumosConfig(env);
     const accessToken = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
     const spreadsheetId = env.SPREADSHEET_ID;
-    const sheetRange = env.SHEET_RANGE || 'Insumos!A:Z';
+    const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
 
     const values = await readSheet(spreadsheetId, sheetRange, accessToken);
     const parsed = parseInsumos(values);
-    const unidades = unidade ? [unidade] : UNIDADES;
+    const unit = unidade ? slugifyUnidade(unidade) : null;
+    const unidades = unit ? [unit] : config.unidades;
 
     for (const u of unidades) {
-        const insumos = normalizeInsumos(parsed, u);
+        const insumos = normalizeInsumos(parsed, u, config);
         const payload = computeNotificationsForUnidade(insumos, u);
         const ts = new Date().toISOString();
         await env.DB.prepare(
@@ -1048,7 +1124,11 @@ function parseMovimentacoes(values) {
             estoqueAnterior: Number(get('estoque anterior')) || 0,
             estoqueNovo: Number(get('estoque novo')) || 0,
             unidade: get('unidade') || '',
+            unidadeOrigem: get('unidade origem') || '',
+            unidadeDestino: get('unidade destino') || '',
+            transferId: get('id transferência') || '',
             usuario: get('usuário') || '',
+            motivo: get('motivo') || '',
             observacoes: get('observações') || ''
         };
     }).filter((m) => m.dataHora || m.tipo || m.codigoBarras || m.produto);
@@ -1102,8 +1182,11 @@ export default {
         } catch {
             // ignore
         }
+        const config = getInsumosConfig(env);
+        const UNIDADES = config.unidades;
         const appOrigin = env.APP_ORIGIN || "https://crm.skincos.com.br";
-        const unidade = url.searchParams.get('unidade') || 'novo-hamburgo';
+        const defaultUnidade = UNIDADES[0] || 'novo-hamburgo';
+        const unidade = slugifyUnidade(url.searchParams.get('unidade') || '') || defaultUnidade;
         const cookies = parseCookies(request.headers.get('cookie') || '');
         const ip = getClientIp(request);
         const userAgent = getUserAgent(request);
@@ -1154,6 +1237,7 @@ export default {
                     runtime: "cloudflare-workers",
                     dbConfigured: !!env?.DB,
                     sheetsConfigured: sheetsMissing.length === 0,
+                    unidades: UNIDADES,
                     sheets: {
                         ...sheetsEnv,
                         missing: sheetsMissing,
@@ -1198,9 +1282,9 @@ export default {
         if (!spreadsheetId) {
             return withCORS(JSON.stringify({ error: "SPREADSHEET_ID not configured" }), { status: 500 }, appOrigin);
         }
-        const sheetRange = env.SHEET_RANGE || 'Insumos!A:Z';
-        const userRange = env.USER_SHEET_RANGE || 'Usuarios!A:Z';
-        const movimentacoesRange = env.MOVIMENTACOES_RANGE || 'Movimentacoes!A:Z';
+        const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
+        const userRange = env.USER_SHEET_RANGE || 'Usuarios!A:AZ';
+        const movimentacoesRange = env.MOVIMENTACOES_RANGE || 'Movimentacoes!A:AZ';
         const insumosSheetName = sheetRange.split('!')[0] || 'Insumos';
         const movimentacoesSheetName = movimentacoesRange.split('!')[0] || 'Movimentacoes';
 
@@ -1371,7 +1455,7 @@ export default {
             parseMovimentacoes,
             sheetRange,
             parseInsumos,
-            normalizeInsumos,
+            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
             unidade,
         });
         if (movResp) return movResp;
@@ -1402,13 +1486,13 @@ export default {
 
             ensureHeaderColumns,
             getHeaderMap,
-            getInsumosUnidadeHeaderKey,
+            getInsumosUnidadeHeaderKeys: (u) => getInsumosUnidadeHeaderKeys(u, config),
             ensureRowLength,
             setIfPresent,
             toA1Col,
 
             parseInsumos,
-            normalizeInsumos,
+            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
 
             nextRegistroFromValues,
             requireRoles,
@@ -1501,9 +1585,9 @@ export default {
             ensureHeaderColumns,
             readSheet,
             parseInsumos,
-            normalizeInsumos,
+            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
             parseMovimentacoes,
-            buildActionables,
+            buildActionables: (itens, u) => buildActionables(itens, u, config),
             buildRoi,
             buildQualityReport,
             stockDistribution,
@@ -1515,9 +1599,10 @@ export default {
     },
     async scheduled(event, env, ctx) {
         try {
+            const { unidades } = getInsumosConfig(env);
             // Prefer Cloudflare-only job execution (Queues are not available on free plan).
             if (env?.JOB_QUEUE) {
-                for (const unidade of UNIDADES) {
+                for (const unidade of unidades) {
                     ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
                 }
                 return;

@@ -44,5 +44,7 @@ export function validateIconName(name?: string | null): boolean {
 }
 
 export function listRegisteredIcons(): string[] {
-    return Object.keys(aliases)
+    const keys = new Set<string>([...Object.keys(REGISTRY), ...Object.keys(aliases)])
+    keys.delete('Question')
+    return Array.from(keys).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))
 }

@@ -29,9 +29,13 @@ database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 
 [vars]
 APP_ORIGIN = "https://crm.skincos.com.br"
-SHEET_RANGE = "Insumos!A:Z"
-USER_SHEET_RANGE = "Usuarios!A:Z"
-MOVIMENTACOES_RANGE = "Movimentacoes!A:Z"
+SHEET_RANGE = "Insumos!A:AZ"
+USER_SHEET_RANGE = "Usuarios!A:AZ"
+MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
+
+# Optional:
+# UNIDADES = "novo-hamburgo,barra-shopping-sul"
+# UNIDADES_HEADERS_JSON = "{\"barra-shopping-sul\":\"barrashoppingsul\",\"novo-hamburgo\":\"novo hamburgo\"}"
 
 # IMPORTANT:
 # Production-only vars/secrets should be configured in Cloudflare (Dashboard or `wrangler secret put`)

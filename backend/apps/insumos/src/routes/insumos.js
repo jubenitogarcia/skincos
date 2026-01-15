@@ -26,7 +26,7 @@ export async function handleInsumosRoutes({
 
     ensureHeaderColumns,
     getHeaderMap,
-    getInsumosUnidadeHeaderKey,
+    getInsumosUnidadeHeaderKeys,
     ensureRowLength,
     setIfPresent,
     toA1Col,
@@ -45,9 +45,22 @@ export async function handleInsumosRoutes({
 
     qrSvg,
 }) {
+    const resolveStockIndex = (headerMap, unit) => {
+        const candidates = (typeof getInsumosUnidadeHeaderKeys === 'function' ? getInsumosUnidadeHeaderKeys(unit) : []) || [];
+        const raw = String(unit || '').trim().toLowerCase();
+        const withSpaces = raw.replace(/-/g, ' ');
+        const expanded = [withSpaces, raw.replace(/-/g, ''), withSpaces.replace(/\s+/g, '')];
+        const keys = Array.from(new Set([...candidates, ...expanded].filter(Boolean)));
+        for (const k of keys) {
+            const idx = headerMap[k];
+            if (idx !== undefined) return { key: k, idx };
+        }
+        return { key: keys[0] || '', idx: undefined };
+    };
+
     // GET /insumos/headers
     if (url.pathname === "/insumos/headers" && request.method === "GET") {
-        const values = await readSheet(spreadsheetId, `${insumosSheetName}!A1:Z1`, accessToken);
+        const values = await readSheet(spreadsheetId, `${insumosSheetName}!1:1`, accessToken);
         const headers = (values?.[0] || []).filter((h) => String(h || '').trim() !== '');
         return withCORS(JSON.stringify({ success: true, data: headers }), { status: 200 }, appOrigin);
     }
@@ -79,8 +92,7 @@ export async function handleInsumosRoutes({
                 return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
             }
 
-            const unidadeKey = getInsumosUnidadeHeaderKey(unidade);
-            const stockIdx = headerMap[unidadeKey];
+            const { idx: stockIdx } = resolveStockIndex(headerMap, unidade);
             if (stockIdx === undefined) {
                 return withCORS(JSON.stringify({ success: false, error: "Coluna de estoque da unidade não encontrada" }), { status: 500 }, appOrigin);
             }
@@ -103,7 +115,7 @@ export async function handleInsumosRoutes({
                 accessToken,
                 requiredHeaders: ['UNIDADE']
             });
-            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!A1:Z1`, accessToken);
+            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
             const movMap = getHeaderMap(movHeaders);
             const movRow = ensureRowLength([], movHeaders.length);
@@ -171,8 +183,7 @@ export async function handleInsumosRoutes({
                 return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
             }
 
-            const unidadeKey = getInsumosUnidadeHeaderKey(unidade);
-            const stockIdx = headerMap[unidadeKey];
+            const { idx: stockIdx } = resolveStockIndex(headerMap, unidade);
             if (stockIdx === undefined) {
                 return withCORS(JSON.stringify({ success: false, error: "Coluna de estoque da unidade não encontrada" }), { status: 500 }, appOrigin);
             }
@@ -198,7 +209,7 @@ export async function handleInsumosRoutes({
                 accessToken,
                 requiredHeaders: ['UNIDADE']
             });
-            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!A1:Z1`, accessToken);
+            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
             const movMap = getHeaderMap(movHeaders);
             const movRow = ensureRowLength([], movHeaders.length);
@@ -295,10 +306,8 @@ export async function handleInsumosRoutes({
                 return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
             }
 
-            const fromKey = getInsumosUnidadeHeaderKey(fromUnidade);
-            const toKey = getInsumosUnidadeHeaderKey(toUnidade);
-            const fromIdx = headerMap[fromKey];
-            const toIdx = headerMap[toKey];
+            const { idx: fromIdx } = resolveStockIndex(headerMap, fromUnidade);
+            const { idx: toIdx } = resolveStockIndex(headerMap, toUnidade);
             if (fromIdx === undefined || toIdx === undefined) {
                 return withCORS(JSON.stringify({ success: false, error: "Coluna de estoque da unidade não encontrada" }), { status: 500 }, appOrigin);
             }
@@ -329,7 +338,7 @@ export async function handleInsumosRoutes({
                 accessToken,
                 requiredHeaders: ['UNIDADE', 'UNIDADE ORIGEM', 'UNIDADE DESTINO', 'ID TRANSFERÊNCIA']
             });
-            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!A1:Z1`, accessToken);
+            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
             const movMap = getHeaderMap(movHeaders);
 
@@ -428,8 +437,7 @@ export async function handleInsumosRoutes({
                 return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
             }
 
-            const unidadeKey = getInsumosUnidadeHeaderKey(unidade);
-            const stockIdx = headerMap[unidadeKey];
+            const { idx: stockIdx } = resolveStockIndex(headerMap, unidade);
             if (stockIdx === undefined) {
                 return withCORS(JSON.stringify({ success: false, error: "Coluna de estoque da unidade não encontrada" }), { status: 500 }, appOrigin);
             }
@@ -452,7 +460,7 @@ export async function handleInsumosRoutes({
                 accessToken,
                 requiredHeaders: ['UNIDADE', 'MOTIVO']
             });
-            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!A1:Z1`, accessToken);
+            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
             const movMap = getHeaderMap(movHeaders);
             const movRow = ensureRowLength([], movHeaders.length);
@@ -491,144 +499,6 @@ export async function handleInsumosRoutes({
 
             ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
             return withCORS(JSON.stringify({ success: true, estoqueAnterior, novoEstoque: estoqueNovo }), { status: 200 }, appOrigin);
-        } catch (err) {
-            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
-        }
-    }
-
-    // POST /insumos/transferir
-    if (url.pathname === "/insumos/transferir" && request.method === "POST") {
-        try {
-            const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
-            if (!auth.ok) return auth.response;
-
-            const body = await request.json().catch(() => ({}));
-            const codigo = (body.codigoBarras || '').toString().trim();
-            const quantidade = Math.max(1, parseInt(body.quantidade, 10) || 0);
-            const fromUnidade = (body.fromUnidade || '').toString().trim() || unidade;
-            const toUnidade = (body.toUnidade || '').toString().trim();
-            const observacoes = (body.observacoes || '').toString();
-            const usuario = auth.user.username || '';
-
-            if (!codigo || !toUnidade) {
-                return withCORS(JSON.stringify({ success: false, error: "Código e unidade destino são obrigatórios" }), { status: 400 }, appOrigin);
-            }
-            if (fromUnidade === toUnidade) {
-                return withCORS(JSON.stringify({ success: false, error: "Unidades devem ser diferentes" }), { status: 400 }, appOrigin);
-            }
-            if (!UNIDADES.includes(fromUnidade) || !UNIDADES.includes(toUnidade)) {
-                return withCORS(JSON.stringify({ success: false, error: "Unidade inválida" }), { status: 400 }, appOrigin);
-            }
-            const allowed = Array.isArray(auth.user.allowedUnits) ? auth.user.allowedUnits.filter(Boolean) : [];
-            const isAdmin = String(auth.user.role || '').toUpperCase() === 'ADMIN';
-            if (!isAdmin && allowed.length) {
-                const ok = allowed.includes(fromUnidade) && allowed.includes(toUnidade);
-                if (!ok) {
-                    return withCORS(
-                        JSON.stringify({ success: false, error: "Sem permissão para unidade", code: 'RBAC_UNIT_DENIED', allowedUnits: allowed }),
-                        { status: 403 },
-                        appOrigin
-                    );
-                }
-            }
-
-            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const headers = values[0] || [];
-            const headerMap = getHeaderMap(headers);
-            const codeIdx = headerMap['código'];
-            if (codeIdx === undefined) {
-                return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
-            }
-            const rowIndex = values.slice(1).findIndex((r) => ((r?.[codeIdx] || '').toString().trim() === codigo));
-            if (rowIndex === -1) {
-                return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
-            }
-
-            const fromKey = getInsumosUnidadeHeaderKey(fromUnidade);
-            const toKey = getInsumosUnidadeHeaderKey(toUnidade);
-            const fromIdx = headerMap[fromKey];
-            const toIdx = headerMap[toKey];
-            if (fromIdx === undefined || toIdx === undefined) {
-                return withCORS(JSON.stringify({ success: false, error: "Colunas de estoque das unidades não encontradas" }), { status: 500 }, appOrigin);
-            }
-
-            const absoluteRowNumber = rowIndex + 2;
-            const beforeRow = ensureRowLength(values[rowIndex + 1], headers.length);
-            const currentRow = [...beforeRow];
-            const estoqueOrigemAntes = parseInt(currentRow[fromIdx], 10) || 0;
-            const estoqueDestinoAntes = parseInt(currentRow[toIdx], 10) || 0;
-            if (quantidade > estoqueOrigemAntes) {
-                return withCORS(JSON.stringify({ success: false, error: "Estoque insuficiente na origem" }), { status: 400 }, appOrigin);
-            }
-            const estoqueOrigemDepois = estoqueOrigemAntes - quantidade;
-            const estoqueDestinoDepois = estoqueDestinoAntes + quantidade;
-            currentRow[fromIdx] = String(estoqueOrigemDepois);
-            currentRow[toIdx] = String(estoqueDestinoDepois);
-            setIfPresent(currentRow, headerMap, 'data atualização', new Date().toISOString());
-
-            const range = `${insumosSheetName}!A${absoluteRowNumber}:${toA1Col(headers.length - 1)}${absoluteRowNumber}`;
-            await batchUpdate(spreadsheetId, [{ range, values: [currentRow] }], accessToken);
-
-            // Movimentações: saída na origem + entrada no destino (para refletir nos gráficos)
-            await ensureHeaderColumns({
-                spreadsheetId,
-                sheetName: movimentacoesSheetName,
-                accessToken,
-                requiredHeaders: ['UNIDADE']
-            });
-            const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!A1:Z1`, accessToken);
-            const movHeaders = movValues[0] || [];
-            const movMap = getHeaderMap(movHeaders);
-            const produtoNome = (headerMap['produto'] !== undefined ? currentRow[headerMap['produto']] : '') || '';
-
-            const movOut = ensureRowLength([], movHeaders.length);
-            setIfPresent(movOut, movMap, 'id movimentação', crypto.randomUUID());
-            setIfPresent(movOut, movMap, 'data/hora', new Date().toISOString());
-            setIfPresent(movOut, movMap, 'tipo', 'SAÍDA');
-            setIfPresent(movOut, movMap, 'código de barras', codigo);
-            setIfPresent(movOut, movMap, 'produto', produtoNome);
-            setIfPresent(movOut, movMap, 'quantidade', quantidade);
-            setIfPresent(movOut, movMap, 'estoque anterior', estoqueOrigemAntes);
-            setIfPresent(movOut, movMap, 'estoque novo', estoqueOrigemDepois);
-            setIfPresent(movOut, movMap, 'unidade', fromUnidade);
-            setIfPresent(movOut, movMap, 'usuário', usuario);
-            setIfPresent(movOut, movMap, 'observações', `Transferência para ${toUnidade}${observacoes ? ` • ${observacoes}` : ''}`);
-
-            const movIn = ensureRowLength([], movHeaders.length);
-            setIfPresent(movIn, movMap, 'id movimentação', crypto.randomUUID());
-            setIfPresent(movIn, movMap, 'data/hora', new Date().toISOString());
-            setIfPresent(movIn, movMap, 'tipo', 'ENTRADA');
-            setIfPresent(movIn, movMap, 'código de barras', codigo);
-            setIfPresent(movIn, movMap, 'produto', produtoNome);
-            setIfPresent(movIn, movMap, 'quantidade', quantidade);
-            setIfPresent(movIn, movMap, 'estoque anterior', estoqueDestinoAntes);
-            setIfPresent(movIn, movMap, 'estoque novo', estoqueDestinoDepois);
-            setIfPresent(movIn, movMap, 'unidade', toUnidade);
-            setIfPresent(movIn, movMap, 'usuário', usuario);
-            setIfPresent(movIn, movMap, 'observações', `Transferência de ${fromUnidade}${observacoes ? ` • ${observacoes}` : ''}`);
-
-            await writeSheet(spreadsheetId, movimentacoesRange, [movOut, movIn], accessToken, 'APPEND');
-
-            await appendAuditLog({
-                env,
-                spreadsheetId,
-                accessToken,
-                actor: auth.user.username,
-                role: auth.user.role,
-                ip,
-                userAgent,
-                idempotencyKey,
-                action: 'TRANSFERIR',
-                entity: 'INSUMO',
-                entityId: codigo,
-                unidade: toUnidade,
-                before: { fromUnidade, toUnidade, estoqueOrigemAntes, estoqueDestinoAntes, row: beforeRow },
-                after: { quantidade, estoqueOrigemDepois, estoqueDestinoDepois, row: currentRow }
-            });
-
-            ctx.waitUntil(enqueueNotificationsRefresh(env, fromUnidade));
-            ctx.waitUntil(enqueueNotificationsRefresh(env, toUnidade));
-            return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
         } catch (err) {
             return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
         }
@@ -725,9 +595,8 @@ export async function handleInsumosRoutes({
             setIfPresent(newRow, headerMap, 'data atualização', now);
 
             const estoqueInicial = Number(body.estoqueInicial) || 0;
-            const estoqueKey = getInsumosUnidadeHeaderKey(unidade);
-            setIfPresent(newRow, headerMap, 'novo hamburgo', estoqueKey === 'novo hamburgo' ? estoqueInicial : 0);
-            setIfPresent(newRow, headerMap, 'barrashoppingsul', estoqueKey === 'barrashoppingsul' ? estoqueInicial : 0);
+            const { key: estoqueKey } = resolveStockIndex(headerMap, unidade);
+            if (estoqueKey) setIfPresent(newRow, headerMap, estoqueKey, estoqueInicial);
 
             await writeSheet(spreadsheetId, sheetRange, [newRow], accessToken, 'APPEND');
 
