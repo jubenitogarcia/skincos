@@ -125,6 +125,13 @@ export default function AppFunctionalNeatlab() {
     const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
     const [sidebarHover, setSidebarHover] = useState(false)
     const [sidebarCanHover, setSidebarCanHover] = useState(false)
+    const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
+        try {
+            return localStorage.getItem('ui.sidebarPinned') === 'true'
+        } catch {
+            return false
+        }
+    })
 
     React.useEffect(() => {
         try {
@@ -134,7 +141,13 @@ export default function AppFunctionalNeatlab() {
         }
     }, [])
 
-    const sidebarExpanded = !sidebarCanHover || sidebarHover
+    React.useEffect(() => {
+        try {
+            localStorage.setItem('ui.sidebarPinned', sidebarPinned ? 'true' : 'false')
+        } catch { /* ignore */ }
+    }, [sidebarPinned])
+
+    const sidebarExpanded = sidebarPinned || !sidebarCanHover || sidebarHover
 
     // Persist active module to survive remounts/reloads and avoid accidental resets
     const [active, setActive] = useState<string>(() => {
@@ -145,7 +158,6 @@ export default function AppFunctionalNeatlab() {
         } catch { return 'unit-monitor' }
     })
     const [search, setSearch] = useState('')
-    console.log('AppFunctionalNeatlab render, active=', active)
 
     // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
     React.useEffect(() => {
@@ -231,6 +243,14 @@ export default function AppFunctionalNeatlab() {
                                     <h1 className="text-lg font-bold text-white leading-tight truncate">Espaço Facial</h1>
                                     <p className="text-xs text-blue-300/80 truncate">CRM Enterprise</p>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSidebarPinned((v) => !v)}
+                                    title={sidebarPinned ? 'Desafixar menu' : 'Fixar menu'}
+                                    className={`rounded-lg border border-white/10 bg-white/[0.06] hover:bg-white/[0.12] text-blue-100/80 hover:text-white transition-colors ${sidebarExpanded ? 'px-2 py-2 text-sm' : 'hidden'}`}
+                                >
+                                    {sidebarPinned ? '📌' : '📍'}
+                                </button>
                             </div>
 
                             {/* User Info */}

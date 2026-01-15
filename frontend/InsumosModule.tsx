@@ -548,6 +548,8 @@ export function InsumosModule() {
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
   const [offlineQueueCount, setOfflineQueueCount] = React.useState(0)
+  const [offlineDialogOpen, setOfflineDialogOpen] = React.useState(false)
+  const [offlineItems, setOfflineItems] = React.useState<OfflineQueueItem[]>([])
 
   const canUseApi = !!health?.ok && !!health?.sheetsConfigured
   const isAuthed = !!user?.username
@@ -606,7 +608,13 @@ export function InsumosModule() {
   const refreshOfflineQueueCount = React.useCallback(() => {
     const items = readOfflineQueue()
     setOfflineQueueCount(items.length)
-  }, [readOfflineQueue])
+    if (offlineDialogOpen) setOfflineItems(items)
+  }, [offlineDialogOpen, readOfflineQueue])
+
+  React.useEffect(() => {
+    if (!offlineDialogOpen) return
+    setOfflineItems(readOfflineQueue())
+  }, [offlineDialogOpen, readOfflineQueue])
 
   const isNetworkError = (e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e)
@@ -642,13 +650,14 @@ export function InsumosModule() {
         remaining = remaining.filter((q) => q.id !== item.id)
         writeOfflineQueue(remaining)
         setOfflineQueueCount(remaining.length)
+        if (offlineDialogOpen) setOfflineItems(remaining)
       } catch (e) {
         if (isNetworkError(e)) break
         toast.error(e instanceof Error ? e.message : String(e))
         break
       }
     }
-  }, [canUseApi, csrfToken, isAuthed, readOfflineQueue, refreshCsrf, writeOfflineQueue])
+  }, [canUseApi, csrfToken, isAuthed, offlineDialogOpen, readOfflineQueue, refreshCsrf, writeOfflineQueue])
 
   const mutateJson = React.useCallback(
     async <T,>(
@@ -1202,6 +1211,17 @@ export function InsumosModule() {
     })
   }, [alertasBusca, alertasCategoria, alertasStatus, insightsAlertas])
 
+  const fmtAge = React.useCallback((ts?: number) => {
+    const t = Number(ts) || 0
+    if (!t) return '-'
+    const sec = Math.max(0, Math.floor((Date.now() - t) / 1000))
+    if (sec < 60) return `${sec}s`
+    const min = Math.floor(sec / 60)
+    if (min < 60) return `${min}m`
+    const h = Math.floor(min / 60)
+    return `${h}h`
+  }, [])
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -1212,7 +1232,11 @@ export function InsumosModule() {
             <span className="font-mono">/api/insumos/*</span>
             {health?.ok ? <Badge variant={health.ok ? 'default' : 'destructive'}>{health.ok ? 'Online' : 'Offline'}</Badge> : null}
             {isAuthed ? <Badge variant="default">Autenticado</Badge> : <Badge variant="secondary">Desconectado</Badge>}
-            {offlineQueueCount > 0 ? <Badge variant="secondary">Fila offline: {offlineQueueCount}</Badge> : null}
+            {offlineQueueCount > 0 ? (
+              <button type="button" onClick={() => setOfflineDialogOpen(true)}>
+                <Badge variant="secondary">Fila offline: {offlineQueueCount}</Badge>
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1230,15 +1254,104 @@ export function InsumosModule() {
             </SelectContent>
           </Select>
           {offlineQueueCount > 0 ? (
-            <Button variant="outline" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
-              Sincronizar
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                Fila
+              </Button>
+              <Button variant="outline" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
+                Sincronizar
+              </Button>
+            </>
           ) : null}
           <Button onClick={loadHealth} disabled={healthLoading}>
             {healthLoading ? 'Atualizando…' : 'Atualizar'}
           </Button>
         </div>
       </div>
+
+      <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Fila offline</DialogTitle>
+            <DialogDescription>
+              Operações salvas localmente quando a rede cai. Ao reconectar, clique em “Sincronizar”.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm text-muted-foreground">
+              Itens: <span className="font-mono">{offlineItems.length}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={() => void syncOfflineQueue()} disabled={!isAuthed || !offlineItems.length}>
+                Sincronizar
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (!offlineItems.length) return
+                  if (!window.confirm('Limpar a fila offline? Você perderá as operações pendentes.')) return
+                  try {
+                    window.localStorage.removeItem(OFFLINE_QUEUE_KEY)
+                  } catch {
+                    // ignore
+                  }
+                  setOfflineItems([])
+                  setOfflineQueueCount(0)
+                  toast.success('Fila limpa.')
+                }}
+                disabled={!offlineItems.length}
+              >
+                Limpar
+              </Button>
+            </div>
+          </div>
+
+          <div className="overflow-auto rounded-xl border border-white/10">
+            <table className="min-w-full text-sm">
+              <thead className="bg-black/30 text-blue-100/80">
+                <tr>
+                  <th className="text-left p-3">Quando</th>
+                  <th className="text-left p-3">Método</th>
+                  <th className="text-left p-3">Endpoint</th>
+                  <th className="text-right p-3">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {offlineItems.map((it) => (
+                  <tr key={it.id} className="hover:bg-white/5">
+                    <td className="p-3 text-blue-100/70">{fmtAge(it.ts)}</td>
+                    <td className="p-3 text-blue-100/80 font-mono">{it.method}</td>
+                    <td className="p-3 text-blue-50 font-mono">{it.path}</td>
+                    <td className="p-3 text-right">
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(JSON.stringify(it, null, 2))
+                            toast.success('Copiado.')
+                          } catch (e: any) {
+                            toast.error(e?.message || 'Não foi possível copiar.')
+                          }
+                        }}
+                      >
+                        Copiar
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {!offlineItems.length ? (
+                  <tr>
+                    <td className="p-3 text-blue-100/70" colSpan={4}>
+                      Sem itens pendentes.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="glass-morphism border border-white/10 lg:col-span-2">
