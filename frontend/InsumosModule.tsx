@@ -514,7 +514,9 @@ export function InsumosModule() {
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
   const [shareHistory, setShareHistory] = React.useState<ShareHistoryItem[]>([])
   const [shareLoading, setShareLoading] = React.useState(false)
+  const [shareHistoryLoading, setShareHistoryLoading] = React.useState(false)
   const shareLoggedRef = React.useRef<string>('')
+  const shareSyncedRef = React.useRef<Set<string>>(new Set())
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
@@ -635,6 +637,25 @@ export function InsumosModule() {
     [SHARE_HISTORY_KEY]
   )
 
+  const loadShareHistory = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    setShareHistoryLoading(true)
+    try {
+      const out = await apiJson<{ success?: boolean; data?: ShareHistoryItem[] }>(`/share/history?limit=12`)
+      if (Array.isArray(out?.data)) {
+        const normalized = out.data.map((item) => ({
+          ...item,
+          files: Array.isArray(item.files) ? item.files : []
+        }))
+        persistShareHistory(normalized)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setShareHistoryLoading(false)
+    }
+  }, [apiJson, canUseApi, isAuthed, persistShareHistory])
+
   React.useEffect(() => {
     try {
       const raw = localStorage.getItem(SHARE_HISTORY_KEY)
@@ -660,6 +681,37 @@ export function InsumosModule() {
     const next = [item, ...shareHistory].slice(0, 12)
     persistShareHistory(next)
   }, [persistShareHistory, shareHistory, sharePayload, shareSourceId])
+
+  React.useEffect(() => {
+    if (!sharePayload || !canUseApi || !isAuthed) return
+    const baseId = shareSourceId || shareLoggedRef.current
+    if (!baseId) return
+    if (shareSyncedRef.current.has(baseId)) return
+    shareSyncedRef.current.add(baseId)
+
+    const files = (sharePayload.files || []).map((f) => ({
+      name: f.name,
+      size: f.size,
+      contentType: f.contentType,
+      url: f.url
+    }))
+    const sourceId = shareSourceId && !shareSourceId.startsWith('local-') ? shareSourceId : undefined
+    void mutateJson('/share/history', {
+      method: 'POST',
+      queueLabel: 'Share history',
+      body: {
+        id: baseId,
+        createdAt: new Date().toISOString(),
+        title: sharePayload.title || '',
+        text: sharePayload.text || '',
+        url: sharePayload.url || '',
+        files,
+        sourceId
+      }
+    }).then(() => {
+      void loadShareHistory()
+    })
+  }, [canUseApi, isAuthed, loadShareHistory, mutateJson, sharePayload, shareSourceId])
 
   React.useEffect(() => {
     const mapTab = (raw: string | null) => {
@@ -830,13 +882,27 @@ export function InsumosModule() {
     (id: string) => {
       const next = shareHistory.filter((item) => item.id !== id)
       persistShareHistory(next)
+      if (canUseApi && isAuthed) {
+        void mutateJson(`/share/history/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          queueLabel: 'Share history delete'
+        })
+      }
     },
-    [persistShareHistory, shareHistory]
+    [canUseApi, isAuthed, mutateJson, persistShareHistory, shareHistory]
   )
 
   const clearShareHistory = React.useCallback(() => {
     persistShareHistory([])
-  }, [persistShareHistory])
+    if (canUseApi && isAuthed && shareHistory.length) {
+      for (const item of shareHistory) {
+        void mutateJson(`/share/history/${encodeURIComponent(item.id)}`, {
+          method: 'DELETE',
+          queueLabel: 'Share history delete'
+        })
+      }
+    }
+  }, [canUseApi, isAuthed, mutateJson, persistShareHistory, shareHistory])
 
   React.useEffect(() => {
     if (!allowedUnits.length) return
@@ -1418,7 +1484,10 @@ export function InsumosModule() {
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
     if (activeTab === 'overview') void loadOverview()
-    if (activeTab === 'insumos') void loadInsumos()
+    if (activeTab === 'insumos') {
+      void loadInsumos()
+      void loadShareHistory()
+    }
     if (activeTab === 'lotes') void loadInsumos()
     if (activeTab === 'mov') void loadMovimentacoes()
     if (activeTab === 'insights') void loadInsights()
@@ -2382,6 +2451,7 @@ export function InsumosModule() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-2">
+                    {shareHistoryLoading ? <div className="text-xs text-blue-200/60">Sincronizando…</div> : null}
                     {shareHistory.slice(0, 6).map((item) => (
                       <div key={item.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                         <div className="flex flex-wrap items-center justify-between gap-2">

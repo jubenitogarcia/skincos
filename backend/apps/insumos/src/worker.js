@@ -11,6 +11,7 @@ import { handleAuditRoutes } from './routes/audit.js';
 import { handleMovimentacoesRoutes } from './routes/movimentacoes.js';
 import { handleInsumosRoutes } from './routes/insumos.js';
 import { handleInsightsRoutes } from './routes/insights.js';
+import { handleShareRoutes } from './routes/share.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
 const AUDIT_SHEET_NAME = 'AuditLog';
@@ -1519,6 +1520,16 @@ export default {
             qrSvg,
         });
         if (insumosResp) return insumosResp;
+
+        const shareResp = await handleShareRoutes({
+            request,
+            url,
+            env,
+            appOrigin,
+            withCORS,
+            requireRoles,
+        });
+        if (shareResp) return shareResp;
 
 
         const exportsResp = await handleExportsRoutes({
