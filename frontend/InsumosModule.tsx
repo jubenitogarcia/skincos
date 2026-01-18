@@ -616,6 +616,9 @@ export function InsumosModule() {
   const [offlineDialogOpen, setOfflineDialogOpen] = React.useState(false)
   const [offlineItems, setOfflineItems] = React.useState<OfflineQueueItem[]>([])
 
+  const OFFLINE_QUEUE_KEY = 'skincos.insumos.offlineQueue.v1'
+  const SHARE_HISTORY_KEY = 'skincos.insumos.shareHistory.v1'
+
   const canUseApi = !!health?.ok && !!health?.sheetsConfigured
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
@@ -933,9 +936,6 @@ export function InsumosModule() {
       return null
     }
   }, [])
-
-  const OFFLINE_QUEUE_KEY = 'skincos.insumos.offlineQueue.v1'
-  const SHARE_HISTORY_KEY = 'skincos.insumos.shareHistory.v1'
 
   const readOfflineQueue = React.useCallback((): OfflineQueueItem[] => {
     try {
