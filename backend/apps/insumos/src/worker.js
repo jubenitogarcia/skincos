@@ -1184,7 +1184,17 @@ export default {
         }
         const config = getInsumosConfig(env);
         const UNIDADES = config.unidades;
-        const appOrigin = env.APP_ORIGIN || "https://crm.skincos.com.br";
+        let appOrigin = env.APP_ORIGIN || "https://crm.skincos.com.br";
+        try {
+            const requestOrigin = String(request.headers.get('Origin') || '').trim();
+            const raw = String(env.APP_ORIGINS || '').trim();
+            const allow = Array.from(new Set([appOrigin, ...raw.split(',').map((s) => s.trim()).filter(Boolean)]));
+            if (requestOrigin && allow.includes(requestOrigin)) {
+                appOrigin = requestOrigin;
+            }
+        } catch {
+            // ignore
+        }
         const defaultUnidade = UNIDADES[0] || 'novo-hamburgo';
         const unidade = slugifyUnidade(url.searchParams.get('unidade') || '') || defaultUnidade;
         const cookies = parseCookies(request.headers.get('cookie') || '');
@@ -1299,9 +1309,11 @@ export default {
             // Dev (http) cannot set Secure cookies; SameSite=None also requires Secure.
             const sameSite = isSecureContext ? 'None' : 'Lax';
             const secureAttr = isSecureContext ? '; Secure' : '';
+            const cookieDomain = String(env.SESSION_COOKIE_DOMAIN || '').trim();
+            const domainAttr = cookieDomain ? `; Domain=${cookieDomain}` : '';
             const headers = new Headers();
-            headers.append('Set-Cookie', `session=${token}; Path=/; HttpOnly${secureAttr}; SameSite=${sameSite}; Max-Age=604800`);
-            headers.append('Set-Cookie', `csrfToken=${csrf}; Path=/${secureAttr}; SameSite=${sameSite}; Max-Age=604800`);
+            headers.append('Set-Cookie', `session=${token}; Path=/; HttpOnly${secureAttr}${domainAttr}; SameSite=${sameSite}; Max-Age=604800`);
+            headers.append('Set-Cookie', `csrfToken=${csrf}; Path=/${domainAttr}${secureAttr}; SameSite=${sameSite}; Max-Age=604800`);
             return { headers, csrf };
         };
 

@@ -22,6 +22,31 @@ export async function onRequest(context: any): Promise<Response> {
         redirect: 'manual'
     })
 
-    return fetch(upstreamRequest)
-}
+    const upstream = await fetch(upstreamRequest)
 
+    // Ensure Set-Cookie survives the proxy (needed for session auth).
+    const outHeaders = new Headers(upstream.headers)
+
+    // Avoid caching API and especially auth routes.
+    outHeaders.set('Cache-Control', 'no-store')
+
+    // Cloudflare-specific: preserve multiple Set-Cookie headers.
+    try {
+        const getSetCookie = (upstream.headers as any).getSetCookie
+        if (typeof getSetCookie === 'function') {
+            const cookies = getSetCookie.call(upstream.headers) as string[]
+            if (Array.isArray(cookies) && cookies.length) {
+                outHeaders.delete('set-cookie')
+                for (const c of cookies) outHeaders.append('Set-Cookie', c)
+            }
+        }
+    } catch {
+        // ignore
+    }
+
+    return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: outHeaders
+    })
+}

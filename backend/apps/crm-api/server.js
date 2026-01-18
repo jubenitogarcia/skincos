@@ -619,6 +619,8 @@ const UNIT_MONITOR_RECORDINGS_DIR = process.env.CRM_UNIT_MONITOR_RECORDINGS_DIR 
     path.join(VAR_DIR, 'recordings', 'unit-monitor')
 const FFMPEG_BIN = process.env.CRM_UNIT_MONITOR_FFMPEG_BIN || process.env.FFMPEG_BIN || 'ffmpeg'
 const FFPROBE_BIN = process.env.CRM_UNIT_MONITOR_FFPROBE_BIN || process.env.FFPROBE_BIN || 'ffprobe'
+const UNIT_MONITOR_MIN_FREE_GB = Math.max(0, Math.min(10_000, Number(process.env.CRM_UNIT_MONITOR_MIN_FREE_GB || 20) || 20))
+const UNIT_MONITOR_MIN_FREE_BYTES = Math.floor(UNIT_MONITOR_MIN_FREE_GB * 1024 * 1024 * 1024)
 
 const UNIT_MONITOR_ICE_SERVERS = (() => {
     try {
@@ -1200,6 +1202,66 @@ async function cleanupUnitMonitorSegments() {
             }
         }
     }
+
+    // Disk-pressure cleanup: if free space is below the configured threshold,
+    // delete the oldest segments across all units/cameras until we recover space.
+    try {
+        if (!UNIT_MONITOR_MIN_FREE_BYTES || UNIT_MONITOR_MIN_FREE_BYTES <= 0) return
+        const disk = await dfInfo(UNIT_MONITOR_RECORDINGS_DIR)
+        const availBytes = disk?.availableKb ? Number(disk.availableKb) * 1024 : null
+        if (!availBytes || availBytes >= UNIT_MONITOR_MIN_FREE_BYTES) return
+
+        const candidates = []
+        const unitsDirs = await fs.readdir(UNIT_MONITOR_RECORDINGS_DIR).catch(() => [])
+        for (const unitDir of unitsDirs) {
+            const unitPath = path.join(UNIT_MONITOR_RECORDINGS_DIR, unitDir)
+            let cams = []
+            try {
+                const st = await fs.stat(unitPath)
+                if (!st.isDirectory()) continue
+                cams = await fs.readdir(unitPath)
+            } catch {
+                continue
+            }
+            for (const camDir of cams) {
+                const camPath = path.join(unitPath, camDir)
+                let files = []
+                try {
+                    const st = await fs.stat(camPath)
+                    if (!st.isDirectory()) continue
+                    files = await fs.readdir(camPath)
+                } catch {
+                    continue
+                }
+                for (const filename of files) {
+                    if (!filename.endsWith('.mp4')) continue
+                    const absPath = path.join(camPath, filename)
+                    try {
+                        const st = await fs.stat(absPath)
+                        if (!st.isFile()) continue
+                        candidates.push({ absPath, mtimeMs: st.mtimeMs, sizeBytes: st.size })
+                    } catch { /* ignore */ }
+                }
+            }
+        }
+
+        candidates.sort((a, b) => a.mtimeMs - b.mtimeMs)
+        let freed = 0
+        let deleted = 0
+        for (const c of candidates) {
+            if (deleted >= 500) break
+            try {
+                await fs.unlink(c.absPath)
+                freed += Number(c.sizeBytes || 0) || 0
+                deleted += 1
+            } catch { /* ignore */ }
+
+            const nextAvail = availBytes + freed
+            if (nextAvail >= UNIT_MONITOR_MIN_FREE_BYTES) break
+        }
+    } catch {
+        // ignore
+    }
 }
 
 setInterval(() => { cleanupUnitMonitorSegments().catch(() => { }) }, 60 * 60 * 1000).unref()
@@ -1377,6 +1439,7 @@ app.get('/api/unit-monitor/diagnostics', async (req, res) => {
         ok: true,
         ts: new Date().toISOString(),
         recordingsDir: UNIT_MONITOR_RECORDINGS_DIR,
+        minFreeGb: UNIT_MONITOR_MIN_FREE_GB,
         disk,
         mediamtx: {
             runtime: mediamtxRuntime,

@@ -21,6 +21,8 @@ GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\
 
 # Local dev helpers
 # APP_ORIGIN="http://localhost:5173"
+# APP_ORIGINS="http://localhost:5173,https://crm.skincos.com.br,https://app.skincos.com.br"
+# SESSION_COOKIE_DOMAIN=".skincos.com.br"
 # SESSION_SECRET="dev-only-secret"
 
 # Units (scales beyond 2 units)

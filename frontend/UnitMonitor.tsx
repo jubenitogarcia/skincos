@@ -169,6 +169,7 @@ interface UnitMonitorDiagnostics {
   ok: boolean
   ts?: string
   recordingsDir?: string
+  minFreeGb?: number
   disk?: {
     totalKb?: number | null
     usedKb?: number | null
@@ -299,6 +300,24 @@ function buildRtspUrlFromParts(cam: RtspCameraConfig): string {
   const stream = normalizeStreamPath(cam.streamPath || 'stream1')
   const auth = username && password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : ''
   return `rtsp://${auth}${host}:${port}/${stream}`
+}
+
+function parseRtspUrl(rtspUrl: string): Pick<RtspCameraConfig, 'host' | 'port' | 'username' | 'password' | 'streamPath'> | null {
+  const raw = String(rtspUrl || '').trim()
+  if (!raw) return null
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'rtsp:') return null
+    const host = String(u.hostname || '').trim()
+    if (!host) return null
+    const port = Number(u.port || 554) || 554
+    const username = u.username ? decodeURIComponent(u.username) : ''
+    const password = u.password ? decodeURIComponent(u.password) : ''
+    const streamPath = normalizeStreamPath(u.pathname || '/stream1')
+    return { host, port, username, password, streamPath }
+  } catch {
+    return null
+  }
 }
 
 function deriveCameraId(cam: RtspCameraConfig): string {
@@ -510,6 +529,26 @@ export function UnitMonitor() {
     } finally {
       setRtspTestBusy(false)
     }
+  }
+
+  const convertRtspUrlToBasic = () => {
+    const raw = String(cameraEditor.rtspUrl || '').trim()
+    const parsed = parseRtspUrl(raw)
+    if (!parsed) {
+      toast.error('RTSP URL inválida para converter')
+      return
+    }
+    setCameraEditor((prev) => ({
+      ...prev,
+      host: parsed.host,
+      port: parsed.port,
+      username: parsed.username,
+      password: parsed.password,
+      streamPath: parsed.streamPath,
+      rtspUrl: ''
+    }))
+    setCameraEditorAdvanced(false)
+    toast.success('Convertido para modo simples')
   }
 
   const upsertCamera = () => {
@@ -1506,6 +1545,9 @@ export function UnitMonitor() {
 	                        <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.04] p-3">
 	                          <div className="flex flex-wrap items-center gap-2 text-xs">
 	                            <Badge variant="secondary">Diagnóstico</Badge>
+	                            {diagnostics?.minFreeGb != null ? (
+	                              <Badge variant="outline">min free {Number(diagnostics.minFreeGb)}GB</Badge>
+	                            ) : null}
 	                            {diagnostics?.disk?.capacity ? (
 	                              <Badge variant="outline">{diagnostics.disk.capacity} disco</Badge>
 	                            ) : null}
@@ -1623,6 +1665,17 @@ export function UnitMonitor() {
                           />
                           <div className="mt-1 text-xs text-muted-foreground font-mono">
                             Preview: {maskRtspUrl(String(cameraEditor.rtspUrl || ''))}
+                          </div>
+                          <div className="mt-2 flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              type="button"
+                              onClick={convertRtspUrlToBasic}
+                              disabled={!parseRtspUrl(String(cameraEditor.rtspUrl || '').trim())}
+                            >
+                              Converter para modo simples
+                            </Button>
                           </div>
                         </div>
                       ) : (

@@ -70,7 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) {
       throw new Error(json?.error || json?.message || `HTTP ${res.status}`)
     }
-    // Refresh app state so useReplitAuth can pick up the new session cookie.
+
+    // Confirm session is actually established (cookie survived the proxy) before reloading.
+    const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
+    if (!meRes || !meRes.ok) {
+      throw new Error('Login OK, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
+    }
+
+    // Refresh app state so useReplitAuth picks up the new session cookie.
     window.location.href = '/'
   }
 
