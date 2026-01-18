@@ -616,8 +616,37 @@ export function InsumosModule() {
   const [offlineDialogOpen, setOfflineDialogOpen] = React.useState(false)
   const [offlineItems, setOfflineItems] = React.useState<OfflineQueueItem[]>([])
 
+  const DEBUG_UI_KEY = 'skincos.ui.debug.v1'
   const OFFLINE_QUEUE_KEY = 'skincos.insumos.offlineQueue.v1'
   const SHARE_HISTORY_KEY = 'skincos.insumos.shareHistory.v1'
+
+  const [debugUi, setDebugUi] = React.useState(false)
+
+  React.useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const forced = params.get('debug') === '1'
+      if (forced) {
+        setDebugUi(true)
+        return
+      }
+      setDebugUi(window.localStorage.getItem(DEBUG_UI_KEY) === '1')
+    } catch {
+      setDebugUi(false)
+    }
+  }, [])
+
+  const toggleDebugUi = React.useCallback(() => {
+    setDebugUi((cur) => {
+      const next = !cur
+      try {
+        window.localStorage.setItem(DEBUG_UI_KEY, next ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }, [])
 
   const canUseApi = !!health?.ok && !!health?.sheetsConfigured
   const isAuthed = !!user?.username
@@ -1607,14 +1636,15 @@ export function InsumosModule() {
         <div>
           <h2 className="text-2xl font-bold text-white">Insumos</h2>
           <div className="flex flex-wrap items-center gap-2 text-sm text-blue-200/80">
-            <span>API</span>
-            <span className="font-mono">/api/insumos/*</span>
-            {health?.ok ? <Badge variant={health.ok ? 'default' : 'destructive'}>{health.ok ? 'Online' : 'Offline'}</Badge> : null}
-            {isAuthed ? <Badge variant="default">Autenticado</Badge> : <Badge variant="secondary">Desconectado</Badge>}
+            {health?.ok ? <Badge variant="default">Online</Badge> : health ? <Badge variant="destructive">Offline</Badge> : null}
+            {isAuthed ? <Badge variant="default">Sessão ativa</Badge> : <Badge variant="secondary">Sessão ausente</Badge>}
             {offlineQueueCount > 0 ? (
               <button type="button" onClick={() => setOfflineDialogOpen(true)}>
-                <Badge variant="secondary">Fila offline: {offlineQueueCount}</Badge>
+                <Badge variant="secondary">Pendências: {offlineQueueCount}</Badge>
               </button>
+            ) : null}
+            {debugUi ? (
+              <Badge variant="secondary">Debug</Badge>
             ) : null}
           </div>
         </div>
@@ -1634,13 +1664,16 @@ export function InsumosModule() {
           {offlineQueueCount > 0 ? (
             <>
               <Button variant="outline" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                Fila
+                Pendências
               </Button>
               <Button variant="outline" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
                 Sincronizar
               </Button>
             </>
           ) : null}
+          <Button variant="ghost" size="sm" onClick={toggleDebugUi}>
+            {debugUi ? 'Ocultar detalhes' : 'Detalhes'}
+          </Button>
           <Button onClick={loadHealth} disabled={healthLoading}>
             {healthLoading ? 'Atualizando…' : 'Atualizar'}
           </Button>
@@ -1650,7 +1683,7 @@ export function InsumosModule() {
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Fila offline</DialogTitle>
+            <DialogTitle>Pendências de sincronização</DialogTitle>
             <DialogDescription>
               Operações salvas localmente quando a rede cai. Ao reconectar, clique em “Sincronizar”.
             </DialogDescription>
@@ -1685,77 +1718,118 @@ export function InsumosModule() {
             </div>
           </div>
 
-          <div className="overflow-auto rounded-xl border border-white/10">
-            <table className="min-w-full text-sm">
-              <thead className="bg-black/30 text-blue-100/80">
-                <tr>
-                  <th className="text-left p-3">Quando</th>
-                  <th className="text-left p-3">Método</th>
-                  <th className="text-left p-3">Endpoint</th>
-                  <th className="text-right p-3">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {offlineItems.map((it) => (
-                  <tr key={it.id} className="hover:bg-white/5">
-                    <td className="p-3 text-blue-100/70">{fmtAge(it.ts)}</td>
-                    <td className="p-3 text-blue-100/80 font-mono">{it.method}</td>
-                    <td className="p-3 text-blue-50 font-mono">{it.path}</td>
-                    <td className="p-3 text-right">
-                      <Button
-                        variant="outline"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(JSON.stringify(it, null, 2))
-                            toast.success('Copiado.')
-                          } catch (e: any) {
-                            toast.error(e?.message || 'Não foi possível copiar.')
-                          }
-                        }}
-                      >
-                        Copiar
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-                {!offlineItems.length ? (
+          {debugUi ? (
+            <div className="overflow-auto rounded-xl border border-white/10">
+              <table className="min-w-full text-sm">
+                <thead className="bg-black/30 text-blue-100/80">
                   <tr>
-                    <td className="p-3 text-blue-100/70" colSpan={4}>
-                      Sem itens pendentes.
-                    </td>
+                    <th className="text-left p-3">Quando</th>
+                    <th className="text-left p-3">Método</th>
+                    <th className="text-left p-3">Endpoint</th>
+                    <th className="text-right p-3">Ações</th>
                   </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {offlineItems.map((it) => (
+                    <tr key={it.id} className="hover:bg-white/5">
+                      <td className="p-3 text-blue-100/70">{fmtAge(it.ts)}</td>
+                      <td className="p-3 text-blue-100/80 font-mono">{it.method}</td>
+                      <td className="p-3 text-blue-50 font-mono">{it.path}</td>
+                      <td className="p-3 text-right">
+                        <Button
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(JSON.stringify(it, null, 2))
+                              toast.success('Copiado.')
+                            } catch (e: any) {
+                              toast.error(e?.message || 'Não foi possível copiar.')
+                            }
+                          }}
+                        >
+                          Copiar
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!offlineItems.length ? (
+                    <tr>
+                      <td className="p-3 text-blue-100/70" colSpan={4}>
+                        Sem itens pendentes.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
+              {offlineItems.length ? (
+                <div>
+                  Existem <span className="font-semibold text-blue-100">{offlineItems.length}</span> operações pendentes. Clique em
+                  “Sincronizar” quando estiver online.
+                </div>
+              ) : (
+                <div>Sem pendências.</div>
+              )}
+              <div className="mt-2">
+                <Button variant="outline" size="sm" onClick={toggleDebugUi}>
+                  Ver detalhes técnicos
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="glass-morphism border border-white/10 lg:col-span-2">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-white">Conexão</CardTitle>
+            <Button variant="ghost" size="sm" onClick={toggleDebugUi}>
+              {debugUi ? 'Ocultar detalhes' : 'Detalhes'}
+            </Button>
           </CardHeader>
           <CardContent className="space-y-3">
             {error ? (
               <div className="text-red-200">
-                Erro ao consultar <span className="font-mono">/api/insumos/health</span>: {error}
+                Erro de conexão com o serviço de Insumos. Tente novamente.
+                {debugUi ? (
+                  <div className="mt-1 text-xs text-blue-100/70">
+                    Endpoint: <span className="font-mono">/api/insumos/health</span> • {error}
+                  </div>
+                ) : null}
               </div>
             ) : health ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={health.ok ? 'default' : 'destructive'}>{health.ok ? 'OK' : 'NOK'}</Badge>
-                  <span className="text-sm text-blue-100/80">
-                    {health.service || 'insumos'} • {health.runtime || 'worker'}
-                  </span>
-                  <Badge variant={health.dbConfigured ? 'default' : 'secondary'}>D1: {health.dbConfigured ? 'on' : 'off'}</Badge>
-                  <Badge variant={health.sheetsConfigured ? 'default' : 'secondary'}>Sheets: {health.sheetsConfigured ? 'on' : 'off'}</Badge>
+                  <Badge variant={health.ok ? 'default' : 'destructive'}>{health.ok ? 'Online' : 'Offline'}</Badge>
+                  {health.sheetsConfigured ? (
+                    <Badge variant="default">Integração ativa</Badge>
+                  ) : (
+                    <Badge variant="secondary">Configuração pendente</Badge>
+                  )}
+                  {debugUi ? (
+                    <>
+                      <span className="text-sm text-blue-100/80">
+                        {health.service || 'insumos'} • {health.runtime || 'worker'}
+                      </span>
+                      <Badge variant={health.dbConfigured ? 'default' : 'secondary'}>D1: {health.dbConfigured ? 'on' : 'off'}</Badge>
+                      <Badge variant={health.sheetsConfigured ? 'default' : 'secondary'}>Sheets: {health.sheetsConfigured ? 'on' : 'off'}</Badge>
+                    </>
+                  ) : null}
                 </div>
 
-                {!health.sheetsConfigured && health.sheets?.missing?.length ? (
-                  <div className="text-sm text-blue-100/70">
-                    Para habilitar: configure <span className="font-mono">{health.sheets.missing.join(', ')}</span> no Worker.
-                  </div>
+                {!health.sheetsConfigured ? (
+                  debugUi && health.sheets?.missing?.length ? (
+                    <div className="text-sm text-blue-100/70">
+                      Para habilitar: configure <span className="font-mono">{health.sheets.missing.join(', ')}</span> no Worker.
+                    </div>
+                  ) : (
+                    <div className="text-sm text-blue-100/70">
+                      Este módulo ainda não está totalmente habilitado para esta conta.
+                    </div>
+                  )
                 ) : null}
               </div>
             ) : (
@@ -1769,9 +1843,12 @@ export function InsumosModule() {
                 isAuthed ? (
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="text-sm text-blue-100/80">
-                      Conectado como <span className="font-mono">{user?.username}</span>
-                      {user?.role ? <span> • <span className="font-mono">{user.role}</span></span> : null}
-                      {crmUser?.email ? <span> • <span className="font-mono">{crmUser.email}</span></span> : null}
+                      Conectado como{' '}
+                      <span className="font-semibold">
+                        {user?.displayName || user?.name || user?.username || 'Usuário'}
+                      </span>
+                      {user?.role ? <span> • {user.role}</span> : null}
+                      {debugUi && crmUser?.email ? <span> • <span className="font-mono">{crmUser.email}</span></span> : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <Button variant="secondary" onClick={loadMe}>
@@ -1793,7 +1870,10 @@ export function InsumosModule() {
                   </div>
                 )
               ) : (
-                <div className="text-sm text-blue-100/70">Módulo indisponível: integração Sheets não configurada no Worker.</div>
+                <div className="text-sm text-blue-100/70">
+                  Módulo indisponível no momento.
+                  {debugUi ? <span> (Sheets não configurado no Worker)</span> : null}
+                </div>
               )}
             </div>
           </CardContent>
