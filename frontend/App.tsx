@@ -119,16 +119,22 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
     { key: 'reports', label: 'Relatórios', icon: '📊', component: <Relatorios /> },
 ]
 
-export default function AppFunctionalNeatlab() {
-    const { isAuthenticated, user, signOut } = useAuth()
+	export default function AppFunctionalNeatlab() {
+	    const { isAuthenticated, user, signOut } = useAuth()
 
-    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
-    const [sidebarHover, setSidebarHover] = useState(false)
-    const [sidebarCanHover, setSidebarCanHover] = useState(false)
-    const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
-        try {
-            return localStorage.getItem('ui.sidebarPinned') === 'true'
-        } catch {
+	    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
+	    const [sidebarHover, setSidebarHover] = useState(false)
+	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
+	        try {
+	            return window.matchMedia('(hover: hover) and (pointer: fine)').matches
+	        } catch {
+	            return false
+	        }
+	    })
+	    const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
+	        try {
+	            return localStorage.getItem('ui.sidebarPinned') === 'true'
+	        } catch {
             return false
         }
     })

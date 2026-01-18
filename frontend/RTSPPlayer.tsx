@@ -45,6 +45,31 @@ export function RTSPPlayer({
     onPlayStateChangeRef.current = onPlayStateChange
   }, [onPlayStateChange])
 
+  // Detect stalled playback (black screen / no new segments) and auto-recover.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !isConnected) return
+    let lastTime = 0
+    let lastAdvanceAt = Date.now()
+    const t = window.setInterval(() => {
+      if (!videoRef.current) return
+      const v = videoRef.current
+      if (v.paused) return
+      const cur = v.currentTime || 0
+      if (cur > lastTime + 0.2) {
+        lastTime = cur
+        lastAdvanceAt = Date.now()
+        return
+      }
+      if (Date.now() - lastAdvanceAt > 5000) {
+        try { hlsRef.current?.startLoad() } catch { /* ignore */ }
+        try { v.play().catch(() => {}) } catch { /* ignore */ }
+        lastAdvanceAt = Date.now()
+      }
+    }, 1000)
+    return () => window.clearInterval(t)
+  }, [isConnected])
+
   useEffect(() => {
     const video = videoRef.current
     if (!video || !isConnected || !streamUrl) return
@@ -77,10 +102,13 @@ export function RTSPPlayer({
         // Aim for lower latency when using short HLS segments.
         lowLatencyMode: true,
         backBufferLength: 0,
-        maxBufferLength: 3,
+        maxBufferLength: 6,
         liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
-        maxLiveSyncPlaybackRate: 1.5
+        liveMaxLatencyDurationCount: 4,
+        maxLiveSyncPlaybackRate: 1.5,
+        fragLoadingTimeOut: 8000,
+        manifestLoadingTimeOut: 8000,
+        levelLoadingTimeOut: 8000
       })
 
       hlsRef.current = hls
@@ -88,13 +116,11 @@ export function RTSPPlayer({
       hls.attachMedia(video)
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log('HLS manifest parsed, ready to play')
         setError(null)
         attemptAutoplay().catch(() => {})
       })
 
       hls.on(Hls.Events.ERROR, (event, data) => {
-        console.error('HLS error:', data)
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
@@ -124,7 +150,6 @@ export function RTSPPlayer({
       // Safari native HLS support
       video.src = hlsUrl
       video.addEventListener('loadedmetadata', () => {
-        console.log('Native HLS loaded')
         setError(null)
         attemptAutoplay().catch(() => {})
       })

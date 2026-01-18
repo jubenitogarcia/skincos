@@ -603,6 +603,14 @@ const MEDIAMTX_LOG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_LOG ||
 const MEDIAMTX_HLS_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_HLS_TARGET || 'http://127.0.0.1:8888'
 const MEDIAMTX_WEBRTC_TARGET = process.env.CRM_UNIT_MONITOR_MEDIAMTX_WEBRTC_TARGET || 'http://127.0.0.1:8889'
 const MEDIAMTX_HLS_SEGMENT_DURATION = process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_DURATION || '1s'
+const MEDIAMTX_HLS_SEGMENT_COUNT = Math.max(2, Math.min(20, Number(process.env.CRM_UNIT_MONITOR_HLS_SEGMENT_COUNT || 3) || 3))
+const MEDIAMTX_HLS_VARIANT = process.env.CRM_UNIT_MONITOR_HLS_VARIANT || 'fmp4'
+const MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT = process.env.CRM_UNIT_MONITOR_SOURCE_ON_DEMAND_START_TIMEOUT || '30s'
+const MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER = process.env.CRM_UNIT_MONITOR_SOURCE_ON_DEMAND_CLOSE_AFTER || '5m'
+const MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS = String(process.env.CRM_UNIT_MONITOR_WEBRTC_ADDITIONAL_HOSTS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 const MEDIAMTX_PID_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_PID_FILE ||
     path.join(CORE_STATE_DIR, 'unit_monitor_mediamtx.pid')
 
@@ -610,6 +618,113 @@ const MEDIAMTX_PID_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_PID_FILE ||
 const UNIT_MONITOR_RECORDINGS_DIR = process.env.CRM_UNIT_MONITOR_RECORDINGS_DIR ||
     path.join(VAR_DIR, 'recordings', 'unit-monitor')
 const FFMPEG_BIN = process.env.CRM_UNIT_MONITOR_FFMPEG_BIN || process.env.FFMPEG_BIN || 'ffmpeg'
+const FFPROBE_BIN = process.env.CRM_UNIT_MONITOR_FFPROBE_BIN || process.env.FFPROBE_BIN || 'ffprobe'
+
+const UNIT_MONITOR_ICE_SERVERS = (() => {
+    try {
+        const raw = String(process.env.CRM_UNIT_MONITOR_ICE_SERVERS_JSON || '').trim()
+        if (!raw) return []
+        const data = JSON.parse(raw)
+        const arr = Array.isArray(data) ? data : (Array.isArray(data?.iceServers) ? data.iceServers : [])
+        return arr
+            .map((s) => {
+                if (!s || typeof s !== 'object') return null
+                const urls = s.urls
+                if (typeof urls === 'string' && urls.trim()) return { ...s, urls: urls.trim() }
+                if (Array.isArray(urls) && urls.filter(Boolean).length) return { ...s, urls: urls.filter(Boolean) }
+                return null
+            })
+            .filter(Boolean)
+    } catch {
+        return []
+    }
+})()
+
+function redactRtspSecrets(text) {
+    const s = String(text || '')
+    return s.replace(/rtsp:\/\/([^:/?#\s]+):([^@/\s]+)@/g, 'rtsp://$1:***@')
+}
+
+function maskRtspUrl(rtspUrl) {
+    const u = String(rtspUrl || '').trim()
+    if (!u) return u
+    try {
+        const parsed = new URL(u)
+        if (parsed.password) parsed.password = '***'
+        return parsed.toString()
+    } catch {
+        return redactRtspSecrets(u)
+    }
+}
+
+async function spawnCapture(bin, args, { timeoutMs = 15000, maxStdoutBytes = 256_000, maxStderrBytes = 256_000 } = {}) {
+    return await new Promise((resolve) => {
+        let stdout = ''
+        let stderr = ''
+        let timedOut = false
+
+        const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+        const killTimer = setTimeout(() => {
+            timedOut = true
+            try { proc.kill('SIGKILL') } catch { /* ignore */ }
+        }, timeoutMs)
+
+        proc.stdout.on('data', (chunk) => {
+            if (stdout.length >= maxStdoutBytes) return
+            stdout += chunk.toString('utf-8')
+            if (stdout.length > maxStdoutBytes) stdout = stdout.slice(0, maxStdoutBytes)
+        })
+        proc.stderr.on('data', (chunk) => {
+            if (stderr.length >= maxStderrBytes) return
+            stderr += chunk.toString('utf-8')
+            if (stderr.length > maxStderrBytes) stderr = stderr.slice(0, maxStderrBytes)
+        })
+
+        proc.on('close', (code, signal) => {
+            clearTimeout(killTimer)
+            resolve({ code, signal, stdout, stderr, timedOut })
+        })
+    })
+}
+
+async function readFileTail(filePath, maxBytes = 64 * 1024) {
+    try {
+        const st = await fs.stat(filePath)
+        if (!st.isFile()) return null
+        const start = Math.max(0, st.size - maxBytes)
+        const fh = await fs.open(filePath, 'r')
+        try {
+            const buf = Buffer.alloc(st.size - start)
+            await fh.read(buf, 0, buf.length, start)
+            return buf.toString('utf-8')
+        } finally {
+            await fh.close().catch(() => { })
+        }
+    } catch {
+        return null
+    }
+}
+
+async function dfInfo(targetPath) {
+    try {
+        const { code, stdout } = await spawnCapture('df', ['-k', targetPath], { timeoutMs: 3000 })
+        if (code !== 0) return null
+        const lines = String(stdout || '').trim().split('\n')
+        if (lines.length < 2) return { raw: stdout }
+        const cols = lines[lines.length - 1].trim().split(/\s+/)
+        // df output: Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
+        return {
+            raw: stdout,
+            availableKb: Number(cols[3]) || null,
+            usedKb: Number(cols[2]) || null,
+            totalKb: Number(cols[1]) || null,
+            capacity: cols[4] || null,
+            mount: cols[cols.length - 1] || null
+        }
+    } catch {
+        return null
+    }
+}
 
 let mediamtxProc = null
 let mediamtxProcFds = { out: null, err: null }
@@ -728,13 +843,16 @@ async function writeMediamtxConfig() {
     lines.push('hlsAddress: 127.0.0.1:8888')
     lines.push('hlsEncryption: no')
     lines.push("hlsAllowOrigins: ['*']")
-    lines.push('hlsVariant: mpegts')
-    lines.push('hlsSegmentCount: 3')
+    lines.push(`hlsVariant: ${yamlQuote(MEDIAMTX_HLS_VARIANT)}`)
+    lines.push(`hlsSegmentCount: ${MEDIAMTX_HLS_SEGMENT_COUNT}`)
     lines.push(`hlsSegmentDuration: ${MEDIAMTX_HLS_SEGMENT_DURATION}`)
     lines.push('webrtc: yes')
     lines.push('webrtcAddress: 127.0.0.1:8889')
     lines.push('webrtcEncryption: no')
     lines.push("webrtcAllowOrigins: ['*']")
+    if (MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS.length) {
+        lines.push(`webrtcAdditionalHosts: [${MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS.map(yamlQuote).join(', ')}]`)
+    }
     lines.push('paths:')
     for (const cam of cameras) {
         const p = cameraToMediamtxPath(cam)
@@ -742,8 +860,8 @@ async function writeMediamtxConfig() {
         lines.push(`    source: ${yamlQuote(cam.rtspUrl)}`)
         lines.push('    rtspTransport: tcp')
         lines.push('    sourceOnDemand: yes')
-        lines.push('    sourceOnDemandStartTimeout: 20s')
-        lines.push('    sourceOnDemandCloseAfter: 20s')
+        lines.push(`    sourceOnDemandStartTimeout: ${MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT}`)
+        lines.push(`    sourceOnDemandCloseAfter: ${MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER}`)
     }
     const config = lines.join('\n') + '\n'
     await fs.writeFile(MEDIAMTX_CONFIG_FILE, config)
@@ -1232,8 +1350,109 @@ app.get('/api/unit-monitor/streaming/status', async (req, res) => {
         hlsProxyBase: '/api/unit-monitor/hls',
         webrtcTarget: MEDIAMTX_WEBRTC_TARGET,
         webrtcProxyBase: '/api/unit-monitor/webrtc',
+        iceServers: UNIT_MONITOR_ICE_SERVERS,
         streams
     })
+})
+
+app.get('/api/unit-monitor/diagnostics', async (req, res) => {
+    const mediamtxPidFromFile = await readMediamtxPidFile()
+    const mediamtxPidRunning = mediamtxPidFromFile ? await isPidRunning(mediamtxPidFromFile) : false
+    const mediamtxTailRaw = await readFileTail(MEDIAMTX_LOG_FILE, 96 * 1024)
+    const mediamtxTail = mediamtxTailRaw ? redactRtspSecrets(mediamtxTailRaw) : mediamtxTailRaw
+    const disk = await dfInfo(UNIT_MONITOR_RECORDINGS_DIR)
+
+    const recorders = Array.from(unitMonitorRecorders.values()).map(r => ({
+        unit: r.unit,
+        cameraId: r.cameraId,
+        pid: r.pid,
+        startedAt: r.startedAt,
+        segmentSeconds: r.segmentSeconds,
+        outDir: r.outDir,
+        logFile: r.logFile,
+        lastError: r.lastError
+    }))
+
+    res.json({
+        ok: true,
+        ts: new Date().toISOString(),
+        recordingsDir: UNIT_MONITOR_RECORDINGS_DIR,
+        disk,
+        mediamtx: {
+            runtime: mediamtxRuntime,
+            pidFromFile: mediamtxPidFromFile,
+            pidRunning: mediamtxPidRunning,
+            logFile: MEDIAMTX_LOG_FILE,
+            logTail: mediamtxTail
+        },
+        recorders
+    })
+})
+
+app.post('/api/unit-monitor/rtsp/test', async (req, res) => {
+    try {
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const inputRtspUrl = String(body.rtspUrl || '').trim()
+        const rtspUrl = inputRtspUrl || buildRtspUrlFromParts({
+            host: body.host || body.ip,
+            port: body.port,
+            username: body.username,
+            password: body.password,
+            streamPath: body.streamPath
+        })
+
+        if (!rtspUrl || !rtspUrl.startsWith('rtsp://')) {
+            return res.status(400).json({ ok: false, error: 'rtspUrl inválida', maskedUrl: maskRtspUrl(rtspUrl) })
+        }
+
+        const timeoutMs = Math.max(5000, Math.min(30000, Number(body.timeoutMs || 15000) || 15000))
+        const timeoutUs = String(Math.floor(timeoutMs * 1000))
+
+        const args = [
+            '-v', 'error',
+            '-rtsp_transport', 'tcp',
+            '-stimeout', timeoutUs,
+            '-print_format', 'json',
+            '-show_format',
+            '-show_streams',
+            rtspUrl
+        ]
+
+        const { code, signal, stdout, stderr, timedOut } = await spawnCapture(FFPROBE_BIN, args, { timeoutMs: timeoutMs + 2000 })
+        if (timedOut) {
+            return res.status(408).json({ ok: false, error: 'Timeout ao testar RTSP', maskedUrl: maskRtspUrl(rtspUrl) })
+        }
+        if (code !== 0) {
+            const err = redactRtspSecrets(stderr || '') || `ffprobe failed (code=${code}${signal ? `, signal=${signal}` : ''})`
+            return res.status(400).json({ ok: false, error: err.trim().slice(0, 5000), maskedUrl: maskRtspUrl(rtspUrl) })
+        }
+
+        let parsed = null
+        try { parsed = JSON.parse(stdout) } catch { /* ignore */ }
+        const streams = Array.isArray(parsed?.streams) ? parsed.streams : []
+
+        const video = streams.find(s => s?.codec_type === 'video') || null
+        const audio = streams.find(s => s?.codec_type === 'audio') || null
+        const fpsRaw = String(video?.avg_frame_rate || video?.r_frame_rate || '')
+        const fps = (() => {
+            const m = fpsRaw.match(/^(\d+)\s*\/\s*(\d+)$/)
+            if (!m) return null
+            const a = Number(m[1])
+            const b = Number(m[2])
+            if (!a || !b) return null
+            return Math.round((a / b) * 100) / 100
+        })()
+
+        res.json({
+            ok: true,
+            maskedUrl: maskRtspUrl(rtspUrl),
+            video: video ? { codec: video.codec_name || null, width: video.width || null, height: video.height || null, fps } : null,
+            audio: audio ? { codec: audio.codec_name || null, sampleRate: audio.sample_rate ? Number(audio.sample_rate) : null, channels: audio.channels || null } : null,
+            format: parsed?.format || null
+        })
+    } catch (e) {
+        res.status(500).json({ ok: false, error: e?.message || String(e) })
+    }
 })
 
 app.post('/api/unit-monitor/streaming/start', async (req, res) => {

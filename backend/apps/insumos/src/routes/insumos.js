@@ -58,6 +58,74 @@ export async function handleInsumosRoutes({
         return { key: keys[0] || '', idx: undefined };
     };
 
+    const safeParseJson = (raw) => {
+        try {
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    };
+
+	    const maybeReplayIdempotency = async ({ action, entity, entityId }) => {
+	        if (!idempotencyKey) return null;
+	        if (!env?.DB) return null;
+	        try {
+	            const row = await env.DB.prepare(
+	                `SELECT before_json, after_json
+	                 FROM audit_log
+	                 WHERE idempotency_key = ?
+	                   AND action = ?
+	                   AND entity = ?
+	                   AND entity_id = ?
+	                 ORDER BY id DESC
+	                 LIMIT 1`
+	            )
+	                .bind(String(idempotencyKey), String(action || ''), String(entity || ''), String(entityId || ''))
+	                .first();
+	            if (!row) return null;
+	            const before = safeParseJson(row.before_json);
+	            const after = safeParseJson(row.after_json);
+	            // Best-effort: return a shape compatible with the route response.
+	            const out = { success: true, replay: true, idempotencyKey: String(idempotencyKey) };
+	            if (action === 'ENTRADA') {
+	                return withCORS(JSON.stringify({ ...out, estoqueAnterior: before?.estoqueAnterior ?? null, novoEstoque: after?.novoEstoque ?? null }), { status: 200 }, appOrigin);
+	            }
+	            if (action === 'BAIXA') {
+	                return withCORS(JSON.stringify({ ...out, estoqueAnterior: before?.estoqueAnterior ?? null, novoEstoque: after?.novoEstoque ?? null, alerta: after?.alerta ?? null }), { status: 200 }, appOrigin);
+	            }
+	            if (action === 'AJUSTE') {
+	                return withCORS(JSON.stringify({ ...out, estoqueAnterior: before?.estoqueAnterior ?? null, novoEstoque: after?.estoqueNovo ?? after?.novoEstoque ?? null }), { status: 200 }, appOrigin);
+	            }
+	            if (action === 'TRANSFERENCIA') {
+	                return withCORS(JSON.stringify({
+	                    ...out,
+	                    transferId: after?.transferId ?? null,
+	                    estoqueAnteriorOrigem: before?.estoqueAnteriorOrigem ?? null,
+	                    estoqueNovoOrigem: after?.estoqueNovoOrigem ?? null,
+	                    estoqueAnteriorDestino: before?.estoqueAnteriorDestino ?? null,
+	                    estoqueNovoDestino: after?.estoqueNovoDestino ?? null,
+	                }), { status: 200 }, appOrigin);
+	            }
+	            if (action === 'CREATE') {
+	                return withCORS(
+	                    JSON.stringify({ ...out, message: 'Insumo cadastrado', data: { registro: after?.registro ?? null } }),
+	                    { status: 201 },
+	                    appOrigin
+	                );
+	            }
+	            if (action === 'UPDATE') {
+	                return withCORS(JSON.stringify({ ...out, message: 'Insumo atualizado' }), { status: 200 }, appOrigin);
+	            }
+	            if (action === 'DELETE') {
+	                return withCORS(JSON.stringify({ ...out, message: 'Insumo removido' }), { status: 200 }, appOrigin);
+	            }
+	        } catch {
+	            return null;
+	        }
+	        return null;
+	    };
+
     // GET /insumos/headers
     if (url.pathname === "/insumos/headers" && request.method === "GET") {
         const values = await readSheet(spreadsheetId, `${insumosSheetName}!1:1`, accessToken);
@@ -79,6 +147,9 @@ export async function handleInsumosRoutes({
             if (!codigo || !quantidade) {
                 return withCORS(JSON.stringify({ success: false, error: "Código e quantidade são obrigatórios" }), { status: 400 }, appOrigin);
             }
+
+            const replay = await maybeReplayIdempotency({ action: 'ENTRADA', entity: 'INSUMO', entityId: codigo });
+            if (replay) return replay;
 
             const values = await readSheet(spreadsheetId, sheetRange, accessToken);
             const headers = values[0] || [];
@@ -170,6 +241,9 @@ export async function handleInsumosRoutes({
             if (!codigo || !quantidade) {
                 return withCORS(JSON.stringify({ success: false, error: "Código e quantidade são obrigatórios" }), { status: 400 }, appOrigin);
             }
+
+            const replay = await maybeReplayIdempotency({ action: 'BAIXA', entity: 'INSUMO', entityId: codigo });
+            if (replay) return replay;
 
             const values = await readSheet(spreadsheetId, sheetRange, accessToken);
             const headers = values[0] || [];
@@ -286,17 +360,20 @@ export async function handleInsumosRoutes({
             const roleUpper = String(auth?.user?.role || '').toUpperCase();
             const allowedUnits = Array.isArray(auth?.user?.allowedUnits) ? auth.user.allowedUnits.filter(Boolean) : [];
             const hasUnitAccess = (u) => roleUpper === 'ADMIN' || allowedUnits.length === 0 || allowedUnits.includes(u);
-            if (!hasUnitAccess(fromUnidade) || !hasUnitAccess(toUnidade)) {
-                return withCORS(
-                    JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits }),
-                    { status: 403 },
-                    appOrigin
-                );
-            }
+	            if (!hasUnitAccess(fromUnidade) || !hasUnitAccess(toUnidade)) {
+	                return withCORS(
+	                    JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits }),
+	                    { status: 403 },
+	                    appOrigin
+	                );
+	            }
 
-            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const headers = values[0] || [];
-            const headerMap = getHeaderMap(headers);
+	            const replay = await maybeReplayIdempotency({ action: 'TRANSFERENCIA', entity: 'INSUMO', entityId: codigo });
+	            if (replay) return replay;
+
+	            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
+	            const headers = values[0] || [];
+	            const headerMap = getHeaderMap(headers);
             const codeIdx = headerMap['código'];
             if (codeIdx === undefined) {
                 return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
@@ -421,13 +498,16 @@ export async function handleInsumosRoutes({
             if (!motivo) {
                 return withCORS(JSON.stringify({ success: false, error: "Motivo é obrigatório para ajuste" }), { status: 400 }, appOrigin);
             }
-            if (!Number.isFinite(Number(novoEstoque)) || Number(novoEstoque) < 0) {
-                return withCORS(JSON.stringify({ success: false, error: "novoEstoque inválido" }), { status: 400 }, appOrigin);
-            }
+	            if (!Number.isFinite(Number(novoEstoque)) || Number(novoEstoque) < 0) {
+	                return withCORS(JSON.stringify({ success: false, error: "novoEstoque inválido" }), { status: 400 }, appOrigin);
+	            }
 
-            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const headers = values[0] || [];
-            const headerMap = getHeaderMap(headers);
+	            const replay = await maybeReplayIdempotency({ action: 'AJUSTE', entity: 'MOVIMENTACAO', entityId: codigo });
+	            if (replay) return replay;
+
+	            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
+	            const headers = values[0] || [];
+	            const headerMap = getHeaderMap(headers);
             const codeIdx = headerMap['código'];
             if (codeIdx === undefined) {
                 return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
@@ -567,11 +647,14 @@ export async function handleInsumosRoutes({
                 throw new Error("Headers REGISTRO/CÓDIGO não encontrados");
             }
 
-            const codigoBarras = (body.codigoBarras || '').toString().trim();
-            if (!codigoBarras) return withCORS(JSON.stringify({ success: false, error: "Código de barras é obrigatório" }), { status: 400 }, appOrigin);
+	            const codigoBarras = (body.codigoBarras || '').toString().trim();
+	            if (!codigoBarras) return withCORS(JSON.stringify({ success: false, error: "Código de barras é obrigatório" }), { status: 400 }, appOrigin);
 
-            const exists = values.slice(1).some((r) => ((r?.[codigoIdx] || '').toString().trim() === codigoBarras));
-            if (exists) return withCORS(JSON.stringify({ success: false, error: "Código de barras já cadastrado" }), { status: 409 }, appOrigin);
+	            const replay = await maybeReplayIdempotency({ action: 'CREATE', entity: 'INSUMO', entityId: codigoBarras });
+	            if (replay) return replay;
+
+	            const exists = values.slice(1).some((r) => ((r?.[codigoIdx] || '').toString().trim() === codigoBarras));
+	            if (exists) return withCORS(JSON.stringify({ success: false, error: "Código de barras já cadastrado" }), { status: 409 }, appOrigin);
 
             const newRow = ensureRowLength([], headers.length);
             const registro = nextRegistroFromValues(values, registroIdx);
@@ -630,13 +713,17 @@ export async function handleInsumosRoutes({
             const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
             if (!auth.ok) return auth.response;
 
-            const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
-            if (!registro) return withCORS(JSON.stringify({ success: false, error: "Registro inválido" }), { status: 400 }, appOrigin);
+	            const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
+	            if (!registro) return withCORS(JSON.stringify({ success: false, error: "Registro inválido" }), { status: 400 }, appOrigin);
 
-            const body = await request.json().catch(() => ({}));
-            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const headers = values[0] || [];
-            const headerMap = getHeaderMap(headers);
+	            const body = await request.json().catch(() => ({}));
+
+	            const replay = await maybeReplayIdempotency({ action: 'UPDATE', entity: 'INSUMO', entityId: registro });
+	            if (replay) return replay;
+
+	            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
+	            const headers = values[0] || [];
+	            const headerMap = getHeaderMap(headers);
             const registroIdx = headerMap['registro'];
             if (registroIdx === undefined) throw new Error("Coluna REGISTRO não encontrada");
 
@@ -696,11 +783,15 @@ export async function handleInsumosRoutes({
             const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
             if (!auth.ok) return auth.response;
 
-            const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
-            if (!registro) return withCORS(JSON.stringify({ success: false, error: "Registro inválido" }), { status: 400 }, appOrigin);
-            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const headers = values[0] || [];
-            const headerMap = getHeaderMap(headers);
+	            const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
+	            if (!registro) return withCORS(JSON.stringify({ success: false, error: "Registro inválido" }), { status: 400 }, appOrigin);
+
+	            const replay = await maybeReplayIdempotency({ action: 'DELETE', entity: 'INSUMO', entityId: registro });
+	            if (replay) return replay;
+
+	            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
+	            const headers = values[0] || [];
+	            const headerMap = getHeaderMap(headers);
             const registroIdx = headerMap['registro'];
             if (registroIdx === undefined) throw new Error("Coluna REGISTRO não encontrada");
             const rowIndex = values.slice(1).findIndex((r) => ((r?.[registroIdx] || '').toString().trim() === registro));

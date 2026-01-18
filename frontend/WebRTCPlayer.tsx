@@ -13,6 +13,7 @@ import {
 interface WebRTCPlayerProps {
   whepUrl: string
   isConnected: boolean
+  iceServers?: RTCIceServer[]
   onPlayStateChange?: (isPlaying: boolean) => void
   onReady?: () => void
   onError?: (error: string) => void
@@ -39,7 +40,7 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 2500): P
   })
 }
 
-export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady, onError }: WebRTCPlayerProps) {
+export function WebRTCPlayer({ whepUrl, isConnected, iceServers, onPlayStateChange, onReady, onError }: WebRTCPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const onErrorRef = useRef(onError)
@@ -88,7 +89,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady,
     let onLoadedData: (() => void) | null = null
     let firstFrameSeen = false
     let videoFrameCbHandle: number | null = null
-    const pc = new RTCPeerConnection()
+    const pc = new RTCPeerConnection({ iceServers: Array.isArray(iceServers) ? iceServers : undefined })
     pcRef.current = pc
 
     pc.addTransceiver('video', { direction: 'recvonly' })
@@ -224,7 +225,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, onPlayStateChange, onReady,
         videoRef.current.srcObject = null
       }
     }
-  }, [whepUrl, isConnected, retryNonce])
+  }, [whepUrl, isConnected, retryNonce, iceServers])
 
   const togglePlay = async () => {
     const video = videoRef.current

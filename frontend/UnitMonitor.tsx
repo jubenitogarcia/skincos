@@ -122,6 +122,7 @@ interface StreamingStatus {
   hlsProxyBase?: string
   webrtcTarget?: string
   webrtcProxyBase?: string
+  iceServers?: RTCIceServer[]
   streams: Array<{
     unit: string
     cameraId: string
@@ -153,6 +154,37 @@ interface RecordingSegment {
   sizeBytes: number
   playbackUrl: string
   downloadUrl: string
+}
+
+interface RtspTestResult {
+  ok: boolean
+  maskedUrl?: string
+  video?: { codec: string | null; width: number | null; height: number | null; fps: number | null } | null
+  audio?: { codec: string | null; sampleRate: number | null; channels: number | null } | null
+  format?: any
+  error?: string
+}
+
+interface UnitMonitorDiagnostics {
+  ok: boolean
+  ts?: string
+  recordingsDir?: string
+  disk?: {
+    totalKb?: number | null
+    usedKb?: number | null
+    availableKb?: number | null
+    capacity?: string | null
+    mount?: string | null
+    raw?: string
+  } | null
+  mediamtx?: {
+    runtime?: { running?: boolean; pid?: number | null; startedAt?: string | null; lastError?: string | null; configPath?: string | null }
+    pidFromFile?: number | null
+    pidRunning?: boolean
+    logFile?: string
+    logTail?: string | null
+  }
+  recorders?: RtspRecorderStatus[]
 }
 
 const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
@@ -211,6 +243,11 @@ function formatBytes(sizeBytes: number): string {
   if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`
   if (sizeBytes < 1024 * 1024 * 1024) return `${(sizeBytes / 1024 / 1024).toFixed(2)} MB`
   return `${(sizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function kbToBytes(kb?: number | null): number {
+  if (!Number.isFinite(Number(kb))) return 0
+  return Math.max(0, Number(kb) * 1024)
 }
 
 function formatDuration(seconds: number): string {
@@ -397,8 +434,12 @@ export function UnitMonitor() {
   const [editingCameraId, setEditingCameraId] = useState<string | null>(null)
   const [liveTransport, setLiveTransport] = useState<'webrtc' | 'hls'>('webrtc')
   const [webrtcProbe, setWebrtcProbe] = useState(false)
-  const [, setWebrtcFailures] = useState(0)
+  const [webrtcFailures, setWebrtcFailures] = useState(0)
   const [webrtcRetryAt, setWebrtcRetryAt] = useState(0)
+  const [rtspTestBusy, setRtspTestBusy] = useState(false)
+  const [rtspTest, setRtspTest] = useState<RtspTestResult | null>(null)
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false)
+  const [diagnostics, setDiagnostics] = useState<UnitMonitorDiagnostics | null>(null)
 
   const recordTimerRef = useRef<number | null>(null)
 
@@ -412,6 +453,63 @@ export function UnitMonitor() {
       message
     }
     setLogs((prev) => [...prev.slice(-199), entry])
+  }
+
+  useEffect(() => {
+    setRtspTest(null)
+  }, [
+    cameraEditorAdvanced,
+    cameraEditor.host,
+    cameraEditor.port,
+    cameraEditor.username,
+    cameraEditor.password,
+    cameraEditor.streamPath,
+    cameraEditor.rtspUrl
+  ])
+
+  const testRtspConnection = async () => {
+    const basicRtspUrl = buildRtspUrlFromParts(cameraEditor)
+    const advancedRtspUrl = String(cameraEditor.rtspUrl || '').trim()
+    const rtspUrl = cameraEditorAdvanced ? advancedRtspUrl : basicRtspUrl
+
+    if (cameraEditorAdvanced && !rtspUrl) return toast.error('RTSP URL obrigatório')
+    if (!cameraEditorAdvanced) {
+      if (!String(cameraEditor.host || '').trim()) return toast.error('IP/Host obrigatório')
+      if (!String(cameraEditor.username || '').trim()) return toast.error('Usuário obrigatório')
+      if (!String(cameraEditor.password || '').trim()) return toast.error('Senha obrigatória')
+    }
+
+    setRtspTestBusy(true)
+    setRtspTest(null)
+    try {
+      const payload = cameraEditorAdvanced
+        ? { rtspUrl }
+        : {
+            host: String(cameraEditor.host || '').trim(),
+            port: Number(cameraEditor.port || 554) || 554,
+            username: String(cameraEditor.username || '').trim(),
+            password: String(cameraEditor.password || '').trim(),
+            streamPath: normalizeStreamPath(cameraEditor.streamPath || 'stream1')
+          }
+
+      const result = await apiJson<RtspTestResult>('/api/unit-monitor/rtsp/test', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
+      setRtspTest(result)
+      addLog('STATUS', `RTSP OK: ${result.maskedUrl || maskRtspUrl(rtspUrl)}`)
+      toast.success('RTSP OK')
+    } catch (e: any) {
+      let msg = e?.message || String(e)
+      let json: any = null
+      try { json = JSON.parse(msg) } catch { /* ignore */ }
+      if (json && typeof json === 'object') msg = json.error || msg
+      setRtspTest({ ok: false, error: msg, maskedUrl: json?.maskedUrl })
+      addLog('ERROR', `RTSP test falhou: ${msg}`)
+      toast.error('Falha ao testar RTSP')
+    } finally {
+      setRtspTestBusy(false)
+    }
   }
 
   const upsertCamera = () => {
@@ -537,6 +635,16 @@ export function UnitMonitor() {
   const refreshStreamingStatus = async () => {
     const data = await apiJson<StreamingStatus>('/api/unit-monitor/streaming/status')
     setStreamingStatus(data)
+  }
+
+  const refreshDiagnostics = async () => {
+    setDiagnosticsBusy(true)
+    try {
+      const data = await apiJson<UnitMonitorDiagnostics>('/api/unit-monitor/diagnostics')
+      setDiagnostics(data)
+    } finally {
+      setDiagnosticsBusy(false)
+    }
   }
 
   const refreshRtspRecorders = async () => {
@@ -1372,15 +1480,18 @@ export function UnitMonitor() {
                       {streamingStatus?.lastError ? (
                         <div className="text-xs text-red-400">Erro: {streamingStatus.lastError}</div>
                       ) : null}
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={() => refreshStreamingStatus().catch(() => {})} variant="outline">
-                          Atualizar
-                        </Button>
-                        {!streamingStatus?.running ? (
-                          <>
-                            <Button size="sm" onClick={startStreamingGateway}>
-                              Salvar e iniciar
-                            </Button>
+	                      <div className="flex gap-2">
+	                        <Button size="sm" onClick={() => refreshStreamingStatus().catch(() => {})} variant="outline">
+	                          Atualizar
+	                        </Button>
+	                        <Button size="sm" onClick={() => refreshDiagnostics().catch(() => {})} variant="outline" disabled={diagnosticsBusy}>
+	                          {diagnosticsBusy ? 'Diagnóstico…' : 'Diagnóstico'}
+	                        </Button>
+	                        {!streamingStatus?.running ? (
+	                          <>
+	                            <Button size="sm" onClick={startStreamingGateway}>
+	                              Salvar e iniciar
+	                            </Button>
                           </>
                         ) : (
                           <Button size="sm" variant="outline" onClick={stopStreamingGateway}>
@@ -1388,11 +1499,40 @@ export function UnitMonitor() {
                           </Button>
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Dica: salve a config da unidade (câmeras + retenção) antes de iniciar.
-                      </div>
-                    </CardContent>
-                  </Card>
+	                      <div className="text-xs text-muted-foreground">
+	                        Dica: salve a config da unidade (câmeras + retenção) antes de iniciar.
+	                      </div>
+	                      {diagnostics ? (
+	                        <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.04] p-3">
+	                          <div className="flex flex-wrap items-center gap-2 text-xs">
+	                            <Badge variant="secondary">Diagnóstico</Badge>
+	                            {diagnostics?.disk?.capacity ? (
+	                              <Badge variant="outline">{diagnostics.disk.capacity} disco</Badge>
+	                            ) : null}
+	                            {diagnostics?.disk?.availableKb != null ? (
+	                              <Badge variant="outline">{formatBytes(kbToBytes(diagnostics.disk.availableKb))} livre</Badge>
+	                            ) : null}
+	                            {diagnostics?.mediamtx?.pidRunning ? (
+	                              <Badge>MediaMTX OK</Badge>
+	                            ) : (
+	                              <Badge variant="outline">MediaMTX?</Badge>
+	                            )}
+	                          </div>
+	                          {diagnostics?.mediamtx?.logTail ? (
+	                            <ScrollArea className="h-32 rounded-md border border-white/10 bg-black/30 p-2">
+	                              <pre className="whitespace-pre-wrap break-words text-[10px] text-blue-100/80">
+	                                {diagnostics.mediamtx.logTail}
+	                              </pre>
+	                            </ScrollArea>
+	                          ) : (
+	                            <div className="text-xs text-muted-foreground">
+	                              Sem logs (arquivo não encontrado ou vazio): {diagnostics?.mediamtx?.logFile || '—'}
+	                            </div>
+	                          )}
+	                        </div>
+	                      ) : null}
+	                    </CardContent>
+	                  </Card>
 
                   <Card>
                     <CardHeader className="pb-3">
@@ -1481,6 +1621,9 @@ export function UnitMonitor() {
                             onChange={(e) => setCameraEditor((p) => ({ ...p, rtspUrl: e.target.value }))}
                             placeholder="rtsp://user:pass@IP:554/stream1"
                           />
+                          <div className="mt-1 text-xs text-muted-foreground font-mono">
+                            Preview: {maskRtspUrl(String(cameraEditor.rtspUrl || ''))}
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -1548,6 +1691,20 @@ export function UnitMonitor() {
                         </>
                       )}
 
+                      {rtspTestBusy ? (
+                        <div className="text-xs text-muted-foreground">Testando RTSP…</div>
+                      ) : rtspTest ? (
+                        rtspTest.ok ? (
+                          <div className="text-xs text-emerald-400">
+                            RTSP OK{rtspTest.video ? ` • ${rtspTest.video.codec || 'vídeo'} • ${rtspTest.video.width || '?'}x${rtspTest.video.height || '?'} • ${rtspTest.video.fps || '?'}fps` : ''}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-red-400">
+                            RTSP falhou: {rtspTest.error || 'erro'}
+                          </div>
+                        )
+                      ) : null}
+
                       <div className="flex items-center justify-between">
                         <Label className="text-sm">Enabled</Label>
                         <Switch
@@ -1556,6 +1713,9 @@ export function UnitMonitor() {
                         />
                       </div>
                       <div className="flex gap-2">
+                        <Button size="sm" variant="outline" disabled={rtspTestBusy} onClick={() => testRtspConnection().catch(() => {})}>
+                          {rtspTestBusy ? 'Testando…' : 'Testar RTSP'}
+                        </Button>
                         <Button size="sm" onClick={upsertCamera}>
                           {editingCameraId ? 'Salvar edição' : 'Adicionar'}
                         </Button>
@@ -1645,14 +1805,15 @@ export function UnitMonitor() {
 		                      ) : null}
 
 		                      <div className="relative">
-		                        <div className={showWebrtc ? '' : 'absolute inset-0 opacity-0 pointer-events-none'}>
-		                          <WebRTCPlayer
-		                            whepUrl={whepUrl}
-		                            isConnected={shouldConnectWebrtc}
-		                            onReady={handleWebrtcReady}
-		                            onError={handleWebrtcError}
-		                          />
-		                        </div>
+			                        <div className={showWebrtc ? '' : 'absolute inset-0 opacity-0 pointer-events-none'}>
+			                          <WebRTCPlayer
+			                            whepUrl={whepUrl}
+			                            isConnected={shouldConnectWebrtc}
+			                            iceServers={streamingStatus?.iceServers}
+			                            onReady={handleWebrtcReady}
+			                            onError={handleWebrtcError}
+			                          />
+			                        </div>
 		                        {showHls ? (
 		                          <RTSPPlayer
 		                            streamUrl={hlsUrl}
