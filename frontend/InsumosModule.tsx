@@ -1494,7 +1494,7 @@ export function InsumosModule() {
     if (activeTab === 'perfil') void loadMe()
     if (activeTab === 'backup') void loadBackups()
     if (activeTab === 'audit') void loadAudit()
-  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadInsights, loadMe, loadMovimentacoes, loadOverview])
+  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadInsights, loadMe, loadMovimentacoes, loadOverview, loadShareHistory])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
