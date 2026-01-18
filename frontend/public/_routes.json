@@ -3,7 +3,8 @@
     "include": [
         "/api/health",
         "/api/insumos",
-        "/api/insumos/*"
+        "/api/insumos/*",
+        "/share"
     ],
     "exclude": []
 }

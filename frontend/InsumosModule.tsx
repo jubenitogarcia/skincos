@@ -169,6 +169,13 @@ type MovReport = {
   movimentos?: Movimentacao[]
 }
 
+type SharePayload = {
+  title?: string
+  text?: string
+  url?: string
+  files?: string[]
+}
+
 type ApiError = {
   error?: string
   message?: string
@@ -490,6 +497,8 @@ export function InsumosModule() {
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
   const [shortcutHint, setShortcutHint] = React.useState<string | null>(null)
   const quickSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
+  const [shareHidden, setShareHidden] = React.useState(false)
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
@@ -657,6 +666,42 @@ export function InsumosModule() {
         setTimeout(() => {
           quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }, 250)
+      }
+
+      const shareTitle = params.get('shareTitle') || ''
+      const shareText = params.get('shareText') || ''
+      const shareUrl = params.get('shareUrl') || ''
+      const shareFilesRaw = params.get('shareFiles') || ''
+      const shareFiles = shareFilesRaw
+        ? shareFilesRaw
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : []
+      const hasShare = Boolean(shareTitle || shareText || shareUrl || shareFiles.length)
+
+      if (hasShare) {
+        setSharePayload({
+          title: shareTitle || undefined,
+          text: shareText || undefined,
+          url: shareUrl || undefined,
+          files: shareFiles.length ? shareFiles : undefined
+        })
+        setShareHidden(false)
+        setActiveTab('insumos')
+        setCreateOpen(true)
+        setShortcutHint('Compartilhado')
+        if (shareTitle) setCreateProduto((prev) => (prev ? prev : shareTitle))
+        if (shareText) setCreateEspecificacao((prev) => (prev ? prev : shareText))
+        if (shareUrl) setCreateFonte((prev) => (prev ? prev : shareUrl))
+        if (shareFiles.length) {
+          const filesSummary = `Arquivos: ${shareFiles.join(', ')}`
+          setCreateFonte((prev) => (prev ? prev : filesSummary))
+        }
+
+        ;['shareTitle', 'shareText', 'shareUrl', 'shareFiles'].forEach((k) => params.delete(k))
+        const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash || ''}`
+        window.history.replaceState({}, '', next)
       }
     } catch {
       // ignore
@@ -2157,6 +2202,44 @@ export function InsumosModule() {
             </TabsContent>
 
             <TabsContent value="insumos" className="mt-4 space-y-3">
+              {sharePayload && !shareHidden ? (
+                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-blue-50 font-semibold">Compartilhamento recebido</div>
+                    <Button variant="secondary" size="sm" onClick={() => setShareHidden(true)}>
+                      Fechar
+                    </Button>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {sharePayload.title ? (
+                      <div>
+                        <span className="text-blue-200/70">Título:</span> {sharePayload.title}
+                      </div>
+                    ) : null}
+                    {sharePayload.text ? (
+                      <div>
+                        <span className="text-blue-200/70">Texto:</span> {sharePayload.text}
+                      </div>
+                    ) : null}
+                    {sharePayload.url ? (
+                      <div className="truncate">
+                        <span className="text-blue-200/70">Link:</span>{' '}
+                        <a className="underline" href={sharePayload.url} target="_blank" rel="noreferrer">
+                          {sharePayload.url}
+                        </a>
+                      </div>
+                    ) : null}
+                    {sharePayload.files && sharePayload.files.length ? (
+                      <div>
+                        <span className="text-blue-200/70">Arquivos:</span> {sharePayload.files.join(', ')}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 text-xs text-blue-200/60">
+                    Preenchi o cadastro com os dados compartilhados. Revise antes de salvar.
+                  </div>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Input

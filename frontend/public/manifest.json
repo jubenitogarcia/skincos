@@ -16,9 +16,21 @@
       "purpose": "any"
     },
     {
+      "src": "/icons/insumos-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/icons/insumos-icon-512.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/insumos-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ],
@@ -30,9 +42,9 @@
       "url": "/?module=insumos&action=entrada",
       "icons": [
         {
-          "src": "/icons/shortcut-entrada.svg",
+          "src": "/icons/shortcut-entrada.png",
           "sizes": "192x192",
-          "type": "image/svg+xml"
+          "type": "image/png"
         }
       ]
     },
@@ -43,9 +55,9 @@
       "url": "/?module=insumos&action=saida",
       "icons": [
         {
-          "src": "/icons/shortcut-saida.svg",
+          "src": "/icons/shortcut-saida.png",
           "sizes": "192x192",
-          "type": "image/svg+xml"
+          "type": "image/png"
         }
       ]
     },
@@ -56,11 +68,31 @@
       "url": "/?module=insumos&scanner=1",
       "icons": [
         {
-          "src": "/icons/shortcut-scanner.svg",
+          "src": "/icons/shortcut-scanner.png",
           "sizes": "192x192",
-          "type": "image/svg+xml"
+          "type": "image/png"
         }
       ]
     }
-  ]
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "media",
+          "accept": [
+            "image/*",
+            "application/pdf",
+            "text/*"
+          ]
+        }
+      ]
+    }
+  }
 }

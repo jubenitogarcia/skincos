@@ -175,7 +175,11 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
                 params.has('insumosAction') ||
                 params.has('insumos') ||
                 params.has('cadastro') ||
-                params.has('scanner')
+                params.has('scanner') ||
+                params.has('shareTitle') ||
+                params.has('shareText') ||
+                params.has('shareUrl') ||
+                params.has('shareFiles')
             if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((m) => m.key === requested)) {
                 setActive(requested)
             } else if (wantsInsumosShortcut && UNLOCKED_MODULE_KEYS.has('insumos')) {
