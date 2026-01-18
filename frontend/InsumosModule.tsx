@@ -500,6 +500,7 @@ export function InsumosModule() {
     'overview' | 'insumos' | 'lotes' | 'mov' | 'insights' | 'perfil' | 'backup' | 'audit'
   >('overview')
 
+  const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickScanOpen, setQuickScanOpen] = React.useState(false)
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
@@ -507,7 +508,6 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
-  const [shortcutHint, setShortcutHint] = React.useState<string | null>(null)
   const quickSectionRef = React.useRef<HTMLDivElement | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
@@ -744,18 +744,18 @@ export function InsumosModule() {
       if (wantsCadastro) {
         setActiveTab('insumos')
         setCreateOpen(true)
-        setShortcutHint('Cadastro')
       }
 
       if (wantsScanner) {
         setActiveTab('overview')
         setQuickScanOpen(true)
-        setShortcutHint('Scanner')
       }
 
       if (wantsQuickAction) {
         setActiveTab('overview')
-        setShortcutHint(actionLabel)
+        if (actionLabel === 'Entrada') setQuickOp('ENTRADA')
+        else if (actionLabel === 'Saída') setQuickOp('BAIXA')
+        else if (actionLabel === 'Transferência') setQuickOp('TRANSFERENCIA')
         setTimeout(() => {
           quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }, 250)
@@ -780,7 +780,6 @@ export function InsumosModule() {
         setShareHidden(false)
         setActiveTab('insumos')
         setCreateOpen(true)
-        setShortcutHint('Compartilhado')
         if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
         if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
         if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
@@ -855,7 +854,6 @@ export function InsumosModule() {
     setSharePayload(payload)
     setShareSourceId(payload.id || null)
     setShareHidden(false)
-    setShortcutHint('Compartilhado')
     if (payload.title) setCreateProduto(payload.title)
     if (payload.text) setCreateEspecificacao(payload.text)
     if (payload.url) setCreateFonte(payload.url)
@@ -1634,10 +1632,12 @@ export function InsumosModule() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-white">Insumos</h2>
           <div className="flex flex-wrap items-center gap-2 text-sm text-blue-200/80">
             {health?.ok ? <Badge variant="default">Online</Badge> : health ? <Badge variant="destructive">Offline</Badge> : null}
             {isAuthed ? <Badge variant="default">Sessão ativa</Badge> : <Badge variant="secondary">Sessão ausente</Badge>}
+            {health ? (
+              health.sheetsConfigured ? <Badge variant="default">Integração ativa</Badge> : <Badge variant="secondary">Integração pendente</Badge>
+            ) : null}
             {offlineQueueCount > 0 ? (
               <button type="button" onClick={() => setOfflineDialogOpen(true)}>
                 <Badge variant="secondary">Pendências: {offlineQueueCount}</Badge>
@@ -1782,219 +1782,46 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="glass-morphism border border-white/10 lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-white">Conexão</CardTitle>
-            <Button variant="ghost" size="sm" onClick={toggleDebugUi}>
-              {debugUi ? 'Ocultar detalhes' : 'Detalhes'}
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {error ? (
-              <div className="text-red-200">
-                Erro de conexão com o serviço de Insumos. Tente novamente.
-                {debugUi ? (
-                  <div className="mt-1 text-xs text-blue-100/70">
-                    Endpoint: <span className="font-mono">/api/insumos/health</span> • {error}
-                  </div>
-                ) : null}
-              </div>
-            ) : health ? (
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={health.ok ? 'default' : 'destructive'}>{health.ok ? 'Online' : 'Offline'}</Badge>
-                  {health.sheetsConfigured ? (
-                    <Badge variant="default">Integração ativa</Badge>
-                  ) : (
-                    <Badge variant="secondary">Configuração pendente</Badge>
-                  )}
-                  {debugUi ? (
-                    <>
-                      <span className="text-sm text-blue-100/80">
-                        {health.service || 'insumos'} • {health.runtime || 'worker'}
-                      </span>
-                      <Badge variant={health.dbConfigured ? 'default' : 'secondary'}>D1: {health.dbConfigured ? 'on' : 'off'}</Badge>
-                      <Badge variant={health.sheetsConfigured ? 'default' : 'secondary'}>Sheets: {health.sheetsConfigured ? 'on' : 'off'}</Badge>
-                    </>
-                  ) : null}
-                </div>
-
-                {!health.sheetsConfigured ? (
-                  debugUi && health.sheets?.missing?.length ? (
-                    <div className="text-sm text-blue-100/70">
-                      Para habilitar: configure <span className="font-mono">{health.sheets.missing.join(', ')}</span> no Worker.
-                    </div>
-                  ) : (
-                    <div className="text-sm text-blue-100/70">
-                      Este módulo ainda não está totalmente habilitado para esta conta.
-                    </div>
-                  )
-                ) : null}
-              </div>
-            ) : (
-              <div className="text-blue-100/70">{healthLoading ? 'Carregando…' : 'Sem dados.'}</div>
-            )}
-
-            <div className="border-t border-white/10 pt-3">
-              {authLoading ? (
-                <div className="text-blue-100/70">Verificando sessão…</div>
-              ) : canUseApi ? (
-                isAuthed ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-sm text-blue-100/80">
-                      Conectado como{' '}
-                      <span className="font-semibold">
-                        {user?.displayName || user?.name || user?.username || 'Usuário'}
-                      </span>
-                      {user?.role ? <span> • {user.role}</span> : null}
-                      {debugUi && crmUser?.email ? <span> • <span className="font-mono">{crmUser.email}</span></span> : null}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="secondary" onClick={loadMe}>
-                        Atualizar sessão
-                      </Button>
-                      <Button variant="destructive" onClick={logout}>
-                        Sair
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-sm text-blue-100/70">
-                      Sessão do Insumos não encontrada. Faça login no CRM para acessar este módulo.
-                    </div>
-                    <Button variant="secondary" onClick={() => { window.location.href = '/' }}>
-                      Ir para login
-                    </Button>
-                  </div>
-                )
-              ) : (
-                <div className="text-sm text-blue-100/70">
-                  Módulo indisponível no momento.
-                  {debugUi ? <span> (Sheets não configurado no Worker)</span> : null}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="glass-morphism border border-white/10">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-white">Ações rápidas</CardTitle>
-            {shortcutHint ? <Badge variant="secondary">Atalho: {shortcutHint}</Badge> : null}
-          </CardHeader>
-          <CardContent ref={quickSectionRef} className="space-y-3">
-            <div className="space-y-2">
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                <div className="flex items-center gap-2">
-                  <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
-                  <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
-                    {quickScanOpen ? 'Fechar' : 'Scan'}
-                  </Button>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
-                  <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Novo estoque</div>
-                  <Input value={quickNovoEstoque} onChange={(e) => setQuickNovoEstoque(e.target.value)} type="number" placeholder="(somente ajuste)" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Origem</div>
-                  <Select value={transferFrom} onValueChange={setTransferFrom}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unidadeOptions.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {unidadeLabel(u)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Destino</div>
-                  <Select value={transferTo} onValueChange={setTransferTo}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unidadeOptions.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {unidadeLabel(u)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Motivo (ajuste)</div>
-                <Input value={quickMotivo} onChange={(e) => setQuickMotivo(e.target.value)} />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Observações</div>
-                <Input value={quickObs} onChange={(e) => setQuickObs(e.target.value)} placeholder="opcional" />
-              </div>
-            </div>
-
-            {quickScanOpen ? (
-              <BarcodeScannerInline
-                onDetected={(code) => {
-                  setQuickCodigo(code)
-                  setQuickScanOpen(false)
-                  toast.success('Código detectado')
-                }}
-                onClose={() => setQuickScanOpen(false)}
-              />
-            ) : null}
-
-            <div className="grid grid-cols-2 gap-2">
-              <Button onClick={() => runQuickAction('ENTRADA')} disabled={quickActionLoading || !isAuthed}>
-                Entrada
-              </Button>
-              <Button variant="secondary" onClick={() => runQuickAction('BAIXA')} disabled={quickActionLoading || !isAuthed}>
-                Baixa
-              </Button>
-              <Button variant="outline" onClick={() => runQuickAction('AJUSTE')} disabled={quickActionLoading || !isAuthed}>
-                Ajuste
-              </Button>
-              <Button variant="secondary" onClick={runTransfer} disabled={quickActionLoading || !isAuthed}>
-                Transferir
-              </Button>
-            </div>
-
-            <div className="text-xs text-blue-200/60">
-              Export:{' '}
-              <a className="underline" href={`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`} target="_blank" rel="noreferrer">
-                insumos.csv
-              </a>{' '}
-              •{' '}
-              <a
-                className="underline"
-                href={`/api/insumos/export/movimentacoes.csv?unidade=${encodeURIComponent(unidade)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                movimentacoes.csv
-              </a>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       <Card className="glass-morphism border border-white/10">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-white">Operação</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                setActiveTab('overview')
+                setQuickOp('ENTRADA')
+                setTimeout(() => quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+              }}
+              disabled={!isAuthed}
+            >
+              Entrada
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setActiveTab('overview')
+                setQuickOp('BAIXA')
+                setTimeout(() => quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+              }}
+              disabled={!isAuthed}
+            >
+              Saída
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setActiveTab('overview')
+                setQuickOp('TRANSFERENCIA')
+                setTimeout(() => quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+              }}
+              disabled={!isAuthed}
+            >
+              Transferência
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
@@ -2010,6 +1837,158 @@ export function InsumosModule() {
             </TabsList>
 
             <TabsContent value="overview" className="mt-4 space-y-3">
+              <div ref={quickSectionRef} className="rounded-xl border border-white/10 bg-black/10 p-4 space-y-3">
+                {!isAuthed ? (
+                  <div className="text-sm text-blue-100/70">Faça login no CRM para usar as operações de Insumos.</div>
+                ) : null}
+
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm text-blue-100/80 font-semibold">Operação rápida</div>
+                  {quickOp ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setQuickOp(null)
+                        setQuickScanOpen(false)
+                      }}
+                    >
+                      Fechar
+                    </Button>
+                  ) : null}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <Button size="sm" onClick={() => setQuickOp('ENTRADA')} disabled={!isAuthed}>
+                    Entrada
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => setQuickOp('BAIXA')} disabled={!isAuthed}>
+                    Saída
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setQuickOp('TRANSFERENCIA')} disabled={!isAuthed}>
+                    Transferência
+                  </Button>
+                </div>
+
+                {quickOp ? (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
+                      <div className="flex items-center gap-2">
+                        <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
+                        <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
+                          {quickScanOpen ? 'Fechar' : 'Scan'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
+                        <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
+                      </div>
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Observações</div>
+                        <Input value={quickObs} onChange={(e) => setQuickObs(e.target.value)} placeholder="opcional" />
+                      </div>
+                    </div>
+
+                    {quickOp === 'TRANSFERENCIA' ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-xs text-blue-200/70 mb-1">Origem</div>
+                          <Select value={transferFrom} onValueChange={setTransferFrom}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {unidadeOptions.map((u) => (
+                                <SelectItem key={u} value={u}>
+                                  {unidadeLabel(u)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <div className="text-xs text-blue-200/70 mb-1">Destino</div>
+                          <Select value={transferTo} onValueChange={setTransferTo}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {unidadeOptions.map((u) => (
+                                <SelectItem key={u} value={u}>
+                                  {unidadeLabel(u)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {quickScanOpen ? (
+                      <BarcodeScannerInline
+                        onDetected={(code) => {
+                          setQuickCodigo(code)
+                          setQuickScanOpen(false)
+                          toast.success('Código detectado')
+                        }}
+                        onClose={() => setQuickScanOpen(false)}
+                      />
+                    ) : null}
+
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setQuickOp(null)
+                          setQuickScanOpen(false)
+                        }}
+                      >
+                        Cancelar
+                      </Button>
+                      {quickOp === 'TRANSFERENCIA' ? (
+                        <Button onClick={runTransfer} disabled={quickActionLoading || !isAuthed}>
+                          Confirmar transferência
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={() => runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')}
+                          disabled={quickActionLoading || !isAuthed}
+                        >
+                          {quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída'}
+                        </Button>
+                      )}
+                    </div>
+
+                    {debugUi ? (
+                      <div className="text-xs text-blue-200/60">
+                        Export:{' '}
+                        <a
+                          className="underline"
+                          href={`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          insumos.csv
+                        </a>{' '}
+                        •{' '}
+                        <a
+                          className="underline"
+                          href={`/api/insumos/export/movimentacoes.csv?unidade=${encodeURIComponent(unidade)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          movimentacoes.csv
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm text-blue-100/70">
                   Dashboard simples e direto (padrão do Insumos original): KPIs, gráficos e ações recomendadas.
