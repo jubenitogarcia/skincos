@@ -1,0 +1,6 @@
+/insumos           /?module=insumos 302
+/cadastro          /?module=insumos&insumosTab=insumos&action=cadastro 302
+/scanner           /?module=insumos&scanner=1 302
+/historico         /?module=insumos&insumosTab=mov 302
+/alertas           /?module=insumos&insumosTab=insights 302
+/lotes             /?module=insumos&insumosTab=lotes 302

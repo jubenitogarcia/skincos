@@ -1,0 +1,66 @@
+{
+  "name": "SKINCOS CRM",
+  "short_name": "SKINCOS",
+  "description": "CRM modular com Insumos e Unit Monitor.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#0b1220",
+  "background_color": "#0b1220",
+  "icons": [
+    {
+      "src": "/icons/insumos-icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/insumos-icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Registrar Entrada",
+      "short_name": "Entrada",
+      "description": "Entrada rápida de insumos",
+      "url": "/?module=insumos&action=entrada",
+      "icons": [
+        {
+          "src": "/icons/shortcut-entrada.svg",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Registrar Saída",
+      "short_name": "Saída",
+      "description": "Saída rápida de insumos",
+      "url": "/?module=insumos&action=saida",
+      "icons": [
+        {
+          "src": "/icons/shortcut-saida.svg",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Escanear Código",
+      "short_name": "Scanner",
+      "description": "Abrir scanner do Insumos",
+      "url": "/?module=insumos&scanner=1",
+      "icons": [
+        {
+          "src": "/icons/shortcut-scanner.svg",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}
