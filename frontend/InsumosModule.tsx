@@ -670,51 +670,6 @@ export function InsumosModule() {
     }
   }, [SHARE_HISTORY_KEY])
 
-  React.useEffect(() => {
-    if (!sharePayload) return
-    const baseId = shareSourceId || `local-${Date.now()}`
-    if (shareLoggedRef.current === baseId) return
-    if (shareHistory.some((item) => item.id === baseId)) return
-    shareLoggedRef.current = baseId
-    const item: ShareHistoryItem = {
-      id: baseId,
-      createdAt: new Date().toISOString(),
-      ...sharePayload
-    }
-    const next = [item, ...shareHistory].slice(0, 12)
-    persistShareHistory(next)
-  }, [persistShareHistory, shareHistory, sharePayload, shareSourceId])
-
-  React.useEffect(() => {
-    if (!sharePayload || !canUseApi || !isAuthed) return
-    const baseId = shareSourceId || shareLoggedRef.current
-    if (!baseId) return
-    if (shareSyncedRef.current.has(baseId)) return
-    shareSyncedRef.current.add(baseId)
-
-    const files = (sharePayload.files || []).map((f) => ({
-      name: f.name,
-      size: f.size,
-      contentType: f.contentType,
-      url: f.url
-    }))
-    const sourceId = shareSourceId && !shareSourceId.startsWith('local-') ? shareSourceId : undefined
-    void mutateJson('/share/history', {
-      method: 'POST',
-      queueLabel: 'Share history',
-      body: {
-        id: baseId,
-        createdAt: new Date().toISOString(),
-        title: sharePayload.title || '',
-        text: sharePayload.text || '',
-        url: sharePayload.url || '',
-        files,
-        sourceId
-      }
-    }).then(() => {
-      void loadShareHistory()
-    })
-  }, [canUseApi, isAuthed, loadShareHistory, mutateJson, sharePayload, shareSourceId])
 
   React.useEffect(() => {
     const mapTab = (raw: string | null) => {
@@ -881,31 +836,6 @@ export function InsumosModule() {
     }
   }, [])
 
-  const removeShareHistory = React.useCallback(
-    (id: string) => {
-      const next = shareHistory.filter((item) => item.id !== id)
-      persistShareHistory(next)
-      if (canUseApi && isAuthed) {
-        void mutateJson(`/share/history/${encodeURIComponent(id)}`, {
-          method: 'DELETE',
-          queueLabel: 'Share history delete'
-        })
-      }
-    },
-    [canUseApi, isAuthed, mutateJson, persistShareHistory, shareHistory]
-  )
-
-  const clearShareHistory = React.useCallback(() => {
-    persistShareHistory([])
-    if (canUseApi && isAuthed && shareHistory.length) {
-      for (const item of shareHistory) {
-        void mutateJson(`/share/history/${encodeURIComponent(item.id)}`, {
-          method: 'DELETE',
-          queueLabel: 'Share history delete'
-        })
-      }
-    }
-  }, [canUseApi, isAuthed, mutateJson, persistShareHistory, shareHistory])
 
   React.useEffect(() => {
     if (!allowedUnits.length) return
@@ -1043,6 +973,78 @@ export function InsumosModule() {
     },
     [csrfToken, enqueueOffline, offlineDialogOpen, refreshCsrf]
   )
+
+  const removeShareHistory = React.useCallback(
+    (id: string) => {
+      const next = shareHistory.filter((item) => item.id !== id)
+      persistShareHistory(next)
+      if (canUseApi && isAuthed) {
+        void mutateJson(`/share/history/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          queueLabel: 'Share history delete'
+        })
+      }
+    },
+    [canUseApi, isAuthed, mutateJson, persistShareHistory, shareHistory]
+  )
+
+  const clearShareHistory = React.useCallback(() => {
+    persistShareHistory([])
+    if (canUseApi && isAuthed && shareHistory.length) {
+      for (const item of shareHistory) {
+        void mutateJson(`/share/history/${encodeURIComponent(item.id)}`, {
+          method: 'DELETE',
+          queueLabel: 'Share history delete'
+        })
+      }
+    }
+  }, [canUseApi, isAuthed, mutateJson, persistShareHistory, shareHistory])
+
+  React.useEffect(() => {
+    if (!sharePayload) return
+    const baseId = shareSourceId || `local-${Date.now()}`
+    if (shareLoggedRef.current === baseId) return
+    if (shareHistory.some((item) => item.id === baseId)) return
+    shareLoggedRef.current = baseId
+    const item: ShareHistoryItem = {
+      id: baseId,
+      createdAt: new Date().toISOString(),
+      ...sharePayload
+    }
+    const next = [item, ...shareHistory].slice(0, 12)
+    persistShareHistory(next)
+  }, [persistShareHistory, shareHistory, sharePayload, shareSourceId])
+
+  React.useEffect(() => {
+    if (!sharePayload || !canUseApi || !isAuthed) return
+    const baseId = shareSourceId || shareLoggedRef.current
+    if (!baseId) return
+    if (shareSyncedRef.current.has(baseId)) return
+    shareSyncedRef.current.add(baseId)
+
+    const files = (sharePayload.files || []).map((f) => ({
+      name: f.name,
+      size: f.size,
+      contentType: f.contentType,
+      url: f.url
+    }))
+    const sourceId = shareSourceId && !shareSourceId.startsWith('local-') ? shareSourceId : undefined
+    void mutateJson('/share/history', {
+      method: 'POST',
+      queueLabel: 'Share history',
+      body: {
+        id: baseId,
+        createdAt: new Date().toISOString(),
+        title: sharePayload.title || '',
+        text: sharePayload.text || '',
+        url: sharePayload.url || '',
+        files,
+        sourceId
+      }
+    }).then(() => {
+      void loadShareHistory()
+    })
+  }, [canUseApi, isAuthed, loadShareHistory, mutateJson, sharePayload, shareSourceId])
 
   React.useEffect(() => {
     refreshOfflineQueueCount()
