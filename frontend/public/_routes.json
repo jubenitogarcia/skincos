@@ -4,7 +4,8 @@
         "/api/health",
         "/api/insumos",
         "/api/insumos/*",
-        "/share"
+        "/share",
+        "/share/*"
     ],
     "exclude": []
 }

@@ -169,11 +169,23 @@ type MovReport = {
   movimentos?: Movimentacao[]
 }
 
+type ShareFile = {
+  name: string
+  size?: number
+  contentType?: string
+  url?: string
+}
+
 type SharePayload = {
   title?: string
   text?: string
   url?: string
-  files?: string[]
+  files?: ShareFile[]
+}
+
+type ShareHistoryItem = SharePayload & {
+  id: string
+  createdAt: string
 }
 
 type ApiError = {
@@ -499,6 +511,10 @@ export function InsumosModule() {
   const quickSectionRef = React.useRef<HTMLDivElement | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
+  const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
+  const [shareHistory, setShareHistory] = React.useState<ShareHistoryItem[]>([])
+  const [shareLoading, setShareLoading] = React.useState(false)
+  const shareLoggedRef = React.useRef<string>('')
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
@@ -607,6 +623,44 @@ export function InsumosModule() {
     return fromHealth.length ? fromHealth : ['novo-hamburgo', 'barra-shopping-sul']
   }, [Array.isArray(health?.unidades) ? health!.unidades!.join('|') : ''])
 
+  const persistShareHistory = React.useCallback(
+    (next: ShareHistoryItem[]) => {
+      setShareHistory(next)
+      try {
+        localStorage.setItem(SHARE_HISTORY_KEY, JSON.stringify(next))
+      } catch {
+        // ignore
+      }
+    },
+    [SHARE_HISTORY_KEY]
+  )
+
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SHARE_HISTORY_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as ShareHistoryItem[]
+      if (Array.isArray(parsed)) setShareHistory(parsed)
+    } catch {
+      // ignore
+    }
+  }, [SHARE_HISTORY_KEY])
+
+  React.useEffect(() => {
+    if (!sharePayload) return
+    const baseId = shareSourceId || `local-${Date.now()}`
+    if (shareLoggedRef.current === baseId) return
+    if (shareHistory.some((item) => item.id === baseId)) return
+    shareLoggedRef.current = baseId
+    const item: ShareHistoryItem = {
+      id: baseId,
+      createdAt: new Date().toISOString(),
+      ...sharePayload
+    }
+    const next = [item, ...shareHistory].slice(0, 12)
+    persistShareHistory(next)
+  }, [persistShareHistory, shareHistory, sharePayload, shareSourceId])
+
   React.useEffect(() => {
     const mapTab = (raw: string | null) => {
       const value = String(raw || '')
@@ -668,6 +722,7 @@ export function InsumosModule() {
         }, 250)
       }
 
+      const shareId = params.get('shareId') || ''
       const shareTitle = params.get('shareTitle') || ''
       const shareText = params.get('shareText') || ''
       const shareUrl = params.get('shareUrl') || ''
@@ -678,28 +733,60 @@ export function InsumosModule() {
             .map((item) => item.trim())
             .filter(Boolean)
         : []
-      const hasShare = Boolean(shareTitle || shareText || shareUrl || shareFiles.length)
+      const hasShare = Boolean(shareId || shareTitle || shareText || shareUrl || shareFiles.length)
 
-      if (hasShare) {
-        setSharePayload({
-          title: shareTitle || undefined,
-          text: shareText || undefined,
-          url: shareUrl || undefined,
-          files: shareFiles.length ? shareFiles : undefined
-        })
+      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
+        setSharePayload(payload)
+        setShareSourceId(sourceId || null)
         setShareHidden(false)
         setActiveTab('insumos')
         setCreateOpen(true)
         setShortcutHint('Compartilhado')
-        if (shareTitle) setCreateProduto((prev) => (prev ? prev : shareTitle))
-        if (shareText) setCreateEspecificacao((prev) => (prev ? prev : shareText))
-        if (shareUrl) setCreateFonte((prev) => (prev ? prev : shareUrl))
-        if (shareFiles.length) {
-          const filesSummary = `Arquivos: ${shareFiles.join(', ')}`
+        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
+        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
+        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
+        if (payload.files && payload.files.length) {
+          const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
           setCreateFonte((prev) => (prev ? prev : filesSummary))
         }
+      }
 
-        ;['shareTitle', 'shareText', 'shareUrl', 'shareFiles'].forEach((k) => params.delete(k))
+      if (shareId) {
+        setShareLoading(true)
+        void (async () => {
+          try {
+            const res = await fetch(`/share/${encodeURIComponent(shareId)}`, { cache: 'no-store' })
+            if (!res.ok) throw new Error('share fetch failed')
+            const data = (await res.json()) as SharePayload
+            const files = (data.files || []).map((f) => ({
+              ...f,
+              url: f.name ? `/share/${encodeURIComponent(shareId)}?file=${encodeURIComponent(f.name)}` : undefined
+            }))
+            applySharePayload({ ...data, files }, shareId)
+          } catch {
+            if (shareTitle || shareText || shareUrl || shareFiles.length) {
+              applySharePayload({
+                title: shareTitle || undefined,
+                text: shareText || undefined,
+                url: shareUrl || undefined,
+                files: shareFiles.map((name) => ({ name }))
+              }, shareId)
+            }
+          } finally {
+            setShareLoading(false)
+          }
+        })()
+      } else if (shareTitle || shareText || shareUrl || shareFiles.length) {
+        applySharePayload({
+          title: shareTitle || undefined,
+          text: shareText || undefined,
+          url: shareUrl || undefined,
+          files: shareFiles.map((name) => ({ name }))
+        }, shareId)
+      }
+
+      if (hasShare) {
+        ;['shareId', 'shareTitle', 'shareText', 'shareUrl', 'shareFiles'].forEach((k) => params.delete(k))
         const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash || ''}`
         window.history.replaceState({}, '', next)
       }
@@ -722,6 +809,34 @@ export function InsumosModule() {
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
       .join(' ')
   }, [])
+
+  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
+    setActiveTab('insumos')
+    setCreateOpen(true)
+    setSharePayload(payload)
+    setShareSourceId(payload.id || null)
+    setShareHidden(false)
+    setShortcutHint('Compartilhado')
+    if (payload.title) setCreateProduto(payload.title)
+    if (payload.text) setCreateEspecificacao(payload.text)
+    if (payload.url) setCreateFonte(payload.url)
+    if (payload.files && payload.files.length) {
+      const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
+      setCreateFonte((prev) => (prev ? prev : filesSummary))
+    }
+  }, [])
+
+  const removeShareHistory = React.useCallback(
+    (id: string) => {
+      const next = shareHistory.filter((item) => item.id !== id)
+      persistShareHistory(next)
+    },
+    [persistShareHistory, shareHistory]
+  )
+
+  const clearShareHistory = React.useCallback(() => {
+    persistShareHistory([])
+  }, [persistShareHistory])
 
   React.useEffect(() => {
     if (!allowedUnits.length) return
@@ -754,6 +869,7 @@ export function InsumosModule() {
   }, [])
 
   const OFFLINE_QUEUE_KEY = 'skincos.insumos.offlineQueue.v1'
+  const SHARE_HISTORY_KEY = 'skincos.insumos.shareHistory.v1'
 
   const readOfflineQueue = React.useCallback((): OfflineQueueItem[] => {
     try {
@@ -2210,6 +2326,7 @@ export function InsumosModule() {
                       Fechar
                     </Button>
                   </div>
+                  {shareLoading ? <div className="mt-2 text-xs text-blue-200/60">Carregando anexos…</div> : null}
                   <div className="mt-2 space-y-1">
                     {sharePayload.title ? (
                       <div>
@@ -2230,8 +2347,21 @@ export function InsumosModule() {
                       </div>
                     ) : null}
                     {sharePayload.files && sharePayload.files.length ? (
-                      <div>
-                        <span className="text-blue-200/70">Arquivos:</span> {sharePayload.files.join(', ')}
+                      <div className="space-y-1">
+                        <div className="text-blue-200/70">Arquivos:</div>
+                        <div className="flex flex-wrap gap-2">
+                          {sharePayload.files.map((f, idx) => (
+                            <span key={`${f.name}-${idx}`} className="text-xs">
+                              {f.url ? (
+                                <a className="underline" href={f.url} target="_blank" rel="noreferrer">
+                                  {f.name}
+                                </a>
+                              ) : (
+                                f.name
+                              )}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -2239,6 +2369,55 @@ export function InsumosModule() {
                     Preenchi o cadastro com os dados compartilhados. Revise antes de salvar.
                   </div>
                 </div>
+              ) : null}
+              {shareHistory.length ? (
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2">
+                    <CardTitle className="text-white text-sm">Importações recentes</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-blue-200/60">{shareHistory.length} itens</span>
+                      <Button variant="secondary" size="sm" onClick={clearShareHistory}>
+                        Limpar
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {shareHistory.slice(0, 6).map((item) => (
+                      <div key={item.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm text-blue-50">
+                            {item.title || item.url || 'Conteúdo compartilhado'}
+                          </div>
+                          <div className="text-xs text-blue-200/60">{fmtDate(item.createdAt)}</div>
+                        </div>
+                        {item.text ? <div className="text-xs text-blue-200/70 mt-1">{item.text}</div> : null}
+                        {item.files && item.files.length ? (
+                          <div className="mt-1 flex flex-wrap gap-2 text-xs text-blue-200/70">
+                            {item.files.map((f, idx) => (
+                              <span key={`${item.id}-${idx}`} className="truncate">
+                                {f.url ? (
+                                  <a className="underline" href={f.url} target="_blank" rel="noreferrer">
+                                    {f.name}
+                                  </a>
+                                ) : (
+                                  f.name
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button variant="secondary" size="sm" onClick={() => applyShareToForm(item)}>
+                            Usar no cadastro
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => removeShareHistory(item.id)}>
+                            Remover
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
