@@ -170,8 +170,16 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
         try {
             const params = new URLSearchParams(window.location.search)
             const requested = params.get('module') || params.get('tab')
+            const wantsInsumosShortcut =
+                params.has('insumosTab') ||
+                params.has('insumosAction') ||
+                params.has('insumos') ||
+                params.has('cadastro') ||
+                params.has('scanner')
             if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((m) => m.key === requested)) {
                 setActive(requested)
+            } else if (wantsInsumosShortcut && UNLOCKED_MODULE_KEYS.has('insumos')) {
+                setActive('insumos')
             }
         } catch { /* ignore */ }
         // eslint-disable-next-line react-hooks/exhaustive-deps

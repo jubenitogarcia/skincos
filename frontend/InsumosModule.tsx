@@ -488,6 +488,8 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
+  const [shortcutHint, setShortcutHint] = React.useState<string | null>(null)
+  const quickSectionRef = React.useRef<HTMLDivElement | null>(null)
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
@@ -595,6 +597,72 @@ export function InsumosModule() {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
     return fromHealth.length ? fromHealth : ['novo-hamburgo', 'barra-shopping-sul']
   }, [Array.isArray(health?.unidades) ? health!.unidades!.join('|') : ''])
+
+  React.useEffect(() => {
+    const mapTab = (raw: string | null) => {
+      const value = String(raw || '')
+        .trim()
+        .toLowerCase()
+      if (!value) return null
+      if (['overview', 'resumo', 'dashboard'].includes(value)) return 'overview'
+      if (['insumos', 'cadastro', 'cadastrar', 'novo'].includes(value)) return 'insumos'
+      if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'lotes'
+      if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
+      if (['insights', 'alertas'].includes(value)) return 'insights'
+      if (['perfil', 'profile'].includes(value)) return 'perfil'
+      if (['backup', 'backups'].includes(value)) return 'backup'
+      if (['audit', 'auditoria'].includes(value)) return 'audit'
+      return null
+    }
+
+    const mapActionLabel = (raw: string) => {
+      const value = raw.toLowerCase()
+      if (['entrada', 'in', 'add'].includes(value)) return 'Entrada'
+      if (['saida', 'saída', 'baixa', 'out', 'remove'].includes(value)) return 'Saída'
+      if (['ajuste', 'ajustar'].includes(value)) return 'Ajuste'
+      if (['transferir', 'transferencia', 'transferência'].includes(value)) return 'Transferência'
+      if (['scanner', 'scan', 'escanear'].includes(value)) return 'Scanner'
+      if (['cadastro', 'cadastrar', 'novo'].includes(value)) return 'Cadastro'
+      return null
+    }
+
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
+      if (requestedTab) setActiveTab(requestedTab)
+
+      const action = String(
+        params.get('insumosAction') || params.get('action') || params.get('type') || params.get('tipo') || ''
+      ).trim()
+      const actionLabel = action ? mapActionLabel(action) : null
+      const wantsCadastro = params.get('cadastro') === '1' || actionLabel === 'Cadastro'
+      const wantsScanner = params.get('scanner') === '1' || actionLabel === 'Scanner'
+      const wantsQuickAction = ['Entrada', 'Saída', 'Ajuste', 'Transferência'].includes(actionLabel || '')
+
+      if (wantsCadastro) {
+        setActiveTab('insumos')
+        setCreateOpen(true)
+        setShortcutHint('Cadastro')
+      }
+
+      if (wantsScanner) {
+        setActiveTab('overview')
+        setQuickScanOpen(true)
+        setShortcutHint('Scanner')
+      }
+
+      if (wantsQuickAction) {
+        setActiveTab('overview')
+        setShortcutHint(actionLabel)
+        setTimeout(() => {
+          quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 250)
+      }
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const unidadeOptions = React.useMemo(() => {
     if (!allowedUnits.length) return allUnidades
@@ -1500,10 +1568,11 @@ export function InsumosModule() {
         </Card>
 
         <Card className="glass-morphism border border-white/10">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-white">Ações rápidas</CardTitle>
+            {shortcutHint ? <Badge variant="secondary">Atalho: {shortcutHint}</Badge> : null}
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent ref={quickSectionRef} className="space-y-3">
             <div className="space-y-2">
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
