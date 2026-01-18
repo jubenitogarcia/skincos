@@ -43,6 +43,12 @@ type Insumo = {
   categoria?: string
   marca?: string
   produto?: string
+  especificacao?: string
+  concentracao?: string
+  volume?: string
+  tipoUnidade?: string
+  fonte?: string
+  calibre?: string
   lote?: string
   precoCusto?: number
   estoqueAtual?: number
@@ -493,9 +499,14 @@ export function InsumosModule() {
   const [createCategoria, setCreateCategoria] = React.useState('')
   const [createMarca, setCreateMarca] = React.useState('')
   const [createTipoUnidade, setCreateTipoUnidade] = React.useState('')
+  const [createEspecificacao, setCreateEspecificacao] = React.useState('')
+  const [createConcentracao, setCreateConcentracao] = React.useState('')
+  const [createVolume, setCreateVolume] = React.useState('')
+  const [createFonte, setCreateFonte] = React.useState('')
+  const [createCalibre, setCreateCalibre] = React.useState('')
   const [createPrecoCusto, setCreatePrecoCusto] = React.useState('')
   const [createEstoqueInicial, setCreateEstoqueInicial] = React.useState('0')
-  const [createEstoqueMinimo, setCreateEstoqueMinimo] = React.useState('0')
+  const [createEstoqueMinimo, setCreateEstoqueMinimo] = React.useState('5')
   const [createLote, setCreateLote] = React.useState('')
   const [createDataValidade, setCreateDataValidade] = React.useState('')
   const [createLoading, setCreateLoading] = React.useState(false)
@@ -525,6 +536,21 @@ export function InsumosModule() {
   const [movPagina, setMovPagina] = React.useState(1)
   const [movLimite, setMovLimite] = React.useState(50)
   const [movTotal, setMovTotal] = React.useState<number | null>(null)
+
+  const movChartData = React.useMemo(() => {
+    const map = new Map<string, { day: string; entradas: number; saidas: number }>()
+    for (const m of movimentacoes) {
+      const raw = String(m.dataHora || '').slice(0, 10)
+      if (!raw || raw.length !== 10) continue
+      const cur = map.get(raw) || { day: raw, entradas: 0, saidas: 0 }
+      const tipo = String(m.tipo || '').toUpperCase().replace('Í', 'I')
+      const qtd = Number(m.quantidade) || 0
+      if (tipo === 'ENTRADA') cur.entradas += qtd
+      else if (tipo === 'SAIDA' || tipo === 'SAÍDA') cur.saidas += qtd
+      map.set(raw, cur)
+    }
+    return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day))
+  }, [movimentacoes])
 
   const [backupItems, setBackupItems] = React.useState<BackupSnapshot[]>([])
   const [backupLoading, setBackupLoading] = React.useState(false)
@@ -1188,6 +1214,20 @@ export function InsumosModule() {
     return Array.from(new Set((insumos || []).map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
+  }, [insumos])
+
+  const insumosMarcas = React.useMemo(() => {
+    return Array.from(new Set((insumos || []).map((i) => String(i.marca || '').trim()).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+    )
+  }, [insumos])
+
+  const insumosTiposUnidade = React.useMemo(() => {
+    const fromData = Array.from(
+      new Set((insumos || []).map((i) => String(i.tipoUnidade || '').trim()).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
+    const fixed = ['Frasco', 'Seringa', 'Unidade', 'Caixa', 'ml']
+    return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
   }, [insumos])
 
   const lotResumo = React.useMemo(() => {
@@ -1978,18 +2018,57 @@ export function InsumosModule() {
 
               <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
                 <DialogContent className="max-w-xl">
-                  <DialogHeader>
-                    <DialogTitle>Editar lote/validade</DialogTitle>
-                    <DialogDescription>
-                      {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
-                    </DialogDescription>
-                  </DialogHeader>
+	                  <DialogHeader>
+	                    <DialogTitle>Editar lote/validade</DialogTitle>
+	                    <DialogDescription>
+	                      {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
+	                    </DialogDescription>
+	                  </DialogHeader>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">Lote</div>
-                      <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
-                    </div>
+	                  {lotSelecionado ? (
+	                    <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
+	                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+	                        <div>
+	                          <div className="text-xs text-muted-foreground">Categoria</div>
+	                          <div className="text-blue-100/80">{lotSelecionado.categoria || '-'}</div>
+	                        </div>
+	                        <div>
+	                          <div className="text-xs text-muted-foreground">Marca</div>
+	                          <div className="text-blue-100/80">{lotSelecionado.marca || '-'}</div>
+	                        </div>
+	                        {lotSelecionado.concentracao ? (
+	                          <div>
+	                            <div className="text-xs text-muted-foreground">Concentração</div>
+	                            <div className="text-blue-100/80">{lotSelecionado.concentracao}</div>
+	                          </div>
+	                        ) : null}
+	                        {lotSelecionado.volume ? (
+	                          <div>
+	                            <div className="text-xs text-muted-foreground">Volume</div>
+	                            <div className="text-blue-100/80">{lotSelecionado.volume}</div>
+	                          </div>
+	                        ) : null}
+	                        {lotSelecionado.calibre ? (
+	                          <div>
+	                            <div className="text-xs text-muted-foreground">Calibre</div>
+	                            <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
+	                          </div>
+	                        ) : null}
+	                        {lotSelecionado.fonte ? (
+	                          <div>
+	                            <div className="text-xs text-muted-foreground">Fonte</div>
+	                            <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
+	                          </div>
+	                        ) : null}
+	                      </div>
+	                    </div>
+	                  ) : null}
+
+	                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+	                    <div>
+	                      <div className="text-xs text-muted-foreground mb-1">Lote</div>
+	                      <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
+	                    </div>
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">Validade (YYYY-MM-DD)</div>
                       <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 2026-12-31" />
@@ -2031,12 +2110,12 @@ export function InsumosModule() {
                 <div className="text-xs text-blue-200/60">{filteredInsumos.length} itens</div>
               </div>
 
-              {createOpen ? (
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
-                  <div className="text-sm text-blue-100/70">
-                    Cadastro rápido (campos mínimos). Depois você pode ajustar detalhes direto na planilha/integração.
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+	              {createOpen ? (
+	                <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
+	                  <div className="text-sm text-blue-100/70">
+	                    Cadastro rápido (campos mínimos) + detalhes opcionais (como no app antigo de Insumos).
+	                  </div>
+	                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div>
                       <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
                       <div className="flex items-center gap-2">
@@ -2050,18 +2129,48 @@ export function InsumosModule() {
                       <div className="text-xs text-blue-200/70 mb-1">Produto</div>
                       <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="Nome do produto" />
                     </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                      <Input value={createCategoria} onChange={(e) => setCreateCategoria(e.target.value)} placeholder="ex: Anestésicos" />
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Marca</div>
-                      <Input value={createMarca} onChange={(e) => setCreateMarca(e.target.value)} placeholder="ex: Marca X" />
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
-                      <Input value={createTipoUnidade} onChange={(e) => setCreateTipoUnidade(e.target.value)} placeholder="ex: Frasco" />
-                    </div>
+	                    <div>
+	                      <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+	                      <Input
+	                        value={createCategoria}
+	                        onChange={(e) => setCreateCategoria(e.target.value)}
+	                        placeholder="ex: Anestésicos"
+	                        list="insumos-categorias"
+	                      />
+	                      <datalist id="insumos-categorias">
+	                        {lotCategorias.map((c) => (
+	                          <option key={c} value={c} />
+	                        ))}
+	                      </datalist>
+	                    </div>
+	                    <div>
+	                      <div className="text-xs text-blue-200/70 mb-1">Marca</div>
+	                      <Input
+	                        value={createMarca}
+	                        onChange={(e) => setCreateMarca(e.target.value)}
+	                        placeholder="ex: Galderma"
+	                        list="insumos-marcas"
+	                      />
+	                      <datalist id="insumos-marcas">
+	                        {insumosMarcas.map((m) => (
+	                          <option key={m} value={m} />
+	                        ))}
+	                      </datalist>
+	                    </div>
+	                    <div>
+	                      <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
+	                      <Input
+	                        value={createTipoUnidade}
+	                        onChange={(e) => setCreateTipoUnidade(e.target.value)}
+	                        placeholder="ex: Frasco"
+	                        list="insumos-tipos-unidade"
+	                      />
+	                      <datalist id="insumos-tipos-unidade">
+	                        {insumosTiposUnidade.map((u) => (
+	                          <option key={u} value={u} />
+	                        ))}
+	                      </datalist>
+	                    </div>
                     <div>
                       <div className="text-xs text-blue-200/70 mb-1">Preço custo</div>
                       <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="R$ 0,00" />
@@ -2078,14 +2187,63 @@ export function InsumosModule() {
                       <div className="text-xs text-blue-200/70 mb-1">Lote</div>
                       <Input value={createLote} onChange={(e) => setCreateLote(e.target.value)} placeholder="opcional" />
                     </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
-                      <Input value={createDataValidade} onChange={(e) => setCreateDataValidade(e.target.value)} placeholder="YYYY-MM-DD" />
-                    </div>
-                  </div>
-                  {createScanOpen ? (
-                    <BarcodeScannerInline
-                      onDetected={(code) => {
+	                    <div>
+	                      <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
+	                      <Input value={createDataValidade} onChange={(e) => setCreateDataValidade(e.target.value)} placeholder="YYYY-MM-DD" />
+	                    </div>
+	                  </div>
+
+	                  <details className="rounded-lg border border-white/10 bg-black/10 p-3">
+	                    <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+	                      Detalhes (opcional)
+	                    </summary>
+	                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+	                      <div className="md:col-span-2">
+	                        <div className="text-xs text-blue-200/70 mb-1">Especificação / Modelo</div>
+	                        <Input
+	                          value={createEspecificacao}
+	                          onChange={(e) => setCreateEspecificacao(e.target.value)}
+	                          placeholder="ex: Base, Lidocaine"
+	                        />
+	                      </div>
+	                      <div>
+	                        <div className="text-xs text-blue-200/70 mb-1">Concentração</div>
+	                        <Input
+	                          value={createConcentracao}
+	                          onChange={(e) => setCreateConcentracao(e.target.value)}
+	                          placeholder="ex: 300U"
+	                        />
+	                      </div>
+	                      <div>
+	                        <div className="text-xs text-blue-200/70 mb-1">Volume</div>
+	                        <Input
+	                          value={createVolume}
+	                          onChange={(e) => setCreateVolume(e.target.value)}
+	                          placeholder="ex: 1ml"
+	                        />
+	                      </div>
+	                      <div>
+	                        <div className="text-xs text-blue-200/70 mb-1">Calibre / Bitola</div>
+	                        <Input
+	                          value={createCalibre}
+	                          onChange={(e) => setCreateCalibre(e.target.value)}
+	                          placeholder="ex: 30G"
+	                        />
+	                      </div>
+	                      <div className="md:col-span-2">
+	                        <div className="text-xs text-blue-200/70 mb-1">Fonte</div>
+	                        <Input
+	                          value={createFonte}
+	                          onChange={(e) => setCreateFonte(e.target.value)}
+	                          placeholder="ex: Tabela 2025"
+	                        />
+	                      </div>
+	                    </div>
+	                  </details>
+
+	                  {createScanOpen ? (
+	                    <BarcodeScannerInline
+	                      onDetected={(code) => {
                         setCreateCodigo(code)
                         setCreateScanOpen(false)
                         toast.success('Código detectado')
@@ -2112,13 +2270,18 @@ export function InsumosModule() {
                             body: {
                               codigoBarras,
                               produto,
-                              categoria: createCategoria.trim(),
-                              marca: createMarca.trim(),
-                              tipoUnidade: createTipoUnidade.trim(),
-                              precoCusto: createPrecoCusto.trim(),
-                              estoqueInicial: Number(createEstoqueInicial) || 0,
-                              estoqueMinimo: Number(createEstoqueMinimo) || 0,
-                              lote: createLote.trim(),
+	                              categoria: createCategoria.trim(),
+	                              marca: createMarca.trim(),
+	                              tipoUnidade: createTipoUnidade.trim(),
+	                              especificacao: createEspecificacao.trim(),
+	                              concentracao: createConcentracao.trim(),
+	                              volume: createVolume.trim(),
+	                              fonte: createFonte.trim(),
+	                              calibre: createCalibre.trim(),
+	                              precoCusto: createPrecoCusto.trim(),
+	                              estoqueInicial: Number(createEstoqueInicial) || 0,
+	                              estoqueMinimo: Number(createEstoqueMinimo) || 0,
+	                              lote: createLote.trim(),
                               dataValidade: createDataValidade.trim()
                             }
                           })
@@ -2126,11 +2289,16 @@ export function InsumosModule() {
                           setCreateCodigo('')
                           setCreateProduto('')
                           setCreateCategoria('')
-                          setCreateMarca('')
-                          setCreateTipoUnidade('')
-                          setCreatePrecoCusto('')
-                          setCreateEstoqueInicial('0')
-                          setCreateEstoqueMinimo('0')
+	                          setCreateMarca('')
+	                          setCreateTipoUnidade('')
+	                          setCreateEspecificacao('')
+	                          setCreateConcentracao('')
+	                          setCreateVolume('')
+	                          setCreateFonte('')
+	                          setCreateCalibre('')
+	                          setCreatePrecoCusto('')
+	                          setCreateEstoqueInicial('0')
+	                          setCreateEstoqueMinimo('5')
                           setCreateLote('')
                           setCreateDataValidade('')
                           setCreateOpen(false)
@@ -2255,12 +2423,42 @@ export function InsumosModule() {
               </div>
             </TabsContent>
 
-            <TabsContent value="mov" className="mt-4 space-y-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="w-48">
-                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
-                  <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
-                    <SelectTrigger>
+	            <TabsContent value="mov" className="mt-4 space-y-3">
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-sm">Entradas vs Saídas (por dia)</CardTitle>
+	                </CardHeader>
+	                <CardContent>
+	                  {movChartData.length ? (
+	                    <div className="h-[240px]">
+	                      <ResponsiveContainer width="100%" height="100%">
+	                        <BarChart data={movChartData}>
+	                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+	                          <XAxis dataKey="day" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 11 }} />
+	                          <YAxis tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 11 }} />
+	                          <Tooltip
+	                            contentStyle={{ backgroundColor: 'rgba(0,0,0,0.85)', border: '1px solid rgba(255,255,255,0.15)' }}
+	                            labelStyle={{ color: 'rgba(255,255,255,0.8)' }}
+	                          />
+	                          <Legend />
+	                          <Bar dataKey="entradas" name="Entradas" fill="#22c55e" />
+	                          <Bar dataKey="saidas" name="Saídas" fill="#ef4444" />
+	                        </BarChart>
+	                      </ResponsiveContainer>
+	                    </div>
+	                  ) : (
+	                    <div className="text-sm text-blue-100/60">
+	                      Sem dados para o gráfico (ajuste filtros e recarregue).
+	                    </div>
+	                  )}
+	                </CardContent>
+	              </Card>
+
+	              <div className="flex flex-wrap items-end gap-2">
+	                <div className="w-48">
+	                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
+	                  <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
+	                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

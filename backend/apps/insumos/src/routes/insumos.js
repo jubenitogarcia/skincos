@@ -667,6 +667,8 @@ export async function handleInsumosRoutes({
             setIfPresent(newRow, headerMap, 'produto', body.produto || '');
             setIfPresent(newRow, headerMap, 'especificação', body.especificacao || '');
             setIfPresent(newRow, headerMap, 'concentração', body.concentracao || '');
+            setIfPresent(newRow, headerMap, 'calibre', body.calibre || '');
+            setIfPresent(newRow, headerMap, 'calibre / bitola', body.calibre || '');
             setIfPresent(newRow, headerMap, 'volume', body.volume || '');
             setIfPresent(newRow, headerMap, 'unidade', body.unidade || body.tipoUnidade || '');
             setIfPresent(newRow, headerMap, 'preço', body.precoCusto ?? '');
@@ -741,6 +743,10 @@ export async function handleInsumosRoutes({
             if (body.produto !== undefined) setIfPresent(currentRow, headerMap, 'produto', body.produto);
             if (body.especificacao !== undefined) setIfPresent(currentRow, headerMap, 'especificação', body.especificacao);
             if (body.concentracao !== undefined) setIfPresent(currentRow, headerMap, 'concentração', body.concentracao);
+            if (body.calibre !== undefined) {
+                setIfPresent(currentRow, headerMap, 'calibre', body.calibre);
+                setIfPresent(currentRow, headerMap, 'calibre / bitola', body.calibre);
+            }
             if (body.volume !== undefined) setIfPresent(currentRow, headerMap, 'volume', body.volume);
             if (body.tipoUnidade !== undefined) setIfPresent(currentRow, headerMap, 'unidade', body.tipoUnidade);
             if (body.unidade !== undefined) setIfPresent(currentRow, headerMap, 'unidade', body.unidade);

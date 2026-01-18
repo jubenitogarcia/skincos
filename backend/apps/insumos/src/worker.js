@@ -330,6 +330,7 @@ function normalizeInsumos(rows, unidade = 'novo-hamburgo', config = { unidades: 
             especificacao: item['especificação'] || '',
             concentracao: item['concentração'] || '',
             volume: item.volume || '',
+            calibre: item.calibre || item['calibre / bitola'] || '',
             tipoUnidade: item.unidade || '',
             unidade: item.unidade || '',
             precoCusto: parsePrice(item['preço']),
