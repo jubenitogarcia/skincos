@@ -1099,29 +1099,6 @@ export function InsumosModule() {
     setLotDialogOpen(true)
   }, [])
 
-  const saveLot = React.useCallback(async () => {
-    if (!lotSelecionado?.registro) {
-      toast.error('Registro do insumo ausente.')
-      return
-    }
-    if (!canUseApi || !isAuthed) return
-    setLotSaving(true)
-    try {
-      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
-        method: 'PUT',
-        body: { lote: lotEditLote.trim(), dataValidade: lotEditValidade.trim() || '' },
-        queueLabel: 'Atualização de lote/validade'
-      })
-      toast.success('Lote/validade atualizados.')
-      setLotDialogOpen(false)
-      await Promise.allSettled([loadInsumos(), loadOverview()])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLotSaving(false)
-    }
-  }, [canUseApi, isAuthed, loadInsumos, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, unidade])
-
   const updateProfile = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setProfileSaving(true)
@@ -1327,6 +1304,29 @@ export function InsumosModule() {
       setOverviewLoading(false)
     }
   }, [canUseApi, isAuthed, unidade, overviewPeriod])
+
+  const saveLot = React.useCallback(async () => {
+    if (!lotSelecionado?.registro) {
+      toast.error('Registro do insumo ausente.')
+      return
+    }
+    if (!canUseApi || !isAuthed) return
+    setLotSaving(true)
+    try {
+      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
+        method: 'PUT',
+        body: { lote: lotEditLote.trim(), dataValidade: lotEditValidade.trim() || '' },
+        queueLabel: 'Atualização de lote/validade'
+      })
+      toast.success('Lote/validade atualizados.')
+      setLotDialogOpen(false)
+      await Promise.allSettled([loadInsumos(), loadOverview()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLotSaving(false)
+    }
+  }, [canUseApi, isAuthed, loadInsumos, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, unidade])
 
   const loadInsights = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
