@@ -715,6 +715,24 @@ export function SystemStatusModule() {
               <div className="text-sm text-blue-100/70">Seu perfil ({insumosRole || '—'}) não tem permissão para auditoria.</div>
             ) : (
               <>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/10 p-3">
+                  <div className="text-sm text-blue-100/70">Diagnóstico Unit Monitor</div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => window.open('/api/unit-monitor/streaming/status', '_blank', 'noopener,noreferrer')}
+                    >
+                      Status
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => window.open('/api/unit-monitor/diagnostics', '_blank', 'noopener,noreferrer')}
+                    >
+                      Logs
+                    </Button>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm text-blue-100/70">
                     Auditoria • Unidade: <span className="text-blue-50 font-semibold">{formatUnitLabel(insumosUnit)}</span>
