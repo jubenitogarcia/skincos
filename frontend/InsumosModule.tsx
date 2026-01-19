@@ -450,7 +450,6 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
-  const quickSectionRef = React.useRef<HTMLDivElement | null>(null)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
@@ -687,7 +686,7 @@ export function InsumosModule() {
         else if (actionLabel === 'Saída') setQuickOp('BAIXA')
         else if (actionLabel === 'Transferência') setQuickOp('TRANSFERENCIA')
         setTimeout(() => {
-          quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          window.scrollTo({ top: 0, behavior: 'smooth' })
         }, 250)
       }
 
@@ -1404,6 +1403,23 @@ export function InsumosModule() {
   }, [canUseApi, isAuthed, loadInsights])
 
   React.useEffect(() => {
+    const onOp = (event: Event) => {
+      const e = event as CustomEvent<{ op?: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' }>
+      const op = e.detail?.op
+      if (!op) return
+      setQuickScanOpen(false)
+      setQuickOp(op)
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('skincos:insumos:op', onOp as EventListener)
+    return () => window.removeEventListener('skincos:insumos:op', onOp as EventListener)
+  }, [])
+
+  React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
     if (activeTab === 'insumos') {
       void loadInsumos()
@@ -1765,50 +1781,8 @@ export function InsumosModule() {
               </Button>
             )}
           </DialogFooter>
-        </DialogContent>
+      </DialogContent>
       </Dialog>
-
-      <div ref={quickSectionRef} className="max-w-6xl mx-auto flex items-center justify-end gap-2">
-        {offlineQueueCount > 0 ? (
-          <Button
-            variant="outline"
-            className="h-9 px-3"
-            onClick={() => setOfflineDialogOpen(true)}
-            disabled={!isAuthed}
-            title="Pendências offline"
-          >
-            Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-          </Button>
-        ) : null}
-        <Button
-          className="h-9 w-9 p-0 !bg-green-600 hover:!bg-green-700 !text-white"
-          onClick={() => setQuickOp('ENTRADA')}
-          disabled={!isAuthed}
-          title="Entrada"
-          aria-label="Entrada"
-        >
-          +
-        </Button>
-        <Button
-          className="h-9 w-9 p-0"
-          variant="destructive"
-          onClick={() => setQuickOp('BAIXA')}
-          disabled={!isAuthed}
-          title="Saída"
-          aria-label="Saída"
-        >
-          −
-        </Button>
-        <Button
-          className="h-9 w-9 p-0 !bg-blue-600 hover:!bg-blue-700 !text-white"
-          onClick={() => setQuickOp('TRANSFERENCIA')}
-          disabled={!isAuthed}
-          title="Transferência"
-          aria-label="Transferência"
-        >
-          ⟲
-        </Button>
-      </div>
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto">
         <Card className="glass-morphism border border-white/10">
@@ -1958,62 +1932,6 @@ export function InsumosModule() {
                   ) : (
                     <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
                   )}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-              <Card className="bg-black/20 border border-white/10 lg:col-span-2">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <div className="text-sm text-blue-100/80">Reposição</div>
-                    {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-                      <button
-                        key={String(r.codigoBarras)}
-                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                        onClick={() => { if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras)) }}
-                      >
-                        <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-                        <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-                        <div className="text-xs text-blue-100/70 mt-1">
-                          sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-                          {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-                        </div>
-                      </button>
-                    ))}
-                    {!overviewActionables?.reposicao?.length ? (
-                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-                    {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-                      <button
-                        key={`${t.codigoBarras}-${t.from}-${t.to}`}
-                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                        onClick={() => {
-                          if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-                          if (t.qty != null) setQuickQuantidade(String(t.qty))
-                          if (t.from) setTransferFrom(String(t.from))
-                          if (t.to) setTransferTo(String(t.to))
-                        }}
-                      >
-                        <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-                        <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-                        <div className="text-xs text-blue-100/70 mt-1">
-                          <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-                          <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-                          <span className="font-mono">{t.qty ?? '-'}</span>
-                        </div>
-                      </button>
-                    ))}
-                    {!overviewActionables?.transferencias?.length ? (
-                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
-                    ) : null}
-                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -2322,6 +2240,60 @@ export function InsumosModule() {
                   </CardContent>
                 </Card>
               </div>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="text-sm text-blue-100/80">Reposição</div>
+                    {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
+                      <button
+                        key={String(r.codigoBarras)}
+                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                        onClick={() => { if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras)) }}
+                      >
+                        <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
+                        <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
+                        <div className="text-xs text-blue-100/70 mt-1">
+                          sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
+                          {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
+                        </div>
+                      </button>
+                    ))}
+                    {!overviewActionables?.reposicao?.length ? (
+                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+                    ) : null}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
+                    {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
+                      <button
+                        key={`${t.codigoBarras}-${t.from}-${t.to}`}
+                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                        onClick={() => {
+                          if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+                          if (t.qty != null) setQuickQuantidade(String(t.qty))
+                          if (t.from) setTransferFrom(String(t.from))
+                          if (t.to) setTransferTo(String(t.to))
+                        }}
+                      >
+                        <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
+                        <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
+                        <div className="text-xs text-blue-100/70 mt-1">
+                          <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+                          <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
+                          <span className="font-mono">{t.qty ?? '-'}</span>
+                        </div>
+                      </button>
+                    ))}
+                    {!overviewActionables?.transferencias?.length ? (
+                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+                    ) : null}
+                  </div>
+                </CardContent>
+              </Card>
 
               <div className="flex items-center justify-between gap-2">
                 <div>

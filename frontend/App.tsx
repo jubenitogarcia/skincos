@@ -672,6 +672,47 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 		                                                        ))}
 		                                                    </SelectContent>
 		                                                </Select>
+		                                                <div className="flex items-center gap-1 ml-2">
+		                                                    <Button
+		                                                        variant="outline"
+		                                                        className="h-8 w-8 p-0 bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12]"
+		                                                        onClick={() => {
+		                                                            try {
+		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
+		                                                            } catch { /* ignore */ }
+		                                                        }}
+		                                                        title="Entrada"
+		                                                        aria-label="Entrada"
+		                                                    >
+		                                                        +
+		                                                    </Button>
+		                                                    <Button
+		                                                        variant="outline"
+		                                                        className="h-8 w-8 p-0 bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12]"
+		                                                        onClick={() => {
+		                                                            try {
+		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
+		                                                            } catch { /* ignore */ }
+		                                                        }}
+		                                                        title="Saída"
+		                                                        aria-label="Saída"
+		                                                    >
+		                                                        −
+		                                                    </Button>
+		                                                    <Button
+		                                                        variant="outline"
+		                                                        className="h-8 w-8 p-0 bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12]"
+		                                                        onClick={() => {
+		                                                            try {
+		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
+		                                                            } catch { /* ignore */ }
+		                                                        }}
+		                                                        title="Transferência"
+		                                                        aria-label="Transferência"
+		                                                    >
+		                                                        ⟲
+		                                                    </Button>
+		                                                </div>
 		                                            </>
 		                                        ) : null}
 		                                        {active === 'unit-monitor' ? (
