@@ -7,6 +7,7 @@ import { AuthScreen } from '@/AuthScreen'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
 import { Badge } from '@/badge'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
 import { isNoAuthMode } from '@/noAuthMode'
@@ -20,6 +21,49 @@ const UNIT_MONITOR_UNITS: Array<{ value: string; label: string }> = [
     { value: 'unit-c', label: 'C' },
     { value: 'custom', label: 'Outra…' }
 ]
+
+type ApiError = {
+    error?: string
+    message?: string
+    code?: string
+}
+
+type InsumosMeResponse = {
+    success?: boolean
+    user?: { username?: string; displayName?: string; email?: string; role?: string }
+    csrfToken?: string
+}
+
+async function insumosApiJson<T>(
+    path: string,
+    opts: {
+        method?: string
+        body?: unknown
+        signal?: AbortSignal
+    } = {}
+): Promise<T> {
+    const method = opts.method || 'GET'
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (opts.body !== undefined) headers['content-type'] = 'application/json'
+    const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
+    const res = await fetch(url, {
+        method,
+        headers,
+        credentials: 'include',
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        signal: opts.signal
+    })
+    const text = await res.text()
+    let json: unknown = null
+    try {
+        json = text ? JSON.parse(text) : null
+    } catch {
+        json = null
+    }
+    if (res.ok) return json as T
+    const err = (json || {}) as ApiError
+    throw new Error(err.error || err.message || `HTTP ${res.status}`)
+}
 
 // Key functional modules
 const LeadsManager = lazy(() => import('@/LeadsManager').then(m => ({ default: m.LeadsManager })))
@@ -133,6 +177,60 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 
 	export default function AppFunctionalNeatlab() {
 	    const { isAuthenticated, user, signOut } = useAuth()
+
+	    const [profileOpen, setProfileOpen] = useState(false)
+	    const [profileLoading, setProfileLoading] = useState(false)
+	    const [profileSaving, setProfileSaving] = useState(false)
+	    const [profileError, setProfileError] = useState<string | null>(null)
+	    const [insumosMe, setInsumosMe] = useState<InsumosMeResponse | null>(null)
+	    const [profileDisplayName, setProfileDisplayName] = useState('')
+	    const [profileEmail, setProfileEmail] = useState('')
+	    const [profileCurrentPassword, setProfileCurrentPassword] = useState('')
+	    const [profileNewPassword, setProfileNewPassword] = useState('')
+
+	    const loadProfile = React.useCallback(async () => {
+	        setProfileLoading(true)
+	        setProfileError(null)
+	        try {
+	            const out = await insumosApiJson<InsumosMeResponse>('/auth/me')
+	            setInsumosMe(out || null)
+	            setProfileDisplayName(out?.user?.displayName || out?.user?.username || '')
+	            setProfileEmail(out?.user?.email || '')
+	        } catch (e: any) {
+	            setInsumosMe(null)
+	            setProfileError(e?.message || 'Não foi possível carregar o perfil.')
+	        } finally {
+	            setProfileLoading(false)
+	        }
+	    }, [])
+
+	    React.useEffect(() => {
+	        if (!profileOpen) return
+	        void loadProfile()
+	    }, [loadProfile, profileOpen])
+
+	    const saveProfile = React.useCallback(async () => {
+	        setProfileSaving(true)
+	        setProfileError(null)
+	        try {
+	            const body: any = {
+	                displayName: profileDisplayName.trim(),
+	                email: profileEmail.trim()
+	            }
+	            if (profileNewPassword.trim()) {
+	                body.newPassword = profileNewPassword.trim()
+	                body.currentPassword = profileCurrentPassword
+	            }
+	            await insumosApiJson('/auth/profile', { method: 'PUT', body })
+	            setProfileCurrentPassword('')
+	            setProfileNewPassword('')
+	            await loadProfile()
+	        } catch (e: any) {
+	            setProfileError(e?.message || 'Não foi possível salvar o perfil.')
+	        } finally {
+	            setProfileSaving(false)
+	        }
+	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 	    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
@@ -317,6 +415,71 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 
     return (
         <NotificationProvider>
+            <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Perfil</DialogTitle>
+                        <DialogDescription>Atualize seus dados e, se necessário, altere sua senha.</DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        {profileError ? (
+                            <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
+                                {profileError}
+                            </div>
+                        ) : null}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <div className="text-xs text-blue-200/70 mb-1">Nome</div>
+                                <Input value={profileDisplayName} onChange={(e) => setProfileDisplayName(e.target.value)} disabled={profileLoading} />
+                            </div>
+                            <div>
+                                <div className="text-xs text-blue-200/70 mb-1">Email</div>
+                                <Input value={profileEmail} onChange={(e) => setProfileEmail(e.target.value)} disabled={profileLoading} />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <div className="text-xs text-blue-200/70 mb-1">Senha atual</div>
+                                <Input
+                                    type="password"
+                                    value={profileCurrentPassword}
+                                    onChange={(e) => setProfileCurrentPassword(e.target.value)}
+                                    disabled={profileLoading}
+                                    placeholder="Somente se for trocar a senha"
+                                />
+                            </div>
+                            <div>
+                                <div className="text-xs text-blue-200/70 mb-1">Nova senha</div>
+                                <Input
+                                    type="password"
+                                    value={profileNewPassword}
+                                    onChange={(e) => setProfileNewPassword(e.target.value)}
+                                    disabled={profileLoading}
+                                    placeholder="Opcional"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="text-xs text-blue-200/60">
+                            Usuário: <span className="text-blue-50 font-semibold">{insumosMe?.user?.username || '—'}</span> • Perfil:{' '}
+                            <span className="text-blue-50 font-semibold">{insumosMe?.user?.role || '—'}</span>
+                        </div>
+                    </div>
+
+                    <DialogFooter className="gap-2">
+                        <Button variant="secondary" onClick={loadProfile} disabled={profileLoading || profileSaving}>
+                            {profileLoading ? 'Atualizando…' : 'Atualizar'}
+                        </Button>
+                        <Button onClick={saveProfile} disabled={profileLoading || profileSaving}>
+                            {profileSaving ? 'Salvando…' : 'Salvar'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Premium Background with animated gradient */}
             <div className="min-h-screen relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-corporate-900 via-brand-900 to-corporate-800">
@@ -376,10 +539,15 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
                                     <div className="w-8 h-8 rounded-lg bg-gradient-blue flex items-center justify-center text-sm font-semibold text-white">
                                         {(user?.name || 'U').charAt(0).toUpperCase()}
                                     </div>
-                                    <div className={`flex-1 min-w-0 ${sidebarExpanded ? '' : 'hidden'}`}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setProfileOpen(true)}
+                                        className={`flex-1 min-w-0 text-left ${sidebarExpanded ? '' : 'hidden'}`}
+                                        title="Abrir perfil"
+                                    >
                                         <p className="font-semibold text-white text-sm leading-tight truncate">{user?.name || 'Usuário'}</p>
                                         <p className="text-xs text-blue-300/70 truncate">{user?.email}</p>
-                                    </div>
+                                    </button>
                                     <button
                                         onClick={signOut}
                                         className={`${sidebarExpanded ? 'text-xs' : 'text-sm'} text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105`}

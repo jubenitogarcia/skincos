@@ -1,6 +1,5 @@
 import React from 'react'
 import { toast } from 'sonner'
-import { Avatar, AvatarFallback, AvatarImage } from '@/avatar'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
@@ -98,28 +97,6 @@ type Actionables = {
   rupturas?: Array<{ codigoBarras?: string; produto?: string; categoria?: string; estoqueMinimo?: number; estimatedImpact?: number }>
 }
 
-type BackupSnapshot = {
-  id?: number
-  ts?: string
-  actor?: string
-  role?: string
-  unidade?: string
-  kind?: string
-}
-
-type AuditRow = {
-  timestamp?: string
-  actor?: string
-  role?: string
-  action?: string
-  entity?: string
-  entityId?: string
-  unidade?: string
-  ip?: string
-  userAgent?: string
-  idempotencyKey?: string
-}
-
 type EstoqueAlerta = {
   codigoBarras?: string
   produto?: string
@@ -200,46 +177,6 @@ type OfflineQueueItem = {
   path: string
   method: string
   body?: unknown
-}
-
-async function fileToCompressedDataUrl(
-  file: File,
-  opts: { maxDimension: number; quality: number; maxDataUrlLength: number }
-): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(String(r.result || ''))
-    r.onerror = () => reject(r.error || new Error('Falha ao ler imagem'))
-    r.readAsDataURL(file)
-  })
-
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('Falha ao carregar imagem'))
-    image.src = dataUrl
-  })
-
-  const max = Math.max(32, opts.maxDimension)
-  const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1))
-  const targetW = Math.max(1, Math.round((img.width || 1) * scale))
-  const targetH = Math.max(1, Math.round((img.height || 1) * scale))
-
-  const canvas = document.createElement('canvas')
-  canvas.width = targetW
-  canvas.height = targetH
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Canvas indisponível')
-  ctx.drawImage(img, 0, 0, targetW, targetH)
-
-  let out = canvas.toDataURL('image/jpeg', Math.min(1, Math.max(0.2, opts.quality)))
-  if (out.length > opts.maxDataUrlLength) {
-    out = canvas.toDataURL('image/jpeg', 0.6)
-  }
-  if (out.length > opts.maxDataUrlLength) {
-    throw new Error('Imagem grande demais. Use uma foto menor.')
-  }
-  return out
 }
 
 function fmtMoneyBRL(value: number) {
@@ -501,9 +438,7 @@ export function InsumosModule() {
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
 
-  const [activeTab, setActiveTab] = React.useState<
-    'overview' | 'insumos' | 'lotes' | 'mov' | 'insights' | 'perfil' | 'backup' | 'audit'
-  >('overview')
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'insumos' | 'lotes' | 'mov' | 'insights'>('overview')
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
@@ -554,14 +489,6 @@ export function InsumosModule() {
   const [lotEditValidade, setLotEditValidade] = React.useState('')
   const [lotSaving, setLotSaving] = React.useState(false)
 
-  const [profileSaving, setProfileSaving] = React.useState(false)
-  const [profileDisplayName, setProfileDisplayName] = React.useState('')
-  const [profileEmail, setProfileEmail] = React.useState('')
-  const [profileUsername, setProfileUsername] = React.useState('')
-  const [profilePhotoUrl, setProfilePhotoUrl] = React.useState('')
-  const [profileCurrentPassword, setProfileCurrentPassword] = React.useState('')
-  const [profileNewPassword, setProfileNewPassword] = React.useState('')
-
   const [movimentacoes, setMovimentacoes] = React.useState<Movimentacao[]>([])
   const [movLoading, setMovLoading] = React.useState(false)
   const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'>('TODOS')
@@ -586,13 +513,7 @@ export function InsumosModule() {
     return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day))
   }, [movimentacoes])
 
-  const [backupItems, setBackupItems] = React.useState<BackupSnapshot[]>([])
-  const [backupLoading, setBackupLoading] = React.useState(false)
-  const [backupRestoreId, setBackupRestoreId] = React.useState('')
-  const [backupCleanupDays, setBackupCleanupDays] = React.useState('30')
-
-  const [auditRows, setAuditRows] = React.useState<AuditRow[]>([])
-  const [auditLoading, setAuditLoading] = React.useState(false)
+  // Backups/auditoria foram movidos para o módulo Status do sistema.
 
   const [overviewLoading, setOverviewLoading] = React.useState(false)
   const [overviewResumo, setOverviewResumo] = React.useState<EstoqueResumo | null>(null)
@@ -716,9 +637,6 @@ export function InsumosModule() {
       if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'lotes'
       if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
       if (['insights', 'alertas'].includes(value)) return 'insights'
-      if (['perfil', 'profile'].includes(value)) return 'perfil'
-      if (['backup', 'backups'].includes(value)) return 'backup'
-      if (['audit', 'auditoria'].includes(value)) return 'audit'
       return null
     }
 
@@ -1143,58 +1061,12 @@ export function InsumosModule() {
     }
   }, [])
 
-  React.useEffect(() => {
-    setProfileDisplayName(user?.displayName || user?.username || '')
-    setProfileEmail(user?.email || '')
-    setProfileUsername(user?.username || '')
-    setProfilePhotoUrl(user?.photoUrl || '')
-    setProfileCurrentPassword('')
-    setProfileNewPassword('')
-  }, [user?.displayName, user?.email, user?.photoUrl, user?.username])
-
   const openLotDialog = React.useCallback((i: Insumo) => {
     setLotSelecionado(i)
     setLotEditLote(String(i.lote || ''))
     setLotEditValidade(i.dataValidade ? String(i.dataValidade) : '')
     setLotDialogOpen(true)
   }, [])
-
-  const updateProfile = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setProfileSaving(true)
-    try {
-      const payload: any = {
-        displayName: profileDisplayName.trim(),
-        email: profileEmail.trim(),
-        photoUrl: profilePhotoUrl || '',
-        newUsername: profileUsername.trim()
-      }
-      if (profileNewPassword.trim()) payload.newPassword = profileNewPassword.trim()
-      if (profileCurrentPassword.trim()) payload.currentPassword = profileCurrentPassword.trim()
-      const out = await apiJson<{ success?: boolean; user?: InsumosUser; csrfToken?: string }>(`/auth/profile`, {
-        method: 'PUT',
-        body: payload
-      })
-      setUser(out?.user || null)
-      setCsrfToken(out?.csrfToken || null)
-      setProfileCurrentPassword('')
-      setProfileNewPassword('')
-      toast.success('Perfil atualizado.')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setProfileSaving(false)
-    }
-  }, [
-    canUseApi,
-    isAuthed,
-    profileCurrentPassword,
-    profileDisplayName,
-    profileEmail,
-    profileNewPassword,
-    profilePhotoUrl,
-    profileUsername
-  ])
 
   const loadInsumos = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -1244,34 +1116,6 @@ export function InsumosModule() {
   React.useEffect(() => {
     setMovPagina(1)
   }, [unidade, movAte, movDe, movLimite, movTipo])
-
-  const loadBackups = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setBackupLoading(true)
-    try {
-      const out = await apiJson<{ success?: boolean; data?: BackupSnapshot[] }>(`/backup/list?limit=20&unidade=${encodeURIComponent(unidade)}`)
-      setBackupItems(Array.isArray(out?.data) ? out.data : [])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-      setBackupItems([])
-    } finally {
-      setBackupLoading(false)
-    }
-  }, [canUseApi, isAuthed, unidade])
-
-  const loadAudit = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setAuditLoading(true)
-    try {
-      const out = await apiJson<{ success?: boolean; data?: AuditRow[] }>(`/audit?limit=200&unidade=${encodeURIComponent(unidade)}`)
-      setAuditRows(Array.isArray(out?.data) ? out.data : [])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-      setAuditRows([])
-    } finally {
-      setAuditLoading(false)
-    }
-  }, [canUseApi, isAuthed, unidade])
 
   const loadOverview = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -1552,10 +1396,7 @@ export function InsumosModule() {
     if (activeTab === 'lotes') void loadInsumos()
     if (activeTab === 'mov') void loadMovimentacoes()
     if (activeTab === 'insights') void loadInsights()
-    if (activeTab === 'perfil') void loadMe()
-    if (activeTab === 'backup') void loadBackups()
-    if (activeTab === 'audit') void loadAudit()
-  }, [activeTab, canUseApi, isAuthed, loadAudit, loadBackups, loadInsumos, loadInsights, loadMe, loadMovimentacoes, loadOverview, loadShareHistory])
+  }, [activeTab, canUseApi, isAuthed, loadInsumos, loadInsights, loadMovimentacoes, loadOverview, loadShareHistory])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
@@ -2006,9 +1847,6 @@ export function InsumosModule() {
               <TabsTrigger value="lotes">Lotes</TabsTrigger>
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
-              <TabsTrigger value="perfil">Perfil</TabsTrigger>
-              <TabsTrigger value="backup">Backup</TabsTrigger>
-              <TabsTrigger value="audit">Auditoria</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className="mt-4 space-y-3">
@@ -3473,262 +3311,6 @@ export function InsumosModule() {
               </div>
             </TabsContent>
 
-            <TabsContent value="perfil" className="mt-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="text-base text-white font-semibold">Minha conta</div>
-                  <div className="text-sm text-blue-100/70">Atualize dados do login do Insumos (mesma sessão do CRM).</div>
-                </div>
-                <Button variant="secondary" onClick={loadMe} disabled={authLoading}>
-                  {authLoading ? 'Atualizando…' : 'Recarregar'}
-                </Button>
-              </div>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">Perfil</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="h-12 w-12">
-                      <AvatarImage src={profilePhotoUrl || user?.photoUrl || ''} />
-                      <AvatarFallback>{String(profileDisplayName || profileUsername || 'US').slice(0, 2).toUpperCase()}</AvatarFallback>
-                    </Avatar>
-                    <div className="text-sm text-blue-100/70">
-                      Logado como <span className="font-mono">{user?.username || '-'}</span> • {user?.role || '-'}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Usuário (login)</div>
-                      <Input value={profileUsername} onChange={(e) => setProfileUsername(e.target.value)} disabled={!isAuthed} />
-                      <div className="text-xs text-blue-200/50 mt-1">Use letras, números, ponto, hífen ou underscore.</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Nome exibido</div>
-                      <Input value={profileDisplayName} onChange={(e) => setProfileDisplayName(e.target.value)} disabled={!isAuthed} />
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Email</div>
-                      <Input value={profileEmail} onChange={(e) => setProfileEmail(e.target.value)} disabled={!isAuthed} />
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Foto de perfil</div>
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        disabled={!isAuthed}
-                        onChange={async (e) => {
-                          const f = e.target.files?.[0]
-                          if (!f) return
-                          try {
-                            const data = await fileToCompressedDataUrl(f, { maxDimension: 256, quality: 0.8, maxDataUrlLength: 45000 })
-                            setProfilePhotoUrl(data)
-                            toast.success('Imagem carregada.')
-                          } catch (err: any) {
-                            toast.error(err?.message || 'Não foi possível processar a imagem.')
-                          }
-                        }}
-                      />
-                      <div className="text-xs text-blue-200/50 mt-1">A imagem é compactada e salva como base64.</div>
-                    </div>
-                  </div>
-
-                  <Card className="bg-black/10 border border-white/10">
-                    <CardHeader>
-                      <CardTitle className="text-white text-sm">Trocar senha (opcional)</CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Senha atual</div>
-                        <Input
-                          type="password"
-                          value={profileCurrentPassword}
-                          onChange={(e) => setProfileCurrentPassword(e.target.value)}
-                          disabled={!isAuthed}
-                        />
-                      </div>
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Nova senha</div>
-                        <Input
-                          type="password"
-                          value={profileNewPassword}
-                          onChange={(e) => setProfileNewPassword(e.target.value)}
-                          disabled={!isAuthed}
-                        />
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <div className="flex justify-end">
-                    <Button onClick={updateProfile} disabled={profileSaving || !isAuthed}>
-                      {profileSaving ? 'Salvando…' : 'Salvar alterações'}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="backup" className="mt-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-blue-100/70">Backup snapshot (D1) + restauração de Sheets (somente perfis autorizados).</div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    onClick={async () => {
-                      if (!isAuthed) return
-                      try {
-                        await mutateJson(`/backup/trigger?unidade=${encodeURIComponent(unidade)}`, { method: 'POST', queueLabel: 'Backup' })
-                        toast.success('Backup disparado')
-                        await loadBackups()
-                      } catch (e) {
-                        toast.error(e instanceof Error ? e.message : String(e))
-                      }
-                    }}
-                    disabled={backupLoading || !isAuthed}
-                  >
-                    Disparar backup
-                  </Button>
-                  <Button variant="secondary" onClick={loadBackups} disabled={backupLoading || !isAuthed}>
-                    {backupLoading ? 'Carregando…' : 'Recarregar'}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Restaurar</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-xs text-blue-200/60">
-                      Confirmação obrigatória: envia <span className="font-mono">{`{"confirm":"RESTORE"}`}</span>.
-                    </div>
-                    <Input value={backupRestoreId} onChange={(e) => setBackupRestoreId(e.target.value)} placeholder="backup id" />
-                    <Button
-                      variant="destructive"
-                      onClick={async () => {
-                        if (!backupRestoreId.trim()) return toast.error('Informe o id')
-                        try {
-                          await mutateJson(`/backup/restore?unidade=${encodeURIComponent(unidade)}`, {
-                            method: 'POST',
-                            queueLabel: 'Restore',
-                            body: { id: Number(backupRestoreId), confirm: 'RESTORE' }
-                          })
-                          toast.success('Restore concluído')
-                          await Promise.allSettled([loadBackups(), loadInsumos(), loadMovimentacoes()])
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : String(e))
-                        }
-                      }}
-                      disabled={!isAuthed}
-                    >
-                      Restaurar
-                    </Button>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Limpeza</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-xs text-blue-200/60">Remove snapshots antigos mantendo N dias.</div>
-                    <Input value={backupCleanupDays} onChange={(e) => setBackupCleanupDays(e.target.value)} type="number" />
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        try {
-                          await mutateJson(`/backup/cleanup?unidade=${encodeURIComponent(unidade)}`, {
-                            method: 'POST',
-                            queueLabel: 'Limpeza de backups',
-                            body: { daysToKeep: Number(backupCleanupDays) || 30 }
-                          })
-                          toast.success('Limpeza executada')
-                          await loadBackups()
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : String(e))
-                        }
-                      }}
-                      disabled={!isAuthed}
-                    >
-                      Limpar
-                    </Button>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="overflow-auto rounded-xl border border-white/10">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-black/30 text-blue-100/80">
-                    <tr>
-                      <th className="text-left p-3">ID</th>
-                      <th className="text-left p-3">Data</th>
-                      <th className="text-left p-3">Unidade</th>
-                      <th className="text-left p-3">Autor</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {backupItems.map((b) => (
-                      <tr key={String(b.id)} className="hover:bg-white/5">
-                        <td className="p-3 font-mono text-blue-100/80">{b.id}</td>
-                        <td className="p-3 text-blue-100/70">{fmtDate(b.ts)}</td>
-                        <td className="p-3 text-blue-100/70">{b.unidade || '-'}</td>
-                        <td className="p-3 text-blue-100/70">{b.actor || '-'}</td>
-                      </tr>
-                    ))}
-                    {!backupItems.length ? (
-                      <tr>
-                        <td className="p-3 text-blue-100/70" colSpan={4}>
-                          {backupLoading ? 'Carregando…' : isAuthed ? 'Sem backups.' : 'Faça login para carregar.'}
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="audit" className="mt-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm text-blue-100/70">Logs operacionais (preferência D1; fallback Sheets).</div>
-                <Button variant="secondary" onClick={loadAudit} disabled={auditLoading || !isAuthed}>
-                  {auditLoading ? 'Carregando…' : 'Recarregar'}
-                </Button>
-              </div>
-
-              <div className="overflow-auto rounded-xl border border-white/10">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-black/30 text-blue-100/80">
-                    <tr>
-                      <th className="text-left p-3">Data</th>
-                      <th className="text-left p-3">Ação</th>
-                      <th className="text-left p-3">Entidade</th>
-                      <th className="text-left p-3">ID</th>
-                      <th className="text-left p-3">Autor</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {auditRows.map((a, idx) => (
-                      <tr key={`${a.timestamp || ''}-${idx}`} className="hover:bg-white/5">
-                        <td className="p-3 text-blue-100/70">{fmtDate(a.timestamp)}</td>
-                        <td className="p-3 text-blue-100/80">{a.action || '-'}</td>
-                        <td className="p-3 text-blue-100/70">{a.entity || '-'}</td>
-                        <td className="p-3 font-mono text-blue-100/70">{a.entityId || '-'}</td>
-                        <td className="p-3 text-blue-100/70">{a.actor || '-'}</td>
-                      </tr>
-                    ))}
-                    {!auditRows.length ? (
-                      <tr>
-                        <td className="p-3 text-blue-100/70" colSpan={5}>
-                          {auditLoading ? 'Carregando…' : isAuthed ? 'Sem logs.' : 'Faça login para carregar.'}
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
