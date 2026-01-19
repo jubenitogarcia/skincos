@@ -58,6 +58,46 @@ export async function handleInsumosRoutes({
         return { key: keys[0] || '', idx: undefined };
     };
 
+    const findInsumoRowIndex = ({ values, headerMap, codigo, registro }) => {
+        const registroIdx = headerMap['registro'];
+        const codigoIdx = headerMap['código'];
+        if (codigoIdx === undefined) {
+            return { ok: false, error: 'Coluna CÓDIGO não encontrada', code: 'HEADERS_MISSING' };
+        }
+
+        const normCodigo = (codigo || '').toString().trim();
+        const normRegistro = (registro || '').toString().trim();
+
+        if (normRegistro && registroIdx !== undefined) {
+            const idx = values.slice(1).findIndex((r) => ((r?.[registroIdx] || '').toString().trim() === normRegistro));
+            if (idx === -1) return { ok: false, error: 'Registro não encontrado', code: 'NOT_FOUND' };
+            const row = values[idx + 1] || [];
+            const rowCodigo = (row?.[codigoIdx] || '').toString().trim();
+            if (normCodigo && rowCodigo && rowCodigo !== normCodigo) {
+                return { ok: false, error: 'Registro não corresponde ao código informado', code: 'MISMATCH' };
+            }
+            return { ok: true, rowIndex: idx };
+        }
+
+        const matches = values
+            .slice(1)
+            .map((r, idx) => ({ r, idx }))
+            .filter(({ r }) => ((r?.[codigoIdx] || '').toString().trim() === normCodigo));
+
+        if (!matches.length) return { ok: false, error: 'Insumo não encontrado', code: 'NOT_FOUND' };
+        if (matches.length > 1) {
+            return {
+                ok: false,
+                error: 'Código possui múltiplos registros (lotes). Informe o registro.',
+                code: 'AMBIGUOUS',
+                registros: matches
+                    .map(({ r }) => (registroIdx !== undefined ? (r?.[registroIdx] || '').toString().trim() : ''))
+                    .filter(Boolean)
+            };
+        }
+        return { ok: true, rowIndex: matches[0].idx };
+    };
+
     const safeParseJson = (raw) => {
         try {
             if (!raw) return null;
@@ -141,6 +181,7 @@ export async function handleInsumosRoutes({
 
             const body = await request.json().catch(() => ({}));
             const codigo = (body.codigoBarras || '').toString().trim();
+            const registro = (body.registro || '').toString().trim();
             const quantidade = Math.max(1, parseInt(body.quantidade, 10) || 0);
             const usuario = (body.usuario || auth.user.username || '').toString();
             const observacoes = (body.observacoes || '').toString();
@@ -154,14 +195,12 @@ export async function handleInsumosRoutes({
             const values = await readSheet(spreadsheetId, sheetRange, accessToken);
             const headers = values[0] || [];
             const headerMap = getHeaderMap(headers);
-            const codeIdx = headerMap['código'];
-            if (codeIdx === undefined) {
-                return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
+            const found = findInsumoRowIndex({ values, headerMap, codigo, registro });
+            if (!found.ok) {
+                const status = found.code === 'NOT_FOUND' ? 404 : found.code === 'AMBIGUOUS' ? 409 : 400;
+                return withCORS(JSON.stringify({ success: false, error: found.error, code: found.code, registros: found.registros || [] }), { status }, appOrigin);
             }
-            const rowIndex = values.slice(1).findIndex((r) => ((r?.[codeIdx] || '').toString().trim() === codigo));
-            if (rowIndex === -1) {
-                return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
-            }
+            const rowIndex = found.rowIndex;
 
             const { idx: stockIdx } = resolveStockIndex(headerMap, unidade);
             if (stockIdx === undefined) {
@@ -184,7 +223,7 @@ export async function handleInsumosRoutes({
                 spreadsheetId,
                 sheetName: movimentacoesSheetName,
                 accessToken,
-                requiredHeaders: ['UNIDADE']
+                requiredHeaders: ['UNIDADE', 'REGISTRO INSUMO', 'LOTE', 'DATA VALIDADE']
             });
             const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
@@ -200,6 +239,9 @@ export async function handleInsumosRoutes({
             setIfPresent(movRow, movMap, 'estoque novo', novoEstoque);
             setIfPresent(movRow, movMap, 'unidade', unidade);
             setIfPresent(movRow, movMap, 'usuário', usuario);
+            setIfPresent(movRow, movMap, 'registro insumo', (headerMap['registro'] !== undefined ? currentRow[headerMap['registro']] : '') || '');
+            setIfPresent(movRow, movMap, 'lote', (headerMap['lote'] !== undefined ? currentRow[headerMap['lote']] : '') || '');
+            setIfPresent(movRow, movMap, 'data validade', (headerMap['data validade'] !== undefined ? currentRow[headerMap['data validade']] : '') || '');
             setIfPresent(movRow, movMap, 'observações', observacoes);
             await writeSheet(spreadsheetId, movimentacoesRange, [movRow], accessToken, 'APPEND');
 
@@ -235,6 +277,7 @@ export async function handleInsumosRoutes({
 
             const body = await request.json().catch(() => ({}));
             const codigo = (body.codigoBarras || '').toString().trim();
+            const registro = (body.registro || '').toString().trim();
             const quantidade = Math.max(1, parseInt(body.quantidade, 10) || 0);
             const usuario = (body.usuario || auth.user.username || '').toString();
             const observacoes = (body.observacoes || '').toString();
@@ -248,14 +291,12 @@ export async function handleInsumosRoutes({
             const values = await readSheet(spreadsheetId, sheetRange, accessToken);
             const headers = values[0] || [];
             const headerMap = getHeaderMap(headers);
-            const codeIdx = headerMap['código'];
-            if (codeIdx === undefined) {
-                return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
+            const found = findInsumoRowIndex({ values, headerMap, codigo, registro });
+            if (!found.ok) {
+                const status = found.code === 'NOT_FOUND' ? 404 : found.code === 'AMBIGUOUS' ? 409 : 400;
+                return withCORS(JSON.stringify({ success: false, error: found.error, code: found.code, registros: found.registros || [] }), { status }, appOrigin);
             }
-            const rowIndex = values.slice(1).findIndex((r) => ((r?.[codeIdx] || '').toString().trim() === codigo));
-            if (rowIndex === -1) {
-                return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
-            }
+            const rowIndex = found.rowIndex;
 
             const { idx: stockIdx } = resolveStockIndex(headerMap, unidade);
             if (stockIdx === undefined) {
@@ -281,7 +322,7 @@ export async function handleInsumosRoutes({
                 spreadsheetId,
                 sheetName: movimentacoesSheetName,
                 accessToken,
-                requiredHeaders: ['UNIDADE']
+                requiredHeaders: ['UNIDADE', 'REGISTRO INSUMO', 'LOTE', 'DATA VALIDADE']
             });
             const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
@@ -297,6 +338,9 @@ export async function handleInsumosRoutes({
             setIfPresent(movRow, movMap, 'estoque novo', novoEstoque);
             setIfPresent(movRow, movMap, 'unidade', unidade);
             setIfPresent(movRow, movMap, 'usuário', usuario);
+            setIfPresent(movRow, movMap, 'registro insumo', (headerMap['registro'] !== undefined ? currentRow[headerMap['registro']] : '') || '');
+            setIfPresent(movRow, movMap, 'lote', (headerMap['lote'] !== undefined ? currentRow[headerMap['lote']] : '') || '');
+            setIfPresent(movRow, movMap, 'data validade', (headerMap['data validade'] !== undefined ? currentRow[headerMap['data validade']] : '') || '');
             setIfPresent(movRow, movMap, 'observações', observacoes);
             await writeSheet(spreadsheetId, movimentacoesRange, [movRow], accessToken, 'APPEND');
 
@@ -338,6 +382,7 @@ export async function handleInsumosRoutes({
 
             const body = await request.json().catch(() => ({}));
             const codigo = (body.codigoBarras || '').toString().trim();
+            const registro = (body.registro || '').toString().trim();
             const quantidade = Math.max(1, parseInt(body.quantidade, 10) || 0);
             const fromUnidade = (body.fromUnidade || body.unidadeOrigem || body.from || '').toString().trim();
             const toUnidade = (body.toUnidade || body.unidadeDestino || body.to || '').toString().trim();
@@ -368,20 +413,19 @@ export async function handleInsumosRoutes({
 	                );
 	            }
 
-	            const replay = await maybeReplayIdempotency({ action: 'TRANSFERENCIA', entity: 'INSUMO', entityId: codigo });
+	            const replayEntityId = registro ? `${codigo}:${registro}` : codigo;
+	            const replay = await maybeReplayIdempotency({ action: 'TRANSFERENCIA', entity: 'INSUMO', entityId: replayEntityId });
 	            if (replay) return replay;
 
 	            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
 	            const headers = values[0] || [];
 	            const headerMap = getHeaderMap(headers);
-            const codeIdx = headerMap['código'];
-            if (codeIdx === undefined) {
-                return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
-            }
-            const rowIndex = values.slice(1).findIndex((r) => ((r?.[codeIdx] || '').toString().trim() === codigo));
-            if (rowIndex === -1) {
-                return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
-            }
+	            const found = findInsumoRowIndex({ values, headerMap, codigo, registro });
+	            if (!found.ok) {
+	                const status = found.code === 'NOT_FOUND' ? 404 : found.code === 'AMBIGUOUS' ? 409 : 400;
+	                return withCORS(JSON.stringify({ success: false, error: found.error, code: found.code, registros: found.registros || [] }), { status }, appOrigin);
+	            }
+	            const rowIndex = found.rowIndex;
 
             const { idx: fromIdx } = resolveStockIndex(headerMap, fromUnidade);
             const { idx: toIdx } = resolveStockIndex(headerMap, toUnidade);
@@ -413,7 +457,7 @@ export async function handleInsumosRoutes({
                 spreadsheetId,
                 sheetName: movimentacoesSheetName,
                 accessToken,
-                requiredHeaders: ['UNIDADE', 'UNIDADE ORIGEM', 'UNIDADE DESTINO', 'ID TRANSFERÊNCIA']
+                requiredHeaders: ['UNIDADE', 'UNIDADE ORIGEM', 'UNIDADE DESTINO', 'ID TRANSFERÊNCIA', 'REGISTRO INSUMO', 'LOTE', 'DATA VALIDADE']
             });
             const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
@@ -438,6 +482,9 @@ export async function handleInsumosRoutes({
                 setIfPresent(movRow, movMap, 'unidade origem', fromUnidade);
                 setIfPresent(movRow, movMap, 'unidade destino', toUnidade);
                 setIfPresent(movRow, movMap, 'id transferência', transferId);
+                setIfPresent(movRow, movMap, 'registro insumo', (headerMap['registro'] !== undefined ? currentRow[headerMap['registro']] : '') || '');
+                setIfPresent(movRow, movMap, 'lote', (headerMap['lote'] !== undefined ? currentRow[headerMap['lote']] : '') || '');
+                setIfPresent(movRow, movMap, 'data validade', (headerMap['data validade'] !== undefined ? currentRow[headerMap['data validade']] : '') || '');
                 const obs = `${obsPrefix}${observacoes ? ` | ${observacoes}` : ''}`;
                 setIfPresent(movRow, movMap, 'observações', obs);
                 return movRow;
@@ -458,10 +505,10 @@ export async function handleInsumosRoutes({
                 idempotencyKey,
                 action: 'TRANSFERENCIA',
                 entity: 'INSUMO',
-                entityId: codigo,
+                entityId: replayEntityId,
                 unidade: fromUnidade,
                 before: { fromUnidade, toUnidade, estoqueAnteriorOrigem, estoqueAnteriorDestino, row: beforeRow },
-                after: { quantidade, transferId, estoqueNovoOrigem, estoqueNovoDestino, row: currentRow }
+                after: { registro: (headerMap['registro'] !== undefined ? currentRow[headerMap['registro']] : '') || '', quantidade, transferId, estoqueNovoOrigem, estoqueNovoDestino, row: currentRow }
             });
 
             ctx.waitUntil(enqueueNotificationsRefresh(env, fromUnidade));
@@ -487,6 +534,7 @@ export async function handleInsumosRoutes({
 
             const body = await request.json().catch(() => ({}));
             const codigo = (body.codigoBarras || '').toString().trim();
+            const registro = (body.registro || '').toString().trim();
             const novoEstoque = Number.isFinite(Number(body.novoEstoque)) ? Number(body.novoEstoque) : parseInt(body.novoEstoque, 10);
             const motivo = (body.motivo || '').toString().trim();
             const observacoes = (body.observacoes || '').toString();
@@ -508,14 +556,12 @@ export async function handleInsumosRoutes({
 	            const values = await readSheet(spreadsheetId, sheetRange, accessToken);
 	            const headers = values[0] || [];
 	            const headerMap = getHeaderMap(headers);
-            const codeIdx = headerMap['código'];
-            if (codeIdx === undefined) {
-                return withCORS(JSON.stringify({ success: false, error: "Coluna CÓDIGO não encontrada" }), { status: 500 }, appOrigin);
-            }
-            const rowIndex = values.slice(1).findIndex((r) => ((r?.[codeIdx] || '').toString().trim() === codigo));
-            if (rowIndex === -1) {
-                return withCORS(JSON.stringify({ success: false, error: "Insumo não encontrado" }), { status: 404 }, appOrigin);
-            }
+	            const found = findInsumoRowIndex({ values, headerMap, codigo, registro });
+	            if (!found.ok) {
+	                const status = found.code === 'NOT_FOUND' ? 404 : found.code === 'AMBIGUOUS' ? 409 : 400;
+	                return withCORS(JSON.stringify({ success: false, error: found.error, code: found.code, registros: found.registros || [] }), { status }, appOrigin);
+	            }
+	            const rowIndex = found.rowIndex;
 
             const { idx: stockIdx } = resolveStockIndex(headerMap, unidade);
             if (stockIdx === undefined) {
@@ -538,7 +584,7 @@ export async function handleInsumosRoutes({
                 spreadsheetId,
                 sheetName: movimentacoesSheetName,
                 accessToken,
-                requiredHeaders: ['UNIDADE', 'MOTIVO']
+                requiredHeaders: ['UNIDADE', 'MOTIVO', 'REGISTRO INSUMO', 'LOTE', 'DATA VALIDADE']
             });
             const movValues = await readSheet(spreadsheetId, `${movimentacoesSheetName}!1:1`, accessToken);
             const movHeaders = movValues[0] || [];
@@ -557,6 +603,9 @@ export async function handleInsumosRoutes({
             setIfPresent(movRow, movMap, 'unidade', unidade);
             setIfPresent(movRow, movMap, 'usuário', usuario);
             setIfPresent(movRow, movMap, 'motivo', motivo);
+            setIfPresent(movRow, movMap, 'registro insumo', (headerMap['registro'] !== undefined ? currentRow[headerMap['registro']] : '') || '');
+            setIfPresent(movRow, movMap, 'lote', (headerMap['lote'] !== undefined ? currentRow[headerMap['lote']] : '') || '');
+            setIfPresent(movRow, movMap, 'data validade', (headerMap['data validade'] !== undefined ? currentRow[headerMap['data validade']] : '') || '');
             setIfPresent(movRow, movMap, 'observações', observacoes);
             await writeSheet(spreadsheetId, movimentacoesRange, [movRow], accessToken, 'APPEND');
 
@@ -650,11 +699,28 @@ export async function handleInsumosRoutes({
 	            const codigoBarras = (body.codigoBarras || '').toString().trim();
 	            if (!codigoBarras) return withCORS(JSON.stringify({ success: false, error: "Código de barras é obrigatório" }), { status: 400 }, appOrigin);
 
-	            const replay = await maybeReplayIdempotency({ action: 'CREATE', entity: 'INSUMO', entityId: codigoBarras });
+	            const allowDuplicateLot = body.allowDuplicateLot === true || body.novoLote === true;
+	            const lote = (body.lote || '').toString().trim();
+	            const replayEntityId = allowDuplicateLot ? `${codigoBarras}:${lote || 'SEM_LOTE'}` : codigoBarras;
+	            const replay = await maybeReplayIdempotency({ action: 'CREATE', entity: 'INSUMO', entityId: replayEntityId });
 	            if (replay) return replay;
 
-	            const exists = values.slice(1).some((r) => ((r?.[codigoIdx] || '').toString().trim() === codigoBarras));
-	            if (exists) return withCORS(JSON.stringify({ success: false, error: "Código de barras já cadastrado" }), { status: 409 }, appOrigin);
+	            if (allowDuplicateLot) {
+	                if (!lote) return withCORS(JSON.stringify({ success: false, error: "Lote é obrigatório para cadastrar novo lote" }), { status: 400 }, appOrigin);
+	                const loteIdx = headerMap['lote'];
+	                if (loteIdx === undefined) {
+	                    return withCORS(JSON.stringify({ success: false, error: "Coluna LOTE não encontrada" }), { status: 500 }, appOrigin);
+	                }
+	                const existsSameLot = values
+	                    .slice(1)
+	                    .some((r) => ((r?.[codigoIdx] || '').toString().trim() === codigoBarras) && ((r?.[loteIdx] || '').toString().trim() === lote));
+	                if (existsSameLot) {
+	                    return withCORS(JSON.stringify({ success: false, error: "Lote já cadastrado para este código de barras" }), { status: 409 }, appOrigin);
+	                }
+	            } else {
+	                const exists = values.slice(1).some((r) => ((r?.[codigoIdx] || '').toString().trim() === codigoBarras));
+	                if (exists) return withCORS(JSON.stringify({ success: false, error: "Código de barras já cadastrado" }), { status: 409 }, appOrigin);
+	            }
 
             const newRow = ensureRowLength([], headers.length);
             const registro = nextRegistroFromValues(values, registroIdx);
@@ -685,22 +751,22 @@ export async function handleInsumosRoutes({
 
             await writeSheet(spreadsheetId, sheetRange, [newRow], accessToken, 'APPEND');
 
-            await appendAuditLog({
-                env,
-                spreadsheetId,
-                accessToken,
-                actor: auth.user.username,
-                role: auth.user.role,
-                ip,
-                userAgent,
-                idempotencyKey,
-                action: 'CREATE',
-                entity: 'INSUMO',
-                entityId: codigoBarras,
-                unidade,
-                before: null,
-                after: { registro, codigoBarras, payload: body }
-            });
+	            await appendAuditLog({
+	                env,
+	                spreadsheetId,
+	                accessToken,
+	                actor: auth.user.username,
+	                role: auth.user.role,
+	                ip,
+	                userAgent,
+	                idempotencyKey,
+	                action: 'CREATE',
+	                entity: 'INSUMO',
+	                entityId: replayEntityId,
+	                unidade,
+	                before: null,
+	                after: { registro, codigoBarras, lote, allowDuplicateLot, payload: body }
+	            });
 
             ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
             return withCORS(JSON.stringify({ success: true, message: "Insumo cadastrado", data: { registro } }), { status: 201 }, appOrigin);

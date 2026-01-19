@@ -1105,36 +1105,39 @@ function setIfPresent(row, headerMap, headerKeyLower, value) {
     row[idx] = value ?? '';
 }
 
-function parseMovimentacoes(values) {
-    if (!values || values.length < 2) return [];
-    const headers = values[0] || [];
-    const map = getHeaderMap(headers);
-    return values.slice(1).map((row) => {
+	function parseMovimentacoes(values) {
+	    if (!values || values.length < 2) return [];
+	    const headers = values[0] || [];
+	    const map = getHeaderMap(headers);
+	    return values.slice(1).map((row) => {
         const r = row || [];
         const get = (key) => {
             const idx = map[key];
             return idx === undefined ? '' : (r[idx] ?? '');
         };
         const dataHora = (get('data/hora') || '').toString();
-        return {
-            id: get('id movimentação') || '',
-            dataHora,
-            tipo: get('tipo') || '',
-            codigoBarras: get('código de barras') || '',
-            produto: get('produto') || '',
-            quantidade: Number(get('quantidade')) || 0,
-            estoqueAnterior: Number(get('estoque anterior')) || 0,
-            estoqueNovo: Number(get('estoque novo')) || 0,
-            unidade: get('unidade') || '',
-            unidadeOrigem: get('unidade origem') || '',
-            unidadeDestino: get('unidade destino') || '',
-            transferId: get('id transferência') || '',
-            usuario: get('usuário') || '',
-            motivo: get('motivo') || '',
-            observacoes: get('observações') || ''
-        };
-    }).filter((m) => m.dataHora || m.tipo || m.codigoBarras || m.produto);
-}
+	        return {
+	            id: get('id movimentação') || '',
+	            dataHora,
+	            tipo: get('tipo') || '',
+	            codigoBarras: get('código de barras') || '',
+	            produto: get('produto') || '',
+	            quantidade: Number(get('quantidade')) || 0,
+	            estoqueAnterior: Number(get('estoque anterior')) || 0,
+	            estoqueNovo: Number(get('estoque novo')) || 0,
+	            unidade: get('unidade') || '',
+	            unidadeOrigem: get('unidade origem') || '',
+	            unidadeDestino: get('unidade destino') || '',
+	            transferId: get('id transferência') || '',
+	            usuario: get('usuário') || '',
+	            motivo: get('motivo') || '',
+	            registroInsumo: get('registro insumo') || '',
+	            lote: get('lote') || '',
+	            dataValidade: get('data validade') || '',
+	            observacoes: get('observações') || ''
+	        };
+	    }).filter((m) => m.dataHora || m.tipo || m.codigoBarras || m.produto);
+	}
 
 /**
  * Convert structured data back to rows for Sheets

@@ -70,6 +70,9 @@ type Movimentacao = {
   transferId?: string
   usuario?: string
   motivo?: string
+  registroInsumo?: string
+  lote?: string
+  dataValidade?: string
   observacoes?: string
 }
 
@@ -161,6 +164,7 @@ type ApiError = {
   message?: string
   success?: boolean
   code?: string
+  registros?: string[]
 }
 
 type OfflineQueueItem = {
@@ -462,7 +466,11 @@ async function apiJson<T>(
     }
   }
 
-  throw new Error(message)
+  const ex = new Error(message) as any
+  ex.status = res.status
+  ex.code = err.code
+  ex.registros = Array.isArray(err.registros) ? err.registros : []
+  throw ex
 }
 
 export function InsumosModule() {
@@ -486,6 +494,9 @@ export function InsumosModule() {
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
+  const [quickRegistro, setQuickRegistro] = React.useState('')
+  const [quickRegistros, setQuickRegistros] = React.useState<string[]>([])
+  const [quickAutoFefo, setQuickAutoFefo] = React.useState(true)
   const [quickScanOpen, setQuickScanOpen] = React.useState(false)
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
   const [quickNovoEstoque, setQuickNovoEstoque] = React.useState('')
@@ -524,6 +535,7 @@ export function InsumosModule() {
   const [createEstoqueMinimo, setCreateEstoqueMinimo] = React.useState('5')
   const [createLote, setCreateLote] = React.useState('')
   const [createDataValidade, setCreateDataValidade] = React.useState('')
+  const [createNovoLote, setCreateNovoLote] = React.useState(false)
   const [createLoading, setCreateLoading] = React.useState(false)
 
   const [lotFiltroCategoria, setLotFiltroCategoria] = React.useState('')
@@ -609,6 +621,73 @@ export function InsumosModule() {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
     return fromHealth.length ? fromHealth : ['novo-hamburgo', 'barra-shopping-sul']
   }, [Array.isArray(health?.unidades) ? health!.unidades!.join('|') : ''])
+
+  const quickLotes = React.useMemo(() => {
+    const codigo = quickCodigo.trim()
+    if (!codigo) return []
+    const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
+    const items = (insumos || [])
+      .filter((i) => String(i.codigoBarras || '').trim() === codigo && String(i.registro || '').trim())
+      .map((i) => {
+        const registro = String(i.registro || '').trim()
+        const lote = String(i.lote || '').trim()
+        const dataValidade = i.dataValidade ?? null
+        const estoque = ctxUnidade && i?.estoques ? Number(i.estoques[ctxUnidade] ?? 0) : Number(i.estoqueAtual ?? 0)
+        return { registro, lote, dataValidade, estoque: Number.isFinite(estoque) ? estoque : 0 }
+      })
+
+    const unique = new Map<string, (typeof items)[number]>()
+    for (const it of items) if (!unique.has(it.registro)) unique.set(it.registro, it)
+    const list = Array.from(unique.values())
+
+    const sortByValidade = (a: any, b: any) => {
+      const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY
+      const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY
+      if (da !== db) return da - db
+      return String(a.registro).localeCompare(String(b.registro))
+    }
+
+    if (quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') {
+      const withStock = list.filter((l) => (Number(l.estoque) || 0) > 0).sort(sortByValidade)
+      const noStock = list.filter((l) => (Number(l.estoque) || 0) <= 0).sort(sortByValidade)
+      return [...withStock, ...noStock]
+    }
+
+    return list.sort(sortByValidade)
+  }, [insumos, quickCodigo, quickOp, transferFrom, unidade])
+
+  const quickLoteNeedsPick = (quickRegistros.length > 1) || (quickLotes.length > 1)
+  const quickLotesForPicker = React.useMemo(() => {
+    if (quickRegistros.length) {
+      const set = new Set(quickRegistros)
+      const filtered = quickLotes.filter((l) => set.has(l.registro))
+      if (filtered.length) return filtered
+      return quickRegistros.map((registro) => ({ registro, lote: '', dataValidade: null as any, estoque: 0 }))
+    }
+    return quickLotes
+  }, [quickLotes, quickRegistros.join('|')])
+
+  React.useEffect(() => {
+    if (!quickOp) return
+    setQuickRegistros([])
+    setQuickRegistro('')
+  }, [quickOp])
+
+  React.useEffect(() => {
+    if (!quickOp) return
+    setQuickRegistros([])
+    setQuickRegistro('')
+  }, [quickCodigo])
+
+  React.useEffect(() => {
+    if (!quickOp) return
+    if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
+    if (!quickAutoFefo) return
+    if (!quickLotes.length) return
+    const suggested = quickLotes[0]?.registro
+    if (!suggested) return
+    setQuickRegistro((cur) => (cur ? cur : suggested))
+  }, [quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickOp])
 
   const persistShareHistory = React.useCallback(
     (next: ShareHistoryItem[]) => {
@@ -1320,18 +1399,24 @@ export function InsumosModule() {
         if (kind === 'AJUSTE') {
           const novoEstoque = Number.isFinite(Number(quickNovoEstoque)) ? Number(quickNovoEstoque) : null
           if (novoEstoque === null) return toast.error('Informe o novo estoque')
+          const registro = quickRegistro.trim()
           await mutateJson(`/insumos/ajuste?unidade=${encodeURIComponent(unidade)}`, {
             method: 'POST',
-            body: { codigoBarras, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
+            body: { codigoBarras, registro: registro || undefined, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
             queueLabel: 'Ajuste'
           })
           toast.success('Ajuste registrado')
         } else {
           const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
           const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
+          const registro = quickRegistro.trim()
+          if (quickLoteNeedsPick && !registro) {
+            toast.error('Selecione o lote/registro')
+            return false
+          }
           await mutateJson(`${path}?unidade=${encodeURIComponent(unidade)}`, {
             method: 'POST',
-            body: { codigoBarras, quantidade, observacoes: quickObs },
+            body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
             queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
           })
           toast.success(kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
@@ -1340,6 +1425,13 @@ export function InsumosModule() {
         await Promise.allSettled([loadInsumos(), loadMovimentacoes()])
         return true
       } catch (e) {
+        const code = (e as any)?.code
+        const registros = Array.isArray((e as any)?.registros) ? (e as any).registros : []
+        if (String(code || '').toUpperCase() === 'AMBIGUOUS') {
+          setQuickRegistros(registros)
+          toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
+          return false
+        }
         toast.error(e instanceof Error ? e.message : String(e))
         return false
       } finally {
@@ -1349,6 +1441,7 @@ export function InsumosModule() {
     [
       canUseApi,
       isAuthed,
+      quickLoteNeedsPick,
       loadInsumos,
       loadMovimentacoes,
       mutateJson,
@@ -1357,6 +1450,7 @@ export function InsumosModule() {
       quickNovoEstoque,
       quickObs,
       quickQuantidade,
+      quickRegistro,
       unidade
     ]
   )
@@ -1367,6 +1461,11 @@ export function InsumosModule() {
     if (!codigoBarras) return toast.error('Informe o código de barras')
 
     if (transferFrom === transferTo) return toast.error('Origem e destino devem ser diferentes')
+    const registro = quickRegistro.trim()
+    if (quickLoteNeedsPick && !registro) {
+      toast.error('Selecione o lote/registro')
+      return false
+    }
 
     setQuickActionLoading(true)
     try {
@@ -1375,6 +1474,7 @@ export function InsumosModule() {
         method: 'POST',
         body: {
           codigoBarras,
+          registro: registro || undefined,
           quantidade,
           fromUnidade: transferFrom,
           toUnidade: transferTo,
@@ -1388,6 +1488,13 @@ export function InsumosModule() {
       await Promise.allSettled([loadInsumos(), loadMovimentacoes(), loadOverview()])
       return true
     } catch (e) {
+      const code = (e as any)?.code
+      const registros = Array.isArray((e as any)?.registros) ? (e as any).registros : []
+      if (String(code || '').toUpperCase() === 'AMBIGUOUS') {
+        setQuickRegistros(registros)
+        toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
+        return false
+      }
       toast.error(e instanceof Error ? e.message : String(e))
       return false
     } finally {
@@ -1396,6 +1503,7 @@ export function InsumosModule() {
   }, [
     canUseApi,
     isAuthed,
+    quickLoteNeedsPick,
     loadInsumos,
     loadMovimentacoes,
     loadOverview,
@@ -1403,6 +1511,7 @@ export function InsumosModule() {
     quickCodigo,
     quickObs,
     quickQuantidade,
+    quickRegistro,
     transferFrom,
     transferTo
   ])
@@ -2042,6 +2151,8 @@ export function InsumosModule() {
           if (open) return
           setQuickOp(null)
           setQuickScanOpen(false)
+          setQuickRegistros([])
+          setQuickRegistro('')
         }}
       >
         <DialogContent className="max-w-xl">
@@ -2074,6 +2185,53 @@ export function InsumosModule() {
                 </Button>
               </div>
             </div>
+
+            {quickLoteNeedsPick ? (
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-blue-200/70">Lote/registro</div>
+                  {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') && quickLotesForPicker.length > 1 ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={() => setQuickAutoFefo((v) => !v)}
+                      title="FEFO (First-Expire, First-Out): prioriza o lote com validade mais próxima"
+                    >
+                      FEFO {quickAutoFefo ? 'auto' : 'manual'}
+                    </Button>
+                  ) : null}
+                </div>
+                <Select
+                  value={quickRegistro}
+                  onValueChange={(v) => {
+                    setQuickRegistro(v)
+                    setQuickAutoFefo(false)
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Selecione o lote/registro" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {quickLotesForPicker.map((l) => (
+                      <SelectItem key={l.registro} value={l.registro}>
+                        <span className="flex w-full items-center justify-between gap-3">
+                          <span className="font-mono">{l.registro}</span>
+                          <span className="flex items-center gap-2 text-xs text-blue-100/70">
+                            {l.lote ? <span>Lote {l.lote}</span> : null}
+                            {l.dataValidade ? <span>Vence {fmtDateOnlyBR(l.dataValidade)}</span> : null}
+                            {Number.isFinite(Number(l.estoque)) ? <span>Estoque {Number(l.estoque)}</span> : null}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="text-xs text-blue-200/60">
+                  Se o produto tiver múltiplos lotes, selecione qual registro deve ser movimentado.
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -2182,6 +2340,61 @@ export function InsumosModule() {
           </DialogFooter>
       </DialogContent>
       </Dialog>
+
+	      <div className="max-w-6xl mx-auto mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+	        <div className="flex items-center gap-2">
+	          <Select value={unidade} onValueChange={(v) => setUnidade(v)}>
+	            <SelectTrigger className="w-64">
+	              <SelectValue placeholder="Selecione a unidade" />
+	            </SelectTrigger>
+	            <SelectContent>
+	              {unidadeOptions.map((u) => (
+	                <SelectItem key={u} value={u}>
+	                  {unidadeLabel(u)}
+	                </SelectItem>
+	              ))}
+	            </SelectContent>
+	          </Select>
+	        </div>
+	        <div className="flex items-center gap-2">
+	          <Button
+	            size="icon"
+	            className="!bg-green-600 hover:!bg-green-700 !text-white"
+	            title="Entrada"
+	            onClick={() => {
+	              setQuickScanOpen(false)
+	              setQuickOp('ENTRADA')
+	            }}
+	            disabled={!isAuthed}
+	          >
+	            +
+	          </Button>
+	          <Button
+	            size="icon"
+	            variant="destructive"
+	            title="Saída"
+	            onClick={() => {
+	              setQuickScanOpen(false)
+	              setQuickOp('BAIXA')
+	            }}
+	            disabled={!isAuthed}
+	          >
+	            −
+	          </Button>
+	          <Button
+	            size="icon"
+	            className="!bg-blue-600 hover:!bg-blue-700 !text-white"
+	            title="Transferência"
+	            onClick={() => {
+	              setQuickScanOpen(false)
+	              setQuickOp('TRANSFERENCIA')
+	            }}
+	            disabled={!isAuthed}
+	          >
+	            ⟲
+	          </Button>
+	        </div>
+	      </div>
 
 	      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3">
 	        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
@@ -3069,12 +3282,31 @@ export function InsumosModule() {
                       <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} type="number" min={0} />
                     </div>
                     <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Lote</div>
-                      <Input value={createLote} onChange={(e) => setCreateLote(e.target.value)} placeholder="opcional" />
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="text-xs text-blue-200/70">Lote</div>
+                        <Button
+                          variant={createNovoLote ? 'secondary' : 'outline'}
+                          size="sm"
+                          type="button"
+                          onClick={() => setCreateNovoLote((v) => !v)}
+                          title="Ative quando estiver cadastrando um lote adicional para um código já existente."
+                        >
+                          {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
+                        </Button>
+                      </div>
+                      <Input
+                        value={createLote}
+                        onChange={(e) => setCreateLote(e.target.value)}
+                        placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'}
+                      />
                     </div>
 	                    <div>
 	                      <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
-	                      <Input value={createDataValidade} onChange={(e) => setCreateDataValidade(e.target.value)} placeholder="DD/MM/AAAA" />
+	                      <Input
+	                        value={createDataValidade}
+	                        onChange={(e) => setCreateDataValidade(e.target.value)}
+	                        placeholder={createNovoLote ? 'recomendado (DD/MM/AAAA)' : 'DD/MM/AAAA'}
+	                      />
 	                    </div>
 	                  </div>
 
@@ -3144,7 +3376,9 @@ export function InsumosModule() {
                       onClick={async () => {
                         const codigoBarras = createCodigo.trim()
                         if (!codigoBarras) return toast.error('Informe o código de barras')
-                        const produto = createProduto.trim()
+                        if (createNovoLote && !createLote.trim()) return toast.error('Informe o lote (Novo lote: on)')
+                        const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                        const produto = createProduto.trim() || (createNovoLote ? String(existing?.produto || '').trim() : '')
                         if (!produto) return toast.error('Informe o produto')
 
                         setCreateLoading(true)
@@ -3155,6 +3389,7 @@ export function InsumosModule() {
                             body: {
                               codigoBarras,
                               produto,
+                              allowDuplicateLot: createNovoLote,
 	                              categoria: createCategoria.trim(),
 	                              marca: createMarca.trim(),
 	                              tipoUnidade: createTipoUnidade.trim(),
@@ -3186,10 +3421,18 @@ export function InsumosModule() {
 	                          setCreateEstoqueMinimo('5')
                           setCreateLote('')
                           setCreateDataValidade('')
+                          setCreateNovoLote(false)
                           setCreateOpen(false)
                           await loadInsumos()
                         } catch (e) {
-                          toast.error(e instanceof Error ? e.message : String(e))
+                          const status = (e as any)?.status
+                          const msg = e instanceof Error ? e.message : String(e)
+                          if (status === 409 && /código de barras já cadastrado/i.test(msg)) {
+                            setCreateNovoLote(true)
+                            toast.error('Código já existe. Ative “Novo lote” e informe Lote/Validade para cadastrar um lote adicional.')
+                            return
+                          }
+                          toast.error(msg)
                         } finally {
                           setCreateLoading(false)
                         }
@@ -3477,16 +3720,28 @@ export function InsumosModule() {
                         <td className="p-3 text-blue-100/70">{m.unidade ? unidadeLabel(m.unidade) : '-'}</td>
                         <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
                         <td className="p-3 text-blue-100/60">
-                          {m.transferId ? (
-                            <div>
-                              <div>Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}</div>
-                              <div className="font-mono text-xs">{m.transferId}</div>
-                            </div>
-                          ) : m.motivo ? (
-                            <span>Motivo: {m.motivo}</span>
-                          ) : (
-                            <span>{m.observacoes || '-'}</span>
-                          )}
+                          <div className="space-y-1">
+                            {m.transferId ? (
+                              <div>
+                                <div>
+                                  Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
+                                  {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
+                                </div>
+                                <div className="font-mono text-xs">{m.transferId}</div>
+                              </div>
+                            ) : m.motivo ? (
+                              <span>Motivo: {m.motivo}</span>
+                            ) : (
+                              <span>{m.observacoes || '-'}</span>
+                            )}
+                            {m.registroInsumo || m.lote || m.dataValidade ? (
+                              <div className="text-xs text-blue-200/60">
+                                {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
+                                {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
+                                {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     ))}
