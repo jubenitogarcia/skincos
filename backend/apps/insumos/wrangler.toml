@@ -43,14 +43,14 @@ MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
 # UNIDADES_HEADERS_JSON = "{\"barra-shopping-sul\":\"barrashoppingsul\",\"novo-hamburgo\":\"novo hamburgo\"}"
 
 # IMPORTANT:
-# Production-only vars/secrets should be configured in Cloudflare (Dashboard or `wrangler secret put`)
-# and preserved during deploys with `wrangler deploy --keep-vars`:
-# - SPREADSHEET_ID
-# - SHEET_ID
-# - GOOGLE_SERVICE_ACCOUNT_EMAIL
-# - GOOGLE_PRIVATE_KEY (secret)
-# - SESSION_SECRET (recommended)
+# Insumos roda em D1 (INSUMOS_STORAGE=d1).
+# Sheets é opcional (apenas para migração/restore legado) e pode ficar desabilitado em produção.
 #
 # Secrets (set via `wrangler secret put`):
-# GOOGLE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
-# MIGRATION_TOKEN = "one-time-token"   # optional: allows calling POST /admin/migrate/sheets-to-d1 without session/CSRF
+# - SESSION_SECRET (recommended)
+# - MIGRATION_TOKEN (optional, one-time)  # permite chamar POST /admin/migrate/sheets-to-d1 sem sessão/CSRF
+#
+# Optional legacy (Sheets):
+# - SPREADSHEET_ID
+# - GOOGLE_SERVICE_ACCOUNT_EMAIL
+# - GOOGLE_PRIVATE_KEY (secret)
