@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 type InsumosHealth = {
@@ -415,8 +414,6 @@ async function apiJson<T>(
 }
 
 export function InsumosModule() {
-  type InsumosTab = 'insumos' | 'mov'
-
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
@@ -435,8 +432,6 @@ export function InsumosModule() {
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
 
-  const [activeTab, setActiveTab] = React.useState<InsumosTab>('insumos')
-
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickScanOpen, setQuickScanOpen] = React.useState(false)
@@ -446,6 +441,8 @@ export function InsumosModule() {
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const insumosSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const movSectionRef = React.useRef<HTMLDivElement | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -604,7 +601,7 @@ export function InsumosModule() {
 
 
 	  React.useEffect(() => {
-	    const mapTab = (raw: string | null): 'overview' | InsumosTab | null => {
+	    const mapTab = (raw: string | null): 'overview' | 'insumos' | 'mov' | null => {
 	      const value = String(raw || '')
 	        .trim()
 	        .toLowerCase()
@@ -629,16 +626,16 @@ export function InsumosModule() {
       return null
     }
 
-    try {
-      const params = new URLSearchParams(window.location.search)
-      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
-      if (requestedTab === 'overview') {
-        setTimeout(() => {
-          overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }, 250)
-      } else if (requestedTab) {
-        setActiveTab(requestedTab)
-      }
+	    try {
+	      const params = new URLSearchParams(window.location.search)
+	      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
+	      if (requestedTab) {
+	        setTimeout(() => {
+	          if (requestedTab === 'overview') overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	          else if (requestedTab === 'insumos') insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	          else if (requestedTab === 'mov') movSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	        }, 250)
+	      }
 
       const action = String(
         params.get('insumosAction') || params.get('action') || params.get('type') || params.get('tipo') || ''
@@ -648,10 +645,10 @@ export function InsumosModule() {
       const wantsScanner = params.get('scanner') === '1' || actionLabel === 'Scanner'
       const wantsQuickAction = ['Entrada', 'Saída', 'Ajuste', 'Transferência'].includes(actionLabel || '')
 
-      if (wantsCadastro) {
-        setActiveTab('insumos')
-        setCreateOpen(true)
-      }
+	      if (wantsCadastro) {
+	        setCreateOpen(true)
+	        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+	      }
 
       if (wantsScanner) {
         setQuickScanOpen(true)
@@ -679,15 +676,15 @@ export function InsumosModule() {
         : []
       const hasShare = Boolean(shareId || shareTitle || shareText || shareUrl || shareFiles.length)
 
-      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
-        setSharePayload(payload)
-        setShareSourceId(sourceId || null)
-        setShareHidden(false)
-        setActiveTab('insumos')
-        setCreateOpen(true)
-        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
-        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
-        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
+	      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
+	        setSharePayload(payload)
+	        setShareSourceId(sourceId || null)
+	        setShareHidden(false)
+	        setCreateOpen(true)
+	        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+	        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
+	        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
+	        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
         if (payload.files && payload.files.length) {
           const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
           setCreateFonte((prev) => (prev ? prev : filesSummary))
@@ -753,16 +750,16 @@ export function InsumosModule() {
       .join(' ')
   }, [])
 
-  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
-    setActiveTab('insumos')
-    setCreateOpen(true)
-    setSharePayload(payload)
-    setShareSourceId(payload.id || null)
-    setShareHidden(false)
-    if (payload.title) setCreateProduto(payload.title)
-    if (payload.text) setCreateEspecificacao(payload.text)
-    if (payload.url) setCreateFonte(payload.url)
-    if (payload.files && payload.files.length) {
+	  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
+	    setCreateOpen(true)
+	    setSharePayload(payload)
+	    setShareSourceId(payload.id || null)
+	    setShareHidden(false)
+	    setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+	    if (payload.title) setCreateProduto(payload.title)
+	    if (payload.text) setCreateEspecificacao(payload.text)
+	    if (payload.url) setCreateFonte(payload.url)
+	    if (payload.files && payload.files.length) {
       const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
       setCreateFonte((prev) => (prev ? prev : filesSummary))
     }
@@ -1379,12 +1376,10 @@ export function InsumosModule() {
 
 	  React.useEffect(() => {
 	    if (!canUseApi || !isAuthed) return
-	    if (activeTab === 'insumos') {
-	      void loadInsumos()
-	      void loadShareHistory()
-	    }
-	    if (activeTab === 'mov') void loadMovimentacoes()
-	  }, [activeTab, canUseApi, isAuthed, loadInsumos, loadMovimentacoes, loadShareHistory])
+	    void loadInsumos()
+	    void loadMovimentacoes()
+	    void loadShareHistory()
+	  }, [canUseApi, isAuthed, loadInsumos, loadMovimentacoes, loadShareHistory])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
@@ -2377,27 +2372,23 @@ export function InsumosModule() {
 	        </DialogContent>
 	      </Dialog>
 
-	      <div className="max-w-6xl mx-auto space-y-3">
-	        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-	          <div className="text-white text-lg font-semibold">Gestão</div>
-	          <div className="flex flex-wrap items-center gap-2">
-	            {offlineQueueCount > 0 ? (
-	              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-	                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-	              </Button>
-	            ) : null}
-	          </div>
-	        </div>
+		      <div ref={insumosSectionRef} className="max-w-6xl mx-auto space-y-3">
+		        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+		          <div>
+		            <div className="text-white text-lg font-semibold">Insumos</div>
+		            <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
+		          </div>
+		          <div className="flex flex-wrap items-center gap-2">
+		            {offlineQueueCount > 0 ? (
+		              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+		                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+		              </Button>
+		            ) : null}
+		          </div>
+		        </div>
 
-	        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-	            <TabsList className="bg-black/20 flex flex-wrap">
-	              <TabsTrigger value="insumos">Insumos</TabsTrigger>
-	              <TabsTrigger value="mov">Movimentações</TabsTrigger>
-	            </TabsList>
-
-	            <TabsContent value="insumos" className="mt-4 space-y-3">
-              {sharePayload && !shareHidden ? (
-                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
+	              {sharePayload && !shareHidden ? (
+	                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-blue-50 font-semibold">Compartilhamento recebido</div>
                     <Button variant="secondary" size="sm" onClick={() => setShareHidden(true)}>
@@ -2829,12 +2820,17 @@ export function InsumosModule() {
                   </tbody>
                 </table>
               </div>
-            </TabsContent>
+		      </div>
 
-		            <TabsContent value="mov" className="mt-4 space-y-3">
-		              <div className="flex flex-wrap items-end gap-2">
-		                <div className="w-48">
-		                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
+		      <div ref={movSectionRef} className="max-w-6xl mx-auto space-y-3">
+		        <div>
+		          <div className="text-white text-lg font-semibold">Movimentações</div>
+		          <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+		        </div>
+
+			              <div className="flex flex-wrap items-end gap-2">
+			                <div className="w-48">
+			                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
 		                  <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
 	                    <SelectTrigger>
                       <SelectValue />
@@ -2932,8 +2928,8 @@ export function InsumosModule() {
                 </div>
               </div>
 
-              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                <table className="min-w-full text-sm">
+			              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+			                <table className="min-w-full text-sm">
                   <thead className="bg-black/30 text-blue-100/80">
                     <tr>
                       <th className="text-left p-3">Data</th>
@@ -2979,11 +2975,8 @@ export function InsumosModule() {
                     ) : null}
                   </tbody>
                 </table>
-              </div>
-            </TabsContent>
-
-	        </Tabs>
-	      </div>
-    </div>
-  )
+			              </div>
+		      </div>
+	    </div>
+	  )
 }
