@@ -1569,7 +1569,7 @@ export function InsumosModule() {
           </div>
 
           {debugUi ? (
-            <div className="overflow-auto rounded-xl border border-white/10">
+            <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
               <table className="min-w-full text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
@@ -1974,7 +1974,7 @@ export function InsumosModule() {
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-                    <div className="overflow-auto rounded-xl border border-white/10">
+                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                       <table className="min-w-full text-sm">
                         <thead className="bg-black/30 text-blue-100/80">
                           <tr>
@@ -2113,7 +2113,7 @@ export function InsumosModule() {
                       </div>
                     </div>
 
-                    <div className="overflow-auto rounded-xl border border-white/10">
+                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                       <table className="min-w-full text-sm">
                         <thead className="bg-black/30 text-blue-100/80">
                           <tr>
@@ -2180,7 +2180,7 @@ export function InsumosModule() {
                         </>
                       ) : null}
                     </div>
-                    <div className="overflow-auto rounded-xl border border-white/10">
+                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                       <table className="min-w-full text-sm">
                         <thead className="bg-black/30 text-blue-100/80">
                           <tr>
@@ -2378,7 +2378,7 @@ export function InsumosModule() {
                   {!insumosLoteFiltrados.length ? (
                     <div className="text-sm text-blue-100/70">Nenhum item para os filtros.</div>
                   ) : (
-                    <div className="overflow-auto">
+                    <div className="overflow-auto max-h-[60vh]">
                       <table className="w-full text-sm">
                         <thead className="text-blue-200/70">
                           <tr className="border-b border-white/10">
@@ -2836,7 +2836,7 @@ export function InsumosModule() {
                 </div>
               ) : null}
 
-              <div className="overflow-auto rounded-xl border border-white/10">
+              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                 <table className="min-w-full text-sm">
                   <thead className="bg-black/30 text-blue-100/80">
                     <tr>
@@ -3078,7 +3078,7 @@ export function InsumosModule() {
                 </div>
               </div>
 
-              <div className="overflow-auto rounded-xl border border-white/10">
+              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                 <table className="min-w-full text-sm">
                   <thead className="bg-black/30 text-blue-100/80">
                     <tr>

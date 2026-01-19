@@ -422,7 +422,7 @@ export function SystemStatusModule() {
                 </Card>
               </div>
 
-              <div className="overflow-auto rounded-xl border border-white/10">
+              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                 <table className="min-w-full text-sm">
                   <thead className="bg-black/30 text-blue-100/80">
                     <tr>
@@ -482,7 +482,7 @@ export function SystemStatusModule() {
                     {auditLoading ? 'Carregando…' : 'Recarregar'}
                   </Button>
                 </div>
-                <div className="overflow-auto rounded-xl border border-white/10">
+                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                   <table className="min-w-full text-sm">
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
