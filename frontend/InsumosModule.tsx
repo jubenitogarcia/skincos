@@ -2377,19 +2377,19 @@ export function InsumosModule() {
 	        </DialogContent>
 	      </Dialog>
 
-	      <Card className="glass-morphism border border-white/10 max-w-6xl mx-auto">
-	        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-	          <CardTitle className="text-white">Gestão</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            {offlineQueueCount > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-              </Button>
-            ) : null}
-          </div>
-        </CardHeader>
-	        <CardContent>
-	          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+	      <div className="max-w-6xl mx-auto space-y-3">
+	        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+	          <div className="text-white text-lg font-semibold">Gestão</div>
+	          <div className="flex flex-wrap items-center gap-2">
+	            {offlineQueueCount > 0 ? (
+	              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+	                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+	              </Button>
+	            ) : null}
+	          </div>
+	        </div>
+
+	        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
 	            <TabsList className="bg-black/20 flex flex-wrap">
 	              <TabsTrigger value="insumos">Insumos</TabsTrigger>
 	              <TabsTrigger value="mov">Movimentações</TabsTrigger>
@@ -2982,9 +2982,8 @@ export function InsumosModule() {
               </div>
             </TabsContent>
 
-          </Tabs>
-        </CardContent>
-      </Card>
+	        </Tabs>
+	      </div>
     </div>
   )
 }
