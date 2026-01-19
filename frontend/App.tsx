@@ -2,7 +2,7 @@
 import React, { useState, Suspense, lazy, useMemo } from 'react'
 import { ContextDebugger } from './ContextDebugger'
 import { ErrorBoundary } from '@/ErrorBoundary'
-import { NotificationProvider, useAuth } from '@/contexts'
+import { NotificationProvider, useAuth, useNotifications } from '@/contexts'
 import { AuthScreen } from '@/AuthScreen'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
@@ -175,8 +175,8 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
     { key: 'reports', label: 'Relatórios', icon: '📊', component: <Relatorios /> },
 ]
 
-	export default function AppFunctionalNeatlab() {
-	    const { isAuthenticated, user, signOut } = useAuth()
+export default function AppFunctionalNeatlab() {
+    const { isAuthenticated, user, signOut } = useAuth()
 
 	    const [profileOpen, setProfileOpen] = useState(false)
 	    const [profileLoading, setProfileLoading] = useState(false)
@@ -232,7 +232,7 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-	    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos', 'status', 'notifications']), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
@@ -401,20 +401,40 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
         })
     }, [UNLOCKED_MODULE_KEYS])
 
-    const filteredModules = useMemo(() => modulesSorted.filter(m =>
-        m.label.toLowerCase().includes(search.toLowerCase()) ||
-        m.key.includes(search.toLowerCase())
-    ), [modulesSorted, search])
+		    const filteredModules = useMemo(() => modulesSorted.filter(m =>
+		        m.label.toLowerCase().includes(search.toLowerCase()) ||
+		        m.key.includes(search.toLowerCase())
+		    ), [modulesSorted, search])
 
     // Resolve active module once for rendering content independently of sidebar filtering
     const activeModule = useMemo(() => modules.find(m => m.key === active), [active])
 
-    if (!isAuthenticated) {
-        return <AuthScreen />
-    }
+	    if (!isAuthenticated) {
+	        return <AuthScreen />
+	    }
 
-    return (
-        <NotificationProvider>
+	    function HeaderNotificationsButton({ onOpen }: { onOpen: () => void }) {
+	        const { unreadCount } = useNotifications()
+	        return (
+	            <Button
+	                variant="outline"
+	                className="relative bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
+	                onClick={onOpen}
+	                title="Notificações"
+	                aria-label="Notificações"
+	            >
+	                <span className="text-lg">🔔</span>
+	                {unreadCount > 0 ? (
+	                    <Badge className="absolute -top-1 -right-1 bg-red-500 text-white text-xs h-5 min-w-5 rounded-full flex items-center justify-center px-1 animate-pulse">
+	                        {unreadCount > 99 ? '99+' : String(unreadCount)}
+	                    </Badge>
+	                ) : null}
+	            </Button>
+	        )
+	    }
+
+	    return (
+	        <NotificationProvider>
             <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
                 <DialogContent className="max-w-xl">
                     <DialogHeader>
@@ -635,7 +655,7 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
                         {/* Premium Header */}
                         <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-6">
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4">
+	                                <div className="flex items-center gap-4">
 	                                    <div className="animate-fade-in">
 	                                        <h1 className="text-2xl font-bold text-white leading-tight">
 	                                            {modules.find(m => m.key === active)?.label || 'Dashboard'}
@@ -763,25 +783,28 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
                                         )}
                                     </div>
 
-                                    {/* Premium Notifications */}
-                                    <Button
-                                        variant="outline"
-                                        className="relative bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
-                                    >
-                                        <span className="text-lg">🔔</span>
-                                        <Badge className="absolute -top-1 -right-1 bg-red-500 text-white text-xs h-5 w-5 rounded-full flex items-center justify-center p-0 animate-pulse">
-                                            3
-                                        </Badge>
-                                    </Button>
+	                                    {/* Premium Notifications */}
+	                                    <HeaderNotificationsButton
+	                                        onOpen={() => {
+	                                            setSearch('')
+	                                            setActive('notifications')
+	                                        }}
+	                                    />
 
-                                    {/* Settings Button */}
-                                    <Button
-                                        variant="outline"
-                                        className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
-                                    >
-                                        <span className="text-lg">⚙️</span>
-                                    </Button>
-                                </div>
+	                                    {/* Settings Button */}
+	                                    <Button
+	                                        variant="outline"
+	                                        className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
+	                                        onClick={() => {
+	                                            setSearch('')
+	                                            setActive('status')
+	                                        }}
+	                                        title="Status do sistema"
+	                                        aria-label="Status do sistema"
+	                                    >
+	                                        <span className="text-lg">⚙️</span>
+	                                    </Button>
+	                                </div>
                             </div>
                         </header>
 

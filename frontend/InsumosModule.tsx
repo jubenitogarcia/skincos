@@ -222,8 +222,8 @@ function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): E
 }
 
 function estoqueStatusLabel(status: EstoqueStatus) {
-  if (status === 'URGENTE') return 'Urgente'
-  if (status === 'ATENCAO') return 'Atenção'
+  if (status === 'URGENTE') return 'Críticos'
+  if (status === 'ATENCAO') return 'Estoque baixo'
   return 'Ok'
 }
 
@@ -245,6 +245,48 @@ function fmtDayShort(isoDay?: string) {
   const d = new Date(`${isoDay}T00:00:00.000Z`)
   if (Number.isNaN(d.getTime())) return String(isoDay)
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+}
+
+function isoToBrDate(value?: string | null) {
+  const v = String(value || '').trim()
+  if (!v) return ''
+  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return v
+  return `${m[3]}/${m[2]}/${m[1]}`
+}
+
+function brToIsoDate(value?: string | null) {
+  const v = String(value || '').trim()
+  if (!v) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v
+
+  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return ''
+  const day = parseInt(m[1], 10)
+  const month = parseInt(m[2], 10)
+  const year = parseInt(m[3], 10)
+  const d = new Date(Date.UTC(year, month - 1, day))
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return ''
+  const yyyy = String(year).padStart(4, '0')
+  const mm = String(month).padStart(2, '0')
+  const dd = String(day).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function dateInputToIso(value?: string | null) {
+  const v = String(value || '').trim()
+  if (!v) return ''
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
+  const iso = brToIsoDate(v)
+  return iso || ''
+}
+
+function fmtDateOnlyBR(value?: string | null) {
+  const v = String(value || '').trim()
+  if (!v) return ''
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return v
+  const iso = dateInputToIso(v)
+  return iso ? isoToBrDate(iso) : v
 }
 
 function statusBadgeVariant(status?: string): 'default' | 'secondary' | 'destructive' {
@@ -1043,7 +1085,7 @@ export function InsumosModule() {
   const openLotDialog = React.useCallback((i: Insumo) => {
     setLotSelecionado(i)
     setLotEditLote(String(i.lote || ''))
-    setLotEditValidade(i.dataValidade ? String(i.dataValidade) : '')
+    setLotEditValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
     setLotDialogOpen(true)
   }, [])
 
@@ -1061,22 +1103,24 @@ export function InsumosModule() {
     }
   }, [canUseApi, isAuthed, unidade])
 
-  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
-    if (!canUseApi || !isAuthed) return
-    setMovLoading(true)
-    try {
+	  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
+	    if (!canUseApi || !isAuthed) return
+	    setMovLoading(true)
+	    try {
       const pagina = Math.max(1, opts?.pagina ?? movPagina)
       const limite = Math.max(1, Math.min(200, opts?.limite ?? movLimite))
       const params = new URLSearchParams()
       params.set('unidade', unidade)
-      params.set('limite', String(limite))
-      params.set('pagina', String(pagina))
-      if (movTipo !== 'TODOS') params.set('tipo', movTipo)
-      if (movDe) params.set('de', movDe)
-      if (movAte) params.set('ate', movAte)
-      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
-        `/movimentacoes?${params.toString()}`
-      )
+	      params.set('limite', String(limite))
+	      params.set('pagina', String(pagina))
+	      if (movTipo !== 'TODOS') params.set('tipo', movTipo)
+	      const deIso = dateInputToIso(movDe)
+	      const ateIso = dateInputToIso(movAte)
+	      if (deIso) params.set('de', deIso)
+	      if (ateIso) params.set('ate', ateIso)
+	      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
+	        `/movimentacoes?${params.toString()}`
+	      )
       const list = (out as any)?.movimentos ?? out?.data
       setMovimentacoes(Array.isArray(list) ? list : [])
       const total = Number((out as any)?.resumo?.totalMovimentacoes)
@@ -1183,20 +1227,21 @@ export function InsumosModule() {
     }
   }, [canUseApi, isAuthed, unidade, overviewPeriod])
 
-  const saveLot = React.useCallback(async () => {
+	  const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
       toast.error('Registro do insumo ausente.')
       return
     }
     if (!canUseApi || !isAuthed) return
-    setLotSaving(true)
-    try {
-      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
-        method: 'PUT',
-        body: { lote: lotEditLote.trim(), dataValidade: lotEditValidade.trim() || '' },
-        queueLabel: 'Atualização de lote/validade'
-      })
-      toast.success('Lote/validade atualizados.')
+	    setLotSaving(true)
+	    try {
+	      const dataValidade = dateInputToIso(lotEditValidade)
+	      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
+	        method: 'PUT',
+	        body: { lote: lotEditLote.trim(), dataValidade },
+	        queueLabel: 'Atualização de lote/validade'
+	      })
+	      toast.success('Lote/validade atualizados.')
       setLotDialogOpen(false)
       await Promise.allSettled([loadInsumos(), loadOverview()])
     } catch (e) {
@@ -1206,24 +1251,26 @@ export function InsumosModule() {
     }
   }, [canUseApi, isAuthed, loadInsumos, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, unidade])
 
-  const loadInsights = React.useCallback(async () => {
+	  const loadInsights = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setInsightsLoading(true)
     try {
       const base = new URLSearchParams()
       base.set('unidade', unidade)
 
-      const trendsParams = new URLSearchParams(base.toString())
-      trendsParams.set('groupBy', 'day')
-      trendsParams.set('days', '30')
-      if (movDe) trendsParams.set('from', movDe)
-      if (movAte) trendsParams.set('to', movAte)
+	      const trendsParams = new URLSearchParams(base.toString())
+	      trendsParams.set('groupBy', 'day')
+	      trendsParams.set('days', '30')
+	      const deIso = dateInputToIso(movDe)
+	      const ateIso = dateInputToIso(movAte)
+	      if (deIso) trendsParams.set('from', deIso)
+	      if (ateIso) trendsParams.set('to', ateIso)
 
-      const turnoverParams = new URLSearchParams(base.toString())
-      turnoverParams.set('days', '30')
-      turnoverParams.set('mode', 'saida')
-      if (movDe) turnoverParams.set('from', movDe)
-      if (movAte) turnoverParams.set('to', movAte)
+	      const turnoverParams = new URLSearchParams(base.toString())
+	      turnoverParams.set('days', '30')
+	      turnoverParams.set('mode', 'saida')
+	      if (deIso) turnoverParams.set('from', deIso)
+	      if (ateIso) turnoverParams.set('to', ateIso)
 
       const [alertas, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
@@ -1853,12 +1900,12 @@ export function InsumosModule() {
 		                          <SelectTrigger>
 		                            <SelectValue />
 		                          </SelectTrigger>
-		                          <SelectContent>
-		                            <SelectItem value="TODOS">Todos</SelectItem>
-		                            <SelectItem value="ATENCAO">Atenção</SelectItem>
-		                            <SelectItem value="URGENTE">Urgente</SelectItem>
-		                          </SelectContent>
-		                        </Select>
+			                          <SelectContent>
+			                            <SelectItem value="TODOS">Todos</SelectItem>
+			                            <SelectItem value="ATENCAO">Estoque baixo</SelectItem>
+			                            <SelectItem value="URGENTE">Críticos</SelectItem>
+			                          </SelectContent>
+			                        </Select>
 		                      </div>
 		                      <div>
 		                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
@@ -2010,9 +2057,9 @@ export function InsumosModule() {
 		                                  <td className="p-3">
 		                                    <span className="font-mono">{i.lote ? String(i.lote) : '-'}</span>
 		                                  </td>
-		                                  <td className="p-3">
-		                                    <span className="font-mono">{i.dataValidade ? String(i.dataValidade) : '-'}</span>
-		                                  </td>
+			                                  <td className="p-3">
+			                                    <span className="font-mono">{i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '-'}</span>
+			                                  </td>
 		                                  <td className="p-3">
 		                                    <Badge variant={badgeVariant}>{st}</Badge>
 		                                  </td>
@@ -2028,67 +2075,67 @@ export function InsumosModule() {
 		                          </tbody>
 		                        </table>
 		                      </div>
-		                    )}
-		                  </div>
-		                </details>
-		              </CardContent>
-		            </Card>
+			                    )}
+			                  </div>
+			                </details>
 
-		            <Card className="bg-black/20 border border-white/10">
-		              <CardHeader>
-		                <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
-		              </CardHeader>
-	              <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-	                <div className="space-y-2">
-	                  <div className="text-sm text-blue-100/80">Reposição</div>
-	                  {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-	                    <button
-	                      key={String(r.codigoBarras)}
-	                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-	                      onClick={() => {
-	                        if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
-	                      }}
-	                    >
-	                      <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-	                      <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-	                      <div className="text-xs text-blue-100/70 mt-1">
-	                        sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-	                        {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-	                      </div>
-	                    </button>
-	                  ))}
-	                  {!overviewActionables?.reposicao?.length ? (
-	                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
-	                  ) : null}
-	                </div>
-	                <div className="space-y-2">
-	                  <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-	                  {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-	                    <button
-	                      key={`${t.codigoBarras}-${t.from}-${t.to}`}
-	                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-	                      onClick={() => {
-	                        if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-	                        if (t.qty != null) setQuickQuantidade(String(t.qty))
-	                        if (t.from) setTransferFrom(String(t.from))
-	                        if (t.to) setTransferTo(String(t.to))
-	                      }}
-	                    >
-	                      <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-	                      <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-	                      <div className="text-xs text-blue-100/70 mt-1">
-	                        <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-	                        <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-	                        <span className="font-mono">{t.qty ?? '-'}</span>
-	                      </div>
-	                    </button>
-	                  ))}
-	                  {!overviewActionables?.transferencias?.length ? (
-	                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
-	                  ) : null}
-	                </div>
-	              </CardContent>
-	            </Card>
+			                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+			                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+			                    Ações recomendadas
+			                  </summary>
+			                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+			                    <div className="space-y-2">
+			                      <div className="text-sm text-blue-100/80">Reposição</div>
+			                      {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
+			                        <button
+			                          key={String(r.codigoBarras)}
+			                          className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+			                          onClick={() => {
+			                            if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
+			                          }}
+			                        >
+			                          <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
+			                          <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
+			                          <div className="text-xs text-blue-100/70 mt-1">
+			                            sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
+			                            {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
+			                          </div>
+			                        </button>
+			                      ))}
+			                      {!overviewActionables?.reposicao?.length ? (
+			                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+			                      ) : null}
+			                    </div>
+			                    <div className="space-y-2">
+			                      <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
+			                      {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
+			                        <button
+			                          key={`${t.codigoBarras}-${t.from}-${t.to}`}
+			                          className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+			                          onClick={() => {
+			                            if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+			                            if (t.qty != null) setQuickQuantidade(String(t.qty))
+			                            if (t.from) setTransferFrom(String(t.from))
+			                            if (t.to) setTransferTo(String(t.to))
+			                          }}
+			                        >
+			                          <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
+			                          <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
+			                          <div className="text-xs text-blue-100/70 mt-1">
+			                            <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+			                            <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
+			                            <span className="font-mono">{t.qty ?? '-'}</span>
+			                          </div>
+			                        </button>
+			                      ))}
+			                      {!overviewActionables?.transferencias?.length ? (
+			                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+			                      ) : null}
+			                    </div>
+			                  </div>
+			                </details>
+			              </CardContent>
+			            </Card>
 
 	            <Card className="bg-black/20 border border-white/10">
 	              <CardHeader className="flex flex-row items-center justify-between gap-2">
@@ -2356,8 +2403,8 @@ export function InsumosModule() {
 	              <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
 	            </div>
 	            <div>
-	              <div className="text-xs text-muted-foreground mb-1">Validade (YYYY-MM-DD)</div>
-	              <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 2026-12-31" />
+		              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
+		              <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 31/12/2026" />
 	            </div>
 	          </div>
 
@@ -2598,7 +2645,7 @@ export function InsumosModule() {
                     </div>
 	                    <div>
 	                      <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
-	                      <Input value={createDataValidade} onChange={(e) => setCreateDataValidade(e.target.value)} placeholder="YYYY-MM-DD" />
+	                      <Input value={createDataValidade} onChange={(e) => setCreateDataValidade(e.target.value)} placeholder="DD/MM/AAAA" />
 	                    </div>
 	                  </div>
 
@@ -2691,7 +2738,7 @@ export function InsumosModule() {
 	                              estoqueInicial: Number(createEstoqueInicial) || 0,
 	                              estoqueMinimo: Number(createEstoqueMinimo) || 0,
 	                              lote: createLote.trim(),
-                              dataValidade: createDataValidade.trim()
+	                              dataValidade: dateInputToIso(createDataValidade)
                             }
                           })
                           toast.success('Insumo cadastrado')
@@ -2740,16 +2787,20 @@ export function InsumosModule() {
                       <th className="text-right p-3">Ações</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {filteredInsumos.map((i) => {
-                      const status = i.statusValidade?.status || 'OK'
-                      const estoque = Number(i.estoqueAtual) || 0
-                      const min = Number(i.estoqueMinimo) || 0
-                      const critico = min > 0 && estoque <= min
-                      const valor = (Number(i.precoCusto) || 0) * estoque
-                      const otherStocks = i.estoques
-                        ? Object.entries(i.estoques)
-                            .filter(([u, v]) => u !== unidade && (Number(v) || 0) > 0)
+	                  <tbody className="divide-y divide-white/5">
+	                    {filteredInsumos.map((i) => {
+	                      const estoque = Number(i.estoqueAtual) || 0
+	                      const min = Number(i.estoqueMinimo) || 0
+	                      const stockStatus = min > 0 ? calcularStatusEstoque(estoque, min) : 'OK'
+	                      const isCritico = min > 0 && stockStatus === 'URGENTE'
+	                      const isLowStock = min > 0 && stockStatus === 'ATENCAO'
+	                      const validadeStatus = String(i.statusValidade?.status || '').toUpperCase()
+	                      const isVencendo = validadeStatus === 'VENCENDO'
+	                      const isExpirado = validadeStatus === 'EXPIRADO'
+	                      const valor = (Number(i.precoCusto) || 0) * estoque
+	                      const otherStocks = i.estoques
+	                        ? Object.entries(i.estoques)
+	                            .filter(([u, v]) => u !== unidade && (Number(v) || 0) > 0)
                             .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
                         : []
                       const otherSummary = otherStocks.length
@@ -2759,12 +2810,20 @@ export function InsumosModule() {
                             .join(' • ')}${otherStocks.length > 2 ? ` • +${otherStocks.length - 2}` : ''}`
                         : ''
 
-                      return (
-                        <tr key={`${i.registro || ''}-${i.codigoBarras || ''}`} className="hover:bg-white/5">
-                          <td className="p-3">
-                            <div className="text-blue-50">{i.produto || '-'}</div>
-                            <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
-                          </td>
+	                      return (
+	                        <tr key={`${i.registro || ''}-${i.codigoBarras || ''}`} className="hover:bg-white/5">
+	                          <td className="p-3">
+	                            <div className="text-blue-50">{i.produto || '-'}</div>
+	                            <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
+	                            {isCritico || isLowStock || isVencendo || isExpirado ? (
+	                              <div className="mt-1 flex flex-wrap gap-1">
+	                                {isCritico ? <Badge variant="destructive">Críticos</Badge> : null}
+	                                {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
+	                                {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
+	                                {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
+	                              </div>
+	                            ) : null}
+	                          </td>
                           <td className="p-3 text-blue-100/80">
                             <div className="flex items-center gap-2">
                               <span
@@ -2777,24 +2836,16 @@ export function InsumosModule() {
                           <td className="p-3">
                             <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
                           </td>
-                          <td className={`p-3 text-right ${critico ? 'text-red-200' : 'text-blue-100/80'}`}>
-                            <div className="flex items-center justify-end gap-2">
-                              <span className="font-mono">{estoque}</span>
-                              {min > 0 ? (
-                                <Badge variant={estoqueStatusBadgeVariant(calcularStatusEstoque(estoque, min))}>
-                                  {estoqueStatusLabel(calcularStatusEstoque(estoque, min))}
-                                </Badge>
-                              ) : null}
-                            </div>
-                            {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
-                          </td>
-                          <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
-                          <td className="p-3">
-                            <div className="flex items-center gap-2">
-                              <Badge variant={statusBadgeVariant(status)}>{status}</Badge>
-                              <span className="text-blue-100/70">{fmtDate(i.dataValidade || '')}</span>
-                            </div>
-                          </td>
+	                          <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
+	                            <div className="flex items-center justify-end gap-2">
+	                              <span className="font-mono">{estoque}</span>
+	                            </div>
+	                            {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
+	                          </td>
+	                          <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
+	                          <td className="p-3">
+	                            <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
+	                          </td>
                           <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
                           <td className="p-3 text-right">
                             <Button
@@ -2845,11 +2896,11 @@ export function InsumosModule() {
                 </div>
                 <div className="w-48">
                   <div className="text-xs text-blue-200/70 mb-1">De</div>
-                  <Input value={movDe} onChange={(e) => setMovDe(e.target.value)} placeholder="YYYY-MM-DD" />
+	                  <Input value={movDe} onChange={(e) => setMovDe(e.target.value)} placeholder="DD/MM/AAAA" />
                 </div>
                 <div className="w-48">
                   <div className="text-xs text-blue-200/70 mb-1">Até</div>
-                  <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="YYYY-MM-DD" />
+	                  <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="DD/MM/AAAA" />
                 </div>
                 <div className="w-40">
                   <div className="text-xs text-blue-200/70 mb-1">Por página</div>
@@ -2880,15 +2931,17 @@ export function InsumosModule() {
 		                <Button
 		                  variant="outline"
 		                  size="sm"
-		                  onClick={() => {
-		                    const params = new URLSearchParams({
-		                      unidade,
-		                      ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-		                      ...(movDe ? { de: movDe } : {}),
-		                      ...(movAte ? { ate: movAte } : {})
-		                    })
-		                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
-		                  }}
+			                  onClick={() => {
+			                    const deIso = dateInputToIso(movDe)
+			                    const ateIso = dateInputToIso(movAte)
+			                    const params = new URLSearchParams({
+			                      unidade,
+			                      ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+			                      ...(deIso ? { de: deIso } : {}),
+			                      ...(ateIso ? { ate: ateIso } : {})
+			                    })
+			                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+			                  }}
 		                  disabled={!isAuthed}
 		                >
 		                  Exportar CSV
