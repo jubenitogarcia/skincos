@@ -48,3 +48,4 @@ MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
 #
 # Secrets (set via `wrangler secret put`):
 # GOOGLE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+# MIGRATION_TOKEN = "one-time-token"   # optional: allows calling POST /admin/migrate/sheets-to-d1 without session/CSRF

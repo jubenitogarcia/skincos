@@ -128,22 +128,160 @@ export async function handleBackupRoutes({
 
             const snap = await loadBackupSnapshot({ env, id });
             const p = snap?.payload;
-            if (!p?.sheets?.insumosValues || !p?.sheets?.usersValues || !p?.sheets?.movValues) {
+            const hasSheets = !!(p?.sheets?.insumosValues && p?.sheets?.usersValues && p?.sheets?.movValues);
+            const hasD1Insumos = !!(
+                p?.d1 &&
+                (Array.isArray(p.d1.insumosItems) ||
+                    Array.isArray(p.d1.insumosUsers) ||
+                    Array.isArray(p.d1.insumosStocks) ||
+                    Array.isArray(p.d1.insumosMovements))
+            );
+
+            if (!hasSheets && !hasD1Insumos) {
                 return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
             }
 
-            // Restore Sheets (clear then write full values)
-            await clearSheetRange(spreadsheetId, sheetRange, accessToken);
-            await writeSheet(spreadsheetId, sheetRange, p.sheets.insumosValues, accessToken, 'UPDATE');
+            const restoreSheets = body.restoreSheets === true;
+            if (hasSheets && !hasD1Insumos && !restoreSheets) {
+                return withCORS(
+                    JSON.stringify({ success: false, error: 'Backup contém apenas Sheets. Para restaurar, envie {"restoreSheets": true}.' }),
+                    { status: 400 },
+                    appOrigin
+                );
+            }
+            if (restoreSheets) {
+                if (!hasSheets) {
+                    return withCORS(JSON.stringify({ success: false, error: 'Backup não contém Sheets' }), { status: 400 }, appOrigin);
+                }
+                if (!spreadsheetId || !accessToken) {
+                    return withCORS(JSON.stringify({ success: false, error: 'Sheets não configurado neste ambiente (sem SPREADSHEET_ID/GOOGLE creds)' }), { status: 500 }, appOrigin);
+                }
 
-            await clearSheetRange(spreadsheetId, userRange, accessToken);
-            await writeSheet(spreadsheetId, userRange, p.sheets.usersValues, accessToken, 'UPDATE');
+                // Restore Sheets (clear then write full values)
+                await clearSheetRange(spreadsheetId, sheetRange, accessToken);
+                await writeSheet(spreadsheetId, sheetRange, p.sheets.insumosValues, accessToken, 'UPDATE');
 
-            await clearSheetRange(spreadsheetId, movimentacoesRange, accessToken);
-            await writeSheet(spreadsheetId, movimentacoesRange, p.sheets.movValues, accessToken, 'UPDATE');
+                await clearSheetRange(spreadsheetId, userRange, accessToken);
+                await writeSheet(spreadsheetId, userRange, p.sheets.usersValues, accessToken, 'UPDATE');
 
-            // Best-effort restore D1 snapshots (do not touch jobs)
+                await clearSheetRange(spreadsheetId, movimentacoesRange, accessToken);
+                await writeSheet(spreadsheetId, movimentacoesRange, p.sheets.movValues, accessToken, 'UPDATE');
+            }
+
+            // Restore D1 (includes Insumos tables + snapshots; does not touch jobs/backups)
             if (env?.DB && p?.d1) {
+                try {
+                    if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
+                    if (Array.isArray(p.d1.insumosMovements)) await env.DB.prepare('DELETE FROM insumos_movements').run();
+                    if (Array.isArray(p.d1.insumosItems)) await env.DB.prepare('DELETE FROM insumos_items').run();
+                    if (Array.isArray(p.d1.insumosUsers)) await env.DB.prepare('DELETE FROM insumos_users').run();
+                    if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
+
+                    for (const row of (p.d1.insumosUsers || []).reverse()) {
+                        await env.DB.prepare(
+                            `INSERT INTO insumos_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                row.username || '',
+                                row.email || '',
+                                row.displayName || '',
+                                row.passwordHash || '',
+                                row.role || 'CONSULTOR',
+                                row.photoUrl || '',
+                                row.allowedUnitsJson || null,
+                                Number(row.ativo || 0) ? 1 : 0,
+                                row.createdAt || new Date().toISOString(),
+                                row.updatedAt || new Date().toISOString()
+                            )
+                            .run();
+                    }
+                    for (const row of (p.d1.insumosItems || []).reverse()) {
+                        await env.DB.prepare(
+                            `INSERT INTO insumos_items
+                             (registro, codigo_barras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade,
+                              fonte, preco_custo, estoque_minimo, lote, data_validade, data_cadastro, data_atualizacao)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                row.registro || '',
+                                row.codigoBarras || '',
+                                row.produto || '',
+                                row.categoria || '',
+                                row.marca || '',
+                                row.especificacao || '',
+                                row.concentracao || '',
+                                row.volume || '',
+                                row.calibre || '',
+                                row.tipoUnidade || '',
+                                row.fonte || '',
+                                Number(row.precoCusto || 0),
+                                Number(row.estoqueMinimo || 0),
+                                row.lote || '',
+                                row.dataValidade || '',
+                                row.dataCadastro || new Date().toISOString(),
+                                row.dataAtualizacao || new Date().toISOString()
+                            )
+                            .run();
+                    }
+                    for (const row of (p.d1.insumosStocks || []).reverse()) {
+                        await env.DB.prepare(
+                            `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+                             VALUES (?, ?, ?, ?)`
+                        )
+                            .bind(row.registro || '', row.unidade || '', Number(row.quantidade || 0), row.updatedAt || new Date().toISOString())
+                            .run();
+                    }
+                    for (const row of (p.d1.insumosMovements || []).reverse()) {
+                        await env.DB.prepare(
+                            `INSERT INTO insumos_movements
+                             (id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto, quantidade,
+                              estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia,
+                              usuario, motivo, observacoes)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                row.id || crypto.randomUUID(),
+                                row.dataHora || new Date().toISOString(),
+                                row.tipo || '',
+                                row.codigoBarras || '',
+                                row.registroInsumo || '',
+                                row.lote || '',
+                                row.dataValidade || '',
+                                row.produto || '',
+                                Number(row.quantidade || 0),
+                                Number(row.estoqueAnterior || 0),
+                                Number(row.estoqueNovo || 0),
+                                row.unidade || '',
+                                row.unidadeOrigem || '',
+                                row.unidadeDestino || '',
+                                row.transferId || '',
+                                row.usuario || '',
+                                row.motivo || '',
+                                row.observacoes || ''
+                            )
+                            .run();
+                    }
+                    for (const row of (p.d1.shareHistory || []).reverse()) {
+                        await env.DB.prepare(
+                            `INSERT INTO share_history (id, user, created_at, title, text, url, files_json, source_id)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                row.id || crypto.randomUUID(),
+                                row.user || '',
+                                row.createdAt || new Date().toISOString(),
+                                row.title || '',
+                                row.text || '',
+                                row.url || '',
+                                row.filesJson || '[]',
+                                row.sourceId || ''
+                            )
+                            .run();
+                    }
+                } catch {
+                    // ignore
+                }
                 try {
                     await env.DB.prepare('DELETE FROM audit_log').run();
                     for (const row of (p.d1.auditLog || []).reverse()) {

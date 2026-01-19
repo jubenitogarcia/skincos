@@ -24,12 +24,20 @@ export async function clearSheetRange(spreadsheetId, range, accessToken) {
 }
 
 export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRange, userRange, movimentacoesRange, env }) {
-    const insumosValues = await readSheet(spreadsheetId, sheetRange, accessToken);
-    const usersValues = await readSheet(spreadsheetId, userRange, accessToken);
-    const movValues = await readSheet(spreadsheetId, movimentacoesRange, accessToken);
+    const includeSheets = !!(spreadsheetId && accessToken && sheetRange && userRange && movimentacoesRange);
+    const insumosValues = includeSheets ? await readSheet(spreadsheetId, sheetRange, accessToken) : null;
+    const usersValues = includeSheets ? await readSheet(spreadsheetId, userRange, accessToken) : null;
+    const movValues = includeSheets ? await readSheet(spreadsheetId, movimentacoesRange, accessToken) : null;
 
-    let auditLog = [];
-    let notifSnapshots = [];
+    const d1Dump = {
+        auditLog: [],
+        notificationSnapshots: [],
+        shareHistory: [],
+        insumosUsers: [],
+        insumosItems: [],
+        insumosStocks: [],
+        insumosMovements: [],
+    };
 
     if (env?.DB) {
         try {
@@ -39,7 +47,7 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
                  ORDER BY ts DESC
                  LIMIT 2000`
             ).all();
-            auditLog = a?.results || [];
+            d1Dump.auditLog = a?.results || [];
         } catch {
             // ignore
         }
@@ -50,7 +58,57 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
                  ORDER BY ts DESC
                  LIMIT 500`
             ).all();
-            notifSnapshots = n?.results || [];
+            d1Dump.notificationSnapshots = n?.results || [];
+        } catch {
+            // ignore
+        }
+        try {
+            const s = await env.DB.prepare(
+                `SELECT id, user, created_at as createdAt, title, text, url, files_json as filesJson, source_id as sourceId
+                 FROM share_history
+                 ORDER BY created_at DESC
+                 LIMIT 500`
+            ).all();
+            d1Dump.shareHistory = s?.results || [];
+        } catch {
+            // ignore
+        }
+        try {
+            const u = await env.DB.prepare(
+                `SELECT username, email, display_name as displayName, password_hash as passwordHash, role, photo_url as photoUrl, allowed_units_json as allowedUnitsJson, ativo, created_at as createdAt, updated_at as updatedAt
+                 FROM insumos_users`
+            ).all();
+            d1Dump.insumosUsers = u?.results || [];
+        } catch {
+            // ignore
+        }
+        try {
+            const it = await env.DB.prepare(
+                `SELECT registro, codigo_barras as codigoBarras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade as tipoUnidade,
+                        fonte, preco_custo as precoCusto, estoque_minimo as estoqueMinimo, lote, data_validade as dataValidade, data_cadastro as dataCadastro, data_atualizacao as dataAtualizacao
+                 FROM insumos_items`
+            ).all();
+            d1Dump.insumosItems = it?.results || [];
+        } catch {
+            // ignore
+        }
+        try {
+            const st = await env.DB.prepare(
+                `SELECT registro, unidade, quantidade, updated_at as updatedAt
+                 FROM insumos_stocks`
+            ).all();
+            d1Dump.insumosStocks = st?.results || [];
+        } catch {
+            // ignore
+        }
+        try {
+            const mv = await env.DB.prepare(
+                `SELECT id, data_hora as dataHora, tipo, codigo_barras as codigoBarras, registro_insumo as registroInsumo, lote, data_validade as dataValidade, produto, quantidade,
+                        estoque_anterior as estoqueAnterior, estoque_novo as estoqueNovo, unidade, unidade_origem as unidadeOrigem, unidade_destino as unidadeDestino,
+                        id_transferencia as transferId, usuario, motivo, observacoes
+                 FROM insumos_movements`
+            ).all();
+            d1Dump.insumosMovements = mv?.results || [];
         } catch {
             // ignore
         }
@@ -60,26 +118,36 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
         version: 1,
         createdAt: new Date().toISOString(),
         sources: {
-            sheets: {
-                sheetRange,
-                userRange,
-                movimentacoesRange,
-            },
+            sheets: includeSheets
+                ? {
+                    enabled: true,
+                    sheetRange,
+                    userRange,
+                    movimentacoesRange,
+                    insumosRows: (insumosValues?.length || 0) - 1,
+                    usersRows: (usersValues?.length || 0) - 1,
+                    movRows: (movValues?.length || 0) - 1,
+                }
+                : { enabled: false },
             d1: {
                 enabled: !!env?.DB,
-                auditLogCount: auditLog.length,
-                notificationSnapshotCount: notifSnapshots.length,
+                auditLogCount: d1Dump.auditLog.length,
+                notificationSnapshotCount: d1Dump.notificationSnapshots.length,
+                shareHistoryCount: d1Dump.shareHistory.length,
+                insumosUsersCount: d1Dump.insumosUsers.length,
+                insumosItemsCount: d1Dump.insumosItems.length,
+                insumosStocksCount: d1Dump.insumosStocks.length,
+                insumosMovementsCount: d1Dump.insumosMovements.length,
             },
         },
-        sheets: {
-            insumosValues,
-            usersValues,
-            movValues,
-        },
-        d1: {
-            auditLog,
-            notificationSnapshots: notifSnapshots,
-        },
+        sheets: includeSheets
+            ? {
+                insumosValues,
+                usersValues,
+                movValues,
+            }
+            : null,
+        d1: d1Dump,
     };
 }
 
@@ -92,11 +160,15 @@ export async function persistBackupSnapshot({ env, actor, role, unidade, kind, p
     const metadata = {
         kind: kind || 'FULL',
         sizes: {
-            insumosRows: (payload?.sheets?.insumosValues?.length || 0) - 1,
-            usersRows: (payload?.sheets?.usersValues?.length || 0) - 1,
-            movRows: (payload?.sheets?.movValues?.length || 0) - 1,
+            sheets: payload?.sources?.sheets?.enabled
+                ? {
+                    insumosRows: payload?.sources?.sheets?.insumosRows ?? ((payload?.sheets?.insumosValues?.length || 0) - 1),
+                    usersRows: payload?.sources?.sheets?.usersRows ?? ((payload?.sheets?.usersValues?.length || 0) - 1),
+                    movRows: payload?.sources?.sheets?.movRows ?? ((payload?.sheets?.movValues?.length || 0) - 1),
+                }
+                : null,
+            d1: payload?.sources?.d1 || { enabled: false },
         },
-        d1: payload?.sources?.d1 || { enabled: false },
     };
 
     // Prefer R2 for large payloads if configured.

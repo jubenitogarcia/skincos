@@ -18,14 +18,18 @@ Commands:
   dev               Run local wrangler dev (foreground)
   deploy            Deploy worker via wrangler
   migrate           Apply D1 migrations (default DB: skincos-db)
+  import            Import Sheets -> D1 via API (requires MIGRATION_TOKEN)
 
 Env:
   INSUMOS_D1_DB      D1 database name (default: skincos-db)
+  INSUMOS_API_URL    API base (default: https://api.skincos.com.br/insumos)
+  INSUMOS_MIGRATION_TOKEN  Token matching Worker secret MIGRATION_TOKEN
 
 Examples:
   ./backend/scripts/dev.sh insumos dev
   INSUMOS_D1_DB=skincos-db ./backend/scripts/dev.sh insumos migrate
   ./backend/scripts/dev.sh insumos deploy
+  INSUMOS_MIGRATION_TOKEN=... ./backend/scripts/dev.sh insumos import upsert
 EOF
 }
 
@@ -67,6 +71,21 @@ case "$cmd" in
       cd "$INSUMOS_DIR"
       run_pnpm exec wrangler d1 migrations apply "$db_name" --config wrangler.toml "$@"
     )
+    ;;
+  import)
+    mode="${1:-upsert}"
+    api_url="${INSUMOS_API_URL:-https://api.skincos.com.br/insumos}"
+    token="${INSUMOS_MIGRATION_TOKEN:-}"
+    if [[ -z "$token" ]]; then
+      echo "[insumos] Missing INSUMOS_MIGRATION_TOKEN (must match Worker secret MIGRATION_TOKEN)" >&2
+      exit 1
+    fi
+    echo "[insumos] Importing Sheets -> D1 via ${api_url}/admin/migrate/sheets-to-d1 (mode=${mode})"
+    curl -fsS "${api_url}/admin/migrate/sheets-to-d1" \
+      -H "content-type: application/json" \
+      -H "x-migration-token: ${token}" \
+      -d "{\"confirm\":\"MIGRATE\",\"mode\":\"${mode}\"}" | cat
+    echo
     ;;
   -h|--help|help|"")
     usage

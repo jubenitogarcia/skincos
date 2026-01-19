@@ -4,6 +4,7 @@
 export async function handleAuthRoutes({
     request,
     url,
+    env,
     appOrigin,
     withCORS,
     spreadsheetId,
@@ -22,7 +23,222 @@ export async function handleAuthRoutes({
     toA1Col,
     buildUserResponseFromSheetRow,
     MAX_PROFILE_PHOTO_URL_CHARS,
+    d1,
 }) {
+    if (d1?.enabled) {
+        // GET /auth/me
+        if (url.pathname === "/auth/me") {
+            if (!sessionUsername) {
+                return withCORS(JSON.stringify({ error: "Not authenticated" }), { status: 401 }, appOrigin);
+            }
+            try {
+                const userDb = await d1.getUserByUsername(sessionUsername);
+                if (!userDb || !userDb.ativo) {
+                    return withCORS(
+                        JSON.stringify({ error: "Not authenticated" }),
+                        { status: 401, headers: deleteAuthCookies() },
+                        appOrigin
+                    );
+                }
+                const user = {
+                    name: userDb.displayName || userDb.username,
+                    displayName: userDb.displayName || userDb.username,
+                    username: userDb.username,
+                    email: userDb.email,
+                    role: userDb.role || "CONSULTOR",
+                    photoUrl: userDb.photoUrl,
+                    allowedUnits: userDb.allowedUnits || [],
+                };
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
+                return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ error: `Auth error: ${err.message}` }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/refresh
+        if (url.pathname === "/auth/refresh" && request.method === "POST") {
+            if (!sessionUsername) {
+                return withCORS(JSON.stringify({ error: "Not authenticated" }), { status: 401 }, appOrigin);
+            }
+            try {
+                const userDb = await d1.getUserByUsername(sessionUsername);
+                if (!userDb || !userDb.ativo) {
+                    return withCORS(
+                        JSON.stringify({ error: "Not authenticated" }),
+                        { status: 401, headers: deleteAuthCookies() },
+                        appOrigin
+                    );
+                }
+                const user = {
+                    name: userDb.displayName || userDb.username,
+                    displayName: userDb.displayName || userDb.username,
+                    username: userDb.username,
+                    email: userDb.email,
+                    role: userDb.role || "CONSULTOR",
+                    photoUrl: userDb.photoUrl,
+                    allowedUnits: userDb.allowedUnits || [],
+                };
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
+                return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ error: `Auth error: ${err.message}` }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/login
+        if (url.pathname === "/auth/login" && request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const usernameInput = (body.username || body.user || body.email || '').toString().trim();
+            const password = (body.password || body.senha || '').toString();
+
+            if (!usernameInput || !password) {
+                return withCORS(JSON.stringify({ error: "Username and password required" }), { status: 400 }, appOrigin);
+            }
+
+            try {
+                const userDb = await d1.getUserByIdentifier(usernameInput);
+                if (!userDb) {
+                    return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
+                }
+                if (!userDb.ativo) {
+                    return withCORS(JSON.stringify({ error: "User inactive" }), { status: 403 }, appOrigin);
+                }
+                if (!userDb.passwordHash) {
+                    return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
+                }
+                const ok = await bcrypt.compare(password, userDb.passwordHash);
+                if (!ok) {
+                    return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
+                }
+                const user = {
+                    name: userDb.displayName || userDb.username,
+                    displayName: userDb.displayName || userDb.username,
+                    username: userDb.username,
+                    email: userDb.email,
+                    role: userDb.role || "CONSULTOR",
+                    photoUrl: userDb.photoUrl,
+                    allowedUnits: userDb.allowedUnits || [],
+                };
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
+                return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ error: `Login error: ${err.message}` }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // PUT /auth/profile
+        if (url.pathname === "/auth/profile" && request.method === "PUT") {
+            if (!sessionUsername) {
+                return withCORS(JSON.stringify({ error: "Not authenticated" }), { status: 401 }, appOrigin);
+            }
+            const body = await request.json().catch(() => ({}));
+            const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : undefined;
+            const email = typeof body.email === 'string' ? body.email.trim() : undefined;
+            const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : undefined;
+            const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : undefined;
+            const newPassword = typeof body.newPassword === 'string' ? body.newPassword : undefined;
+            const newUsername = typeof body.newUsername === 'string' ? body.newUsername.trim() : undefined;
+
+            try {
+                if (photoUrl !== undefined && photoUrl.length > MAX_PROFILE_PHOTO_URL_CHARS) {
+                    return withCORS(
+                        JSON.stringify({
+                            success: false,
+                            error: "Foto muito grande para salvar no cadastro. Tente uma imagem menor."
+                        }),
+                        { status: 413 },
+                        appOrigin
+                    );
+                }
+
+                const userDb = await d1.getUserByUsername(sessionUsername);
+                if (!userDb || !userDb.ativo) {
+                    return withCORS(
+                        JSON.stringify({ error: "Not authenticated" }),
+                        { status: 401, headers: deleteAuthCookies() },
+                        appOrigin
+                    );
+                }
+
+                const isChangingSensitive = !!(newPassword?.trim() || newUsername?.trim());
+                let passwordHash = null;
+
+                if (isChangingSensitive) {
+                    if (!currentPassword) {
+                        return withCORS(JSON.stringify({ error: "Current password required" }), { status: 400 }, appOrigin);
+                    }
+                    const ok = await bcrypt.compare(currentPassword, userDb.passwordHash || '');
+                    if (!ok) {
+                        return withCORS(JSON.stringify({ error: "Invalid current password" }), { status: 401 }, appOrigin);
+                    }
+                }
+
+                if (newUsername) {
+                    if (!validateUsername(newUsername)) {
+                        return withCORS(JSON.stringify({ error: "Invalid username" }), { status: 400 }, appOrigin);
+                    }
+                }
+
+                if (newPassword && newPassword.trim()) {
+                    passwordHash = await bcrypt.hash(newPassword, 10);
+                }
+
+                const updated = await d1.updateUserProfile(env, sessionUsername, {
+                    displayName,
+                    email,
+                    photoUrl,
+                    passwordHash,
+                    newUsername,
+                });
+                if (!updated.ok) {
+                    const code = String(updated.error || '');
+                    const status =
+                        code === 'USERNAME_TAKEN' ? 409
+                        : code === 'USER_NOT_FOUND' ? 404
+                        : updated.status || 400;
+                    return withCORS(JSON.stringify({ success: false, error: updated.error || 'Profile update error' }), { status }, appOrigin);
+                }
+
+                const outUser = updated.user || null;
+                const responseUser = outUser
+                    ? {
+                        name: outUser.displayName || outUser.username,
+                        displayName: outUser.displayName || outUser.username,
+                        username: outUser.username,
+                        email: outUser.email,
+                        role: outUser.role || "CONSULTOR",
+                        photoUrl: outUser.photoUrl,
+                        allowedUnits: outUser.allowedUnits || [],
+                    }
+                    : null;
+
+                let headersOut;
+                let csrfTokenOut;
+                if (updated.username && updated.username !== sessionUsername) {
+                    const issued = await issueAuthCookies({ username: updated.username });
+                    headersOut = issued.headers;
+                    csrfTokenOut = issued.csrf;
+                }
+                const csrfToken = csrfTokenOut || cookies.csrfToken || sessionCsrf || null;
+                return withCORS(
+                    JSON.stringify({ success: true, user: responseUser, csrfToken }),
+                    { status: 200, headers: headersOut },
+                    appOrigin
+                );
+            } catch (err) {
+                return withCORS(JSON.stringify({ error: `Profile update error: ${err.message}` }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/logout
+        if (url.pathname === "/auth/logout" && request.method === "POST") {
+            return withCORS(JSON.stringify({ success: true }), { status: 200, headers: deleteAuthCookies() }, appOrigin);
+        }
+
+        return null;
+    }
+
     // GET /auth/me
     if (url.pathname === "/auth/me") {
         if (!sessionUsername) {

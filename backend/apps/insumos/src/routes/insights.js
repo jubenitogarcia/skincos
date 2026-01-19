@@ -135,6 +135,7 @@ function computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, 
 export async function handleInsightsRoutes({
     request,
     url,
+    env,
     appOrigin,
     withCORS,
     spreadsheetId,
@@ -153,12 +154,57 @@ export async function handleInsightsRoutes({
     buildQualityReport,
     stockDistribution,
     buildResumoEstoque,
+    d1,
 }) {
+    const listInsumos = async (unidadeQ) => {
+        if (d1?.enabled) return d1.listInsumos({ unidade: unidadeQ });
+        const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
+        return normalizeInsumos(parseInsumos(rows), unidadeQ);
+    };
+
+    const listMovimentos = async ({ unidadeQ, fromIso, toIso }) => {
+        if (d1?.enabled) {
+            if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
+            const where = [];
+            const binds = [];
+            if (unidadeQ) {
+                where.push('unidade = ?');
+                binds.push(String(unidadeQ));
+            }
+            if (fromIso) {
+                where.push('data_hora >= ?');
+                binds.push(String(fromIso));
+            }
+            if (toIso) {
+                where.push('data_hora <= ?');
+                binds.push(String(toIso));
+            }
+            const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+            const r = await env.DB.prepare(
+                `SELECT data_hora as dataHora, tipo, codigo_barras as codigoBarras, produto, quantidade, unidade, usuario
+                 FROM insumos_movements
+                 ${whereSql}
+                 ORDER BY data_hora ASC
+                 LIMIT 100000`
+            )
+                .bind(...binds)
+                .all();
+            return r?.results || [];
+        }
+
+        await ensureHeaderColumns({
+            spreadsheetId,
+            sheetName: movimentacoesSheetName,
+            accessToken,
+            requiredHeaders: ['UNIDADE']
+        });
+        const movRaw = await readSheet(spreadsheetId, movimentacoesRange, accessToken);
+        return parseMovimentacoes(movRaw);
+    };
     // Stub analytics / relatorios / alertas / movimentacoes endpoints expected by frontend
     if (url.pathname === "/analytics/actionables" && request.method === "GET") {
         try {
-            const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const insumos = normalizeInsumos(parseInsumos(rows), unidade);
+            const insumos = await listInsumos(unidade);
             const data = buildActionables(insumos, unidade);
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
         } catch (err) {
@@ -167,8 +213,7 @@ export async function handleInsightsRoutes({
     }
     if (url.pathname === "/analytics/roi" && request.method === "GET") {
         try {
-            const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const insumos = normalizeInsumos(parseInsumos(rows), unidade);
+            const insumos = await listInsumos(unidade);
             const data = buildRoi(insumos, unidade);
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
         } catch (err) {
@@ -178,8 +223,7 @@ export async function handleInsightsRoutes({
     if (url.pathname === "/quality/report" && request.method === "GET") {
         try {
             const limitIssues = url.searchParams.get('limitIssues') || '500';
-            const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-            const insumos = normalizeInsumos(parseInsumos(rows), unidade);
+            const insumos = await listInsumos(unidade);
             const data = buildQualityReport(insumos, unidade, limitIssues);
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
         } catch (err) {
@@ -188,13 +232,6 @@ export async function handleInsightsRoutes({
     }
     if (url.pathname === "/analytics/trends") {
         try {
-            await ensureHeaderColumns({
-                spreadsheetId,
-                sheetName: movimentacoesSheetName,
-                accessToken,
-                requiredHeaders: ['UNIDADE']
-            });
-
             const days = Math.max(1, Math.min(366, parseInt(url.searchParams.get('days') || '30', 10) || 30));
             const groupBy = (url.searchParams.get('groupBy') || 'day').toLowerCase();
             const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
@@ -202,13 +239,15 @@ export async function handleInsightsRoutes({
             const from = toDateOrNull(url.searchParams.get('from')) || toDateOrNull(url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
             const to = toDateOrNull(url.searchParams.get('to')) || toDateOrNull(url.searchParams.get('ate')) || now;
 
-            const [insumosRaw, movRaw] = await Promise.all([
-                readSheet(spreadsheetId, sheetRange, accessToken),
-                readSheet(spreadsheetId, movimentacoesRange, accessToken),
+            const [insumos, movimentos] = await Promise.all([
+                listInsumos(unidade),
+                listMovimentos({
+                    unidadeQ: unidade,
+                    fromIso: from ? from.toISOString() : null,
+                    toIso: to ? to.toISOString() : null
+                }),
             ]);
-            const insumos = normalizeInsumos(parseInsumos(insumosRaw), unidade);
             const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
-            const movimentos = parseMovimentacoes(movRaw);
 
             const data = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade });
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
@@ -218,26 +257,20 @@ export async function handleInsightsRoutes({
     }
     if (url.pathname === "/analytics/category-turnover") {
         try {
-            await ensureHeaderColumns({
-                spreadsheetId,
-                sheetName: movimentacoesSheetName,
-                accessToken,
-                requiredHeaders: ['UNIDADE']
-            });
-
             const days = Math.max(1, Math.min(366, parseInt(url.searchParams.get('days') || '30', 10) || 30));
             const now = new Date();
             const from = toDateOrNull(url.searchParams.get('from')) || toDateOrNull(url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
             const to = toDateOrNull(url.searchParams.get('to')) || toDateOrNull(url.searchParams.get('ate')) || now;
             const mode = (url.searchParams.get('mode') || 'saida').toLowerCase(); // saida|entrada|all
-
-            const [insumosRaw, movRaw] = await Promise.all([
-                readSheet(spreadsheetId, sheetRange, accessToken),
-                readSheet(spreadsheetId, movimentacoesRange, accessToken),
+            const [insumos, movimentos] = await Promise.all([
+                listInsumos(unidade),
+                listMovimentos({
+                    unidadeQ: unidade,
+                    fromIso: from ? from.toISOString() : null,
+                    toIso: to ? to.toISOString() : null
+                }),
             ]);
-            const insumos = normalizeInsumos(parseInsumos(insumosRaw), unidade);
             const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
-            const movimentos = parseMovimentacoes(movRaw);
 
             const data = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode });
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
@@ -247,13 +280,6 @@ export async function handleInsightsRoutes({
     }
     if (url.pathname === "/analytics/report" && request.method === "POST") {
         try {
-            await ensureHeaderColumns({
-                spreadsheetId,
-                sheetName: movimentacoesSheetName,
-                accessToken,
-                requiredHeaders: ['UNIDADE']
-            });
-
             const body = await request.json().catch(() => ({}));
             const groupBy = String(body.groupBy || url.searchParams.get('groupBy') || 'day').toLowerCase();
             const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
@@ -262,14 +288,15 @@ export async function handleInsightsRoutes({
             const from = toDateOrNull(body.from || body.de || url.searchParams.get('from') || url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
             const to = toDateOrNull(body.to || body.ate || url.searchParams.get('to') || url.searchParams.get('ate')) || now;
             const mode = String(body.mode || url.searchParams.get('mode') || 'saida').toLowerCase();
-
-            const [insumosRaw, movRaw] = await Promise.all([
-                readSheet(spreadsheetId, sheetRange, accessToken),
-                readSheet(spreadsheetId, movimentacoesRange, accessToken),
+            const [insumos, movimentos] = await Promise.all([
+                listInsumos(unidade),
+                listMovimentos({
+                    unidadeQ: unidade,
+                    fromIso: from ? from.toISOString() : null,
+                    toIso: to ? to.toISOString() : null
+                }),
             ]);
-            const insumos = normalizeInsumos(parseInsumos(insumosRaw), unidade);
             const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
-            const movimentos = parseMovimentacoes(movRaw);
 
             const trends = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade });
             const turnover = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode });
@@ -308,35 +335,44 @@ export async function handleInsightsRoutes({
         }
     }
     if (url.pathname === "/analytics/stock-distribution") {
-        const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-        const insumos = normalizeInsumos(parseInsumos(rows), unidade);
-        const dist = stockDistribution(insumos);
-        return withCORS(JSON.stringify(dist), { status: 200 }, appOrigin);
+        try {
+            const insumos = await listInsumos(unidade);
+            const dist = stockDistribution(insumos);
+            return withCORS(JSON.stringify(dist), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
     }
     if (url.pathname === "/relatorios/estoque") {
-        const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-        const insumos = normalizeInsumos(parseInsumos(rows), unidade);
-        const resumo = buildResumoEstoque(insumos);
-        return withCORS(JSON.stringify({ success: true, data: { itens: insumos, resumo } }), { status: 200 }, appOrigin);
+        try {
+            const insumos = await listInsumos(unidade);
+            const resumo = buildResumoEstoque(insumos);
+            return withCORS(JSON.stringify({ success: true, data: { itens: insumos, resumo } }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
     }
     if (url.pathname === "/alertas/estoque") {
-        const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-        const insumos = normalizeInsumos(parseInsumos(rows), unidade);
-        const alertas = insumos
-            .filter(i => i.estoqueMinimo > 0 && (i.estoqueAtual || 0) <= i.estoqueMinimo)
-            .map(i => ({
-                codigoBarras: i.codigoBarras,
-                produto: i.produto,
-                categoria: i.categoria,
-                estoqueAtual: i.estoqueAtual,
-                estoqueMinimo: i.estoqueMinimo,
-                diferenca: (i.estoqueAtual || 0) - (i.estoqueMinimo || 0),
-                percentual: i.estoqueMinimo > 0
-                    ? Math.round(((i.estoqueAtual || 0) / i.estoqueMinimo) * 100)
-                    : null,
-                tipoAlerta: 'ESTOQUE_BAIXO'
-            }));
-        return withCORS(JSON.stringify({ success: true, data: alertas }), { status: 200 }, appOrigin);
+        try {
+            const insumos = await listInsumos(unidade);
+            const alertas = insumos
+                .filter(i => i.estoqueMinimo > 0 && (i.estoqueAtual || 0) <= i.estoqueMinimo)
+                .map(i => ({
+                    codigoBarras: i.codigoBarras,
+                    produto: i.produto,
+                    categoria: i.categoria,
+                    estoqueAtual: i.estoqueAtual,
+                    estoqueMinimo: i.estoqueMinimo,
+                    diferenca: (i.estoqueAtual || 0) - (i.estoqueMinimo || 0),
+                    percentual: i.estoqueMinimo > 0
+                        ? Math.round(((i.estoqueAtual || 0) / i.estoqueMinimo) * 100)
+                        : null,
+                    tipoAlerta: 'ESTOQUE_BAIXO'
+                }));
+            return withCORS(JSON.stringify({ success: true, data: alertas }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
     }
 
     // Legacy/stub paths

@@ -12,6 +12,20 @@ import { handleMovimentacoesRoutes } from './routes/movimentacoes.js';
 import { handleInsumosRoutes } from './routes/insumos.js';
 import { handleInsightsRoutes } from './routes/insights.js';
 import { handleShareRoutes } from './routes/share.js';
+import {
+    shouldUseD1,
+    d1ListInsumos,
+    d1CreateInsumo,
+    d1UpdateInsumo,
+    d1DeleteInsumo,
+    d1EntradaBaixa,
+    d1Ajuste,
+    d1Transfer,
+    d1ListMovimentacoes,
+    d1GetUserByUsername,
+    d1GetUserByIdentifier,
+    d1UpdateUserProfile,
+} from './d1Store.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
 const AUDIT_SHEET_NAME = 'AuditLog';
@@ -1049,18 +1063,34 @@ async function enqueueNotificationsRefresh(env, unidade) {
 
 async function refreshNotificationsSnapshotInD1({ env, unidade }) {
     if (!env?.DB) return;
-    if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) return;
-
     const config = getInsumosConfig(env);
+    const unit = unidade ? slugifyUnidade(unidade) : null;
+    const unidades = unit ? [unit] : config.unidades;
+
+    const useD1 = await shouldUseD1(env);
+    if (useD1) {
+        for (const u of unidades) {
+            const insumos = await d1ListInsumos({ env, unidades: config.unidades, unidade: u });
+            const payload = computeNotificationsForUnidade(insumos, u);
+            const ts = new Date().toISOString();
+            await env.DB.prepare(
+                `INSERT INTO notification_snapshot (ts, unidade, low_stock, expiring_soon, expired_with_stock, payload_json)
+                 VALUES (?, ?, ?, ?, ?, ?)`
+            )
+                .bind(ts, u, payload.counts.lowStock, payload.counts.expiringSoon, payload.counts.expiredWithStock, safeJson(payload))
+                .run();
+        }
+        return;
+    }
+
+    // Sheets fallback (until D1 is populated)
+    if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) return;
     const accessToken = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
     const spreadsheetId = env.SPREADSHEET_ID;
     const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
 
     const values = await readSheet(spreadsheetId, sheetRange, accessToken);
     const parsed = parseInsumos(values);
-    const unit = unidade ? slugifyUnidade(unidade) : null;
-    const unidades = unit ? [unit] : config.unidades;
-
     for (const u of unidades) {
         const insumos = normalizeInsumos(parsed, u, config);
         const payload = computeNotificationsForUnidade(insumos, u);
@@ -1232,8 +1262,8 @@ export default {
             return withCORS(null, { status: 204 }, appOrigin);
         }
 
-        // Public endpoints (must not depend on Google auth / secrets)
-        if (url.pathname === "/health") {
+	        // Public endpoints (must not depend on Google auth / secrets)
+	        if (url.pathname === "/health") {
             const sheetsEnv = {
                 spreadsheetIdPresent: !!env?.SPREADSHEET_ID,
                 serviceAccountEmailPresent: !!env?.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -1245,26 +1275,28 @@ export default {
                 sheetsEnv.privateKeyPresent ? null : 'GOOGLE_PRIVATE_KEY',
             ].filter(Boolean);
 
-            return withCORS(
-                JSON.stringify({
-                    ok: true,
-                    service: "insumos",
-                    runtime: "cloudflare-workers",
-                    dbConfigured: !!env?.DB,
-                    sheetsConfigured: sheetsMissing.length === 0,
-                    unidades: UNIDADES,
-                    sheets: {
-                        ...sheetsEnv,
-                        missing: sheetsMissing,
-                        hint: sheetsMissing.length === 0
-                            ? 'Sheets enabled'
-                            : 'Sheets disabled (configure missing env vars for local dev or secrets in Cloudflare)'
-                    },
-                }),
-                { status: 200 },
-                appOrigin
-            );
-        }
+	            const storageMode = await shouldUseD1(env) ? 'd1' : 'sheets';
+	            return withCORS(
+	                JSON.stringify({
+	                    ok: true,
+	                    service: "insumos",
+	                    runtime: "cloudflare-workers",
+	                    storage: storageMode,
+	                    dbConfigured: !!env?.DB,
+	                    sheetsConfigured: sheetsMissing.length === 0,
+	                    unidades: UNIDADES,
+	                    sheets: {
+	                        ...sheetsEnv,
+	                        missing: sheetsMissing,
+	                        hint: sheetsMissing.length === 0
+	                            ? 'Sheets enabled'
+	                            : 'Sheets disabled (configure missing env vars for local dev or secrets in Cloudflare)'
+	                    },
+	                }),
+	                { status: 200 },
+	                appOrigin
+	            );
+	        }
         if (url.pathname === "/api/metrics" || url.pathname === "/metrics") {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
         }
@@ -1282,26 +1314,32 @@ export default {
             // If rate limiting fails, continue without blocking
         }
 
-        // Get credentials and authenticate
-        let accessToken;
-        try {
-            if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) {
-                throw new Error("GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY not configured");
-            }
-            accessToken = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
-        } catch (err) {
-            return withCORS(JSON.stringify({ error: `Auth failed: ${err.message}` }), { status: 500 }, appOrigin);
-        }
+	        const useD1 = await shouldUseD1(env);
 
-        const spreadsheetId = env.SPREADSHEET_ID || '';
-        if (!spreadsheetId) {
-            return withCORS(JSON.stringify({ error: "SPREADSHEET_ID not configured" }), { status: 500 }, appOrigin);
-        }
-        const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
-        const userRange = env.USER_SHEET_RANGE || 'Usuarios!A:AZ';
-        const movimentacoesRange = env.MOVIMENTACOES_RANGE || 'Movimentacoes!A:AZ';
-        const insumosSheetName = sheetRange.split('!')[0] || 'Insumos';
-        const movimentacoesSheetName = movimentacoesRange.split('!')[0] || 'Movimentacoes';
+	        // Get credentials and authenticate (Sheets mode only)
+	        let accessToken = '';
+	        let spreadsheetId = '';
+	        const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
+	        const userRange = env.USER_SHEET_RANGE || 'Usuarios!A:AZ';
+	        const movimentacoesRange = env.MOVIMENTACOES_RANGE || 'Movimentacoes!A:AZ';
+	        const insumosSheetName = sheetRange.split('!')[0] || 'Insumos';
+	        const movimentacoesSheetName = movimentacoesRange.split('!')[0] || 'Movimentacoes';
+
+	        if (!useD1) {
+	            try {
+	                if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) {
+	                    throw new Error("GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY not configured");
+	                }
+	                accessToken = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
+	            } catch (err) {
+	                return withCORS(JSON.stringify({ error: `Auth failed: ${err.message}` }), { status: 500 }, appOrigin);
+	            }
+
+	            spreadsheetId = env.SPREADSHEET_ID || '';
+	            if (!spreadsheetId) {
+	                return withCORS(JSON.stringify({ error: "SPREADSHEET_ID not configured" }), { status: 500 }, appOrigin);
+	            }
+	        }
 
         const sessionSecret = env.SESSION_SECRET || '';
 
@@ -1330,7 +1368,16 @@ export default {
         const methodUpper = (request.method || 'GET').toUpperCase();
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(methodUpper);
         const isAuthRoute = url.pathname.startsWith('/auth/');
-        if (isMutating && !isAuthRoute) {
+        const isMigrationRoute = url.pathname === '/admin/migrate/sheets-to-d1';
+        const expectedMigrationToken = String(env?.MIGRATION_TOKEN || '').trim();
+        const providedMigrationToken =
+            String(request.headers.get('x-migration-token') || '').trim() ||
+            (String(request.headers.get('authorization') || '').trim().toLowerCase().startsWith('bearer ')
+                ? String(request.headers.get('authorization') || '').trim().slice('bearer '.length).trim()
+                : '');
+        const migrationTokenOk = isMigrationRoute && expectedMigrationToken && providedMigrationToken && expectedMigrationToken === providedMigrationToken;
+
+        if (isMutating && !isAuthRoute && !migrationTokenOk) {
             const csrfCookie = cookies.csrfToken || '';
             const csrfHeader = request.headers.get('x-csrf-token') || request.headers.get('X-CSRF-Token') || '';
             const expected = sessionCsrf || csrfCookie;
@@ -1343,6 +1390,12 @@ export default {
         const loadSessionUser = async () => {
             if (sessionUser) return sessionUser;
             if (!sessionUsername) return null;
+            if (useD1) {
+                const userDb = await d1GetUserByUsername(env, sessionUsername);
+                if (!userDb || !userDb.ativo) return null;
+                sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
+                return sessionUser;
+            }
             const userRows = await readSheet(spreadsheetId, userRange, accessToken);
             const users = parseUsers(userRows);
             const userDb = users.find(u => u.username.toLowerCase() === sessionUsername.toLowerCase());
@@ -1397,6 +1450,7 @@ export default {
         const authResp = await handleAuthRoutes({
             request,
             url,
+            env,
             appOrigin,
             withCORS,
             spreadsheetId,
@@ -1415,8 +1469,230 @@ export default {
             toA1Col,
             buildUserResponseFromSheetRow,
             MAX_PROFILE_PHOTO_URL_CHARS,
+            d1: useD1
+                ? {
+                    enabled: true,
+                    getUserByUsername: (u) => d1GetUserByUsername(env, u),
+                    getUserByIdentifier: (id) => d1GetUserByIdentifier(env, id),
+                    updateUserProfile: d1UpdateUserProfile,
+                }
+                : { enabled: false },
         });
         if (authResp) return authResp;
+
+        // Admin: one-time migration from Google Sheets -> D1 (idempotent upsert)
+        if (url.pathname === "/admin/migrate/sheets-to-d1" && request.method === "POST") {
+            try {
+                const allowFlag = String(env?.ALLOW_SHEETS_MIGRATION || '').trim().toLowerCase() === 'true';
+                const allow = allowFlag || migrationTokenOk;
+                if (!allow) {
+                    return withCORS(
+                        JSON.stringify({
+                            success: false,
+                            error: 'Migração desativada',
+                            hint: 'Defina ALLOW_SHEETS_MIGRATION=true no Worker (var) ou configure MIGRATION_TOKEN e chame com x-migration-token.'
+                        }),
+                        { status: 403 },
+                        appOrigin
+                    );
+                }
+                if (!env?.DB) {
+                    return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
+                }
+
+                let actor = 'migration-token';
+                let role = 'ADMIN';
+                if (!migrationTokenOk) {
+                    const auth = await requireRoles(['ADMIN', 'GESTOR']);
+                    if (!auth.ok) return auth.response;
+                    actor = auth.user.username;
+                    role = auth.user.role;
+                }
+
+                const body = await request.json().catch(() => ({}));
+                const confirm = String(body.confirm || '').trim().toUpperCase();
+                if (confirm !== 'MIGRATE') {
+                    return withCORS(
+                        JSON.stringify({ success: false, error: 'Confirmação necessária', hint: 'Envie {"confirm":"MIGRATE"}' }),
+                        { status: 400 },
+                        appOrigin
+                    );
+                }
+                const mode = String(body.mode || 'upsert').trim().toLowerCase(); // upsert|replace
+                const dryRun = body.dryRun === true;
+
+                if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) {
+                    return withCORS(JSON.stringify({ success: false, error: 'GOOGLE_CREDENTIALS_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
+                }
+                const spreadsheetIdMig = env.SPREADSHEET_ID || '';
+                if (!spreadsheetIdMig) {
+                    return withCORS(JSON.stringify({ success: false, error: 'SPREADSHEET_ID_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
+                }
+
+                const accessTokenMig = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
+
+                const [insumosValues, usersValues, movValues] = await Promise.all([
+                    readSheet(spreadsheetIdMig, sheetRange, accessTokenMig),
+                    readSheet(spreadsheetIdMig, userRange, accessTokenMig),
+                    readSheet(spreadsheetIdMig, movimentacoesRange, accessTokenMig),
+                ]);
+
+                const parsedInsumos = parseInsumos(insumosValues);
+                const normalized = normalizeInsumos(parsedInsumos, unidade, config);
+                const parsedUsers = parseUsers(usersValues);
+                const parsedMovs = parseMovimentacoes(movValues);
+
+                if (mode === 'replace' && !dryRun) {
+                    // Order matters due to FK constraints
+                    await env.DB.prepare('DELETE FROM insumos_stocks').run();
+                    await env.DB.prepare('DELETE FROM insumos_movements').run();
+                    await env.DB.prepare('DELETE FROM insumos_items').run();
+                    await env.DB.prepare('DELETE FROM insumos_users').run();
+                }
+
+                const now = new Date().toISOString();
+                let nUsers = 0;
+                let nItems = 0;
+                let nStocks = 0;
+                let nMovs = 0;
+
+                if (!dryRun) {
+                    for (const u of parsedUsers) {
+                        const username = String(u?.username || '').trim();
+                        if (!username) continue;
+                        const createdAt = u.createdAt ? String(u.createdAt) : now;
+                        const updatedAt = u.updatedAt ? String(u.updatedAt) : now;
+                        await env.DB.prepare(
+                            `INSERT OR REPLACE INTO insumos_users
+                             (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                username,
+                                String(u.email || '').trim(),
+                                String(u.displayName || '').trim(),
+                                String(u.passwordHash || ''),
+                                normalizeRole(u.role || 'CONSULTOR'),
+                                String(u.photoUrl || ''),
+                                JSON.stringify(Array.isArray(u.allowedUnits) ? u.allowedUnits : []),
+                                u.ativo ? 1 : 0,
+                                createdAt,
+                                updatedAt
+                            )
+                            .run();
+                        nUsers += 1;
+                    }
+
+                    for (const it of normalized) {
+                        const registro = String(it.registro || '').trim();
+                        const codigoBarras = String(it.codigoBarras || '').trim();
+                        const produto = String(it.produto || '').trim();
+                        if (!registro || !codigoBarras || !produto) continue;
+                        const dataCadastro = it.dataCadastro ? String(it.dataCadastro) : now;
+                        const dataAtualizacao = it.ultimaAtualizacao ? String(it.ultimaAtualizacao) : now;
+                        const dataValidade = it.dataValidade ? String(it.dataValidade) : '';
+
+                        await env.DB.prepare(
+                            `INSERT OR REPLACE INTO insumos_items
+                             (registro, codigo_barras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade,
+                              fonte, preco_custo, estoque_minimo, lote, data_validade, data_cadastro, data_atualizacao)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                registro,
+                                codigoBarras,
+                                produto,
+                                String(it.categoria || ''),
+                                String(it.marca || ''),
+                                String(it.especificacao || ''),
+                                String(it.concentracao || ''),
+                                String(it.volume || ''),
+                                String(it.calibre || ''),
+                                String(it.tipoUnidade || ''),
+                                String(it.fonte || ''),
+                                Number(it.precoCusto || 0) || 0,
+                                Number(it.estoqueMinimo || 0) || 0,
+                                String(it.lote || ''),
+                                dataValidade,
+                                dataCadastro,
+                                dataAtualizacao
+                            )
+                            .run();
+                        nItems += 1;
+
+                        for (const u of UNIDADES) {
+                            const qty = Number(it?.estoques?.[u] ?? 0) || 0;
+                            await env.DB.prepare(
+                                `INSERT OR REPLACE INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+                                 VALUES (?, ?, ?, ?)`
+                            )
+                                .bind(registro, u, qty, now)
+                                .run();
+                            nStocks += 1;
+                        }
+                    }
+
+                    for (let idx = 0; idx < parsedMovs.length; idx++) {
+                        const m = parsedMovs[idx] || {};
+                        const id = String(m.id || '').trim() || `sheets:${idx + 2}`;
+                        const dataHoraRaw = String(m.dataHora || '').trim();
+                        let dataHora = dataHoraRaw;
+                        try {
+                            const d = new Date(dataHoraRaw);
+                            if (!Number.isNaN(d.getTime())) dataHora = d.toISOString();
+                        } catch { }
+                        await env.DB.prepare(
+                            `INSERT OR REPLACE INTO insumos_movements
+                             (id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto, quantidade,
+                              estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia,
+                              usuario, motivo, observacoes)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        )
+                            .bind(
+                                id,
+                                dataHora || now,
+                                String(m.tipo || '').toUpperCase().replace('Í', 'I'),
+                                String(m.codigoBarras || '').trim(),
+                                String(m.registroInsumo || '').trim(),
+                                String(m.lote || '').trim(),
+                                String(m.dataValidade || '').trim(),
+                                String(m.produto || ''),
+                                Number(m.quantidade || 0) || 0,
+                                Number(m.estoqueAnterior || 0) || 0,
+                                Number(m.estoqueNovo || 0) || 0,
+                                String(m.unidade || ''),
+                                String(m.unidadeOrigem || ''),
+                                String(m.unidadeDestino || ''),
+                                String(m.transferId || ''),
+                                String(m.usuario || ''),
+                                String(m.motivo || ''),
+                                String(m.observacoes || '')
+                            )
+                            .run();
+                        nMovs += 1;
+                    }
+                } else {
+                    nUsers = parsedUsers.filter((u) => String(u?.username || '').trim()).length;
+                    nItems = normalized.filter((it) => String(it?.registro || '').trim()).length;
+                    nStocks = nItems * UNIDADES.length;
+                    nMovs = parsedMovs.length;
+                }
+
+                return withCORS(
+                    JSON.stringify({
+                        success: true,
+                        dryRun,
+                        mode,
+                        imported: { users: nUsers, items: nItems, stocks: nStocks, movements: nMovs },
+                        hint: 'Após a importação, o Worker deve mudar automaticamente para D1 (storage= d1) quando houver itens em insumos_items.'
+                    }),
+                    { status: 200 },
+                    appOrigin
+                );
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: String(err?.message || err) }), { status: 500 }, appOrigin);
+            }
+        }
 
         const isPublicEndpoint = url.pathname === "/api/metrics" || url.pathname === "/metrics";
         if (!isPublicEndpoint && !url.pathname.startsWith("/auth/")) {
@@ -1444,21 +1720,36 @@ export default {
             }
         }
 
-        // Ensure optional columns exist for app features
-        if (url.pathname.startsWith("/insumos") || url.pathname.startsWith("/relatorios") || url.pathname.startsWith("/alertas") || url.pathname.startsWith("/analytics") || url.pathname.startsWith("/movimentacoes")) {
-            try {
-                await ensureHeaderColumns({
-                    spreadsheetId,
-                    sheetName: insumosSheetName,
-                    accessToken,
-                    requiredHeaders: ['LOTE', 'DATA VALIDADE']
-                });
-            } catch (e) {
-                // ignore header upgrade failures; read-only still works
-            }
-        }
+	        // Ensure optional columns exist for app features (Sheets only)
+	        if (!useD1) {
+	            if (url.pathname.startsWith("/insumos") || url.pathname.startsWith("/relatorios") || url.pathname.startsWith("/alertas") || url.pathname.startsWith("/analytics") || url.pathname.startsWith("/movimentacoes")) {
+	                try {
+	                    await ensureHeaderColumns({
+	                        spreadsheetId,
+	                        sheetName: insumosSheetName,
+	                        accessToken,
+	                        requiredHeaders: ['LOTE', 'DATA VALIDADE']
+	                    });
+	                } catch (e) {
+	                    // ignore header upgrade failures; read-only still works
+	                }
+	            }
+	        }
 
-        const movResp = await handleMovimentacoesRoutes({
+	        const d1 = useD1 ? {
+	            enabled: true,
+	            listInsumos: ({ unidade }) => d1ListInsumos({ env, unidades: UNIDADES, unidade }),
+	            createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
+	            updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
+	            deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),
+	            entradaBaixa: ({ unidade, body, kind }) => d1EntradaBaixa({ env, unidade, body, kind }),
+	            ajuste: ({ unidade, body }) => d1Ajuste({ env, unidade, body }),
+	            transfer: ({ body }) => d1Transfer({ env, body }),
+	            listMovimentacoes: ({ unidade, tipo, de, ate, pagina, limite, codigoBarras }) =>
+	                d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina, limite, codigoBarras }),
+	        } : { enabled: false };
+
+	        const movResp = await handleMovimentacoesRoutes({
             request,
             url,
             appOrigin,
@@ -1471,13 +1762,14 @@ export default {
             readSheet,
             parseMovimentacoes,
             sheetRange,
-            parseInsumos,
-            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
-            unidade,
-        });
+	            parseInsumos,
+	            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
+	            unidade,
+	            d1,
+	        });
         if (movResp) return movResp;
 
-        const insumosResp = await handleInsumosRoutes({
+	        const insumosResp = await handleInsumosRoutes({
             request,
             url,
             env,
@@ -1520,8 +1812,9 @@ export default {
             userAgent,
             idempotencyKey,
 
-            qrSvg,
-        });
+	            qrSvg,
+	            d1,
+	        });
         if (insumosResp) return insumosResp;
 
         const shareResp = await handleShareRoutes({
@@ -1556,6 +1849,7 @@ export default {
             safeJson,
             toCsv,
             qrSvg,
+            d1,
         });
         if (exportsResp) return exportsResp;
 
@@ -1601,6 +1895,7 @@ export default {
         const insightsResp = await handleInsightsRoutes({
             request,
             url,
+            env,
             appOrigin,
             withCORS,
             spreadsheetId,
@@ -1619,6 +1914,7 @@ export default {
             buildQualityReport,
             stockDistribution,
             buildResumoEstoque,
+            d1,
         });
         if (insightsResp) return insightsResp;
 

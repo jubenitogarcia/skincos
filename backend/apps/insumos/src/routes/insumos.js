@@ -44,7 +44,266 @@ export async function handleInsumosRoutes({
     idempotencyKey,
 
     qrSvg,
+
+    d1,
 }) {
+    if (d1?.enabled) {
+        // GET /insumos
+        if (url.pathname === "/insumos" && request.method === "GET") {
+            try {
+                const items = await d1.listInsumos({ unidade });
+                return withCORS(JSON.stringify({ success: true, data: items }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /insumos - cadastrar novo insumo/lote
+        if (url.pathname === "/insumos" && request.method === "POST") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+
+                const body = await request.json().catch(() => ({}));
+
+                const out = await d1.createInsumo({ unidade, body });
+                if (!out.ok) {
+                    return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
+                }
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'CREATE',
+                    entity: 'INSUMO',
+                    entityId: out.registro,
+                    unidade,
+                    before: null,
+                    after: { registro: out.registro, payload: body }
+                });
+
+                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                return withCORS(JSON.stringify({ success: true, message: "Insumo cadastrado", data: { registro: out.registro } }), { status: 201 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // PUT /insumos/:registro
+        if (url.pathname.startsWith("/insumos/") && request.method === "PUT") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+
+                const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
+                if (!registro) return withCORS(JSON.stringify({ success: false, error: "Registro inválido" }), { status: 400 }, appOrigin);
+
+                const body = await request.json().catch(() => ({}));
+                const out = await d1.updateInsumo({ registro, body });
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'UPDATE',
+                    entity: 'INSUMO',
+                    entityId: registro,
+                    unidade,
+                    before: null,
+                    after: { payload: body }
+                });
+
+                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                return withCORS(JSON.stringify({ success: true, message: "Insumo atualizado" }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // DELETE /insumos/:registro
+        if (url.pathname.startsWith("/insumos/") && request.method === "DELETE") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+
+                const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
+                const out = await d1.deleteInsumo({ registro });
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'DELETE',
+                    entity: 'INSUMO',
+                    entityId: registro,
+                    unidade,
+                    before: null,
+                    after: null
+                });
+                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                return withCORS(JSON.stringify({ success: true, message: "Insumo removido" }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /insumos/entrada
+        if (url.pathname === "/insumos/entrada" && request.method === "POST") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const out = await d1.entradaBaixa({ unidade, body, kind: 'ENTRADA' });
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'ENTRADA',
+                    entity: 'INSUMO',
+                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                    unidade,
+                    before: { estoqueAnterior: out.estoqueAnterior },
+                    after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
+                });
+                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /insumos/baixa
+        if (url.pathname === "/insumos/baixa" && request.method === "POST") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const out = await d1.entradaBaixa({ unidade, body, kind: 'BAIXA' });
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'BAIXA',
+                    entity: 'INSUMO',
+                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                    unidade,
+                    before: { estoqueAnterior: out.estoqueAnterior },
+                    after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
+                });
+                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /insumos/transferir
+        if (url.pathname === "/insumos/transferir" && request.method === "POST") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const out = await d1.transfer({ body });
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'TRANSFERENCIA',
+                    entity: 'INSUMO',
+                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                    unidade: body?.fromUnidade || unidade,
+                    before: null,
+                    after: { transferId: out.transferId, quantidade: body?.quantidade, registro: out.registro, from: body?.fromUnidade, to: body?.toUnidade }
+                });
+                ctx.waitUntil(enqueueNotificationsRefresh(env, body?.fromUnidade || unidade));
+                ctx.waitUntil(enqueueNotificationsRefresh(env, body?.toUnidade || unidade));
+                return withCORS(JSON.stringify({
+                    success: true,
+                    transferId: out.transferId,
+                    estoqueAnteriorOrigem: out.estoqueAnteriorOrigem,
+                    estoqueNovoOrigem: out.estoqueNovoOrigem,
+                    estoqueAnteriorDestino: out.estoqueAnteriorDestino,
+                    estoqueNovoDestino: out.estoqueNovoDestino,
+                }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /insumos/ajuste
+        if (url.pathname === "/insumos/ajuste" && request.method === "POST") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const out = await d1.ajuste({ unidade, body });
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+
+                await appendAuditLog({
+                    env,
+                    spreadsheetId,
+                    accessToken,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'AJUSTE',
+                    entity: 'MOVIMENTACAO',
+                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                    unidade,
+                    before: { estoqueAnterior: out.estoqueAnterior },
+                    after: { motivo: body?.motivo, novoEstoque: out.novoEstoque, registro: out.registro }
+                });
+                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        return null;
+    }
+
     const resolveStockIndex = (headerMap, unit) => {
         const candidates = (typeof getInsumosUnidadeHeaderKeys === 'function' ? getInsumosUnidadeHeaderKeys(unit) : []) || [];
         const raw = String(unit || '').trim().toLowerCase();
