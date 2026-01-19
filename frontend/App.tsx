@@ -10,6 +10,16 @@ import { Badge } from '@/badge'
 import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
 import { isNoAuthMode } from '@/noAuthMode'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { useKV } from '@/spark-mock'
+
+const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
+const UNIT_MONITOR_UNITS: Array<{ value: string; label: string }> = [
+    { value: 'unit-a', label: 'Unidade A' },
+    { value: 'unit-b', label: 'Unidade B' },
+    { value: 'unit-c', label: 'Unidade C' },
+    { value: 'custom', label: 'Outra…' }
+]
 
 // Key functional modules
 const LeadsManager = lazy(() => import('@/LeadsManager').then(m => ({ default: m.LeadsManager })))
@@ -168,7 +178,28 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 	        online: boolean | null
 	        authed: boolean | null
 	        integrated: boolean | null
+	        unidades: string[]
+	        allowedUnits: string[]
 	    } | null>(null)
+	    const [insumosUnit, setInsumosUnit] = useState<string>(() => {
+	        try {
+	            return localStorage.getItem(INSUMOS_UNIT_KEY) || 'novo-hamburgo'
+	        } catch {
+	            return 'novo-hamburgo'
+	        }
+	    })
+	    const [unitMonitorSelectedUnit, setUnitMonitorSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
+	    const [unitMonitorCustomUnit, setUnitMonitorCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
+	    const unitMonitorEffectiveUnit =
+	        unitMonitorSelectedUnit === 'custom' ? (unitMonitorCustomUnit.trim() || 'custom') : unitMonitorSelectedUnit
+	    const [unitMonitorApiStatus, setUnitMonitorApiStatus] = useState<'unknown' | 'connected' | 'offline'>('unknown')
+
+	    const formatUnitLabel = (u: string) =>
+	        String(u || '')
+	            .split('-')
+	            .filter(Boolean)
+	            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+	            .join(' ')
 
     // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
     React.useEffect(() => {
@@ -216,30 +247,78 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 
 	                let online: boolean | null = null
 	                let integrated: boolean | null = null
+	                let unidades: string[] = []
 	                if (healthRes?.ok) {
 	                    const h: any = await healthRes.json().catch(() => null)
 	                    online = Boolean(h?.ok)
 	                    integrated = typeof h?.sheetsConfigured === 'boolean' ? Boolean(h.sheetsConfigured) : null
+	                    unidades = Array.isArray(h?.unidades) ? h.unidades.filter(Boolean).map((x: any) => String(x)) : []
 	                } else if (healthRes) {
 	                    online = false
 	                }
 
 	                let authed: boolean | null = null
+	                let allowedUnits: string[] = []
 	                if (meRes?.ok) {
 	                    const m: any = await meRes.json().catch(() => null)
 	                    authed = Boolean(m?.user?.username)
+	                    allowedUnits = Array.isArray(m?.user?.allowedUnits)
+	                        ? m.user.allowedUnits.filter(Boolean).map((x: any) => String(x))
+	                        : []
 	                } else if (meRes) {
 	                    authed = false
 	                }
 
-	                setInsumosHeaderStatus({ online, authed, integrated })
+	                const candidateUnits = unidades.length ? unidades : ['novo-hamburgo', 'barra-shopping-sul']
+	                const filteredUnits = allowedUnits.length
+	                    ? candidateUnits.filter((u) => allowedUnits.includes(u))
+	                    : candidateUnits
+	                const options = filteredUnits.length ? filteredUnits : candidateUnits
+
+	                let nextUnit = insumosUnit
+	                try {
+	                    const saved = localStorage.getItem(INSUMOS_UNIT_KEY)
+	                    if (saved) nextUnit = saved
+	                } catch { /* ignore */ }
+	                if (!options.includes(nextUnit)) nextUnit = options[0]
+	                setInsumosUnit(nextUnit)
+	                try { localStorage.setItem(INSUMOS_UNIT_KEY, nextUnit) } catch { /* ignore */ }
+	                try { window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: nextUnit } })) } catch { /* ignore */ }
+
+	                setInsumosHeaderStatus({ online, authed, integrated, unidades: options, allowedUnits })
 	            } catch {
-	                setInsumosHeaderStatus({ online: false, authed: false, integrated: null })
+	                setInsumosHeaderStatus({ online: false, authed: false, integrated: null, unidades: [], allowedUnits: [] })
 	            }
 	        })()
 
 	        return () => ac.abort()
-	    }, [active])
+	    }, [active, insumosUnit])
+
+	    React.useEffect(() => {
+	        if (active !== 'unit-monitor') {
+	            setUnitMonitorApiStatus('unknown')
+	            return
+	        }
+	        if (!unitMonitorEffectiveUnit) return
+
+	        const ac = new AbortController()
+	        setUnitMonitorApiStatus('unknown')
+	        ;(async () => {
+	            try {
+	                const res = await fetch(`/api/unit-monitor/state?unit=${encodeURIComponent(unitMonitorEffectiveUnit)}`, {
+	                    credentials: 'include',
+	                    signal: ac.signal
+	                })
+	                if (!res.ok) return setUnitMonitorApiStatus('offline')
+	                const data: any = await res.json().catch(() => null)
+	                if (data && typeof data.ok === 'boolean' && data.ok === false) return setUnitMonitorApiStatus('offline')
+	                setUnitMonitorApiStatus('connected')
+	            } catch {
+	                setUnitMonitorApiStatus('offline')
+	            }
+	        })()
+	        return () => ac.abort()
+	    }, [active, unitMonitorEffectiveUnit])
 
     const modulesSorted = useMemo(() => {
         const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
@@ -439,6 +518,67 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 	                                                    <Badge variant={insumosHeaderStatus.integrated ? 'default' : 'warning'}>
 	                                                        {insumosHeaderStatus.integrated ? 'Integração ativa' : 'Integração pendente'}
 	                                                    </Badge>
+	                                                ) : null}
+	                                                {insumosHeaderStatus.unidades.length ? (
+	                                                    <Select
+	                                                        value={insumosUnit}
+	                                                        onValueChange={(v) => {
+	                                                            setInsumosUnit(v)
+	                                                            try { localStorage.setItem(INSUMOS_UNIT_KEY, v) } catch { /* ignore */ }
+	                                                            try {
+	                                                                window.dispatchEvent(
+	                                                                    new CustomEvent('skincos:insumos:unidade', { detail: { unidade: v } })
+	                                                                )
+	                                                            } catch { /* ignore */ }
+	                                                        }}
+	                                                    >
+	                                                        <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
+	                                                            <SelectValue placeholder="Unidade" />
+	                                                        </SelectTrigger>
+	                                                        <SelectContent>
+	                                                            {insumosHeaderStatus.unidades.map((u) => (
+	                                                                <SelectItem key={u} value={u}>
+	                                                                    Unidade: {formatUnitLabel(u)}
+	                                                                </SelectItem>
+	                                                            ))}
+	                                                        </SelectContent>
+	                                                    </Select>
+	                                                ) : null}
+	                                            </>
+	                                        ) : null}
+	                                        {active === 'unit-monitor' ? (
+	                                            <>
+	                                                <div className="w-px h-4 bg-white/20 mx-2"></div>
+	                                                <Badge
+	                                                    variant={
+	                                                        unitMonitorApiStatus === 'connected'
+	                                                            ? 'success'
+	                                                            : unitMonitorApiStatus === 'offline'
+	                                                                ? 'destructive'
+	                                                                : 'secondary'
+	                                                    }
+	                                                >
+	                                                    Unit Monitor {unitMonitorApiStatus === 'connected' ? 'Online' : unitMonitorApiStatus === 'offline' ? 'Offline' : '…'}
+	                                                </Badge>
+	                                                <Select value={unitMonitorSelectedUnit} onValueChange={(v) => setUnitMonitorSelectedUnit(v)}>
+	                                                    <SelectTrigger className="h-8 w-44 bg-white/[0.06] border-white/20 text-white">
+	                                                        <SelectValue placeholder="Unidade" />
+	                                                    </SelectTrigger>
+	                                                    <SelectContent>
+	                                                        {UNIT_MONITOR_UNITS.map((u) => (
+	                                                            <SelectItem key={u.value} value={u.value}>
+	                                                                {u.label}
+	                                                            </SelectItem>
+	                                                        ))}
+	                                                    </SelectContent>
+	                                                </Select>
+	                                                {unitMonitorSelectedUnit === 'custom' ? (
+	                                                    <Input
+	                                                        value={unitMonitorCustomUnit}
+	                                                        onChange={(e) => setUnitMonitorCustomUnit(e.target.value)}
+	                                                        placeholder="ex: unidade-centro"
+	                                                        className="h-8 w-48 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+	                                                    />
 	                                                ) : null}
 	                                            </>
 	                                        ) : null}

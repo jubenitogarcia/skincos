@@ -8,7 +8,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
-import { useAuth } from '@/contexts'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 type InsumosHealth = {
@@ -484,12 +483,18 @@ async function apiJson<T>(
 }
 
 export function InsumosModule() {
-  const { user: crmUser, signOut } = useAuth()
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
 
-  const [unidade, setUnidade] = React.useState<string>('novo-hamburgo')
+  const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
+  const [unidade, setUnidade] = React.useState<string>(() => {
+    try {
+      return window.localStorage.getItem(INSUMOS_UNIT_KEY) || 'novo-hamburgo'
+    } catch {
+      return 'novo-hamburgo'
+    }
+  })
   const [transferFrom, setTransferFrom] = React.useState<string>('novo-hamburgo')
   const [transferTo, setTransferTo] = React.useState<string>('barra-shopping-sul')
   const [csrfToken, setCsrfToken] = React.useState<string | null>(null)
@@ -863,11 +868,39 @@ export function InsumosModule() {
     }
   }, [])
 
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(INSUMOS_UNIT_KEY, unidade)
+    } catch {
+      // ignore
+    }
+  }, [INSUMOS_UNIT_KEY, unidade])
+
+  React.useEffect(() => {
+    const onUnit = (evt: Event) => {
+      const next = String((evt as any)?.detail?.unidade || '').trim()
+      if (!next) return
+      setUnidade(next)
+    }
+    window.addEventListener('skincos:insumos:unidade', onUnit as any)
+    return () => window.removeEventListener('skincos:insumos:unidade', onUnit as any)
+  }, [])
 
   React.useEffect(() => {
     if (!allowedUnits.length) return
     if (allowedUnits.includes(unidade)) return
-    setUnidade(allowedUnits[0])
+    const next = allowedUnits[0]
+    setUnidade(next)
+    try {
+      window.localStorage.setItem(INSUMOS_UNIT_KEY, next)
+    } catch {
+      // ignore
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: next } }))
+    } catch {
+      // ignore
+    }
   }, [allowedUnits.join('|'), unidade])
 
   React.useEffect(() => {
@@ -1162,11 +1195,6 @@ export function InsumosModule() {
     profilePhotoUrl,
     profileUsername
   ])
-
-  const logout = React.useCallback(async () => {
-    // Logout do CRM também encerra a sessão do Insumos (same cookie).
-    signOut()
-  }, [signOut])
 
   const loadInsumos = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -1634,40 +1662,6 @@ export function InsumosModule() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div />
-        <div className="flex items-center gap-2">
-          <Select value={unidade} onValueChange={setUnidade}>
-            <SelectTrigger className="w-56">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {unidadeOptions.map((u) => (
-                <SelectItem key={u} value={u}>
-                  Unidade: {unidadeLabel(u)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {offlineQueueCount > 0 ? (
-            <>
-              <Button variant="outline" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                Pendências
-              </Button>
-              <Button variant="outline" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
-                Sincronizar
-              </Button>
-            </>
-          ) : null}
-          <Button variant="ghost" size="sm" onClick={toggleDebugUi}>
-            {debugUi ? 'Ocultar detalhes' : 'Detalhes'}
-          </Button>
-          <Button onClick={loadHealth} disabled={healthLoading}>
-            {healthLoading ? 'Atualizando…' : 'Atualizar'}
-          </Button>
-        </div>
-      </div>
-
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -1917,42 +1911,90 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <Card className="glass-morphism border border-white/10">
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-white">Operação</CardTitle>
+      <div ref={quickSectionRef} className="max-w-2xl mx-auto">
+        <Card className="glass-morphism border border-white/10">
+          <CardHeader className="space-y-3">
+            <CardTitle className="text-white">Operações</CardTitle>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <Button
+                className="!bg-green-600 hover:!bg-green-700 !text-white"
+                onClick={() => {
+                  setActiveTab('overview')
+                  setQuickOp('ENTRADA')
+                }}
+                disabled={!isAuthed}
+              >
+                Entrada
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setActiveTab('overview')
+                  setQuickOp('BAIXA')
+                }}
+                disabled={!isAuthed}
+              >
+                Saída
+              </Button>
+              <Button
+                className="!bg-blue-600 hover:!bg-blue-700 !text-white"
+                onClick={() => {
+                  setActiveTab('overview')
+                  setQuickOp('TRANSFERENCIA')
+                }}
+                disabled={!isAuthed}
+              >
+                Transferência
+              </Button>
+            </div>
+            <div className="lg:hidden space-y-1">
+              <div className="text-xs text-blue-200/70">Unidade</div>
+              <Select value={unidade} onValueChange={setUnidade}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {unidadeOptions.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      Unidade: {unidadeLabel(u)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm text-blue-100/70">
+              Unidade atual: <span className="font-semibold text-blue-100">{unidadeLabel(unidade)}</span>
+            </div>
+            {offlineQueueCount > 0 ? (
+              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                Pendências: {offlineQueueCount}
+              </Button>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="glass-morphism border border-white/10 max-w-6xl mx-auto">
+        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <CardTitle className="text-white">Gestão</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              className="!bg-green-600 hover:!bg-green-700 !text-white"
-              onClick={() => {
-                setActiveTab('overview')
-                setQuickOp('ENTRADA')
-              }}
-              disabled={!isAuthed}
-            >
-              Entrada
+            {offlineQueueCount > 0 ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                  Pendências
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
+                  Sincronizar
+                </Button>
+              </>
+            ) : null}
+            <Button variant="ghost" size="sm" onClick={toggleDebugUi}>
+              {debugUi ? 'Ocultar detalhes' : 'Detalhes'}
             </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => {
-                setActiveTab('overview')
-                setQuickOp('BAIXA')
-              }}
-              disabled={!isAuthed}
-            >
-              Saída
-            </Button>
-            <Button
-              size="sm"
-              className="!bg-blue-600 hover:!bg-blue-700 !text-white"
-              onClick={() => {
-                setActiveTab('overview')
-                setQuickOp('TRANSFERENCIA')
-              }}
-              disabled={!isAuthed}
-            >
-              Transferência
+            <Button size="sm" onClick={loadHealth} disabled={healthLoading}>
+              {healthLoading ? 'Atualizando…' : 'Atualizar'}
             </Button>
           </div>
         </CardHeader>

@@ -1086,20 +1086,38 @@ export function UnitMonitor() {
 
   return (
     <>
-      <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-            <VideoCamera className="w-5 h-5" />
-            Unit Monitor (Cameras)
-          </h2>
-          <p className="text-sm text-blue-300/80">
-            Monitoramento e gravação de evidências de câmeras por unidade com automação Google Home.
-          </p>
+      <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="space-y-2">
+        <p className="text-sm text-blue-300/80">
+          Monitoramento e gravação de evidências de câmeras por unidade (RTSP) com live e playback.
+        </p>
+        <div className="lg:hidden space-y-2">
+          <Label className="text-white">Unidade</Label>
+          <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
+            <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
+              <SelectValue placeholder="Selecione" />
+            </SelectTrigger>
+            <SelectContent>
+              {DEFAULT_UNITS.map((unit) => (
+                <SelectItem key={unit.value} value={unit.value}>
+                  {unit.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedUnit === 'custom' && (
+            <Input
+              value={customUnit}
+              onChange={(e) => setCustomUnit(e.target.value)}
+              placeholder="ex: unidade-centro"
+              className="bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+            />
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge className="bg-white/10 text-white border-white/20">API: {serverStatus}</Badge>
-          <Badge className="bg-white/10 text-white border-white/20">Modo: {isElectron() ? 'electron' : 'browser'}</Badge>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-blue-200/70">
+            Unidade atual: <span className="font-mono text-white">{effectiveUnit || '-'}</span>
+          </div>
           {recordingControls}
         </div>
       </div>
@@ -1114,31 +1132,7 @@ export function UnitMonitor() {
             Configure a unidade, sincronize com o servidor e acesse o Google Home.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label className="text-white">Unidade</Label>
-            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
-              <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-                <SelectValue placeholder="Selecione" />
-              </SelectTrigger>
-              <SelectContent>
-                {DEFAULT_UNITS.map((unit) => (
-                  <SelectItem key={unit.value} value={unit.value}>
-                    {unit.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {selectedUnit === 'custom' && (
-              <Input
-                value={customUnit}
-                onChange={(e) => setCustomUnit(e.target.value)}
-                placeholder="ex: unidade-centro"
-                className="bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-              />
-            )}
-          </div>
-
+        <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label className="text-white">Status Google Home</Label>
             <div className="flex flex-wrap gap-2">
