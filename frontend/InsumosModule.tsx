@@ -415,7 +415,7 @@ async function apiJson<T>(
 }
 
 export function InsumosModule() {
-  type InsumosTab = 'insumos' | 'lotes' | 'mov'
+  type InsumosTab = 'insumos' | 'mov'
 
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -603,20 +603,20 @@ export function InsumosModule() {
   }, [SHARE_HISTORY_KEY])
 
 
-  React.useEffect(() => {
-    const mapTab = (raw: string | null): 'overview' | InsumosTab | null => {
-      const value = String(raw || '')
-        .trim()
-        .toLowerCase()
-      if (!value) return null
-      if (['overview', 'resumo', 'dashboard'].includes(value)) return 'overview'
-      if (['insumos', 'cadastro', 'cadastrar', 'novo'].includes(value)) return 'insumos'
-      if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'lotes'
-      if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
-      if (['alertas', 'avisos'].includes(value)) return 'lotes'
-      if (['insights'].includes(value)) return 'mov'
-      return null
-    }
+	  React.useEffect(() => {
+	    const mapTab = (raw: string | null): 'overview' | InsumosTab | null => {
+	      const value = String(raw || '')
+	        .trim()
+	        .toLowerCase()
+	      if (!value) return null
+	      if (['overview', 'resumo', 'dashboard'].includes(value)) return 'overview'
+	      if (['insumos', 'cadastro', 'cadastrar', 'novo'].includes(value)) return 'insumos'
+	      if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'overview'
+	      if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
+	      if (['alertas', 'avisos'].includes(value)) return 'overview'
+	      if (['insights'].includes(value)) return 'overview'
+	      return null
+	    }
 
     const mapActionLabel = (raw: string) => {
       const value = raw.toLowerCase()
@@ -1377,15 +1377,14 @@ export function InsumosModule() {
     return () => window.removeEventListener('skincos:insumos:op', onOp as EventListener)
   }, [])
 
-  React.useEffect(() => {
-    if (!canUseApi || !isAuthed) return
-    if (activeTab === 'insumos') {
-      void loadInsumos()
-      void loadShareHistory()
-    }
-    if (activeTab === 'lotes') void loadInsumos()
-    if (activeTab === 'mov') void loadMovimentacoes()
-  }, [activeTab, canUseApi, isAuthed, loadInsumos, loadInsights, loadMovimentacoes, loadShareHistory])
+	  React.useEffect(() => {
+	    if (!canUseApi || !isAuthed) return
+	    if (activeTab === 'insumos') {
+	      void loadInsumos()
+	      void loadShareHistory()
+	    }
+	    if (activeTab === 'mov') void loadMovimentacoes()
+	  }, [activeTab, canUseApi, isAuthed, loadInsumos, loadMovimentacoes, loadShareHistory])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
@@ -1749,13 +1748,13 @@ export function InsumosModule() {
                     <SelectItem value="1y">1 ano</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="secondary"
-                  onClick={() => void Promise.allSettled([loadOverview(), loadInsights()])}
-                  disabled={(!isAuthed) || overviewLoading || insightsLoading}
-                >
-                  {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
-                </Button>
+	                <Button
+	                  variant="secondary"
+	                  onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), loadInsumos()])}
+	                  disabled={(!isAuthed) || overviewLoading || insightsLoading}
+	                >
+	                  {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
+	                </Button>
               </div>
             </div>
 
@@ -1812,11 +1811,11 @@ export function InsumosModule() {
                 </CardContent>
               </Card>
 
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">📊 Movimentações</CardTitle>
-                </CardHeader>
-                <CardContent>
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-sm">📊 Movimentações</CardTitle>
+	                </CardHeader>
+	                <CardContent>
                   <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
                   <div className="text-sm text-blue-100/80">
                     <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
@@ -1825,14 +1824,227 @@ export function InsumosModule() {
                   <div className="text-xs text-blue-200/60">
                     saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
                   </div>
-                </CardContent>
-              </Card>
-	            </div>
+	                </CardContent>
+	              </Card>
+		            </div>
 
-	            <Card className="bg-black/20 border border-white/10">
-	              <CardHeader>
-	                <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
-	              </CardHeader>
+		            <Card className="bg-black/20 border border-white/10">
+		              <CardHeader className="flex flex-row items-center justify-between gap-2">
+		                <CardTitle className="text-white text-base">Alertas</CardTitle>
+		                <div className="flex items-center gap-2 text-xs text-blue-200/60">
+		                  <span>
+		                    estoque:{' '}
+		                    <span className="font-mono">
+		                      {Number.isFinite(Number(overviewNotifications?.counts?.lowStock)) ? Number(overviewNotifications?.counts?.lowStock) : insightsAlertasFiltrados.length}
+		                    </span>
+		                  </span>
+		                  <span>•</span>
+		                  <span>
+		                    validade:{' '}
+		                    <span className="font-mono">
+		                      {insumosLoteFiltrados.length}
+		                    </span>
+		                  </span>
+		                </div>
+		              </CardHeader>
+		              <CardContent className="space-y-3">
+		                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+		                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+		                    Estoque abaixo do mínimo
+		                  </summary>
+		                  <div className="mt-3 space-y-2">
+		                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+		                      <div>
+		                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
+		                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
+		                          <SelectTrigger>
+		                            <SelectValue />
+		                          </SelectTrigger>
+		                          <SelectContent>
+		                            <SelectItem value="TODOS">Todos</SelectItem>
+		                            <SelectItem value="ATENCAO">Atenção</SelectItem>
+		                            <SelectItem value="URGENTE">Urgente</SelectItem>
+		                          </SelectContent>
+		                        </Select>
+		                      </div>
+		                      <div>
+		                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+		                        <Select
+		                          value={alertasCategoria || '__ALL__'}
+		                          onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
+		                        >
+		                          <SelectTrigger>
+		                            <SelectValue />
+		                          </SelectTrigger>
+		                          <SelectContent>
+		                            <SelectItem value="__ALL__">Todas</SelectItem>
+		                            {alertasCategorias.map((c) => (
+		                              <SelectItem key={c} value={c}>
+		                                {c}
+		                              </SelectItem>
+		                            ))}
+		                          </SelectContent>
+		                        </Select>
+		                      </div>
+		                      <div>
+		                        <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
+		                        <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
+		                      </div>
+		                    </div>
+
+		                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+		                      <table className="min-w-full text-sm">
+		                        <thead className="bg-black/30 text-blue-100/80">
+		                          <tr>
+		                            <th className="text-left p-3">Produto</th>
+		                            <th className="text-left p-3">Categoria</th>
+		                            <th className="text-left p-3">Status</th>
+		                            <th className="text-right p-3">Atual</th>
+		                            <th className="text-right p-3">Mín</th>
+		                            <th className="text-right p-3">Dif</th>
+		                            <th className="text-right p-3">%</th>
+		                          </tr>
+		                        </thead>
+		                        <tbody className="divide-y divide-white/5">
+		                          {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
+		                            const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
+		                            return (
+		                              <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+		                                <td className="p-3 text-blue-50">
+		                                  <div className="text-blue-50">{a.produto || '-'}</div>
+		                                  <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
+		                                </td>
+		                                <td className="p-3 text-blue-100/80">
+		                                  <div className="flex items-center gap-2">
+		                                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
+		                                    <span className="truncate">{a.categoria || '-'}</span>
+		                                  </div>
+		                                </td>
+		                                <td className="p-3">
+		                                  <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
+		                                </td>
+		                                <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
+		                                <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
+		                                <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
+		                                <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
+		                              </tr>
+		                            )
+		                          })}
+		                          {!insightsAlertasFiltrados.length ? (
+		                            <tr>
+		                              <td className="p-3 text-blue-100/70" colSpan={7}>
+		                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
+		                              </td>
+		                            </tr>
+		                          ) : null}
+		                        </tbody>
+		                      </table>
+		                    </div>
+		                  </div>
+		                </details>
+
+		                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+		                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+		                    Validade (lotes)
+		                  </summary>
+		                  <div className="mt-3 space-y-2">
+		                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+		                      <div>
+		                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+		                        <Select
+		                          value={lotFiltroCategoria || '__ALL__'}
+		                          onValueChange={(v) => setLotFiltroCategoria(v === '__ALL__' ? '' : String(v))}
+		                        >
+		                          <SelectTrigger>
+		                            <SelectValue placeholder="Todas" />
+		                          </SelectTrigger>
+		                          <SelectContent>
+		                            <SelectItem value="__ALL__">Todas</SelectItem>
+		                            {lotCategorias.map((c) => (
+		                              <SelectItem key={c} value={c}>
+		                                {c}
+		                              </SelectItem>
+		                            ))}
+		                          </SelectContent>
+		                        </Select>
+		                      </div>
+		                      <div>
+		                        <div className="text-xs text-blue-200/70 mb-1">Validade</div>
+		                        <Select value={lotFiltroValidade} onValueChange={(v) => setLotFiltroValidade(v as any)}>
+		                          <SelectTrigger>
+		                            <SelectValue />
+		                          </SelectTrigger>
+		                          <SelectContent>
+		                            <SelectItem value="TODOS">Todos</SelectItem>
+		                            <SelectItem value="OK">OK</SelectItem>
+		                            <SelectItem value="VENCENDO">Vencendo</SelectItem>
+		                            <SelectItem value="EXPIRADO">Expirado</SelectItem>
+		                            <SelectItem value="SEM_VALIDADE">Sem validade</SelectItem>
+		                          </SelectContent>
+		                        </Select>
+		                      </div>
+		                      <div>
+		                        <div className="text-xs text-blue-200/70 mb-1">Busca</div>
+		                        <Input value={lotBusca} onChange={(e) => setLotBusca(e.target.value)} placeholder="produto, código, lote..." />
+		                      </div>
+		                    </div>
+
+		                    {!insumosLoteFiltrados.length ? (
+		                      <div className="text-sm text-blue-100/70">Nenhum item para os filtros.</div>
+		                    ) : (
+		                      <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+		                        <table className="w-full text-sm">
+		                          <thead className="text-blue-200/70">
+		                            <tr className="border-b border-white/10">
+		                              <th className="text-left p-3">Produto</th>
+		                              <th className="text-left p-3">Lote</th>
+		                              <th className="text-left p-3">Validade</th>
+		                              <th className="text-left p-3">Status</th>
+		                              <th className="text-right p-3">Estoque</th>
+		                              <th className="text-right p-3">Ações</th>
+		                            </tr>
+		                          </thead>
+		                          <tbody className="text-blue-50/90 divide-y divide-white/5">
+		                            {insumosLoteFiltrados.map((i) => {
+		                              const st = String(i.statusValidade?.status || (i.dataValidade ? 'OK' : '—')).toUpperCase()
+		                              const badgeVariant = st === 'EXPIRADO' ? 'destructive' : st === 'VENCENDO' ? 'secondary' : 'default'
+		                              return (
+		                                <tr key={String(i.registro || i.codigoBarras)} className="hover:bg-white/5">
+		                                  <td className="p-3">
+		                                    <div className="font-medium">{i.produto || '-'}</div>
+		                                    <div className="text-xs text-blue-200/60">{i.categoria || ''}</div>
+		                                  </td>
+		                                  <td className="p-3">
+		                                    <span className="font-mono">{i.lote ? String(i.lote) : '-'}</span>
+		                                  </td>
+		                                  <td className="p-3">
+		                                    <span className="font-mono">{i.dataValidade ? String(i.dataValidade) : '-'}</span>
+		                                  </td>
+		                                  <td className="p-3">
+		                                    <Badge variant={badgeVariant}>{st}</Badge>
+		                                  </td>
+		                                  <td className="p-3 text-right font-mono">{Number(i.estoqueAtual) || 0}</td>
+		                                  <td className="p-3 text-right">
+		                                    <Button variant="secondary" onClick={() => openLotDialog(i)} disabled={!isAuthed}>
+		                                      Detalhes
+		                                    </Button>
+		                                  </td>
+		                                </tr>
+		                              )
+		                            })}
+		                          </tbody>
+		                        </table>
+		                      </div>
+		                    )}
+		                  </div>
+		                </details>
+		              </CardContent>
+		            </Card>
+
+		            <Card className="bg-black/20 border border-white/10">
+		              <CardHeader>
+		                <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
+		              </CardHeader>
 	              <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
 	                <div className="space-y-2">
 	                  <div className="text-sm text-blue-100/80">Reposição</div>
@@ -2096,12 +2308,82 @@ export function InsumosModule() {
 	              </Card>
             </div>
           </CardContent>
-        </Card>
-      </div>
+	        </Card>
+	      </div>
 
-      <Card className="glass-morphism border border-white/10 max-w-6xl mx-auto">
-        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <CardTitle className="text-white">Gestão</CardTitle>
+	      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
+	        <DialogContent className="max-w-xl">
+	          <DialogHeader>
+	            <DialogTitle>Editar lote/validade</DialogTitle>
+	            <DialogDescription>
+	              {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
+	            </DialogDescription>
+	          </DialogHeader>
+
+	          {lotSelecionado ? (
+	            <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
+	              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+	                <div>
+	                  <div className="text-xs text-muted-foreground">Categoria</div>
+	                  <div className="text-blue-100/80">{lotSelecionado.categoria || '-'}</div>
+	                </div>
+	                <div>
+	                  <div className="text-xs text-muted-foreground">Marca</div>
+	                  <div className="text-blue-100/80">{lotSelecionado.marca || '-'}</div>
+	                </div>
+	                {lotSelecionado.concentracao ? (
+	                  <div>
+	                    <div className="text-xs text-muted-foreground">Concentração</div>
+	                    <div className="text-blue-100/80">{lotSelecionado.concentracao}</div>
+	                  </div>
+	                ) : null}
+	                {lotSelecionado.volume ? (
+	                  <div>
+	                    <div className="text-xs text-muted-foreground">Volume</div>
+	                    <div className="text-blue-100/80">{lotSelecionado.volume}</div>
+	                  </div>
+	                ) : null}
+	                {lotSelecionado.calibre ? (
+	                  <div>
+	                    <div className="text-xs text-muted-foreground">Calibre</div>
+	                    <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
+	                  </div>
+	                ) : null}
+	                {lotSelecionado.fonte ? (
+	                  <div>
+	                    <div className="text-xs text-muted-foreground">Fonte</div>
+	                    <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
+	                  </div>
+	                ) : null}
+	              </div>
+	            </div>
+	          ) : null}
+
+	          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+	            <div>
+	              <div className="text-xs text-muted-foreground mb-1">Lote</div>
+	              <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
+	            </div>
+	            <div>
+	              <div className="text-xs text-muted-foreground mb-1">Validade (YYYY-MM-DD)</div>
+	              <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 2026-12-31" />
+	            </div>
+	          </div>
+
+	          <DialogFooter>
+	            <Button variant="secondary" onClick={() => setLotDialogOpen(false)}>
+	              Cancelar
+	            </Button>
+	            <Button onClick={saveLot} disabled={lotSaving || !isAuthed}>
+	              {lotSaving ? 'Salvando…' : 'Salvar'}
+	            </Button>
+	          </DialogFooter>
+	        </DialogContent>
+	      </Dialog>
+
+	      <Card className="glass-morphism border border-white/10 max-w-6xl mx-auto">
+	        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+	          <CardTitle className="text-white">Gestão</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
             {offlineQueueCount > 0 ? (
               <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
@@ -2110,303 +2392,14 @@ export function InsumosModule() {
             ) : null}
           </div>
         </CardHeader>
-        <CardContent>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-            <TabsList className="bg-black/20 flex flex-wrap">
-              <TabsTrigger value="insumos">Insumos</TabsTrigger>
-              <TabsTrigger value="lotes">Avisos</TabsTrigger>
-              <TabsTrigger value="mov">Movimentações</TabsTrigger>
-            </TabsList>
+	        <CardContent>
+	          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+	            <TabsList className="bg-black/20 flex flex-wrap">
+	              <TabsTrigger value="insumos">Insumos</TabsTrigger>
+	              <TabsTrigger value="mov">Movimentações</TabsTrigger>
+	            </TabsList>
 
-	            <TabsContent value="lotes" className="mt-4 space-y-4">
-	              <div className="flex flex-wrap items-center justify-between gap-2">
-	                <div>
-	                  <div className="text-base text-white font-semibold">Avisos</div>
-	                  <div className="text-sm text-blue-100/70">Alertas de estoque e validade (lotes).</div>
-	                </div>
-	                <Button
-	                  variant="secondary"
-	                  onClick={() => void Promise.allSettled([loadInsights(), loadInsumos()])}
-	                  disabled={(!isAuthed) || insightsLoading || insumosLoading}
-                >
-                  {(insightsLoading || insumosLoading) ? 'Atualizando…' : 'Recarregar'}
-                </Button>
-              </div>
-
-              <div className="space-y-3">
-                <Card className="bg-black/20 border border-white/10">
-		                  <CardHeader>
-		                    <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
-		                  </CardHeader>
-		                  <CardContent className="space-y-2">
-	                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-	                      <div>
-	                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
-	                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-	                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="TODOS">Todos</SelectItem>
-                            <SelectItem value="ATENCAO">Atenção</SelectItem>
-                            <SelectItem value="URGENTE">Urgente</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                        <Select value={alertasCategoria || '__ALL__'} onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__ALL__">Todas</SelectItem>
-                            {alertasCategorias.map((c) => (
-                              <SelectItem key={c} value={c}>
-                                {c}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
-                        <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
-                      </div>
-                    </div>
-
-                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-left p-3">Categoria</th>
-                            <th className="text-left p-3">Status</th>
-                            <th className="text-right p-3">Atual</th>
-                            <th className="text-right p-3">Mín</th>
-                            <th className="text-right p-3">Dif</th>
-                            <th className="text-right p-3">%</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
-                            const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
-                            return (
-                              <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-                                <td className="p-3 text-blue-50">
-                                  <div className="text-blue-50">{a.produto || '-'}</div>
-                                  <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
-                                </td>
-                                <td className="p-3 text-blue-100/80">
-                                  <div className="flex items-center gap-2">
-                                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
-                                    <span className="truncate">{a.categoria || '-'}</span>
-                                  </div>
-                                </td>
-                                <td className="p-3">
-                                  <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
-                                </td>
-                                <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
-                                <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
-                                <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
-                                <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
-                              </tr>
-                            )
-                          })}
-                          {!insightsAlertasFiltrados.length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={7}>
-                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-	                  </CardContent>
-	                </Card>
-	              </div>
-
-	              <div className="flex items-center justify-between gap-2">
-	                <div>
-	                  <div className="text-base text-white font-semibold">Validade (lotes)</div>
-	                  <div className="text-sm text-blue-100/70">Controle simples e operacional (OK / Vencendo / Expirado).</div>
-	                </div>
-	              </div>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">Filtros</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                    <Select
-                      value={lotFiltroCategoria || '__ALL__'}
-                      onValueChange={(v) => setLotFiltroCategoria(v === '__ALL__' ? '' : String(v))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Todas" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__ALL__">Todas</SelectItem>
-                        {lotCategorias.map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Validade</div>
-                    <Select value={lotFiltroValidade} onValueChange={(v) => setLotFiltroValidade(v as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="TODOS">Todos</SelectItem>
-                        <SelectItem value="OK">OK</SelectItem>
-                        <SelectItem value="VENCENDO">Vencendo</SelectItem>
-                        <SelectItem value="EXPIRADO">Expirado</SelectItem>
-                        <SelectItem value="SEM_VALIDADE">Sem validade</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Busca</div>
-                    <Input value={lotBusca} onChange={(e) => setLotBusca(e.target.value)} placeholder="produto, código, lote..." />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">Itens ({insumosLoteFiltrados.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {!insumosLoteFiltrados.length ? (
-                    <div className="text-sm text-blue-100/70">Nenhum item para os filtros.</div>
-                  ) : (
-                    <div className="overflow-auto max-h-[60vh]">
-                      <table className="w-full text-sm">
-                        <thead className="text-blue-200/70">
-                          <tr className="border-b border-white/10">
-                            <th className="text-left py-2 pr-3">Produto</th>
-                            <th className="text-left py-2 pr-3">Lote</th>
-                            <th className="text-left py-2 pr-3">Validade</th>
-                            <th className="text-left py-2 pr-3">Status</th>
-                            <th className="text-right py-2">Estoque</th>
-                            <th className="text-right py-2 pl-3">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-blue-50/90">
-                          {insumosLoteFiltrados.map((i) => {
-                            const st = String(i.statusValidade?.status || (i.dataValidade ? 'OK' : '—')).toUpperCase()
-                            const badgeVariant = st === 'EXPIRADO' ? 'destructive' : st === 'VENCENDO' ? 'secondary' : 'default'
-                            return (
-                              <tr key={String(i.registro || i.codigoBarras)} className="border-b border-white/5 hover:bg-white/5">
-                                <td className="py-2 pr-3">
-                                  <div className="font-medium">{i.produto || '-'}</div>
-                                  <div className="text-xs text-blue-200/60">{i.categoria || ''}</div>
-                                </td>
-                                <td className="py-2 pr-3">
-                                  <span className="font-mono">{i.lote ? String(i.lote) : '-'}</span>
-                                </td>
-                                <td className="py-2 pr-3">
-                                  <span className="font-mono">{i.dataValidade ? String(i.dataValidade) : '-'}</span>
-                                </td>
-                                <td className="py-2 pr-3">
-                                  <Badge variant={badgeVariant}>{st}</Badge>
-                                </td>
-                                <td className="py-2 text-right font-mono">{Number(i.estoqueAtual) || 0}</td>
-                                <td className="py-2 pl-3 text-right">
-                                  <Button variant="secondary" onClick={() => openLotDialog(i)} disabled={!isAuthed}>
-                                    Detalhes
-                                  </Button>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
-                <DialogContent className="max-w-xl">
-	                  <DialogHeader>
-	                    <DialogTitle>Editar lote/validade</DialogTitle>
-	                    <DialogDescription>
-	                      {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
-	                    </DialogDescription>
-	                  </DialogHeader>
-
-	                  {lotSelecionado ? (
-	                    <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
-	                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-	                        <div>
-	                          <div className="text-xs text-muted-foreground">Categoria</div>
-	                          <div className="text-blue-100/80">{lotSelecionado.categoria || '-'}</div>
-	                        </div>
-	                        <div>
-	                          <div className="text-xs text-muted-foreground">Marca</div>
-	                          <div className="text-blue-100/80">{lotSelecionado.marca || '-'}</div>
-	                        </div>
-	                        {lotSelecionado.concentracao ? (
-	                          <div>
-	                            <div className="text-xs text-muted-foreground">Concentração</div>
-	                            <div className="text-blue-100/80">{lotSelecionado.concentracao}</div>
-	                          </div>
-	                        ) : null}
-	                        {lotSelecionado.volume ? (
-	                          <div>
-	                            <div className="text-xs text-muted-foreground">Volume</div>
-	                            <div className="text-blue-100/80">{lotSelecionado.volume}</div>
-	                          </div>
-	                        ) : null}
-	                        {lotSelecionado.calibre ? (
-	                          <div>
-	                            <div className="text-xs text-muted-foreground">Calibre</div>
-	                            <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
-	                          </div>
-	                        ) : null}
-	                        {lotSelecionado.fonte ? (
-	                          <div>
-	                            <div className="text-xs text-muted-foreground">Fonte</div>
-	                            <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
-	                          </div>
-	                        ) : null}
-	                      </div>
-	                    </div>
-	                  ) : null}
-
-	                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-	                    <div>
-	                      <div className="text-xs text-muted-foreground mb-1">Lote</div>
-	                      <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
-	                    </div>
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">Validade (YYYY-MM-DD)</div>
-                      <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 2026-12-31" />
-                    </div>
-                  </div>
-
-                  <DialogFooter>
-                    <Button variant="secondary" onClick={() => setLotDialogOpen(false)}>
-                      Cancelar
-                    </Button>
-                    <Button onClick={saveLot} disabled={lotSaving || !isAuthed}>
-                      {lotSaving ? 'Salvando…' : 'Salvar'}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </TabsContent>
-
-            <TabsContent value="insumos" className="mt-4 space-y-3">
+	            <TabsContent value="insumos" className="mt-4 space-y-3">
               {sharePayload && !shareHidden ? (
                 <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
                   <div className="flex flex-wrap items-center justify-between gap-2">
