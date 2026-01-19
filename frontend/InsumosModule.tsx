@@ -420,7 +420,7 @@ async function apiJson<T>(
 }
 
 export function InsumosModule() {
-  type InsumosTab = 'insumos' | 'lotes' | 'mov' | 'insights'
+  type InsumosTab = 'insumos' | 'lotes' | 'mov'
 
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -532,11 +532,9 @@ export function InsumosModule() {
   const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
   const [insightsRoi, setInsightsRoi] = React.useState<RoiInsights | null>(null)
   const [insightsQuality, setInsightsQuality] = React.useState<QualityReport | null>(null)
-  const [insightsStockDist, setInsightsStockDist] = React.useState<StockDistributionItem[]>([])
   const [insightsMovReport, setInsightsMovReport] = React.useState<MovReport | null>(null)
   const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
   const [insightsTurnover, setInsightsTurnover] = React.useState<any | null>(null)
-  const [qrText, setQrText] = React.useState('')
   const [alertasStatus, setAlertasStatus] = React.useState<'TODOS' | EstoqueStatus>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
@@ -638,7 +636,8 @@ export function InsumosModule() {
       if (['insumos', 'cadastro', 'cadastrar', 'novo'].includes(value)) return 'insumos'
       if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'lotes'
       if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
-      if (['insights', 'alertas'].includes(value)) return 'insights'
+      if (['alertas', 'avisos'].includes(value)) return 'lotes'
+      if (['insights'].includes(value)) return 'mov'
       return null
     }
 
@@ -1258,11 +1257,10 @@ export function InsumosModule() {
       if (movDe) turnoverParams.set('from', movDe)
       if (movAte) turnoverParams.set('to', movAte)
 
-      const [alertas, roi, quality, dist, movReport, trends, turnover] = await Promise.all([
+      const [alertas, roi, quality, movReport, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
         apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${base.toString()}`),
         apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '200' }).toString()}`),
-        apiJson<StockDistributionItem[]>(`/analytics/stock-distribution?${base.toString()}`),
         apiJson<{ success?: boolean; data?: MovReport }>(`/relatorios/movimentacoes?${movParams.toString()}`),
         apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`),
         apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverParams.toString()}`)
@@ -1271,7 +1269,6 @@ export function InsumosModule() {
       setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
       setInsightsRoi(roi?.data || null)
       setInsightsQuality(quality?.data || null)
-      setInsightsStockDist(Array.isArray(dist) ? dist : [])
       setInsightsMovReport(movReport?.data || null)
       setInsightsTrends(trends?.data || null)
       setInsightsTurnover(turnover?.data || null)
@@ -1280,7 +1277,6 @@ export function InsumosModule() {
       setInsightsAlertas([])
       setInsightsRoi(null)
       setInsightsQuality(null)
-      setInsightsStockDist([])
       setInsightsMovReport(null)
       setInsightsTrends(null)
       setInsightsTurnover(null)
@@ -1427,7 +1423,6 @@ export function InsumosModule() {
     }
     if (activeTab === 'lotes') void loadInsumos()
     if (activeTab === 'mov') void loadMovimentacoes()
-    if (activeTab === 'insights') void loadInsights()
   }, [activeTab, canUseApi, isAuthed, loadInsumos, loadInsights, loadMovimentacoes, loadShareHistory])
 
   const filteredInsumos = React.useMemo(() => {
@@ -2037,21 +2032,10 @@ export function InsumosModule() {
           <CardTitle className="text-white">Gestão</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
             {offlineQueueCount > 0 ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                  Pendências
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => void syncOfflineQueue()} disabled={!isAuthed}>
-                  Sincronizar
-                </Button>
-              </>
+              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+              </Button>
             ) : null}
-            <Button variant="ghost" size="sm" onClick={toggleDebugUi}>
-              {debugUi ? 'Ocultar detalhes' : 'Detalhes'}
-            </Button>
-            <Button size="sm" onClick={loadHealth} disabled={healthLoading}>
-              {healthLoading ? 'Atualizando…' : 'Atualizar'}
-            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -2060,7 +2044,6 @@ export function InsumosModule() {
               <TabsTrigger value="insumos">Insumos</TabsTrigger>
               <TabsTrigger value="lotes">Avisos</TabsTrigger>
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
-              <TabsTrigger value="insights">Insights</TabsTrigger>
             </TabsList>
 
             <TabsContent value="lotes" className="mt-4 space-y-4">
@@ -2629,6 +2612,14 @@ export function InsumosModule() {
                   </Button>
                   <Button
                     variant="outline"
+                    onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+                    disabled={!isAuthed}
+                    title="Exportar CSV"
+                  >
+                    Exportar
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={() => setCreateOpen((v) => !v)}
                     disabled={!isAuthed}
                   >
@@ -2895,16 +2886,6 @@ export function InsumosModule() {
                           </td>
                           <td className="p-3">
                             <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
-                            {i.codigoBarras ? (
-                              <a
-                                className="text-xs underline text-blue-200/70"
-                                href={`/api/insumos/insumos/${encodeURIComponent(i.codigoBarras)}/qr`}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                QR
-                              </a>
-                            ) : null}
                           </td>
                           <td className={`p-3 text-right ${critico ? 'text-red-200' : 'text-blue-100/80'}`}>
                             <div className="flex items-center justify-end gap-2">
@@ -3031,6 +3012,40 @@ export function InsumosModule() {
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>
+                    Entradas: <span className="font-mono">{insightsMovReport?.resumo?.totalEntradas ?? '-'}</span>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Saídas: <span className="font-mono">{insightsMovReport?.resumo?.totalSaidas ?? '-'}</span>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Total: <span className="font-mono">{insightsMovReport?.resumo?.totalMovimentacoes ?? '-'}</span>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const params = new URLSearchParams({
+                        unidade,
+                        ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+                        ...(movDe ? { de: movDe } : {}),
+                        ...(movAte ? { ate: movAte } : {})
+                      })
+                      window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+                    }}
+                    disabled={!isAuthed}
+                  >
+                    Exportar CSV
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
                 <div>
                   Página <span className="font-mono">{movPagina}</span>
                   {movTotal != null ? (
@@ -3110,146 +3125,6 @@ export function InsumosModule() {
                     ) : null}
                   </tbody>
                 </table>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="insights" className="mt-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-blue-100/70">Relatórios e ferramentas (export, QR e análises detalhadas).</div>
-                <Button variant="secondary" onClick={loadInsights} disabled={insightsLoading || !isAuthed}>
-                  {insightsLoading ? 'Carregando…' : 'Recarregar'}
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Distribuição (por categoria)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="overflow-auto rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Categoria</th>
-                            <th className="text-right p-3">Qtd</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {[...insightsStockDist]
-                            .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
-                            .slice(0, 12)
-                            .map((d, idx) => (
-                              <tr key={`${d.name || ''}-${idx}`} className="hover:bg-white/5">
-                                <td className="p-3 text-blue-50">{d.name || 'Outros'}</td>
-                                <td className="p-3 text-right text-blue-100/80">{d.value ?? 0}</td>
-                              </tr>
-                            ))}
-                          {!insightsStockDist.length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={2}>
-                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem dados.' : 'Faça login para carregar.'}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Relatório de movimentações</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-sm text-blue-100/80">
-                      Entradas: <span className="font-mono">{insightsMovReport?.resumo?.totalEntradas ?? '-'}</span> • Saídas:{' '}
-                      <span className="font-mono">{insightsMovReport?.resumo?.totalSaidas ?? '-'}</span> • Total:{' '}
-                      <span className="font-mono">{insightsMovReport?.resumo?.totalMovimentacoes ?? '-'}</span>
-                    </div>
-                    <div className="text-xs text-blue-200/60">
-                      Export:{' '}
-                      <a
-                        className="underline"
-                        href={`/api/insumos/export/movimentacoes.csv?${new URLSearchParams({
-                          unidade,
-                          ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-                          ...(movDe ? { de: movDe } : {}),
-                          ...(movAte ? { ate: movAte } : {})
-                        }).toString()}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        movimentacoes.csv (filtros atuais)
-                      </a>
-                    </div>
-                    <div className="overflow-auto rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Data</th>
-                            <th className="text-left p-3">Tipo</th>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-right p-3">Qtd</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {(insightsMovReport?.movimentos || []).slice(0, 25).map((m, idx) => (
-                            <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
-                              <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
-                              <td className="p-3 text-blue-50">{m.produto || '-'}</td>
-                              <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
-                            </tr>
-                          ))}
-                          {!(insightsMovReport?.movimentos || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem dados.' : 'Faça login para carregar.'}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Ferramentas (export & QR)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="text-xs text-blue-200/60">
-                      Export:{' '}
-                      <a className="underline" href={`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`} target="_blank" rel="noreferrer">
-                        insumos.csv
-                      </a>{' '}
-                      •{' '}
-                      <a className="underline" href={`/api/insumos/export/movimentacoes.csv?unidade=${encodeURIComponent(unidade)}`} target="_blank" rel="noreferrer">
-                        movimentacoes.csv
-                      </a>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Gerar QR (texto livre)</div>
-                        <Input value={qrText} onChange={(e) => setQrText(e.target.value)} placeholder="ex.: CODIGO123" />
-                      </div>
-                      <div className="flex items-center justify-center rounded-xl border border-white/10 bg-black/20 min-h-[92px]">
-                        {qrText.trim() ? (
-                          <img
-                            src={`/api/insumos/qr?text=${encodeURIComponent(qrText.trim())}`}
-                            alt="QR"
-                            className="h-[84px] w-[84px]"
-                          />
-                        ) : (
-                          <div className="text-xs text-blue-100/60">Digite um texto para ver o QR.</div>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
               </div>
             </TabsContent>
 
