@@ -1728,35 +1728,33 @@ export function InsumosModule() {
       </DialogContent>
       </Dialog>
 
-      <div ref={overviewSectionRef} className="max-w-6xl mx-auto">
-        <Card className="glass-morphism border border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white">Visão geral</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm text-blue-100/70">KPIs, gráficos e ações recomendadas para a unidade atual.</div>
-              <div className="flex items-center gap-2">
-                <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="7d">7d</SelectItem>
-                    <SelectItem value="30d">30d</SelectItem>
-                    <SelectItem value="90d">90d</SelectItem>
-                    <SelectItem value="1y">1 ano</SelectItem>
-                  </SelectContent>
-                </Select>
-	                <Button
-	                  variant="secondary"
-	                  onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), loadInsumos()])}
-	                  disabled={(!isAuthed) || overviewLoading || insightsLoading}
-	                >
-	                  {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
-	                </Button>
-              </div>
-            </div>
+	      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3">
+	        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+	          <div>
+	            <div className="text-white text-lg font-semibold">Visão geral</div>
+	            <div className="text-sm text-blue-100/70">KPIs, gráficos e alertas para a unidade atual.</div>
+	          </div>
+	          <div className="flex items-center gap-2">
+	            <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
+	              <SelectTrigger className="w-24">
+	                <SelectValue />
+	              </SelectTrigger>
+	              <SelectContent>
+	                <SelectItem value="7d">7d</SelectItem>
+	                <SelectItem value="30d">30d</SelectItem>
+	                <SelectItem value="90d">90d</SelectItem>
+	                <SelectItem value="1y">1 ano</SelectItem>
+	              </SelectContent>
+	            </Select>
+	            <Button
+	              variant="secondary"
+	              onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), loadInsumos()])}
+	              disabled={(!isAuthed) || overviewLoading || insightsLoading}
+	            >
+	              {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
+	            </Button>
+	          </div>
+	        </div>
 
 	              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
 	              <Card className="bg-black/20 border border-white/10">
@@ -1820,17 +1818,17 @@ export function InsumosModule() {
                   <div className="text-sm text-blue-100/80">
                     <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
                     <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                  </div>
-                  <div className="text-xs text-blue-200/60">
-                    saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-                  </div>
+	                  </div>
+	                  <div className="text-xs text-blue-200/60">
+	                    saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+	                  </div>
 	                </CardContent>
 	              </Card>
-		            </div>
+	            </div>
 
-		            <Card className="bg-black/20 border border-white/10">
-		              <CardHeader className="flex flex-row items-center justify-between gap-2">
-		                <CardTitle className="text-white text-base">Alertas</CardTitle>
+			            <Card className="bg-black/20 border border-white/10">
+			              <CardHeader className="flex flex-row items-center justify-between gap-2">
+			                <CardTitle className="text-white text-base">Alertas</CardTitle>
 		                <div className="flex items-center gap-2 text-xs text-blue-200/60">
 		                  <span>
 		                    estoque:{' '}
@@ -2306,10 +2304,8 @@ export function InsumosModule() {
 	                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
 	                </CardContent>
 	              </Card>
-            </div>
-          </CardContent>
-	        </Card>
-	      </div>
+	            </div>
+		      </div>
 
 	      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
 	        <DialogContent className="max-w-xl">
