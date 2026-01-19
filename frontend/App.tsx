@@ -156,14 +156,19 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
     const sidebarExpanded = sidebarPinned || !sidebarCanHover || sidebarHover
 
     // Persist active module to survive remounts/reloads and avoid accidental resets
-    const [active, setActive] = useState<string>(() => {
-        try {
-            const saved = localStorage.getItem('app.activeModule')
-            const candidate = saved || 'unit-monitor'
-            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : 'unit-monitor'
-        } catch { return 'unit-monitor' }
-    })
-    const [search, setSearch] = useState('')
+	    const [active, setActive] = useState<string>(() => {
+	        try {
+	            const saved = localStorage.getItem('app.activeModule')
+	            const candidate = saved || 'unit-monitor'
+	            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : 'unit-monitor'
+	        } catch { return 'unit-monitor' }
+	    })
+	    const [search, setSearch] = useState('')
+	    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
+	        online: boolean | null
+	        authed: boolean | null
+	        integrated: boolean | null
+	    } | null>(null)
 
     // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
     React.useEffect(() => {
@@ -189,10 +194,52 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    // Save active module selection
-    React.useEffect(() => {
-        try { localStorage.setItem('app.activeModule', active) } catch { /* ignore */ }
-    }, [active])
+	    // Save active module selection
+	    React.useEffect(() => {
+	        try { localStorage.setItem('app.activeModule', active) } catch { /* ignore */ }
+	    }, [active])
+
+	    React.useEffect(() => {
+	        if (active !== 'insumos') {
+	            setInsumosHeaderStatus(null)
+	            return
+	        }
+
+	        const ac = new AbortController()
+
+	        ;(async () => {
+	            try {
+	                const [healthRes, meRes] = await Promise.all([
+	                    fetch('/api/insumos/health', { credentials: 'include', signal: ac.signal }).catch(() => null),
+	                    fetch('/api/insumos/auth/me', { credentials: 'include', signal: ac.signal }).catch(() => null),
+	                ])
+
+	                let online: boolean | null = null
+	                let integrated: boolean | null = null
+	                if (healthRes?.ok) {
+	                    const h: any = await healthRes.json().catch(() => null)
+	                    online = Boolean(h?.ok)
+	                    integrated = typeof h?.sheetsConfigured === 'boolean' ? Boolean(h.sheetsConfigured) : null
+	                } else if (healthRes) {
+	                    online = false
+	                }
+
+	                let authed: boolean | null = null
+	                if (meRes?.ok) {
+	                    const m: any = await meRes.json().catch(() => null)
+	                    authed = Boolean(m?.user?.username)
+	                } else if (meRes) {
+	                    authed = false
+	                }
+
+	                setInsumosHeaderStatus({ online, authed, integrated })
+	            } catch {
+	                setInsumosHeaderStatus({ online: false, authed: false, integrated: null })
+	            }
+	        })()
+
+	        return () => ac.abort()
+	    }, [active])
 
     const modulesSorted = useMemo(() => {
         const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
@@ -375,12 +422,28 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
                                         </h1>
                                         <p className="text-sm text-blue-300/80 mt-1">Plataforma empresarial unificada</p>
                                     </div>
-                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-                                    <div className="hidden lg:flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
-                                        <span className="text-xs text-green-300 font-medium">Sistema Online</span>
-                                    </div>
-                                </div>
+	                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
+	                                    <div className="hidden lg:flex items-center gap-2">
+	                                        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+	                                        <span className="text-xs text-green-300 font-medium">Sistema Online</span>
+	                                        {active === 'insumos' && insumosHeaderStatus ? (
+	                                            <>
+	                                                <div className="w-px h-4 bg-white/20 mx-2"></div>
+	                                                <Badge variant={insumosHeaderStatus.online ? 'success' : 'destructive'}>
+	                                                    {insumosHeaderStatus.online ? 'Insumos Online' : 'Insumos Offline'}
+	                                                </Badge>
+	                                                <Badge variant={insumosHeaderStatus.authed ? 'default' : 'secondary'}>
+	                                                    {insumosHeaderStatus.authed ? 'Sessão ativa' : 'Sessão ausente'}
+	                                                </Badge>
+	                                                {typeof insumosHeaderStatus.integrated === 'boolean' ? (
+	                                                    <Badge variant={insumosHeaderStatus.integrated ? 'default' : 'warning'}>
+	                                                        {insumosHeaderStatus.integrated ? 'Integração ativa' : 'Integração pendente'}
+	                                                    </Badge>
+	                                                ) : null}
+	                                            </>
+	                                        ) : null}
+	                                    </div>
+	                                </div>
 
                                 <div className="flex items-center gap-4">
                                     {/* Premium Search */}

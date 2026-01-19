@@ -1412,7 +1412,7 @@ export function InsumosModule() {
   }, [canUseApi, isAuthed, movAte, movDe, movTipo, unidade])
 
   const runQuickAction = React.useCallback(
-    async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE') => {
+    async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
       if (!canUseApi || !isAuthed) return
       const codigoBarras = quickCodigo.trim()
       if (!codigoBarras) return toast.error('Informe o código de barras')
@@ -1440,8 +1440,10 @@ export function InsumosModule() {
         }
 
         await Promise.allSettled([loadInsumos(), loadMovimentacoes()])
+        return true
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e))
+        return false
       } finally {
         setQuickActionLoading(false)
       }
@@ -1461,7 +1463,7 @@ export function InsumosModule() {
     ]
   )
 
-  const runTransfer = React.useCallback(async () => {
+  const runTransfer = React.useCallback(async (): Promise<boolean> => {
     if (!canUseApi || !isAuthed) return
     const codigoBarras = quickCodigo.trim()
     if (!codigoBarras) return toast.error('Informe o código de barras')
@@ -1486,8 +1488,10 @@ export function InsumosModule() {
 
       // Refresh what the user is seeing (estoque + movimentações)
       await Promise.allSettled([loadInsumos(), loadMovimentacoes(), loadOverview()])
+      return true
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
+      return false
     } finally {
       setQuickActionLoading(false)
     }
@@ -1631,23 +1635,7 @@ export function InsumosModule() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-blue-200/80">
-            {health?.ok ? <Badge variant="default">Online</Badge> : health ? <Badge variant="destructive">Offline</Badge> : null}
-            {isAuthed ? <Badge variant="default">Sessão ativa</Badge> : <Badge variant="secondary">Sessão ausente</Badge>}
-            {health ? (
-              health.sheetsConfigured ? <Badge variant="default">Integração ativa</Badge> : <Badge variant="secondary">Integração pendente</Badge>
-            ) : null}
-            {offlineQueueCount > 0 ? (
-              <button type="button" onClick={() => setOfflineDialogOpen(true)}>
-                <Badge variant="secondary">Pendências: {offlineQueueCount}</Badge>
-              </button>
-            ) : null}
-            {debugUi ? (
-              <Badge variant="secondary">Debug</Badge>
-            ) : null}
-          </div>
-        </div>
+        <div />
         <div className="flex items-center gap-2">
           <Select value={unidade} onValueChange={setUnidade}>
             <SelectTrigger className="w-56">
@@ -1782,16 +1770,163 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={quickOp != null}
+        onOpenChange={(open) => {
+          if (open) return
+          setQuickOp(null)
+          setQuickScanOpen(false)
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {quickOp === 'ENTRADA'
+                ? 'Entrada'
+                : quickOp === 'BAIXA'
+                  ? 'Saída'
+                  : quickOp === 'TRANSFERENCIA'
+                    ? 'Transferência'
+                    : 'Operação'}
+            </DialogTitle>
+            <DialogDescription>
+              Preencha os dados para registrar a operação na unidade selecionada.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!isAuthed ? (
+            <div className="text-sm text-blue-100/70">Faça login no CRM para usar as operações de Insumos.</div>
+          ) : null}
+
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
+              <div className="flex items-center gap-2">
+                <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
+                <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
+                  {quickScanOpen ? 'Fechar' : 'Scan'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
+                <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Observações</div>
+                <Input value={quickObs} onChange={(e) => setQuickObs(e.target.value)} placeholder="opcional" />
+              </div>
+            </div>
+
+            {quickOp === 'TRANSFERENCIA' ? (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Origem</div>
+                  <Select value={transferFrom} onValueChange={setTransferFrom}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unidadeOptions.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {unidadeLabel(u)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Destino</div>
+                  <Select value={transferTo} onValueChange={setTransferTo}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unidadeOptions.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {unidadeLabel(u)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            ) : null}
+
+            {quickScanOpen ? (
+              <BarcodeScannerInline
+                onDetected={(code) => {
+                  setQuickCodigo(code)
+                  setQuickScanOpen(false)
+                  toast.success('Código detectado')
+                }}
+                onClose={() => setQuickScanOpen(false)}
+              />
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setQuickOp(null)
+                setQuickScanOpen(false)
+              }}
+            >
+              Cancelar
+            </Button>
+            {quickOp === 'TRANSFERENCIA' ? (
+              <Button
+                className="!bg-blue-600 hover:!bg-blue-700 !text-white"
+                onClick={async () => {
+                  const ok = await runTransfer()
+                  if (ok) {
+                    setQuickOp(null)
+                    setQuickScanOpen(false)
+                  }
+                }}
+                disabled={quickActionLoading || !isAuthed}
+              >
+                Confirmar transferência
+              </Button>
+            ) : (
+              <Button
+                className={
+                  quickOp === 'ENTRADA'
+                    ? '!bg-green-600 hover:!bg-green-700 !text-white'
+                    : quickOp === 'BAIXA'
+                      ? ''
+                      : ''
+                }
+                variant={quickOp === 'BAIXA' ? 'destructive' : 'default'}
+                onClick={async () => {
+                  const ok = await runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')
+                  if (ok) {
+                    setQuickOp(null)
+                    setQuickScanOpen(false)
+                  }
+                }}
+                disabled={quickActionLoading || !isAuthed}
+              >
+                {quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Card className="glass-morphism border border-white/10">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-white">Operação</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
+              className="!bg-green-600 hover:!bg-green-700 !text-white"
               onClick={() => {
                 setActiveTab('overview')
                 setQuickOp('ENTRADA')
-                setTimeout(() => quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
               }}
               disabled={!isAuthed}
             >
@@ -1799,11 +1934,10 @@ export function InsumosModule() {
             </Button>
             <Button
               size="sm"
-              variant="secondary"
+              variant="destructive"
               onClick={() => {
                 setActiveTab('overview')
                 setQuickOp('BAIXA')
-                setTimeout(() => quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
               }}
               disabled={!isAuthed}
             >
@@ -1811,11 +1945,10 @@ export function InsumosModule() {
             </Button>
             <Button
               size="sm"
-              variant="outline"
+              className="!bg-blue-600 hover:!bg-blue-700 !text-white"
               onClick={() => {
                 setActiveTab('overview')
                 setQuickOp('TRANSFERENCIA')
-                setTimeout(() => quickSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
               }}
               disabled={!isAuthed}
             >
@@ -1837,158 +1970,6 @@ export function InsumosModule() {
             </TabsList>
 
             <TabsContent value="overview" className="mt-4 space-y-3">
-              <div ref={quickSectionRef} className="rounded-xl border border-white/10 bg-black/10 p-4 space-y-3">
-                {!isAuthed ? (
-                  <div className="text-sm text-blue-100/70">Faça login no CRM para usar as operações de Insumos.</div>
-                ) : null}
-
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm text-blue-100/80 font-semibold">Operação rápida</div>
-                  {quickOp ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setQuickOp(null)
-                        setQuickScanOpen(false)
-                      }}
-                    >
-                      Fechar
-                    </Button>
-                  ) : null}
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <Button size="sm" onClick={() => setQuickOp('ENTRADA')} disabled={!isAuthed}>
-                    Entrada
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setQuickOp('BAIXA')} disabled={!isAuthed}>
-                    Saída
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setQuickOp('TRANSFERENCIA')} disabled={!isAuthed}>
-                    Transferência
-                  </Button>
-                </div>
-
-                {quickOp ? (
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                      <div className="flex items-center gap-2">
-                        <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
-                        <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
-                          {quickScanOpen ? 'Fechar' : 'Scan'}
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
-                        <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
-                      </div>
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Observações</div>
-                        <Input value={quickObs} onChange={(e) => setQuickObs(e.target.value)} placeholder="opcional" />
-                      </div>
-                    </div>
-
-                    {quickOp === 'TRANSFERENCIA' ? (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="text-xs text-blue-200/70 mb-1">Origem</div>
-                          <Select value={transferFrom} onValueChange={setTransferFrom}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {unidadeOptions.map((u) => (
-                                <SelectItem key={u} value={u}>
-                                  {unidadeLabel(u)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <div className="text-xs text-blue-200/70 mb-1">Destino</div>
-                          <Select value={transferTo} onValueChange={setTransferTo}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {unidadeOptions.map((u) => (
-                                <SelectItem key={u} value={u}>
-                                  {unidadeLabel(u)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {quickScanOpen ? (
-                      <BarcodeScannerInline
-                        onDetected={(code) => {
-                          setQuickCodigo(code)
-                          setQuickScanOpen(false)
-                          toast.success('Código detectado')
-                        }}
-                        onClose={() => setQuickScanOpen(false)}
-                      />
-                    ) : null}
-
-                    <div className="flex items-center justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setQuickOp(null)
-                          setQuickScanOpen(false)
-                        }}
-                      >
-                        Cancelar
-                      </Button>
-                      {quickOp === 'TRANSFERENCIA' ? (
-                        <Button onClick={runTransfer} disabled={quickActionLoading || !isAuthed}>
-                          Confirmar transferência
-                        </Button>
-                      ) : (
-                        <Button
-                          onClick={() => runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')}
-                          disabled={quickActionLoading || !isAuthed}
-                        >
-                          {quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída'}
-                        </Button>
-                      )}
-                    </div>
-
-                    {debugUi ? (
-                      <div className="text-xs text-blue-200/60">
-                        Export:{' '}
-                        <a
-                          className="underline"
-                          href={`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          insumos.csv
-                        </a>{' '}
-                        •{' '}
-                        <a
-                          className="underline"
-                          href={`/api/insumos/export/movimentacoes.csv?unidade=${encodeURIComponent(unidade)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          movimentacoes.csv
-                        </a>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm text-blue-100/70">
                   Dashboard simples e direto (padrão do Insumos original): KPIs, gráficos e ações recomendadas.
