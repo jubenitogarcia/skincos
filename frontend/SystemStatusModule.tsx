@@ -43,6 +43,14 @@ type InsumosMe = {
   csrfToken?: string
 }
 
+type UnitMonitorStreamingStatus = {
+  ok?: boolean
+  running?: boolean
+  startedAt?: string | null
+  lastError?: string | null
+  streams?: Array<{ unit?: string; cameraId?: string }>
+}
+
 type BackupSnapshot = {
   id?: number
   ts?: string
@@ -161,10 +169,10 @@ export function SystemStatusModule() {
   const refresh = React.useCallback(async () => {
     setLoading(true)
     try {
-      const [insHealth, insMe, umState] = await Promise.allSettled([
+      const [insHealth, insMe, umStreaming] = await Promise.allSettled([
         fetch('/api/insumos/health', { credentials: 'include' }).then(async (r) => ({ ok: r.ok, json: await r.json().catch(() => null) })),
         fetch('/api/insumos/auth/me', { credentials: 'include' }).then(async (r) => ({ ok: r.ok, json: await r.json().catch(() => null) })),
-        fetch(`/api/unit-monitor/state?unit=${encodeURIComponent(unitMonitorEffectiveUnit)}`, { credentials: 'include' }).then(async (r) => ({
+        fetch(`/api/unit-monitor/streaming/status`, { credentials: 'include' }).then(async (r) => ({
           ok: r.ok,
           json: await r.json().catch(() => null)
         }))
@@ -200,13 +208,23 @@ export function SystemStatusModule() {
         next.push({ key: 'insumos-session', title: 'Insumos', status: 'error', subtitle: 'Erro ao consultar' })
       }
 
-      if (umState.status === 'fulfilled') {
-        const ok = umState.value.ok
+      if (umStreaming.status === 'fulfilled') {
+        const ok = umStreaming.value.ok
+        const json = (umStreaming.value.json || {}) as UnitMonitorStreamingStatus
+        const running = ok && Boolean(json?.running)
+        const lastError = typeof json?.lastError === 'string' ? json.lastError : null
+        const streams = Array.isArray(json?.streams) ? json.streams : []
+        const camsForUnit = streams.filter((s) => String(s?.unit || '') === String(unitMonitorEffectiveUnit)).length
+        const subtitle = ok
+          ? (running
+            ? `Online • Gateway ativo • ${unitMonitorEffectiveUnit}${camsForUnit ? ` • ${camsForUnit} cams` : ''}`
+            : `Online • Gateway parado • ${unitMonitorEffectiveUnit}${lastError ? ` • ${lastError}` : ''}`)
+          : `Offline • ${unitMonitorEffectiveUnit}`
         next.push({
           key: 'unit-monitor-api',
           title: 'Unit Monitor',
-          status: ok ? 'ok' : 'error',
-          subtitle: ok ? `Online • ${unitMonitorEffectiveUnit}` : `Offline • ${unitMonitorEffectiveUnit}`
+          status: ok ? (running ? 'ok' : 'warn') : 'error',
+          subtitle
         })
       } else {
         next.push({
