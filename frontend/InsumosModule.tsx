@@ -420,6 +420,8 @@ async function apiJson<T>(
 }
 
 export function InsumosModule() {
+  type InsumosTab = 'insumos' | 'lotes' | 'mov' | 'insights'
+
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
@@ -438,7 +440,7 @@ export function InsumosModule() {
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
 
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'insumos' | 'lotes' | 'mov' | 'insights'>('overview')
+  const [activeTab, setActiveTab] = React.useState<InsumosTab>('insumos')
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
@@ -449,6 +451,7 @@ export function InsumosModule() {
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
   const quickSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -627,7 +630,7 @@ export function InsumosModule() {
 
 
   React.useEffect(() => {
-    const mapTab = (raw: string | null) => {
+    const mapTab = (raw: string | null): 'overview' | InsumosTab | null => {
       const value = String(raw || '')
         .trim()
         .toLowerCase()
@@ -654,7 +657,13 @@ export function InsumosModule() {
     try {
       const params = new URLSearchParams(window.location.search)
       const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
-      if (requestedTab) setActiveTab(requestedTab)
+      if (requestedTab === 'overview') {
+        setTimeout(() => {
+          overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 250)
+      } else if (requestedTab) {
+        setActiveTab(requestedTab)
+      }
 
       const action = String(
         params.get('insumosAction') || params.get('action') || params.get('type') || params.get('tipo') || ''
@@ -670,12 +679,10 @@ export function InsumosModule() {
       }
 
       if (wantsScanner) {
-        setActiveTab('overview')
         setQuickScanOpen(true)
       }
 
       if (wantsQuickAction) {
-        setActiveTab('overview')
         if (actionLabel === 'Entrada') setQuickOp('ENTRADA')
         else if (actionLabel === 'Saída') setQuickOp('BAIXA')
         else if (actionLabel === 'Transferência') setQuickOp('TRANSFERENCIA')
@@ -1388,7 +1395,11 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
-    if (activeTab === 'overview') void loadOverview()
+    void loadOverview()
+  }, [canUseApi, isAuthed, loadOverview])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
     if (activeTab === 'insumos') {
       void loadInsumos()
       void loadShareHistory()
@@ -1396,7 +1407,7 @@ export function InsumosModule() {
     if (activeTab === 'lotes') void loadInsumos()
     if (activeTab === 'mov') void loadMovimentacoes()
     if (activeTab === 'insights') void loadInsights()
-  }, [activeTab, canUseApi, isAuthed, loadInsumos, loadInsights, loadMovimentacoes, loadOverview, loadShareHistory])
+  }, [activeTab, canUseApi, isAuthed, loadInsumos, loadInsights, loadMovimentacoes, loadShareHistory])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
@@ -1760,7 +1771,6 @@ export function InsumosModule() {
               <Button
                 className="!bg-green-600 hover:!bg-green-700 !text-white"
                 onClick={() => {
-                  setActiveTab('overview')
                   setQuickOp('ENTRADA')
                 }}
                 disabled={!isAuthed}
@@ -1770,7 +1780,6 @@ export function InsumosModule() {
               <Button
                 variant="destructive"
                 onClick={() => {
-                  setActiveTab('overview')
                   setQuickOp('BAIXA')
                 }}
                 disabled={!isAuthed}
@@ -1780,7 +1789,6 @@ export function InsumosModule() {
               <Button
                 className="!bg-blue-600 hover:!bg-blue-700 !text-white"
                 onClick={() => {
-                  setActiveTab('overview')
                   setQuickOp('TRANSFERENCIA')
                 }}
                 disabled={!isAuthed}
@@ -1817,6 +1825,249 @@ export function InsumosModule() {
         </Card>
       </div>
 
+      <div ref={overviewSectionRef} className="max-w-6xl mx-auto">
+        <Card className="glass-morphism border border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white">Visão geral</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm text-blue-100/70">KPIs, gráficos e ações recomendadas para a unidade atual.</div>
+              <div className="flex items-center gap-2">
+                <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="7d">7d</SelectItem>
+                    <SelectItem value="30d">30d</SelectItem>
+                    <SelectItem value="90d">90d</SelectItem>
+                    <SelectItem value="1y">1 ano</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="secondary" onClick={loadOverview} disabled={overviewLoading || !isAuthed}>
+                  {overviewLoading ? 'Carregando…' : 'Recarregar'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">💰 Valor em estoque</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg text-blue-50 font-mono">
+                    {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
+                  </div>
+                  <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">🚨 Críticos</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
+                  <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">⚠️ Estoque baixo</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
+                  <div className="text-xs text-blue-200/60">atenção</div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">⏳ Vencendo</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
+                  <div className="text-xs text-blue-200/60">janela próxima</div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">🧨 Expirado c/ estoque</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
+                  <div className="text-xs text-blue-200/60">risco imediato</div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-sm">📊 Movimentações</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
+                  <div className="text-sm text-blue-100/80">
+                    <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
+                    <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+                  </div>
+                  <div className="text-xs text-blue-200/60">
+                    saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-base">Distribuição por categoria</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {overviewStockDistPie.length ? (
+                    <div className="h-[280px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={overviewStockDistPie} dataKey="value" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={2}>
+                            {overviewStockDistPie.map((entry, idx) => (
+                              <Cell key={idx} fill={(entry as any).color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v) => `${v}`} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-base">Entrada vs Saída</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {overviewMovSeries.length ? (
+                    <div className="h-[280px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={overviewMovSeries}>
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                          <XAxis dataKey="day" tickFormatter={fmtDayShort} />
+                          <YAxis />
+                          <Tooltip labelFormatter={(d) => fmtDayShort(String(d))} />
+                          <Legend />
+                          <Bar dataKey="entrada" name="Entrada" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="saida" name="Saída" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              <Card className="bg-black/20 border border-white/10 lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="text-sm text-blue-100/80">Reposição</div>
+                    {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
+                      <button
+                        key={String(r.codigoBarras)}
+                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                        onClick={() => { if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras)) }}
+                      >
+                        <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
+                        <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
+                        <div className="text-xs text-blue-100/70 mt-1">
+                          sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
+                          {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
+                        </div>
+                      </button>
+                    ))}
+                    {!overviewActionables?.reposicao?.length ? (
+                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+                    ) : null}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
+                    {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
+                      <button
+                        key={`${t.codigoBarras}-${t.from}-${t.to}`}
+                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                        onClick={() => {
+                          if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+                          if (t.qty != null) setQuickQuantidade(String(t.qty))
+                          if (t.from) setTransferFrom(String(t.from))
+                          if (t.to) setTransferTo(String(t.to))
+                        }}
+                      >
+                        <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
+                        <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
+                        <div className="text-xs text-blue-100/70 mt-1">
+                          <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+                          <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
+                          <span className="font-mono">{t.qty ?? '-'}</span>
+                        </div>
+                      </button>
+                    ))}
+                    {!overviewActionables?.transferencias?.length ? (
+                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+                    ) : null}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-base">Qualidade</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="text-sm text-blue-100/80">
+                    Issues: <span className="font-mono">{overviewQuality?.summary?.total ?? '-'}</span>
+                  </div>
+                  {overviewQuality?.summary?.bySeverity ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
+                      <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
+                      <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
+                    </div>
+                  ) : null}
+                  <div className="text-xs text-blue-200/60">
+                    ROI risco vencendo:{' '}
+                    <span className="font-mono">
+                      {overviewRoi?.perdas?.valorRiscoVencendo != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0) : '-'}
+                    </span>
+                  </div>
+                  <div className="space-y-2 pt-1">
+                    {(overviewQuality?.issues || []).slice(0, 3).map((it, idx) => (
+                      <div key={`${it.code || ''}-${idx}`} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant={severityBadgeVariant(it.severity)}>{String(it.severity || 'INFO').toUpperCase()}</Badge>
+                          <span className="text-xs text-blue-200/60 font-mono">{it.code || ''}</span>
+                        </div>
+                        <div className="text-sm text-blue-50 mt-1">{it.message || '-'}</div>
+                        {it.suggestion ? <div className="text-xs text-blue-200/60 mt-1">{it.suggestion}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card className="glass-morphism border border-white/10 max-w-6xl mx-auto">
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <CardTitle className="text-white">Gestão</CardTitle>
@@ -1842,249 +2093,11 @@ export function InsumosModule() {
         <CardContent>
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
             <TabsList className="bg-black/20 flex flex-wrap">
-              <TabsTrigger value="overview">Visão geral</TabsTrigger>
               <TabsTrigger value="insumos">Insumos</TabsTrigger>
               <TabsTrigger value="lotes">Lotes</TabsTrigger>
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
             </TabsList>
-
-            <TabsContent value="overview" className="mt-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-blue-100/70">
-                  Dashboard simples e direto (padrão do Insumos original): KPIs, gráficos e ações recomendadas.
-                </div>
-                <div className="flex items-center gap-2">
-                  <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
-                    <SelectTrigger className="w-24">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="7d">7d</SelectItem>
-                      <SelectItem value="30d">30d</SelectItem>
-                      <SelectItem value="90d">90d</SelectItem>
-                      <SelectItem value="1y">1 ano</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button variant="secondary" onClick={loadOverview} disabled={overviewLoading || !isAuthed}>
-                    {overviewLoading ? 'Carregando…' : 'Recarregar'}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">💰 Valor em estoque</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">
-                      {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
-                    </div>
-                    <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">🚨 Críticos</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-                    <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">⚠️ Estoque baixo</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-                    <div className="text-xs text-blue-200/60">atenção</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">⏳ Vencendo</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-                    <div className="text-xs text-blue-200/60">janela próxima</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">🧨 Expirado c/ estoque</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-                    <div className="text-xs text-blue-200/60">risco imediato</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">📊 Movimentações</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
-                    <div className="text-sm text-blue-100/80">
-                      <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
-                      <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                    </div>
-                    <div className="text-xs text-blue-200/60">
-                      saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Distribuição por categoria</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {overviewStockDistPie.length ? (
-                      <div className="h-[280px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie data={overviewStockDistPie} dataKey="value" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={2}>
-                              {overviewStockDistPie.map((entry, idx) => (
-                                <Cell key={idx} fill={(entry as any).color} />
-                              ))}
-                            </Pie>
-                            <Tooltip formatter={(v) => `${v}`} />
-                            <Legend />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Entrada vs Saída</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {overviewMovSeries.length ? (
-                      <div className="h-[280px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={overviewMovSeries}>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                            <XAxis dataKey="day" tickFormatter={fmtDayShort} />
-                            <YAxis />
-                            <Tooltip labelFormatter={(d) => fmtDayShort(String(d))} />
-                            <Legend />
-                            <Bar dataKey="entrada" name="Entrada" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="saida" name="Saída" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <div className="text-sm text-blue-100/80">Reposição</div>
-                      {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-                        <button
-                          key={String(r.codigoBarras)}
-                          className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                          onClick={() => { if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras)) }}
-                        >
-                          <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-                          <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-                          <div className="text-xs text-blue-100/70 mt-1">
-                            sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-                            {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-                          </div>
-                        </button>
-                      ))}
-                      {!overviewActionables?.reposicao?.length ? (
-                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
-                      ) : null}
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-                      {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-                        <button
-                          key={`${t.codigoBarras}-${t.from}-${t.to}`}
-                          className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                          onClick={() => {
-                            if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-                            if (t.qty != null) setQuickQuantidade(String(t.qty))
-                            if (t.from) setTransferFrom(String(t.from))
-                            if (t.to) setTransferTo(String(t.to))
-                          }}
-                        >
-                          <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-                          <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-                          <div className="text-xs text-blue-100/70 mt-1">
-                            <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-                            <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-                            <span className="font-mono">{t.qty ?? '-'}</span>
-                          </div>
-                        </button>
-                      ))}
-                      {!overviewActionables?.transferencias?.length ? (
-                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
-                      ) : null}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Qualidade</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-sm text-blue-100/80">
-                      Issues: <span className="font-mono">{overviewQuality?.summary?.total ?? '-'}</span>
-                    </div>
-                    {overviewQuality?.summary?.bySeverity ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-                        <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
-                        <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
-                      </div>
-                    ) : null}
-                    <div className="text-xs text-blue-200/60">
-                      ROI risco vencendo: <span className="font-mono">{overviewRoi?.perdas?.valorRiscoVencendo != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0) : '-'}</span>
-                    </div>
-                    <div className="space-y-2 pt-1">
-                      {(overviewQuality?.issues || []).slice(0, 3).map((it, idx) => (
-                        <div key={`${it.code || ''}-${idx}`} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <Badge variant={severityBadgeVariant(it.severity)}>
-                              {String(it.severity || 'INFO').toUpperCase()}
-                            </Badge>
-                            <span className="text-xs text-blue-200/60 font-mono">{it.code || ''}</span>
-                          </div>
-                          <div className="text-sm text-blue-50 mt-1">{it.message || '-'}</div>
-                          {it.suggestion ? <div className="text-xs text-blue-200/60 mt-1">{it.suggestion}</div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
 
             <TabsContent value="lotes" className="mt-4 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
