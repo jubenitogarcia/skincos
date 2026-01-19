@@ -2,7 +2,10 @@ import React from 'react'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Switch } from '@/switch'
 import { useKV } from '@/spark-mock'
 
 type StatusKind = 'ok' | 'warn' | 'error' | 'unknown'
@@ -49,6 +52,12 @@ type BackupSnapshot = {
   kind?: string
 }
 
+type BackupStatus = {
+  db?: boolean
+  lastBackupTs?: string | null
+  r2?: boolean
+}
+
 type AuditRow = {
   timestamp?: string
   actor?: string
@@ -57,6 +66,18 @@ type AuditRow = {
   entity?: string
   entityId?: string
   unidade?: string
+}
+
+type AdminUser = {
+  username: string
+  displayName?: string
+  email?: string
+  role?: string
+  photoUrl?: string
+  allowedUnits?: string[]
+  ativo?: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
 async function apiJson<T>(
@@ -117,10 +138,12 @@ export function SystemStatusModule() {
   const canManageBackups = hasInsumosSession && (insumosRole === 'ADMIN' || insumosRole === 'GESTOR')
 
   const [backupLoading, setBackupLoading] = React.useState(false)
+  const [backupStatus, setBackupStatus] = React.useState<BackupStatus | null>(null)
   const [backupItems, setBackupItems] = React.useState<BackupSnapshot[]>([])
   const [backupRestoreId, setBackupRestoreId] = React.useState('')
   const [backupCleanupDays, setBackupCleanupDays] = React.useState('30')
   const [advancedOpen, setAdvancedOpen] = React.useState(false)
+  const [adminOpen, setAdminOpen] = React.useState(false)
   const [auditLoading, setAuditLoading] = React.useState(false)
   const [auditRows, setAuditRows] = React.useState<AuditRow[]>([])
 
@@ -151,12 +174,13 @@ export function SystemStatusModule() {
 
       if (insHealth.status === 'fulfilled') {
         const online = insHealth.value.ok && Boolean(insHealth.value.json?.ok)
-        const integrated = typeof insHealth.value.json?.sheetsConfigured === 'boolean' ? Boolean(insHealth.value.json.sheetsConfigured) : null
+        const storage = String(insHealth.value.json?.storage || '').toLowerCase() || '—'
+        const lockedToD1 = storage === 'd1'
         next.push({
           key: 'insumos-api',
           title: 'Insumos',
-          status: online ? (integrated === false ? 'warn' : 'ok') : 'error',
-          subtitle: online ? (integrated === false ? 'Online • Integração pendente' : 'Online') : 'Offline'
+          status: online ? (lockedToD1 ? 'ok' : 'warn') : 'error',
+          subtitle: online ? `Online • ${storage.toUpperCase()}` : 'Offline'
         })
       } else {
         next.push({ key: 'insumos-api', title: 'Insumos', status: 'error', subtitle: 'Erro ao consultar' })
@@ -226,14 +250,41 @@ export function SystemStatusModule() {
     if (!canManageBackups) return
     setBackupLoading(true)
     try {
+      const status = await apiJson<{ success?: boolean; data?: BackupStatus }>('/backup/status')
+      setBackupStatus((status?.data as BackupStatus) || null)
       const out = await apiJson<{ success?: boolean; data?: BackupSnapshot[] }>('/backup/list?limit=20')
       setBackupItems(Array.isArray(out?.data) ? out.data : [])
     } catch {
+      setBackupStatus(null)
       setBackupItems([])
     } finally {
       setBackupLoading(false)
     }
   }, [canManageBackups])
+
+  const canManageUsers = hasInsumosSession && (insumosRole === 'ADMIN' || insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
+  const [usersLoading, setUsersLoading] = React.useState(false)
+  const [usersQuery, setUsersQuery] = React.useState('')
+  const [users, setUsers] = React.useState<AdminUser[]>([])
+  const [userCreateOpen, setUserCreateOpen] = React.useState(false)
+  const [userEdit, setUserEdit] = React.useState<AdminUser | null>(null)
+  const [oneTimePassword, setOneTimePassword] = React.useState<string | null>(null)
+
+  const loadUsers = React.useCallback(async () => {
+    if (!canManageUsers) return
+    setUsersLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (usersQuery.trim()) params.set('q', usersQuery.trim())
+      params.set('limit', '100')
+      const out = await apiJson<{ success?: boolean; data?: AdminUser[] }>(`/admin/users?${params.toString()}`)
+      setUsers(Array.isArray(out?.data) ? out.data : [])
+    } catch {
+      setUsers([])
+    } finally {
+      setUsersLoading(false)
+    }
+  }, [canManageUsers, usersQuery])
 
   const canViewAudit = hasInsumosSession && (insumosRole === 'ADMIN' || insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
   const loadAudit = React.useCallback(async () => {
@@ -269,6 +320,11 @@ export function SystemStatusModule() {
   React.useEffect(() => {
     void loadBackups()
   }, [loadBackups])
+
+  React.useEffect(() => {
+    if (!adminOpen) return
+    void loadUsers()
+  }, [adminOpen, loadUsers])
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -362,6 +418,16 @@ export function SystemStatusModule() {
                     {backupLoading ? 'Carregando…' : 'Recarregar'}
                   </Button>
                 </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
+                <Badge variant={backupStatus?.db ? 'success' : 'secondary'}>{backupStatus?.db ? 'D1 ok' : 'D1 —'}</Badge>
+                <Badge variant={backupStatus?.r2 ? 'success' : 'secondary'}>{backupStatus?.r2 ? 'R2 ativo' : 'R2 off'}</Badge>
+                {backupStatus?.lastBackupTs ? (
+                  <span>Último backup: {new Date(String(backupStatus.lastBackupTs)).toLocaleString('pt-BR')}</span>
+                ) : (
+                  <span>Último backup: —</span>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -459,13 +525,170 @@ export function SystemStatusModule() {
       <Card className="glass-morphism border border-white/10">
         <CardHeader className="space-y-2">
           <CardTitle className="text-white text-base flex items-center justify-between gap-2">
-            <span>Avançado</span>
-            <Button variant="secondary" onClick={() => setAdvancedOpen((v) => !v)}>
-              {advancedOpen ? 'Ocultar' : 'Abrir'}
-            </Button>
+            <span>Admin</span>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={() => setAdminOpen((v) => !v)}>
+                {adminOpen ? 'Ocultar usuários' : 'Usuários'}
+              </Button>
+              <Button variant="secondary" onClick={() => setAdvancedOpen((v) => !v)}>
+                {advancedOpen ? 'Ocultar auditoria' : 'Auditoria'}
+              </Button>
+            </div>
           </CardTitle>
-          <div className="text-sm text-blue-100/70">Logs e diagnósticos (para gestores).</div>
+          <div className="text-sm text-blue-100/70">Ferramentas restritas para gestão (usuários, auditoria).</div>
         </CardHeader>
+        {adminOpen ? (
+          <CardContent className="space-y-4">
+            {!hasInsumosSession ? (
+              <div className="text-sm text-blue-100/70">Faça login para ver funções administrativas.</div>
+            ) : !canManageUsers ? (
+              <div className="text-sm text-blue-100/70">Seu perfil ({insumosRole || '—'}) não tem permissão para usuários.</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm text-blue-100/70">Usuários do Insumos (D1)</div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={usersQuery}
+                      onChange={(e) => setUsersQuery(e.target.value)}
+                      placeholder="Buscar usuário/email…"
+                      className="max-w-xs"
+                    />
+                    <Button variant="secondary" onClick={loadUsers} disabled={usersLoading}>
+                      {usersLoading ? 'Carregando…' : 'Recarregar'}
+                    </Button>
+                    <Button onClick={() => { setOneTimePassword(null); setUserCreateOpen(true) }}>
+                      Novo usuário
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-black/30 text-blue-100/80">
+                      <tr>
+                        <th className="text-left p-3">Usuário</th>
+                        <th className="text-left p-3">Perfil</th>
+                        <th className="text-left p-3">Unidades</th>
+                        <th className="text-left p-3">Ativo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {users.map((u) => (
+                        <tr
+                          key={u.username}
+                          className="hover:bg-white/5 cursor-pointer"
+                          onClick={() => { setOneTimePassword(null); setUserEdit(u) }}
+                        >
+                          <td className="p-3 text-blue-100/80">
+                            <div className="font-mono">{u.username}</div>
+                            {u.email ? <div className="text-xs text-blue-200/60">{u.email}</div> : null}
+                          </td>
+                          <td className="p-3 text-blue-100/70">
+                            <Badge variant="secondary">{String(u.role || 'CONSULTOR').toUpperCase()}</Badge>
+                            {u.displayName ? <div className="text-xs text-blue-200/60 mt-1">{u.displayName}</div> : null}
+                          </td>
+                          <td className="p-3 text-blue-100/70">
+                            {(Array.isArray(u.allowedUnits) && u.allowedUnits.length)
+                              ? u.allowedUnits.map(formatUnitLabel).join(', ')
+                              : <span className="text-blue-200/60">Todas</span>}
+                          </td>
+                          <td className="p-3 text-blue-100/70">
+                            <Badge variant={u.ativo ? 'success' : 'secondary'}>{u.ativo ? 'Sim' : 'Não'}</Badge>
+                          </td>
+                        </tr>
+                      ))}
+                      {!users.length ? (
+                        <tr>
+                          <td className="p-3 text-blue-100/70" colSpan={4}>
+                            {usersLoading ? 'Carregando…' : 'Sem usuários.'}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            <Dialog open={userCreateOpen} onOpenChange={(o) => { setUserCreateOpen(o); if (!o) setOneTimePassword(null) }}>
+              <DialogContent className="sm:max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Novo usuário (Insumos)</DialogTitle>
+                  <DialogDescription>Cria o usuário no D1 e retorna uma senha temporária.</DialogDescription>
+                </DialogHeader>
+                <AdminUserForm
+                  mode="create"
+                  onCancel={() => setUserCreateOpen(false)}
+                  onSubmit={async (payload) => {
+                    const out = await mutate('/admin/users', { method: 'POST', body: payload })
+                    const pw = (out as any)?.oneTimePassword || null
+                    setOneTimePassword(typeof pw === 'string' ? pw : null)
+                    await loadUsers()
+                  }}
+                />
+                {oneTimePassword ? (
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-sm text-blue-100/80">Senha temporária (mostrar só uma vez):</div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="font-mono text-blue-50 break-all">{oneTimePassword}</div>
+                      <Button
+                        variant="secondary"
+                        onClick={() => navigator.clipboard?.writeText(oneTimePassword).catch(() => null)}
+                      >
+                        Copiar
+                      </Button>
+                    </div>
+                    <div className="mt-2 text-xs text-blue-200/60">Recomende trocar a senha no primeiro acesso.</div>
+                  </div>
+                ) : null}
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!userEdit} onOpenChange={(o) => { if (!o) { setUserEdit(null); setOneTimePassword(null) } }}>
+              <DialogContent className="sm:max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Editar usuário</DialogTitle>
+                  <DialogDescription>Atualiza permissões e permite resetar senha.</DialogDescription>
+                </DialogHeader>
+                {userEdit ? (
+                  <AdminUserForm
+                    mode="edit"
+                    initial={userEdit}
+                    onCancel={() => setUserEdit(null)}
+                    onSubmit={async (payload) => {
+                      await mutate(`/admin/users/${encodeURIComponent(userEdit.username)}`, { method: 'PUT', body: payload })
+                      await loadUsers()
+                    }}
+                    onResetPassword={async () => {
+                      const out = await mutate(`/admin/users/${encodeURIComponent(userEdit.username)}/reset-password`, {
+                        method: 'POST',
+                        body: {}
+                      })
+                      const pw = (out as any)?.oneTimePassword || null
+                      setOneTimePassword(typeof pw === 'string' ? pw : null)
+                    }}
+                  />
+                ) : null}
+                {oneTimePassword ? (
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-sm text-blue-100/80">Senha temporária:</div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="font-mono text-blue-50 break-all">{oneTimePassword}</div>
+                      <Button
+                        variant="secondary"
+                        onClick={() => navigator.clipboard?.writeText(oneTimePassword).catch(() => null)}
+                      >
+                        Copiar
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </DialogContent>
+            </Dialog>
+          </CardContent>
+        ) : null}
+
         {advancedOpen ? (
           <CardContent className="space-y-3">
             {!hasInsumosSession ? (
@@ -519,6 +742,138 @@ export function SystemStatusModule() {
           </CardContent>
         ) : null}
       </Card>
+    </div>
+  )
+}
+
+function AdminUserForm({
+  mode,
+  initial,
+  onCancel,
+  onSubmit,
+  onResetPassword
+}: {
+  mode: 'create' | 'edit'
+  initial?: AdminUser | null
+  onCancel: () => void
+  onSubmit: (payload: any) => Promise<void>
+  onResetPassword?: () => Promise<void>
+}) {
+  const [loading, setLoading] = React.useState(false)
+  const [username, setUsername] = React.useState(initial?.username || '')
+  const [displayName, setDisplayName] = React.useState(initial?.displayName || '')
+  const [email, setEmail] = React.useState(initial?.email || '')
+  const [role, setRole] = React.useState(String(initial?.role || 'CONSULTOR').toUpperCase())
+  const [allowedUnits, setAllowedUnits] = React.useState((initial?.allowedUnits || []).join(', '))
+  const [ativo, setAtivo] = React.useState(initial?.ativo ?? true)
+  const [password, setPassword] = React.useState('')
+  const isCreate = mode === 'create'
+
+  const submit = async () => {
+    setLoading(true)
+    try {
+      const payload: any = {
+        displayName: displayName.trim(),
+        email: email.trim(),
+        role,
+        allowedUnits: allowedUnits
+          .split(/[,;|]/g)
+          .map((s) => s.trim())
+          .filter(Boolean),
+        ativo
+      }
+      if (isCreate) {
+        payload.username = username.trim()
+        if (password.trim()) payload.password = password.trim()
+      }
+      await onSubmit(payload)
+      if (isCreate) {
+        setUsername('')
+        setDisplayName('')
+        setEmail('')
+        setRole('CONSULTOR')
+        setAllowedUnits('')
+        setAtivo(true)
+        setPassword('')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <div className="text-xs text-blue-200/70">Usuário</div>
+          <Input value={username} onChange={(e) => setUsername(e.target.value)} disabled={!isCreate} placeholder="ex: julian" />
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs text-blue-200/70">Perfil</div>
+          <Select value={role} onValueChange={setRole}>
+            <SelectTrigger>
+              <SelectValue placeholder="Selecione" />
+            </SelectTrigger>
+            <SelectContent>
+              {['CONSULTOR', 'OPERADOR', 'GERENTE', 'GESTOR', 'ADMIN'].map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1 sm:col-span-2">
+          <div className="text-xs text-blue-200/70">Nome exibido</div>
+          <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="ex: Julian Benito" />
+        </div>
+        <div className="space-y-1 sm:col-span-2">
+          <div className="text-xs text-blue-200/70">Email</div>
+          <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ex: julian@empresa.com" />
+        </div>
+        <div className="space-y-1 sm:col-span-2">
+          <div className="text-xs text-blue-200/70">Unidades permitidas</div>
+          <Input value={allowedUnits} onChange={(e) => setAllowedUnits(e.target.value)} placeholder="vazio = todas • ex: novo-hamburgo, barra-shopping-sul" />
+        </div>
+        {isCreate ? (
+          <div className="space-y-1 sm:col-span-2">
+            <div className="text-xs text-blue-200/70">Senha (opcional)</div>
+            <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="deixe vazio para gerar automaticamente" />
+          </div>
+        ) : null}
+        <div className="flex items-center justify-between sm:col-span-2 rounded-lg border border-white/10 bg-black/20 p-3">
+          <div>
+            <div className="text-sm text-blue-100/80">Ativo</div>
+            <div className="text-xs text-blue-200/60">Desative para bloquear acesso sem apagar o usuário.</div>
+          </div>
+          <Switch checked={ativo} onCheckedChange={setAtivo} />
+        </div>
+      </div>
+
+      <DialogFooter>
+        {onResetPassword ? (
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              setLoading(true)
+              try {
+                await onResetPassword()
+              } finally {
+                setLoading(false)
+              }
+            }}
+            disabled={loading}
+          >
+            Reset senha
+          </Button>
+        ) : null}
+        <Button variant="secondary" onClick={onCancel} disabled={loading}>
+          Cancelar
+        </Button>
+        <Button onClick={submit} disabled={loading || (isCreate && !username.trim())}>
+          {loading ? 'Salvando…' : 'Salvar'}
+        </Button>
+      </DialogFooter>
     </div>
   )
 }
