@@ -2755,45 +2755,11 @@ export function InsumosModule() {
 			              Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
 			            </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Categoria</th>
-                            <th className="text-right p-3">Qtd</th>
-                            <th className="text-right p-3">Valor</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {(insightsTurnover.categories || []).slice(0, 10).map((c: any, idx: number) => (
-                            <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
-                              <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
-                              <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-                  )}
-                  <div className="text-xs text-blue-200/60">Use “Movimentações” (De/Até) e recarregue.</div>
-                </CardContent>
-              </Card>
-
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-	                </CardHeader>
-	                <CardContent className="space-y-1">
+		              <Card className="bg-black/20 border border-white/10">
+		                <CardHeader>
+		                  <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+		                </CardHeader>
+		                <CardContent className="space-y-1">
 	                  <div className="text-sm text-blue-100/80">
 	                    Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
 	                    {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
@@ -2807,11 +2773,10 @@ export function InsumosModule() {
 	                  <div className="text-sm text-blue-100/80">
 	                    Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
 	                  </div>
-	                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-	                </CardContent>
-	              </Card>
-	            </div>
-		      </div>
+		                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
+		                </CardContent>
+		              </Card>
+			      </div>
 
 	      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
 	        <DialogContent className="max-w-xl">
@@ -3386,15 +3351,57 @@ export function InsumosModule() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button variant="secondary" onClick={() => void loadMovimentacoes()} disabled={movLoading || !isAuthed}>
-                  {movLoading ? 'Carregando…' : 'Filtrar'}
-		                </Button>
-		              </div>
+			                <Button
+			                  variant="secondary"
+			                  onClick={() => void Promise.allSettled([loadMovimentacoes(), loadInsights()])}
+			                  disabled={movLoading || !isAuthed}
+			                >
+			                  {movLoading ? 'Carregando…' : 'Filtrar'}
+			                </Button>
+			              </div>
 
-		              <div className="flex items-center justify-end">
-		                <Button
-		                  variant="outline"
-		                  size="sm"
+			              <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+			                <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+			                  Giro por categoria (saídas){' '}
+			                  <span className="text-xs text-blue-200/60">
+			                    • {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
+			                  </span>
+			                </summary>
+			                <div className="mt-3 space-y-2">
+			                  {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
+			                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+			                      <table className="min-w-full text-sm">
+			                        <thead className="bg-black/30 text-blue-100/80">
+			                          <tr>
+			                            <th className="text-left p-3">Categoria</th>
+			                            <th className="text-right p-3">Qtd</th>
+			                            <th className="text-right p-3">Valor</th>
+			                          </tr>
+			                        </thead>
+			                        <tbody className="divide-y divide-white/5">
+			                          {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idx: number) => (
+			                            <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
+			                              <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
+			                              <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
+			                              <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
+			                            </tr>
+			                          ))}
+			                        </tbody>
+			                      </table>
+			                    </div>
+			                  ) : (
+			                    <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+			                  )}
+			                  <div className="text-xs text-blue-200/60">
+			                    Usa os filtros desta seção (De/Até) e o período da Visão geral ({overviewPeriod}).
+			                  </div>
+			                </div>
+			              </details>
+
+			              <div className="flex items-center justify-end">
+			                <Button
+			                  variant="outline"
+			                  size="sm"
 			                  onClick={() => {
 			                    const deIso = dateInputToIso(movDe)
 			                    const ateIso = dateInputToIso(movAte)
@@ -3406,11 +3413,11 @@ export function InsumosModule() {
 			                    })
 			                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
 			                  }}
-		                  disabled={!isAuthed}
-		                >
-		                  Exportar CSV
-		                </Button>
-		              </div>
+			                  disabled={!isAuthed}
+			                >
+			                  Exportar CSV
+			                </Button>
+			              </div>
 
 		              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
 		                <div>
