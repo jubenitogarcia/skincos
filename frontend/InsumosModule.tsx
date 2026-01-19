@@ -1507,11 +1507,7 @@ export function InsumosModule() {
   type ChartSlotConfig = { presetId: ChartPresetId; metric?: ChartMetric; view?: ChartView; topN?: number }
 
   const CHARTS_SLOTS_KEY = 'skincos.insumos.charts.slots.v1'
-  const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [
-    { presetId: 'stock_category', metric: 'valor', view: 'pie', topN: 8 },
-    { presetId: 'mov_inout', metric: 'qtd', view: 'bar' },
-    { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }
-  ]
+  const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [{ presetId: 'stock_category', metric: 'valor', view: 'pie', topN: 8 }]
 
   const CHART_PRESETS: Array<{
     id: ChartPresetId
@@ -1540,14 +1536,15 @@ export function InsumosModule() {
       const cleaned: ChartSlotConfig[] = slots
         .slice(0, 3)
         .map((s: any, idx: number) => {
-          const presetId: ChartPresetId = validIds.has(String(s?.presetId)) ? (String(s.presetId) as any) : DEFAULT_CHART_SLOTS[idx].presetId
+          const fallback = DEFAULT_CHART_SLOTS[0]
+          const presetId: ChartPresetId = validIds.has(String(s?.presetId)) ? (String(s.presetId) as any) : fallback.presetId
           const preset = CHART_PRESETS.find((p) => p.id === presetId)
           const metric: ChartMetric | undefined = s?.metric === 'valor' || s?.metric === 'qtd' ? s.metric : preset?.defaultMetric
           const view: ChartView | undefined = s?.view === 'bar' || s?.view === 'line' || s?.view === 'pie' ? s.view : preset?.defaultView
-          const topN = Math.max(5, Math.min(15, parseInt(String(s?.topN ?? ''), 10) || 0)) || DEFAULT_CHART_SLOTS[idx].topN
+          const topN = Math.max(5, Math.min(15, parseInt(String(s?.topN ?? ''), 10) || 0)) || fallback.topN
           return { presetId, metric, view, topN }
         })
-      while (cleaned.length < 3) cleaned.push(DEFAULT_CHART_SLOTS[cleaned.length])
+      if (!cleaned.length) return DEFAULT_CHART_SLOTS
       return cleaned
     } catch {
       return DEFAULT_CHART_SLOTS
@@ -1566,7 +1563,7 @@ export function InsumosModule() {
   const setChartSlot = React.useCallback((idx: number, next: Partial<ChartSlotConfig>) => {
     setChartSlots((prev) => {
       const copy = [...prev]
-      const cur = copy[idx] || DEFAULT_CHART_SLOTS[idx]
+      const cur = copy[idx] || DEFAULT_CHART_SLOTS[0]
       const presetId = (next.presetId ?? cur.presetId) as ChartPresetId
       const preset = CHART_PRESETS.find((p) => p.id === presetId)
       const metric = next.metric ?? cur.metric ?? preset?.defaultMetric
@@ -2609,16 +2606,29 @@ export function InsumosModule() {
 				              </CardContent>
 				            </Card>
 
-			            <div className="flex items-center justify-between">
+			            <div className="flex flex-wrap items-center justify-between gap-2">
 			              <div className="text-white text-base font-semibold">Gráficos</div>
-			              <Button
-			                variant="outline"
-			                size="sm"
-			                onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
-			                disabled={overviewLoading || insightsLoading}
-			              >
-			                Reset
-			              </Button>
+			              <div className="flex items-center gap-2">
+			                <Button
+			                  variant="outline"
+			                  size="sm"
+			                  onClick={() => {
+			                    if (chartSlots.length >= 3) return
+			                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+			                  }}
+			                  disabled={overviewLoading || insightsLoading || chartSlots.length >= 3}
+			                >
+			                  + Adicionar
+			                </Button>
+			                <Button
+			                  variant="outline"
+			                  size="sm"
+			                  onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+			                  disabled={overviewLoading || insightsLoading}
+			                >
+			                  Reset
+			                </Button>
+			              </div>
 			            </div>
 			            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
 			              {chartSlots.map((slot, idx) => {
@@ -2631,7 +2641,7 @@ export function InsumosModule() {
 			                return (
 			                  <Card key={`${slot.presetId}-${idx}`} className="bg-black/20 border border-white/10">
 			                    <CardHeader className="space-y-2">
-			                      <div className="flex items-center justify-between gap-2">
+			                      <div className="flex items-center gap-2">
 			                        <Select
 			                          value={slot.presetId}
 			                          onValueChange={(v) => {
@@ -2652,6 +2662,19 @@ export function InsumosModule() {
 			                            ))}
 			                          </SelectContent>
 			                        </Select>
+			                        {chartSlots.length > 1 ? (
+			                          <Button
+			                            variant="outline"
+			                            className="h-8 w-8 p-0"
+			                            title="Remover gráfico"
+			                            aria-label="Remover gráfico"
+			                            onClick={() => {
+			                              setChartSlots((prev) => prev.filter((_, i) => i !== idx))
+			                            }}
+			                          >
+			                            ×
+			                          </Button>
+			                        ) : null}
 			                      </div>
 			                      <div className="flex flex-wrap items-center gap-2">
 			                        {preset.supportsMetric ? (
