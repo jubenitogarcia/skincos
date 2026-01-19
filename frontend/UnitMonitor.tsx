@@ -221,9 +221,9 @@ function makeDefaultOperatingHours(timezone: string = getDefaultTimeZone()): Ope
 }
 
 const DEFAULT_UNITS = [
-  { value: 'unit-a', label: 'Unidade A' },
-  { value: 'unit-b', label: 'Unidade B' },
-  { value: 'unit-c', label: 'Unidade C' },
+  { value: 'unit-a', label: 'A' },
+  { value: 'unit-b', label: 'B' },
+  { value: 'unit-c', label: 'C' },
   { value: 'custom', label: 'Outra' }
 ]
 

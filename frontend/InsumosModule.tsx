@@ -1956,7 +1956,7 @@ export function InsumosModule() {
                 <SelectContent>
                   {unidadeOptions.map((u) => (
                     <SelectItem key={u} value={u}>
-                      Unidade: {unidadeLabel(u)}
+                      {unidadeLabel(u)}
                     </SelectItem>
                   ))}
                 </SelectContent>
