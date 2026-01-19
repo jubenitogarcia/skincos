@@ -140,11 +140,6 @@ type QualityReport = {
 
 type StockDistributionItem = { name?: string; value?: number }
 
-type MovReport = {
-  resumo?: { totalEntradas?: number; totalSaidas?: number; totalMovimentacoes?: number }
-  movimentos?: Movimentacao[]
-}
-
 type ShareFile = {
   name: string
   size?: number
@@ -500,21 +495,6 @@ export function InsumosModule() {
   const [movLimite, setMovLimite] = React.useState(50)
   const [movTotal, setMovTotal] = React.useState<number | null>(null)
 
-  const movChartData = React.useMemo(() => {
-    const map = new Map<string, { day: string; entradas: number; saidas: number }>()
-    for (const m of movimentacoes) {
-      const raw = String(m.dataHora || '').slice(0, 10)
-      if (!raw || raw.length !== 10) continue
-      const cur = map.get(raw) || { day: raw, entradas: 0, saidas: 0 }
-      const tipo = String(m.tipo || '').toUpperCase().replace('Í', 'I')
-      const qtd = Number(m.quantidade) || 0
-      if (tipo === 'ENTRADA') cur.entradas += qtd
-      else if (tipo === 'SAIDA' || tipo === 'SAÍDA') cur.saidas += qtd
-      map.set(raw, cur)
-    }
-    return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day))
-  }, [movimentacoes])
-
   // Backups/auditoria foram movidos para o módulo Status do sistema.
 
   const [overviewLoading, setOverviewLoading] = React.useState(false)
@@ -530,9 +510,6 @@ export function InsumosModule() {
 
   const [insightsLoading, setInsightsLoading] = React.useState(false)
   const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
-  const [insightsRoi, setInsightsRoi] = React.useState<RoiInsights | null>(null)
-  const [insightsQuality, setInsightsQuality] = React.useState<QualityReport | null>(null)
-  const [insightsMovReport, setInsightsMovReport] = React.useState<MovReport | null>(null)
   const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
   const [insightsTurnover, setInsightsTurnover] = React.useState<any | null>(null)
   const [alertasStatus, setAlertasStatus] = React.useState<'TODOS' | EstoqueStatus>('TODOS')
@@ -1239,12 +1216,6 @@ export function InsumosModule() {
       const base = new URLSearchParams()
       base.set('unidade', unidade)
 
-      const movParams = new URLSearchParams(base.toString())
-      movParams.set('limite', '200')
-      if (movTipo !== 'TODOS') movParams.set('tipo', movTipo)
-      if (movDe) movParams.set('de', movDe)
-      if (movAte) movParams.set('ate', movAte)
-
       const trendsParams = new URLSearchParams(base.toString())
       trendsParams.set('groupBy', 'day')
       trendsParams.set('days', '30')
@@ -1257,27 +1228,18 @@ export function InsumosModule() {
       if (movDe) turnoverParams.set('from', movDe)
       if (movAte) turnoverParams.set('to', movAte)
 
-      const [alertas, roi, quality, movReport, trends, turnover] = await Promise.all([
+      const [alertas, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
-        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${base.toString()}`),
-        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '200' }).toString()}`),
-        apiJson<{ success?: boolean; data?: MovReport }>(`/relatorios/movimentacoes?${movParams.toString()}`),
         apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`),
         apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverParams.toString()}`)
       ])
 
       setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
-      setInsightsRoi(roi?.data || null)
-      setInsightsQuality(quality?.data || null)
-      setInsightsMovReport(movReport?.data || null)
       setInsightsTrends(trends?.data || null)
       setInsightsTurnover(turnover?.data || null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setInsightsAlertas([])
-      setInsightsRoi(null)
-      setInsightsQuality(null)
-      setInsightsMovReport(null)
       setInsightsTrends(null)
       setInsightsTurnover(null)
     } finally {
@@ -1455,18 +1417,6 @@ export function InsumosModule() {
     ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
     const fixed = ['Frasco', 'Seringa', 'Unidade', 'Caixa', 'ml']
     return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
-  }, [insumos])
-
-  const lotResumo = React.useMemo(() => {
-    const base = { ok: 0, vencendo: 0, expirado: 0, sem: 0 }
-    for (const i of insumos || []) {
-      const st = String(i.statusValidade?.status || '').toUpperCase()
-      if (!i.dataValidade) base.sem += 1
-      else if (st === 'EXPIRADO') base.expirado += 1
-      else if (st === 'VENCENDO') base.vencendo += 1
-      else base.ok += 1
-    }
-    return base
   }, [insumos])
 
   const insumosLoteFiltrados = React.useMemo(() => {
@@ -1809,11 +1759,11 @@ export function InsumosModule() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">💰 Valor em estoque</CardTitle>
-                </CardHeader>
+	              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-sm">💰 Valor em estoque</CardTitle>
+	                </CardHeader>
                 <CardContent>
                   <div className="text-lg text-blue-50 font-mono">
                     {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
@@ -1877,12 +1827,134 @@ export function InsumosModule() {
                   </div>
                 </CardContent>
               </Card>
-            </div>
+	            </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">Distribuição por categoria</CardTitle>
+	            <Card className="bg-black/20 border border-white/10">
+	              <CardHeader>
+	                <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
+	              </CardHeader>
+	              <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+	                <div className="space-y-2">
+	                  <div className="text-sm text-blue-100/80">Reposição</div>
+	                  {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
+	                    <button
+	                      key={String(r.codigoBarras)}
+	                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+	                      onClick={() => {
+	                        if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
+	                      }}
+	                    >
+	                      <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
+	                      <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
+	                      <div className="text-xs text-blue-100/70 mt-1">
+	                        sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
+	                        {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
+	                      </div>
+	                    </button>
+	                  ))}
+	                  {!overviewActionables?.reposicao?.length ? (
+	                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+	                  ) : null}
+	                </div>
+	                <div className="space-y-2">
+	                  <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
+	                  {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
+	                    <button
+	                      key={`${t.codigoBarras}-${t.from}-${t.to}`}
+	                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+	                      onClick={() => {
+	                        if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+	                        if (t.qty != null) setQuickQuantidade(String(t.qty))
+	                        if (t.from) setTransferFrom(String(t.from))
+	                        if (t.to) setTransferTo(String(t.to))
+	                      }}
+	                    >
+	                      <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
+	                      <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
+	                      <div className="text-xs text-blue-100/70 mt-1">
+	                        <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+	                        <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
+	                        <span className="font-mono">{t.qty ?? '-'}</span>
+	                      </div>
+	                    </button>
+	                  ))}
+	                  {!overviewActionables?.transferencias?.length ? (
+	                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+	                  ) : null}
+	                </div>
+	              </CardContent>
+	            </Card>
+
+	            <Card className="bg-black/20 border border-white/10">
+	              <CardHeader className="flex flex-row items-center justify-between gap-2">
+	                <CardTitle className="text-white text-base">Qualidade do cadastro</CardTitle>
+	                <div className="text-xs text-blue-200/60">
+	                  {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} issues` : overviewLoading ? 'Carregando…' : '—'}
+	                </div>
+	              </CardHeader>
+	              <CardContent className="space-y-2">
+	                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+	                  {overviewQuality?.summary?.bySeverity ? (
+	                    <>
+	                      <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
+	                      <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
+	                      <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
+	                    </>
+	                  ) : null}
+	                  {!overviewQuality?.summary?.total ? (
+	                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem issues.'}</span>
+	                  ) : null}
+	                </div>
+
+	                {overviewQuality?.issues?.length ? (
+	                  <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+	                    <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+	                      Ver detalhes
+	                    </summary>
+	                    <div className="mt-3 overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+	                      <table className="min-w-full text-sm">
+	                        <thead className="bg-black/30 text-blue-100/80">
+	                          <tr>
+	                            <th className="text-left p-3">Sev</th>
+	                            <th className="text-left p-3">Código</th>
+	                            <th className="text-left p-3">Mensagem</th>
+	                          </tr>
+	                        </thead>
+	                        <tbody className="divide-y divide-white/5">
+	                          {(overviewQuality.issues || []).slice(0, 30).map((it, idx) => {
+	                            const sev = String(it.severity || '').toUpperCase()
+	                            const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+	                            return (
+	                              <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
+	                                <td className="p-3">
+	                                  <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+	                                </td>
+	                                <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
+	                                <td className="p-3 text-blue-50">
+	                                  {it.message || '-'}
+	                                  {(it.codigoBarras || it.produto) ? (
+	                                    <div className="text-xs text-blue-200/60 mt-1">
+	                                      {(it.codigoBarras ? `#${it.codigoBarras}` : '')}
+	                                      {it.codigoBarras && it.produto ? ' • ' : ''}
+	                                      {it.produto || ''}
+	                                    </div>
+	                                  ) : null}
+	                                </td>
+	                              </tr>
+	                            )
+	                          })}
+	                        </tbody>
+	                      </table>
+	                    </div>
+	                  </details>
+	                ) : null}
+	              </CardContent>
+	            </Card>
+
+	            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-base">Distribuição por categoria</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {overviewStockDistPie.length ? (
@@ -2001,27 +2073,27 @@ export function InsumosModule() {
                 </CardContent>
               </Card>
 
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-1">
-                  <div className="text-sm text-blue-100/80">
-                    Expirados: <span className="font-mono">{insightsRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-                    {insightsRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(insightsRoi.perdas.valorExpirado) || 0) : '-'}
-                  </div>
-                  <div className="text-sm text-blue-100/80">
-                    Vencendo: <span className="font-mono">{insightsRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-                    {insightsRoi?.perdas?.valorRiscoVencendo != null
-                      ? fmtMoneyBRL(Number(insightsRoi.perdas.valorRiscoVencendo) || 0)
-                      : '-'}
-                  </div>
-                  <div className="text-sm text-blue-100/80">
-                    Rupturas (estoque 0): <span className="font-mono">{insightsRoi?.ruptura?.itensRuptura ?? '-'}</span>
-                  </div>
-                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-                </CardContent>
-              </Card>
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+	                </CardHeader>
+	                <CardContent className="space-y-1">
+	                  <div className="text-sm text-blue-100/80">
+	                    Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+	                    {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
+	                  </div>
+	                  <div className="text-sm text-blue-100/80">
+	                    Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+	                    {overviewRoi?.perdas?.valorRiscoVencendo != null
+	                      ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
+	                      : '-'}
+	                  </div>
+	                  <div className="text-sm text-blue-100/80">
+	                    Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
+	                  </div>
+	                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
+	                </CardContent>
+	              </Card>
             </div>
           </CardContent>
         </Card>
@@ -2046,42 +2118,32 @@ export function InsumosModule() {
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="lotes" className="mt-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="text-base text-white font-semibold">Avisos</div>
-                  <div className="text-sm text-blue-100/70">Alertas de estoque, qualidade do cadastro e validade (lotes).</div>
-                </div>
-                <Button
-                  variant="secondary"
-                  onClick={() => void Promise.allSettled([loadInsights(), loadInsumos()])}
-                  disabled={(!isAuthed) || insightsLoading || insumosLoading}
+	            <TabsContent value="lotes" className="mt-4 space-y-4">
+	              <div className="flex flex-wrap items-center justify-between gap-2">
+	                <div>
+	                  <div className="text-base text-white font-semibold">Avisos</div>
+	                  <div className="text-sm text-blue-100/70">Alertas de estoque e validade (lotes).</div>
+	                </div>
+	                <Button
+	                  variant="secondary"
+	                  onClick={() => void Promise.allSettled([loadInsights(), loadInsumos()])}
+	                  disabled={(!isAuthed) || insightsLoading || insumosLoading}
                 >
                   {(insightsLoading || insumosLoading) ? 'Atualizando…' : 'Recarregar'}
                 </Button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm text-blue-100/70">
-                        Itens abaixo do mínimo: <span className="font-mono">{insightsAlertasFiltrados.length}</span>{' '}
-                        • urgentes:{' '}
-                        <span className="font-mono">
-                          {insightsAlertasFiltrados.filter((a) => calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0) === 'URGENTE').length}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
-                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                          <SelectTrigger>
+              <div className="space-y-3">
+                <Card className="bg-black/20 border border-white/10">
+		                  <CardHeader>
+		                    <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
+		                  </CardHeader>
+		                  <CardContent className="space-y-2">
+	                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+	                      <div>
+	                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
+	                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
+	                          <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -2161,168 +2223,16 @@ export function InsumosModule() {
                         </tbody>
                       </table>
                     </div>
-                  </CardContent>
-                </Card>
+	                  </CardContent>
+	                </Card>
+	              </div>
 
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Qualidade do cadastro</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
-                      <span>Total issues:</span>
-                      <span className="font-mono">{insightsQuality?.summary?.total ?? '-'}</span>
-                      {insightsQuality?.summary?.bySeverity ? (
-                        <>
-                          <Badge variant="destructive">CRIT {insightsQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-                          <Badge variant="secondary">WARN {insightsQuality.summary.bySeverity.WARN ?? 0}</Badge>
-                          <Badge variant="default">INFO {insightsQuality.summary.bySeverity.INFO ?? 0}</Badge>
-                        </>
-                      ) : null}
-                    </div>
-                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Sev</th>
-                            <th className="text-left p-3">Código</th>
-                            <th className="text-left p-3">Mensagem</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {(insightsQuality?.issues || []).slice(0, 20).map((it, idx) => {
-                            const sev = String(it.severity || '').toUpperCase()
-                            const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
-                            return (
-                              <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
-                                <td className="p-3">
-                                  <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
-                                </td>
-                                <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
-                                <td className="p-3 text-blue-50">
-                                  {it.message || '-'}
-                                  {(it.codigoBarras || it.produto) ? (
-                                    <div className="text-xs text-blue-200/60 mt-1">
-                                      {(it.codigoBarras ? `#${it.codigoBarras}` : '')}{it.codigoBarras && it.produto ? ' • ' : ''}{it.produto || ''}
-                                    </div>
-                                  ) : null}
-                                </td>
-                              </tr>
-                            )
-                          })}
-                          {!(insightsQuality?.issues || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={3}>
-                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem issues.' : 'Faça login para carregar.'}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">Ações recomendadas</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <div className="text-sm text-blue-100/80">Reposição</div>
-                    {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-                      <button
-                        key={String(r.codigoBarras)}
-                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                        onClick={() => { if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras)) }}
-                      >
-                        <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-                        <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-                        <div className="text-xs text-blue-100/70 mt-1">
-                          sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-                          {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-                        </div>
-                      </button>
-                    ))}
-                    {!overviewActionables?.reposicao?.length ? (
-                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-                    {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-                      <button
-                        key={`${t.codigoBarras}-${t.from}-${t.to}`}
-                        className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                        onClick={() => {
-                          if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-                          if (t.qty != null) setQuickQuantidade(String(t.qty))
-                          if (t.from) setTransferFrom(String(t.from))
-                          if (t.to) setTransferTo(String(t.to))
-                        }}
-                      >
-                        <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-                        <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-                        <div className="text-xs text-blue-100/70 mt-1">
-                          <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-                          <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-                          <span className="font-mono">{t.qty ?? '-'}</span>
-                        </div>
-                      </button>
-                    ))}
-                    {!overviewActionables?.transferencias?.length ? (
-                      <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
-                    ) : null}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-base text-white font-semibold">Validade (lotes)</div>
-                  <div className="text-sm text-blue-100/70">Controle simples e operacional (OK / Vencendo / Expirado).</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">✅ Dentro do prazo</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{lotResumo.ok}</div>
-                    <div className="text-xs text-blue-200/60">status OK</div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">⚠️ Vencendo</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{lotResumo.vencendo}</div>
-                    <div className="text-xs text-blue-200/60">janela próxima</div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">❌ Expirado</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{lotResumo.expirado}</div>
-                    <div className="text-xs text-blue-200/60">risco</div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-sm">🧾 Sem validade</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-lg text-blue-50 font-mono">{lotResumo.sem}</div>
-                    <div className="text-xs text-blue-200/60">dados incompletos</div>
-                  </CardContent>
-                </Card>
-              </div>
+	              <div className="flex items-center justify-between gap-2">
+	                <div>
+	                  <div className="text-base text-white font-semibold">Validade (lotes)</div>
+	                  <div className="text-sm text-blue-100/70">Controle simples e operacional (OK / Vencendo / Expirado).</div>
+	                </div>
+	              </div>
 
               <Card className="bg-black/20 border border-white/10">
                 <CardHeader>
@@ -2932,41 +2842,11 @@ export function InsumosModule() {
               </div>
             </TabsContent>
 
-	            <TabsContent value="mov" className="mt-4 space-y-3">
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-sm">Entradas vs Saídas (por dia)</CardTitle>
-	                </CardHeader>
-	                <CardContent>
-	                  {movChartData.length ? (
-	                    <div className="h-[240px]">
-	                      <ResponsiveContainer width="100%" height="100%">
-	                        <BarChart data={movChartData}>
-	                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-	                          <XAxis dataKey="day" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 11 }} />
-	                          <YAxis tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 11 }} />
-	                          <Tooltip
-	                            contentStyle={{ backgroundColor: 'rgba(0,0,0,0.85)', border: '1px solid rgba(255,255,255,0.15)' }}
-	                            labelStyle={{ color: 'rgba(255,255,255,0.8)' }}
-	                          />
-	                          <Legend />
-	                          <Bar dataKey="entradas" name="Entradas" fill="#22c55e" />
-	                          <Bar dataKey="saidas" name="Saídas" fill="#ef4444" />
-	                        </BarChart>
-	                      </ResponsiveContainer>
-	                    </div>
-	                  ) : (
-	                    <div className="text-sm text-blue-100/60">
-	                      Sem dados para o gráfico (ajuste filtros e recarregue).
-	                    </div>
-	                  )}
-	                </CardContent>
-	              </Card>
-
-	              <div className="flex flex-wrap items-end gap-2">
-	                <div className="w-48">
-	                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
-	                  <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
+		            <TabsContent value="mov" className="mt-4 space-y-3">
+		              <div className="flex flex-wrap items-end gap-2">
+		                <div className="w-48">
+		                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
+		                  <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
 	                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -3008,46 +2888,31 @@ export function InsumosModule() {
                 </div>
                 <Button variant="secondary" onClick={() => void loadMovimentacoes()} disabled={movLoading || !isAuthed}>
                   {movLoading ? 'Carregando…' : 'Filtrar'}
-                </Button>
-              </div>
+		                </Button>
+		              </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span>
-                    Entradas: <span className="font-mono">{insightsMovReport?.resumo?.totalEntradas ?? '-'}</span>
-                  </span>
-                  <span>•</span>
-                  <span>
-                    Saídas: <span className="font-mono">{insightsMovReport?.resumo?.totalSaidas ?? '-'}</span>
-                  </span>
-                  <span>•</span>
-                  <span>
-                    Total: <span className="font-mono">{insightsMovReport?.resumo?.totalMovimentacoes ?? '-'}</span>
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const params = new URLSearchParams({
-                        unidade,
-                        ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-                        ...(movDe ? { de: movDe } : {}),
-                        ...(movAte ? { ate: movAte } : {})
-                      })
-                      window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
-                    }}
-                    disabled={!isAuthed}
-                  >
-                    Exportar CSV
-                  </Button>
-                </div>
-              </div>
+		              <div className="flex items-center justify-end">
+		                <Button
+		                  variant="outline"
+		                  size="sm"
+		                  onClick={() => {
+		                    const params = new URLSearchParams({
+		                      unidade,
+		                      ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+		                      ...(movDe ? { de: movDe } : {}),
+		                      ...(movAte ? { ate: movAte } : {})
+		                    })
+		                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+		                  }}
+		                  disabled={!isAuthed}
+		                >
+		                  Exportar CSV
+		                </Button>
+		              </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
-                <div>
-                  Página <span className="font-mono">{movPagina}</span>
+		              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+		                <div>
+		                  Página <span className="font-mono">{movPagina}</span>
                   {movTotal != null ? (
                     <>
                       {' '}
