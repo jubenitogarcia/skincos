@@ -6,6 +6,7 @@ import { qrSvg } from './lib/qr.js';
 import { getClientIp, getUserAgent } from './lib/request.js';
 import { handleBackupRoutes } from './routes/backup.js';
 import { handleAuthRoutes } from './routes/auth.js';
+import { handleAdminRoutes } from './routes/admin.js';
 import { handleExportsRoutes } from './routes/exports.js';
 import { handleAuditRoutes } from './routes/audit.js';
 import { handleMovimentacoesRoutes } from './routes/movimentacoes.js';
@@ -1479,6 +1480,18 @@ export default {
                 : { enabled: false },
         });
         if (authResp) return authResp;
+
+        const adminResp = await handleAdminRoutes({
+            request,
+            url,
+            env,
+            appOrigin,
+            withCORS,
+            requireRoles,
+            bcrypt,
+            validateUsername,
+        });
+        if (adminResp) return adminResp;
 
         // Admin: one-time migration from Google Sheets -> D1 (idempotent upsert)
         if (url.pathname === "/admin/migrate/sheets-to-d1" && request.method === "POST") {

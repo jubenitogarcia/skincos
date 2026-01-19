@@ -27,8 +27,13 @@ binding = "DB"
 database_name = "skincos-db"
 database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "skincos-backups"
+
 [vars]
 APP_ORIGIN = "https://crm.skincos.com.br"
+INSUMOS_STORAGE = "d1"
 SHEET_RANGE = "Insumos!A:AZ"
 USER_SHEET_RANGE = "Usuarios!A:AZ"
 MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
