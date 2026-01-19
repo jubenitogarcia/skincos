@@ -1504,10 +1504,12 @@ export function InsumosModule() {
 
   type ChartMetric = 'qtd' | 'valor'
   type ChartView = 'bar' | 'line' | 'pie'
+  type ChartLayout = 'square' | 'wide' | 'tall'
   type ChartSlotConfig = { presetId: ChartPresetId; metric?: ChartMetric; view?: ChartView; topN?: number }
 
   const CHARTS_SLOTS_KEY = 'skincos.insumos.charts.slots.v1'
   const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [{ presetId: 'stock_category', metric: 'valor', view: 'pie', topN: 8 }]
+  const MAX_CHARTS = 9
 
   const CHART_PRESETS: Array<{
     id: ChartPresetId
@@ -1517,13 +1519,14 @@ export function InsumosModule() {
     supportsTopN?: boolean
     defaultMetric?: ChartMetric
     defaultView?: ChartView
+    layout?: ChartLayout
   }> = [
-    { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie' },
-    { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie' },
-    { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar' },
-    { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar' },
-    { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line' },
-    { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar' }
+    { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+    { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+    { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
+    { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
+    { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
+    { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' }
   ]
 
   const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
@@ -1534,7 +1537,7 @@ export function InsumosModule() {
       const slots = Array.isArray(parsed) ? parsed : []
       const validIds = new Set(CHART_PRESETS.map((p) => p.id))
       const cleaned: ChartSlotConfig[] = slots
-        .slice(0, 3)
+        .slice(0, MAX_CHARTS)
         .map((s: any, idx: number) => {
           const fallback = DEFAULT_CHART_SLOTS[0]
           const presetId: ChartPresetId = validIds.has(String(s?.presetId)) ? (String(s.presetId) as any) : fallback.presetId
@@ -1692,7 +1695,8 @@ export function InsumosModule() {
         supportsMetric: false,
         supportsView: false,
         supportsTopN: false,
-        defaultView: 'bar' as any
+        defaultView: 'bar' as any,
+        layout: 'square' as any
       },
     []
   )
@@ -1704,11 +1708,12 @@ export function InsumosModule() {
   }, [])
 
   const renderChart = React.useCallback(
-    (slot: ChartSlotConfig) => {
+    (slot: ChartSlotConfig, opts?: { height?: number }) => {
       const presetId = slot.presetId
       const metric: ChartMetric = slot.metric === 'valor' ? 'valor' : 'qtd'
       const view: ChartView = slot.view === 'pie' || slot.view === 'line' || slot.view === 'bar' ? slot.view : 'bar'
       const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+      const height = Math.max(220, Math.min(560, Number(opts?.height) || 260))
       const tooltipFormatter = (v: any) => fmtChartValue(metric, v)
 
       if (presetId === 'stock_category' || presetId === 'stock_brand') {
@@ -1725,7 +1730,7 @@ export function InsumosModule() {
         if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
 
         return view === 'pie' ? (
-          <div className="h-[260px]">
+          <div className="w-full" style={{ height }}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={top} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
@@ -1739,7 +1744,7 @@ export function InsumosModule() {
             </ResponsiveContainer>
           </div>
         ) : (
-          <div className="h-[260px]">
+          <div className="w-full" style={{ height }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={top} layout="vertical" margin={{ left: 12, right: 12 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
@@ -1763,7 +1768,7 @@ export function InsumosModule() {
         const data = sorted.map((x) => ({ name: x.name, value: metric === 'valor' ? x.valor : x.qtd }))
         if (!data.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
         return (
-          <div className="h-[260px]">
+          <div className="w-full" style={{ height }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data} layout="vertical" margin={{ left: 12, right: 12 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
@@ -1792,7 +1797,7 @@ export function InsumosModule() {
 
         if (view === 'line') {
           return (
-            <div className="h-[260px]">
+            <div className="w-full" style={{ height }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={series as any}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
@@ -1815,7 +1820,7 @@ export function InsumosModule() {
         }
 
         return (
-          <div className="h-[260px]">
+          <div className="w-full" style={{ height }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={series as any}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
@@ -1851,7 +1856,7 @@ export function InsumosModule() {
         if (view === 'line') {
           return (
             <div>
-              <div className="h-[260px]">
+              <div className="w-full" style={{ height }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={series}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
@@ -1873,7 +1878,7 @@ export function InsumosModule() {
 
         return (
           <div>
-            <div className="h-[260px]">
+            <div className="w-full" style={{ height }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={series}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
@@ -2613,10 +2618,10 @@ export function InsumosModule() {
 			                  variant="outline"
 			                  size="sm"
 			                  onClick={() => {
-			                    if (chartSlots.length >= 3) return
+			                    if (chartSlots.length >= MAX_CHARTS) return
 			                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
 			                  }}
-			                  disabled={overviewLoading || insightsLoading || chartSlots.length >= 3}
+			                  disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
 			                >
 			                  + Adicionar
 			                </Button>
@@ -2630,16 +2635,36 @@ export function InsumosModule() {
 			                </Button>
 			              </div>
 			            </div>
-			            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+			            <div
+			              className={`grid gap-3 ${
+			                chartSlots.length === 1
+			                  ? 'grid-cols-1'
+			                  : chartSlots.length === 2
+			                    ? 'grid-cols-1 lg:grid-cols-2'
+			                    : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
+			              }`}
+			            >
 			              {chartSlots.map((slot, idx) => {
 			                const preset = presetSupports(slot.presetId)
 			                const viewOptions = presetViewOptions(slot.presetId)
 			                const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
 			                const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
 			                const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+			                const layout = (preset as any).layout as ChartLayout | undefined
+			                const baseH =
+			                  chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
+			                const height =
+			                  layout === 'tall'
+			                    ? baseH + (chartSlots.length === 1 ? 180 : 120)
+			                    : baseH
+			                const cardSpan =
+			                  chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
 
 			                return (
-			                  <Card key={`${slot.presetId}-${idx}`} className="bg-black/20 border border-white/10">
+			                  <Card
+			                    key={`${slot.presetId}-${idx}`}
+			                    className={`bg-black/20 border border-white/10 ${cardSpan}`}
+			                  >
 			                    <CardHeader className="space-y-2">
 			                      <div className="flex items-center gap-2">
 			                        <Select
@@ -2720,7 +2745,7 @@ export function InsumosModule() {
 			                      </div>
 			                    </CardHeader>
 			                    <CardContent>
-			                      {renderChart({ ...slot, view, metric, topN })}
+			                      {renderChart({ ...slot, view, metric, topN }, { height })}
 			                    </CardContent>
 			                  </Card>
 			                )
