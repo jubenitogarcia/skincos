@@ -2079,11 +2079,11 @@ export function InsumosModule() {
 			                  </div>
 			                </details>
 
-			                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-			                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-			                    Ações recomendadas
-			                  </summary>
-			                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+				                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+				                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+				                    Ações recomendadas
+				                  </summary>
+				                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
 			                    <div className="space-y-2">
 			                      <div className="text-sm text-blue-100/80">Reposição</div>
 			                      {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
@@ -2131,81 +2131,76 @@ export function InsumosModule() {
 			                      {!overviewActionables?.transferencias?.length ? (
 			                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
 			                      ) : null}
+				                    </div>
+				                  </div>
+				                </details>
+
+			                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+			                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+			                    Qualidade do cadastro{' '}
+			                    <span className="text-xs text-blue-200/60">
+			                      • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} issues` : overviewLoading ? 'Carregando…' : '—'}
+			                    </span>
+			                  </summary>
+			                  <div className="mt-3 space-y-2">
+			                    <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+			                      {overviewQuality?.summary?.bySeverity ? (
+			                        <>
+			                          <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
+			                          <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
+			                          <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
+			                        </>
+			                      ) : null}
+			                      {!overviewQuality?.summary?.total ? (
+			                        <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem issues.'}</span>
+			                      ) : null}
 			                    </div>
+
+			                    {overviewQuality?.issues?.length ? (
+			                      <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+			                        <table className="min-w-full text-sm">
+			                          <thead className="bg-black/30 text-blue-100/80">
+			                            <tr>
+			                              <th className="text-left p-3">Sev</th>
+			                              <th className="text-left p-3">Código</th>
+			                              <th className="text-left p-3">Mensagem</th>
+			                            </tr>
+			                          </thead>
+			                          <tbody className="divide-y divide-white/5">
+			                            {(overviewQuality.issues || []).slice(0, 30).map((it, idx) => {
+			                              const sev = String(it.severity || '').toUpperCase()
+			                              const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+			                              return (
+			                                <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
+			                                  <td className="p-3">
+			                                    <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+			                                  </td>
+			                                  <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
+			                                  <td className="p-3 text-blue-50">
+			                                    {it.message || '-'}
+			                                    {(it.codigoBarras || it.produto) ? (
+			                                      <div className="text-xs text-blue-200/60 mt-1">
+			                                        {(it.codigoBarras ? `#${it.codigoBarras}` : '')}
+			                                        {it.codigoBarras && it.produto ? ' • ' : ''}
+			                                        {it.produto || ''}
+			                                      </div>
+			                                    ) : null}
+			                                  </td>
+			                                </tr>
+			                              )
+			                            })}
+			                          </tbody>
+			                        </table>
+			                      </div>
+			                    ) : null}
 			                  </div>
 			                </details>
-			              </CardContent>
-			            </Card>
+				              </CardContent>
+				            </Card>
 
-	            <Card className="bg-black/20 border border-white/10">
-	              <CardHeader className="flex flex-row items-center justify-between gap-2">
-	                <CardTitle className="text-white text-base">Qualidade do cadastro</CardTitle>
-	                <div className="text-xs text-blue-200/60">
-	                  {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} issues` : overviewLoading ? 'Carregando…' : '—'}
-	                </div>
-	              </CardHeader>
-	              <CardContent className="space-y-2">
-	                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
-	                  {overviewQuality?.summary?.bySeverity ? (
-	                    <>
-	                      <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-	                      <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
-	                      <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
-	                    </>
-	                  ) : null}
-	                  {!overviewQuality?.summary?.total ? (
-	                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem issues.'}</span>
-	                  ) : null}
-	                </div>
-
-	                {overviewQuality?.issues?.length ? (
-	                  <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-	                    <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-	                      Ver detalhes
-	                    </summary>
-	                    <div className="mt-3 overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-	                      <table className="min-w-full text-sm">
-	                        <thead className="bg-black/30 text-blue-100/80">
-	                          <tr>
-	                            <th className="text-left p-3">Sev</th>
-	                            <th className="text-left p-3">Código</th>
-	                            <th className="text-left p-3">Mensagem</th>
-	                          </tr>
-	                        </thead>
-	                        <tbody className="divide-y divide-white/5">
-	                          {(overviewQuality.issues || []).slice(0, 30).map((it, idx) => {
-	                            const sev = String(it.severity || '').toUpperCase()
-	                            const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
-	                            return (
-	                              <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
-	                                <td className="p-3">
-	                                  <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
-	                                </td>
-	                                <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
-	                                <td className="p-3 text-blue-50">
-	                                  {it.message || '-'}
-	                                  {(it.codigoBarras || it.produto) ? (
-	                                    <div className="text-xs text-blue-200/60 mt-1">
-	                                      {(it.codigoBarras ? `#${it.codigoBarras}` : '')}
-	                                      {it.codigoBarras && it.produto ? ' • ' : ''}
-	                                      {it.produto || ''}
-	                                    </div>
-	                                  ) : null}
-	                                </td>
-	                              </tr>
-	                            )
-	                          })}
-	                        </tbody>
-	                      </table>
-	                    </div>
-	                  </details>
-	                ) : null}
-	              </CardContent>
-	            </Card>
-
-	            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
+		            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+		              <Card className="bg-black/20 border border-white/10">
+		                <CardHeader>
 	                  <CardTitle className="text-white text-base">Distribuição por categoria</CardTitle>
                 </CardHeader>
                 <CardContent>
