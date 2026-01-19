@@ -1400,6 +1400,11 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
+    void loadInsights()
+  }, [canUseApi, isAuthed, loadInsights])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
     if (activeTab === 'insumos') {
       void loadInsumos()
       void loadShareHistory()
@@ -1763,66 +1768,46 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <div ref={quickSectionRef} className="max-w-2xl mx-auto">
-        <Card className="glass-morphism border border-white/10">
-          <CardHeader className="space-y-3">
-            <CardTitle className="text-white">Operações</CardTitle>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <Button
-                className="!bg-green-600 hover:!bg-green-700 !text-white"
-                onClick={() => {
-                  setQuickOp('ENTRADA')
-                }}
-                disabled={!isAuthed}
-              >
-                Entrada
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  setQuickOp('BAIXA')
-                }}
-                disabled={!isAuthed}
-              >
-                Saída
-              </Button>
-              <Button
-                className="!bg-blue-600 hover:!bg-blue-700 !text-white"
-                onClick={() => {
-                  setQuickOp('TRANSFERENCIA')
-                }}
-                disabled={!isAuthed}
-              >
-                Transferência
-              </Button>
-            </div>
-            <div className="lg:hidden space-y-1">
-              <div className="text-xs text-blue-200/70">Unidade</div>
-              <Select value={unidade} onValueChange={setUnidade}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {unidadeOptions.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {unidadeLabel(u)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm text-blue-100/70">
-              Unidade atual: <span className="font-semibold text-blue-100">{unidadeLabel(unidade)}</span>
-            </div>
-            {offlineQueueCount > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                Pendências: {offlineQueueCount}
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
+      <div ref={quickSectionRef} className="max-w-6xl mx-auto flex items-center justify-end gap-2">
+        {offlineQueueCount > 0 ? (
+          <Button
+            variant="outline"
+            className="h-9 px-3"
+            onClick={() => setOfflineDialogOpen(true)}
+            disabled={!isAuthed}
+            title="Pendências offline"
+          >
+            Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+          </Button>
+        ) : null}
+        <Button
+          className="h-9 w-9 p-0 !bg-green-600 hover:!bg-green-700 !text-white"
+          onClick={() => setQuickOp('ENTRADA')}
+          disabled={!isAuthed}
+          title="Entrada"
+          aria-label="Entrada"
+        >
+          +
+        </Button>
+        <Button
+          className="h-9 w-9 p-0"
+          variant="destructive"
+          onClick={() => setQuickOp('BAIXA')}
+          disabled={!isAuthed}
+          title="Saída"
+          aria-label="Saída"
+        >
+          −
+        </Button>
+        <Button
+          className="h-9 w-9 p-0 !bg-blue-600 hover:!bg-blue-700 !text-white"
+          onClick={() => setQuickOp('TRANSFERENCIA')}
+          disabled={!isAuthed}
+          title="Transferência"
+          aria-label="Transferência"
+        >
+          ⟲
+        </Button>
       </div>
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto">
@@ -1845,8 +1830,12 @@ export function InsumosModule() {
                     <SelectItem value="1y">1 ano</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="secondary" onClick={loadOverview} disabled={overviewLoading || !isAuthed}>
-                  {overviewLoading ? 'Carregando…' : 'Recarregar'}
+                <Button
+                  variant="secondary"
+                  onClick={() => void Promise.allSettled([loadOverview(), loadInsights()])}
+                  disabled={(!isAuthed) || overviewLoading || insightsLoading}
+                >
+                  {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
                 </Button>
               </div>
             </div>
@@ -2027,40 +2016,97 @@ export function InsumosModule() {
                   </div>
                 </CardContent>
               </Card>
+            </div>
+
+            <Card className="bg-black/20 border border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white text-base">Tendências (30d)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {Array.isArray(insightsTrends?.buckets) && insightsTrends.buckets.length ? (
+                  <div className="h-[260px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={(insightsTrends.buckets || []).slice(-30)}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                        <XAxis dataKey="bucket" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                        <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="entradaQtd" name="Entradas" fill="#22c55e" />
+                        <Bar dataKey="saidaQtd" name="Saídas" fill="#ef4444" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+                )}
+                <div className="text-xs text-blue-200/60 mt-2">
+                  Saldo (qtd):{' '}
+                  <span className="font-mono">
+                    {insightsTrends?.totals ? Number(insightsTrends.totals.saldoQtd || 0).toFixed(0) : '-'}
+                  </span>
+                  {' • '}
+                  Saldo (valor):{' '}
+                  <span className="font-mono">
+                    {insightsTrends?.totals ? fmtMoneyBRL(Number(insightsTrends.totals.saldoValor || 0)) : '-'}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <Card className="bg-black/20 border border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Categoria</th>
+                            <th className="text-right p-3">Qtd</th>
+                            <th className="text-right p-3">Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {(insightsTurnover.categories || []).slice(0, 10).map((c: any, idx: number) => (
+                            <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
+                              <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
+                              <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+                  )}
+                  <div className="text-xs text-blue-200/60">Use “Movimentações” (De/Até) e recarregue.</div>
+                </CardContent>
+              </Card>
 
               <Card className="bg-black/20 border border-white/10">
                 <CardHeader>
-                  <CardTitle className="text-white text-base">Qualidade</CardTitle>
+                  <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2">
+                <CardContent className="space-y-1">
                   <div className="text-sm text-blue-100/80">
-                    Issues: <span className="font-mono">{overviewQuality?.summary?.total ?? '-'}</span>
+                    Expirados: <span className="font-mono">{insightsRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+                    {insightsRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(insightsRoi.perdas.valorExpirado) || 0) : '-'}
                   </div>
-                  {overviewQuality?.summary?.bySeverity ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-                      <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
-                      <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
-                    </div>
-                  ) : null}
-                  <div className="text-xs text-blue-200/60">
-                    ROI risco vencendo:{' '}
-                    <span className="font-mono">
-                      {overviewRoi?.perdas?.valorRiscoVencendo != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0) : '-'}
-                    </span>
+                  <div className="text-sm text-blue-100/80">
+                    Vencendo: <span className="font-mono">{insightsRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+                    {insightsRoi?.perdas?.valorRiscoVencendo != null
+                      ? fmtMoneyBRL(Number(insightsRoi.perdas.valorRiscoVencendo) || 0)
+                      : '-'}
                   </div>
-                  <div className="space-y-2 pt-1">
-                    {(overviewQuality?.issues || []).slice(0, 3).map((it, idx) => (
-                      <div key={`${it.code || ''}-${idx}`} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <Badge variant={severityBadgeVariant(it.severity)}>{String(it.severity || 'INFO').toUpperCase()}</Badge>
-                          <span className="text-xs text-blue-200/60 font-mono">{it.code || ''}</span>
-                        </div>
-                        <div className="text-sm text-blue-50 mt-1">{it.message || '-'}</div>
-                        {it.suggestion ? <div className="text-xs text-blue-200/60 mt-1">{it.suggestion}</div> : null}
-                      </div>
-                    ))}
+                  <div className="text-sm text-blue-100/80">
+                    Rupturas (estoque 0): <span className="font-mono">{insightsRoi?.ruptura?.itensRuptura ?? '-'}</span>
                   </div>
+                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
                 </CardContent>
               </Card>
             </div>
@@ -2094,7 +2140,7 @@ export function InsumosModule() {
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
             <TabsList className="bg-black/20 flex flex-wrap">
               <TabsTrigger value="insumos">Insumos</TabsTrigger>
-              <TabsTrigger value="lotes">Lotes</TabsTrigger>
+              <TabsTrigger value="lotes">Avisos</TabsTrigger>
               <TabsTrigger value="mov">Movimentações</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
             </TabsList>
@@ -2102,12 +2148,186 @@ export function InsumosModule() {
             <TabsContent value="lotes" className="mt-4 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <div className="text-base text-white font-semibold">Rastreamento de lotes & validade</div>
+                  <div className="text-base text-white font-semibold">Avisos</div>
+                  <div className="text-sm text-blue-100/70">Alertas de estoque, qualidade do cadastro e validade (lotes).</div>
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() => void Promise.allSettled([loadInsights(), loadInsumos()])}
+                  disabled={(!isAuthed) || insightsLoading || insumosLoading}
+                >
+                  {(insightsLoading || insumosLoading) ? 'Atualizando…' : 'Recarregar'}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm text-blue-100/70">
+                        Itens abaixo do mínimo: <span className="font-mono">{insightsAlertasFiltrados.length}</span>{' '}
+                        • urgentes:{' '}
+                        <span className="font-mono">
+                          {insightsAlertasFiltrados.filter((a) => calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0) === 'URGENTE').length}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
+                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="TODOS">Todos</SelectItem>
+                            <SelectItem value="ATENCAO">Atenção</SelectItem>
+                            <SelectItem value="URGENTE">Urgente</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+                        <Select value={alertasCategoria || '__ALL__'} onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__ALL__">Todas</SelectItem>
+                            {alertasCategorias.map((c) => (
+                              <SelectItem key={c} value={c}>
+                                {c}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
+                        <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
+                      </div>
+                    </div>
+
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-left p-3">Categoria</th>
+                            <th className="text-left p-3">Status</th>
+                            <th className="text-right p-3">Atual</th>
+                            <th className="text-right p-3">Mín</th>
+                            <th className="text-right p-3">Dif</th>
+                            <th className="text-right p-3">%</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
+                            const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
+                            return (
+                              <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                                <td className="p-3 text-blue-50">
+                                  <div className="text-blue-50">{a.produto || '-'}</div>
+                                  <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
+                                </td>
+                                <td className="p-3 text-blue-100/80">
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
+                                    <span className="truncate">{a.categoria || '-'}</span>
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
+                                </td>
+                                <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
+                                <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
+                                <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
+                                <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
+                              </tr>
+                            )
+                          })}
+                          {!insightsAlertasFiltrados.length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={7}>
+                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">Qualidade do cadastro</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+                      <span>Total issues:</span>
+                      <span className="font-mono">{insightsQuality?.summary?.total ?? '-'}</span>
+                      {insightsQuality?.summary?.bySeverity ? (
+                        <>
+                          <Badge variant="destructive">CRIT {insightsQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
+                          <Badge variant="secondary">WARN {insightsQuality.summary.bySeverity.WARN ?? 0}</Badge>
+                          <Badge variant="default">INFO {insightsQuality.summary.bySeverity.INFO ?? 0}</Badge>
+                        </>
+                      ) : null}
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Sev</th>
+                            <th className="text-left p-3">Código</th>
+                            <th className="text-left p-3">Mensagem</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {(insightsQuality?.issues || []).slice(0, 20).map((it, idx) => {
+                            const sev = String(it.severity || '').toUpperCase()
+                            const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+                            return (
+                              <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
+                                <td className="p-3">
+                                  <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+                                </td>
+                                <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
+                                <td className="p-3 text-blue-50">
+                                  {it.message || '-'}
+                                  {(it.codigoBarras || it.produto) ? (
+                                    <div className="text-xs text-blue-200/60 mt-1">
+                                      {(it.codigoBarras ? `#${it.codigoBarras}` : '')}{it.codigoBarras && it.produto ? ' • ' : ''}{it.produto || ''}
+                                    </div>
+                                  ) : null}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                          {!(insightsQuality?.issues || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={3}>
+                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem issues.' : 'Faça login para carregar.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-base text-white font-semibold">Validade (lotes)</div>
                   <div className="text-sm text-blue-100/70">Controle simples e operacional (OK / Vencendo / Expirado).</div>
                 </div>
-                <Button variant="secondary" onClick={loadInsumos} disabled={insumosLoading || !isAuthed}>
-                  {insumosLoading ? 'Atualizando…' : 'Atualizar'}
-                </Button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -2923,276 +3143,13 @@ export function InsumosModule() {
 
             <TabsContent value="insights" className="mt-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-blue-100/70">
-                  Relatórios, alertas e qualidade do cadastro (usa as mesmas datas/filtros de movimentações).
-                </div>
+                <div className="text-sm text-blue-100/70">Relatórios e ferramentas (export, QR e análises detalhadas).</div>
                 <Button variant="secondary" onClick={loadInsights} disabled={insightsLoading || !isAuthed}>
                   {insightsLoading ? 'Carregando…' : 'Recarregar'}
                 </Button>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Tendências (30d)</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {Array.isArray(insightsTrends?.buckets) && insightsTrends.buckets.length ? (
-                      <div className="h-[260px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={(insightsTrends.buckets || []).slice(-30)}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                            <XAxis dataKey="bucket" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                            <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                            <Tooltip />
-                            <Legend />
-                            <Bar dataKey="entradaQtd" name="Entradas" fill="#22c55e" />
-                            <Bar dataKey="saidaQtd" name="Saídas" fill="#ef4444" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-                    )}
-                    <div className="text-xs text-blue-200/60 mt-2">
-                      Saldo (qtd):{' '}
-                      <span className="font-mono">
-                        {insightsTrends?.totals ? Number(insightsTrends.totals.saldoQtd || 0).toFixed(0) : '-'}
-                      </span>
-                      {' • '}
-                      Saldo (valor):{' '}
-                      <span className="font-mono">
-                        {insightsTrends?.totals ? fmtMoneyBRL(Number(insightsTrends.totals.saldoValor || 0)) : '-'}
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-                      <div className="overflow-auto rounded-xl border border-white/10">
-                        <table className="min-w-full text-sm">
-                          <thead className="bg-black/30 text-blue-100/80">
-                            <tr>
-                              <th className="text-left p-3">Categoria</th>
-                              <th className="text-right p-3">Qtd</th>
-                              <th className="text-right p-3">Valor</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5">
-                            {(insightsTurnover.categories || []).slice(0, 10).map((c: any, idx: number) => (
-                              <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
-                                <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
-                                <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
-                                <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-                    )}
-                    <div className="text-xs text-blue-200/60">
-                      Dica: ajuste o período em “Movimentações” (De/Até) e recarregue os Insights.
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Alertas de estoque</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm text-blue-100/70">
-                        Itens abaixo do mínimo: <span className="font-mono">{insightsAlertasFiltrados.length}</span>{' '}
-                        • urgentes:{' '}
-                        <span className="font-mono">
-                          {insightsAlertasFiltrados.filter((a) => calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0) === 'URGENTE').length}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
-                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="TODOS">Todos</SelectItem>
-                            <SelectItem value="ATENCAO">Atenção</SelectItem>
-                            <SelectItem value="URGENTE">Urgente</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                        <Select value={alertasCategoria || '__ALL__'} onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__ALL__">Todas</SelectItem>
-                            {alertasCategorias.map((c) => (
-                              <SelectItem key={c} value={c}>
-                                {c}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
-                        <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
-                      </div>
-                    </div>
-
-                    <div className="overflow-auto rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-left p-3">Categoria</th>
-                            <th className="text-left p-3">Status</th>
-                            <th className="text-right p-3">Atual</th>
-                            <th className="text-right p-3">Mín</th>
-                            <th className="text-right p-3">Dif</th>
-                            <th className="text-right p-3">%</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
-                            const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
-                            return (
-                              <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-                                <td className="p-3 text-blue-50">
-                                  <div className="text-blue-50">{a.produto || '-'}</div>
-                                  <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
-                                </td>
-                                <td className="p-3 text-blue-100/80">
-                                  <div className="flex items-center gap-2">
-                                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
-                                    <span className="truncate">{a.categoria || '-'}</span>
-                                  </div>
-                                </td>
-                                <td className="p-3">
-                                  <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
-                                </td>
-                                <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
-                                <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
-                                <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
-                                <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
-                              </tr>
-                            )
-                          })}
-                          {!insightsAlertasFiltrados.length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={7}>
-                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-1">
-                    <div className="text-sm text-blue-100/80">
-                      Expirados: <span className="font-mono">{insightsRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-                      {insightsRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(insightsRoi.perdas.valorExpirado) || 0) : '-'}
-                    </div>
-                    <div className="text-sm text-blue-100/80">
-                      Vencendo: <span className="font-mono">{insightsRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-                      {insightsRoi?.perdas?.valorRiscoVencendo != null
-                        ? fmtMoneyBRL(Number(insightsRoi.perdas.valorRiscoVencendo) || 0)
-                        : '-'}
-                    </div>
-                    <div className="text-sm text-blue-100/80">
-                      Rupturas (estoque 0): <span className="font-mono">{insightsRoi?.ruptura?.itensRuptura ?? '-'}</span>
-                    </div>
-                    <div className="text-xs text-blue-200/60 mt-2">
-                      Dica: use “Movimentações” para filtrar por data e baixar CSV.
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10 lg:col-span-2">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">Qualidade do cadastro</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
-                      <span>Total issues:</span>
-                      <span className="font-mono">{insightsQuality?.summary?.total ?? '-'}</span>
-                      {insightsQuality?.summary?.bySeverity ? (
-                        <>
-                          <Badge variant="destructive">CRIT {insightsQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-                          <Badge variant="secondary">WARN {insightsQuality.summary.bySeverity.WARN ?? 0}</Badge>
-                          <Badge variant="default">INFO {insightsQuality.summary.bySeverity.INFO ?? 0}</Badge>
-                        </>
-                      ) : null}
-                      <span className="text-blue-200/60">
-                        (amostra: {Array.isArray(insightsQuality?.issues) ? insightsQuality!.issues!.length : 0})
-                      </span>
-                    </div>
-                    <div className="overflow-auto rounded-xl border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Sev</th>
-                            <th className="text-left p-3">Código</th>
-                            <th className="text-left p-3">Mensagem</th>
-                            <th className="text-left p-3">Sugestão</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {(insightsQuality?.issues || []).slice(0, 40).map((it, idx) => {
-                            const sev = String(it.severity || '').toUpperCase()
-                            const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
-                            return (
-                              <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
-                                <td className="p-3">
-                                  <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
-                                </td>
-                                <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
-                                <td className="p-3 text-blue-50">
-                                  {it.message || '-'}
-                                  {(it.codigoBarras || it.produto) ? (
-                                    <div className="text-xs text-blue-200/60 mt-1">
-                                      {(it.codigoBarras ? `#${it.codigoBarras}` : '')}{it.codigoBarras && it.produto ? ' • ' : ''}{it.produto || ''}
-                                    </div>
-                                  ) : null}
-                                </td>
-                                <td className="p-3 text-blue-100/70">{it.suggestion || '-'}</td>
-                              </tr>
-                            )
-                          })}
-                          {!(insightsQuality?.issues || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem issues.' : 'Faça login para carregar.'}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-
                 <Card className="bg-black/20 border border-white/10">
                   <CardHeader>
                     <CardTitle className="text-white text-base">Distribuição (por categoria)</CardTitle>
