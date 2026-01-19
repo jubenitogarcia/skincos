@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 type InsumosHealth = {
   ok?: boolean
@@ -137,8 +137,6 @@ type QualityReport = {
   issues?: QualityIssue[]
 }
 
-type StockDistributionItem = { name?: string; value?: number }
-
 type ShareFile = {
   name: string
   size?: number
@@ -245,6 +243,18 @@ function fmtDayShort(isoDay?: string) {
   const d = new Date(`${isoDay}T00:00:00.000Z`)
   if (Number.isNaN(d.getTime())) return String(isoDay)
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+}
+
+function isoDayWeekStart(isoDay?: string) {
+  const v = String(isoDay || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return ''
+  const d = new Date(`${v}T00:00:00.000Z`)
+  if (Number.isNaN(d.getTime())) return ''
+  const dow = d.getUTCDay() // 0=Sun
+  const diff = (dow + 6) % 7 // days since Monday
+  const start = new Date(d)
+  start.setUTCDate(start.getUTCDate() - diff)
+  return start.toISOString().slice(0, 10)
 }
 
 function isoToBrDate(value?: string | null) {
@@ -543,9 +553,10 @@ export function InsumosModule() {
   const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '90d' | '1y'>('30d')
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
-  const [overviewStockDist, setOverviewStockDist] = React.useState<StockDistributionItem[]>([])
   const [overviewMovResumo, setOverviewMovResumo] = React.useState<{ entradaQtd: number; saidaQtd: number; entradaValor: number; saidaValor: number; saldoLiquido: number } | null>(null)
-  const [overviewMovSeries, setOverviewMovSeries] = React.useState<Array<{ day: string; entrada: number; saida: number }>>([])
+  const [overviewMovSeries, setOverviewMovSeries] = React.useState<
+    Array<{ day: string; entrada: number; saida: number; entradaValor?: number; saidaValor?: number }>
+  >([])
 
   const [insightsLoading, setInsightsLoading] = React.useState(false)
   const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
@@ -1155,13 +1166,12 @@ export function InsumosModule() {
       const ate = yyyyMmDd(now)
 
       const params = `unidade=${encodeURIComponent(unidade)}`
-      const [estoque, notif, act, roi, quality, dist, movs] = await Promise.all([
+      const [estoque, notif, act, roi, quality, movs] = await Promise.all([
         apiJson<{ success?: boolean; data?: { resumo?: EstoqueResumo } }>(`/relatorios/estoque?${params}`),
         apiJson<{ success?: boolean; data?: NotificationsSummary }>(`/notifications/summary?${params}`),
         apiJson<{ success?: boolean; data?: Actionables }>(`/analytics/actionables?${params}`),
         apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${params}`),
         apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '120' }).toString()}`),
-        apiJson<StockDistributionItem[]>(`/analytics/stock-distribution?${params}`),
         apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(
           `/movimentacoes?${new URLSearchParams({
             unidade,
@@ -1177,7 +1187,6 @@ export function InsumosModule() {
 
       setOverviewRoi(roi?.data || null)
       setOverviewQuality(quality?.data || null)
-      setOverviewStockDist(Array.isArray(dist) ? dist : [])
 
       const movList = (movs as any)?.movimentos ?? movs?.data
       const list: Movimentacao[] = Array.isArray(movList) ? movList : []
@@ -1200,18 +1209,27 @@ export function InsumosModule() {
       )
       setOverviewMovResumo({ ...resumo, saldoLiquido: resumo.entradaValor - resumo.saidaValor })
 
-      const byDay = new Map<string, { day: string; entrada: number; saida: number }>()
+      const byDay = new Map<string, { day: string; entrada: number; saida: number; entradaValor: number; saidaValor: number }>()
       for (const m of list) {
         const d = new Date(m.dataHora || '')
         if (Number.isNaN(d.getTime())) continue
         const day = d.toISOString().slice(0, 10)
-        const cur = byDay.get(day) || { day, entrada: 0, saida: 0 }
+        const cur = byDay.get(day) || { day, entrada: 0, saida: 0, entradaValor: 0, saidaValor: 0 }
         const t = String(m.tipo || '').toUpperCase().replace('Í', 'I')
-        if (t === 'ENTRADA') cur.entrada += Number(m.quantidade) || 0
-        else if (t === 'SAIDA' || t === 'SAÍDA') cur.saida += Number(m.quantidade) || 0
+        const qtd = Number(m.quantidade) || 0
+        const preco = Number((m as any).preco) || 0
+        const valor = preco * qtd
+        if (t === 'ENTRADA') {
+          cur.entrada += qtd
+          cur.entradaValor += valor
+        } else if (t === 'SAIDA' || t === 'SAÍDA') {
+          cur.saida += qtd
+          cur.saidaValor += valor
+        }
         byDay.set(day, cur)
       }
-      setOverviewMovSeries(Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)).slice(-30))
+      const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+      setOverviewMovSeries(Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)).slice(-limit))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setOverviewResumo(null)
@@ -1219,7 +1237,6 @@ export function InsumosModule() {
       setOverviewActionables(null)
       setOverviewRoi(null)
       setOverviewQuality(null)
-      setOverviewStockDist([])
       setOverviewMovResumo(null)
       setOverviewMovSeries([])
     } finally {
@@ -1260,14 +1277,15 @@ export function InsumosModule() {
 
 	      const trendsParams = new URLSearchParams(base.toString())
 	      trendsParams.set('groupBy', 'day')
-	      trendsParams.set('days', '30')
+	      const days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+	      trendsParams.set('days', String(days))
 	      const deIso = dateInputToIso(movDe)
 	      const ateIso = dateInputToIso(movAte)
 	      if (deIso) trendsParams.set('from', deIso)
 	      if (ateIso) trendsParams.set('to', ateIso)
 
 	      const turnoverParams = new URLSearchParams(base.toString())
-	      turnoverParams.set('days', '30')
+	      turnoverParams.set('days', String(days))
 	      turnoverParams.set('mode', 'saida')
 	      if (deIso) turnoverParams.set('from', deIso)
 	      if (ateIso) turnoverParams.set('to', ateIso)
@@ -1289,7 +1307,7 @@ export function InsumosModule() {
     } finally {
       setInsightsLoading(false)
     }
-  }, [canUseApi, isAuthed, movAte, movDe, movTipo, unidade])
+	  }, [canUseApi, isAuthed, movAte, movDe, movTipo, overviewPeriod, unidade])
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
@@ -1476,19 +1494,412 @@ export function InsumosModule() {
     })
   }, [insumos, lotBusca, lotFiltroCategoria, lotFiltroValidade])
 
-  const overviewStockDistPie = React.useMemo(() => {
-    if (!overviewStockDist.length) return []
-    const sorted = [...overviewStockDist].sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
-    const topN = 8
-    const top = sorted.slice(0, topN).map((c) => ({
-      name: c.name || 'Outros',
-      value: Number(c.value) || 0,
-      color: getCategoriaBgColor(c.name || 'Outros')
-    }))
-    const restValue = sorted.slice(topN).reduce((acc, c) => acc + (Number(c.value) || 0), 0)
-    if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
-    return top
-  }, [overviewStockDist])
+  type ChartPresetId =
+    | 'stock_category'
+    | 'stock_brand'
+    | 'stock_top'
+    | 'mov_inout'
+    | 'mov_saldo'
+    | 'trends_inout'
+
+  type ChartMetric = 'qtd' | 'valor'
+  type ChartView = 'bar' | 'line' | 'pie'
+  type ChartSlotConfig = { presetId: ChartPresetId; metric?: ChartMetric; view?: ChartView; topN?: number }
+
+  const CHARTS_SLOTS_KEY = 'skincos.insumos.charts.slots.v1'
+  const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [
+    { presetId: 'stock_category', metric: 'valor', view: 'pie', topN: 8 },
+    { presetId: 'mov_inout', metric: 'qtd', view: 'bar' },
+    { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }
+  ]
+
+  const CHART_PRESETS: Array<{
+    id: ChartPresetId
+    label: string
+    supportsMetric?: boolean
+    supportsView?: boolean
+    supportsTopN?: boolean
+    defaultMetric?: ChartMetric
+    defaultView?: ChartView
+  }> = [
+    { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie' },
+    { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie' },
+    { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar' },
+    { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar' },
+    { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line' },
+    { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar' }
+  ]
+
+  const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(CHARTS_SLOTS_KEY)
+      if (!raw) return DEFAULT_CHART_SLOTS
+      const parsed = JSON.parse(raw)
+      const slots = Array.isArray(parsed) ? parsed : []
+      const validIds = new Set(CHART_PRESETS.map((p) => p.id))
+      const cleaned: ChartSlotConfig[] = slots
+        .slice(0, 3)
+        .map((s: any, idx: number) => {
+          const presetId: ChartPresetId = validIds.has(String(s?.presetId)) ? (String(s.presetId) as any) : DEFAULT_CHART_SLOTS[idx].presetId
+          const preset = CHART_PRESETS.find((p) => p.id === presetId)
+          const metric: ChartMetric | undefined = s?.metric === 'valor' || s?.metric === 'qtd' ? s.metric : preset?.defaultMetric
+          const view: ChartView | undefined = s?.view === 'bar' || s?.view === 'line' || s?.view === 'pie' ? s.view : preset?.defaultView
+          const topN = Math.max(5, Math.min(15, parseInt(String(s?.topN ?? ''), 10) || 0)) || DEFAULT_CHART_SLOTS[idx].topN
+          return { presetId, metric, view, topN }
+        })
+      while (cleaned.length < 3) cleaned.push(DEFAULT_CHART_SLOTS[cleaned.length])
+      return cleaned
+    } catch {
+      return DEFAULT_CHART_SLOTS
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(CHARTS_SLOTS_KEY, JSON.stringify(chartSlots))
+    } catch {
+      // ignore
+    }
+  }, [chartSlots])
+
+  const setChartSlot = React.useCallback((idx: number, next: Partial<ChartSlotConfig>) => {
+    setChartSlots((prev) => {
+      const copy = [...prev]
+      const cur = copy[idx] || DEFAULT_CHART_SLOTS[idx]
+      const presetId = (next.presetId ?? cur.presetId) as ChartPresetId
+      const preset = CHART_PRESETS.find((p) => p.id === presetId)
+      const metric = next.metric ?? cur.metric ?? preset?.defaultMetric
+      const view = next.view ?? cur.view ?? preset?.defaultView
+      const topN = next.topN ?? cur.topN
+      copy[idx] = { ...cur, ...next, presetId, metric, view, topN }
+      return copy
+    })
+  }, [])
+
+  const fmtChartValue = React.useCallback(
+    (metric: ChartMetric, v: any) => {
+      const n = Number(v) || 0
+      return metric === 'valor' ? fmtMoneyBRL(n) : String(Math.round(n))
+    },
+    []
+  )
+
+  const stockAgg = React.useMemo(() => {
+    const byCategoria = new Map<string, { name: string; qtd: number; valor: number }>()
+    const byMarca = new Map<string, { name: string; qtd: number; valor: number }>()
+    const byProduto = new Map<string, { name: string; qtd: number; valor: number }>()
+
+    for (const i of insumos || []) {
+      const estoque = Number(i.estoqueAtual) || 0
+      if (!estoque) continue
+      const preco = Number(i.precoCusto) || 0
+      const valor = estoque * preco
+
+      const cat = String(i.categoria || 'Outros').trim() || 'Outros'
+      const brand = String(i.marca || 'Sem marca').trim() || 'Sem marca'
+      const prod = String(i.produto || i.codigoBarras || 'Item').trim() || 'Item'
+
+      const c = byCategoria.get(cat) || { name: cat, qtd: 0, valor: 0 }
+      c.qtd += estoque
+      c.valor += valor
+      byCategoria.set(cat, c)
+
+      const b = byMarca.get(brand) || { name: brand, qtd: 0, valor: 0 }
+      b.qtd += estoque
+      b.valor += valor
+      byMarca.set(brand, b)
+
+      const p = byProduto.get(prod) || { name: prod, qtd: 0, valor: 0 }
+      p.qtd += estoque
+      p.valor += valor
+      byProduto.set(prod, p)
+    }
+
+    const toSorted = (m: Map<string, { name: string; qtd: number; valor: number }>) =>
+      Array.from(m.values()).sort((a, b) => b.valor - a.valor)
+
+    return {
+      byCategoria: toSorted(byCategoria),
+      byMarca: toSorted(byMarca),
+      byProduto: toSorted(byProduto)
+    }
+  }, [insumos])
+
+  const fmtBucketLabel = React.useCallback((bucket: string) => {
+    const b = String(bucket || '')
+    if (/^\d{4}-\d{2}-\d{2}$/.test(b)) return fmtDayShort(b)
+    return b
+  }, [])
+
+  const trendsSeriesRaw = React.useMemo(() => {
+    const buckets = Array.isArray((insightsTrends as any)?.buckets) ? ((insightsTrends as any).buckets as any[]) : []
+    return buckets.map((b) => {
+      const entradaQtd = Number(b.entradaQtd ?? b.inQty ?? b.entrada ?? 0) || 0
+      const saidaQtd = Number(b.saidaQtd ?? b.outQty ?? b.saida ?? 0) || 0
+      const entradaValor = Number(b.entradaValor ?? b.inValue ?? b.entradaV ?? 0) || 0
+      const saidaValor = Number(b.saidaValor ?? b.outValue ?? b.saidaV ?? 0) || 0
+      return {
+        bucket: String(b.bucket ?? b.day ?? b.date ?? ''),
+        entradaQtd,
+        saidaQtd,
+        saldoQtd: entradaQtd - saidaQtd,
+        entradaValor,
+        saidaValor,
+        saldoValor: entradaValor - saidaValor
+      }
+    })
+  }, [insightsTrends])
+
+  const trendsSeries = React.useMemo(() => {
+    const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+    const raw = trendsSeriesRaw.slice(-limit)
+    if (overviewPeriod !== '1y') return raw
+
+    const byWeek = new Map<string, { bucket: string; entradaQtd: number; saidaQtd: number; saldoQtd: number; entradaValor: number; saidaValor: number; saldoValor: number }>()
+    for (const r of raw) {
+      const week = isoDayWeekStart(r.bucket) || String(r.bucket || '')
+      const cur =
+        byWeek.get(week) || { bucket: week, entradaQtd: 0, saidaQtd: 0, saldoQtd: 0, entradaValor: 0, saidaValor: 0, saldoValor: 0 }
+      cur.entradaQtd += Number(r.entradaQtd) || 0
+      cur.saidaQtd += Number(r.saidaQtd) || 0
+      cur.entradaValor += Number(r.entradaValor) || 0
+      cur.saidaValor += Number(r.saidaValor) || 0
+      cur.saldoQtd = cur.entradaQtd - cur.saidaQtd
+      cur.saldoValor = cur.entradaValor - cur.saidaValor
+      byWeek.set(week, cur)
+    }
+    return Array.from(byWeek.values()).sort((a, b) => String(a.bucket).localeCompare(String(b.bucket))).slice(-60)
+  }, [overviewPeriod, trendsSeriesRaw])
+
+  const movSeriesForCharts = React.useMemo(() => {
+    if (overviewPeriod !== '1y') return overviewMovSeries
+    const byWeek = new Map<string, { day: string; entrada: number; saida: number; entradaValor: number; saidaValor: number }>()
+    for (const r of overviewMovSeries) {
+      const week = isoDayWeekStart(r.day) || String(r.day || '')
+      const cur = byWeek.get(week) || { day: week, entrada: 0, saida: 0, entradaValor: 0, saidaValor: 0 }
+      cur.entrada += Number(r.entrada) || 0
+      cur.saida += Number(r.saida) || 0
+      cur.entradaValor += Number(r.entradaValor) || 0
+      cur.saidaValor += Number(r.saidaValor) || 0
+      byWeek.set(week, cur)
+    }
+    return Array.from(byWeek.values()).sort((a, b) => String(a.day).localeCompare(String(b.day))).slice(-60)
+  }, [overviewMovSeries, overviewPeriod])
+
+  const presetSupports = React.useCallback(
+    (id: ChartPresetId) =>
+      CHART_PRESETS.find((p) => p.id === id) || {
+        id,
+        label: String(id),
+        supportsMetric: false,
+        supportsView: false,
+        supportsTopN: false,
+        defaultView: 'bar' as any
+      },
+    []
+  )
+
+  const presetViewOptions = React.useCallback((id: ChartPresetId): ChartView[] => {
+    if (id === 'stock_category' || id === 'stock_brand') return ['pie', 'bar']
+    if (id === 'mov_saldo') return ['line', 'bar']
+    return ['bar', 'line']
+  }, [])
+
+  const renderChart = React.useCallback(
+    (slot: ChartSlotConfig) => {
+      const presetId = slot.presetId
+      const metric: ChartMetric = slot.metric === 'valor' ? 'valor' : 'qtd'
+      const view: ChartView = slot.view === 'pie' || slot.view === 'line' || slot.view === 'bar' ? slot.view : 'bar'
+      const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+      const tooltipFormatter = (v: any) => fmtChartValue(metric, v)
+
+      if (presetId === 'stock_category' || presetId === 'stock_brand') {
+        const base = presetId === 'stock_category' ? stockAgg.byCategoria : stockAgg.byMarca
+        const sorted = [...base].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd))
+        const top = sorted.slice(0, topN).map((x) => ({
+          name: x.name,
+          value: metric === 'valor' ? x.valor : x.qtd,
+          color: getCategoriaBgColor(x.name)
+        }))
+        const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
+        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
+
+        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+
+        return view === 'pie' ? (
+          <div className="h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={top} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
+                  {top.map((entry, idx) => (
+                    <Cell key={idx} fill={(entry as any).color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={tooltipFormatter} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={top} layout="vertical" margin={{ left: 12, right: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={110}
+                  tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }}
+                />
+                <Tooltip formatter={tooltipFormatter} />
+                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill="#60a5fa" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+
+      if (presetId === 'stock_top') {
+        const sorted = [...stockAgg.byProduto].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd)).slice(0, topN)
+        const data = sorted.map((x) => ({ name: x.name, value: metric === 'valor' ? x.valor : x.qtd }))
+        if (!data.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        return (
+          <div className="h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data} layout="vertical" margin={{ left: 12, right: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                <Tooltip formatter={tooltipFormatter} />
+                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill="#a78bfa" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+
+      if (presetId === 'mov_inout' || presetId === 'mov_saldo') {
+        if (!movSeriesForCharts.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        const series =
+          presetId === 'mov_saldo'
+            ? movSeriesForCharts.map((p) => ({
+                day: p.day,
+                saldoQtd: (Number(p.entrada) || 0) - (Number(p.saida) || 0),
+                saldoValor: (Number(p.entradaValor) || 0) - (Number(p.saidaValor) || 0)
+              }))
+            : movSeriesForCharts
+
+        const xFormatter = (d: any) => fmtDayShort(String(d))
+
+        if (view === 'line') {
+          return (
+            <div className="h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={series as any}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="day" tickFormatter={xFormatter} />
+                  <YAxis />
+                  <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
+                  <Legend />
+                  {presetId === 'mov_saldo' ? (
+                    <Line type="monotone" dataKey={metric === 'valor' ? 'saldoValor' : 'saldoQtd'} name="Saldo" stroke="#60a5fa" strokeWidth={2} dot={false} />
+                  ) : (
+                    <>
+                      <Line type="monotone" dataKey={metric === 'valor' ? 'entradaValor' : 'entrada'} name="Entrada" stroke="#22c55e" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey={metric === 'valor' ? 'saidaValor' : 'saida'} name="Saída" stroke="#ef4444" strokeWidth={2} dot={false} />
+                    </>
+                  )}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )
+        }
+
+        return (
+          <div className="h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={series as any}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                <XAxis dataKey="day" tickFormatter={xFormatter} />
+                <YAxis />
+                <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
+                <Legend />
+                {presetId === 'mov_saldo' ? (
+                  <Bar dataKey={metric === 'valor' ? 'saldoValor' : 'saldoQtd'} name="Saldo" fill="#60a5fa" radius={[4, 4, 0, 0]} />
+                ) : (
+                  <>
+                    <Bar dataKey={metric === 'valor' ? 'entradaValor' : 'entrada'} name="Entrada" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey={metric === 'valor' ? 'saidaValor' : 'saida'} name="Saída" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                  </>
+                )}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+
+      if (presetId === 'trends_inout') {
+        if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+        const series = trendsSeries.map((b) => ({
+          bucket: b.bucket,
+          entrada: metric === 'valor' ? b.entradaValor : b.entradaQtd,
+          saida: metric === 'valor' ? b.saidaValor : b.saidaQtd,
+          saldo: metric === 'valor' ? b.saldoValor : b.saldoQtd
+        }))
+        const saldoTotal = series.reduce((acc, r) => acc + (Number(r.saldo) || 0), 0)
+        const xFormatter = (b: any) => fmtBucketLabel(String(b))
+
+        if (view === 'line') {
+          return (
+            <div>
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={series}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                    <XAxis dataKey="bucket" tickFormatter={xFormatter} />
+                    <YAxis />
+                    <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
+                    <Legend />
+                    <Line type="monotone" dataKey="entrada" name="Entradas" stroke="#22c55e" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="saida" name="Saídas" stroke="#ef4444" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="text-xs text-blue-200/60 mt-2">
+                Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
+              </div>
+            </div>
+          )
+        }
+
+        return (
+          <div>
+            <div className="h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={series}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis dataKey="bucket" tickFormatter={xFormatter} tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                  <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                  <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
+                  <Legend />
+                  <Bar dataKey="entrada" name="Entradas" fill="#22c55e" />
+                  <Bar dataKey="saida" name="Saídas" fill="#ef4444" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="text-xs text-blue-200/60 mt-2">
+              Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
+            </div>
+          </div>
+        )
+      }
+
+      return <div className="text-sm text-blue-100/70">Preset indisponível.</div>
+    },
+    [fmtBucketLabel, fmtChartValue, fmtDayShort, insightsLoading, movSeriesForCharts, overviewLoading, stockAgg, trendsSeries]
+  )
 
   const alertasCategorias = React.useMemo(() => {
     return Array.from(new Set((insightsAlertas || []).map((a) => String(a.categoria || '').trim()).filter(Boolean))).sort(
@@ -2198,93 +2609,103 @@ export function InsumosModule() {
 				              </CardContent>
 				            </Card>
 
-		            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-		              <Card className="bg-black/20 border border-white/10">
-		                <CardHeader>
-	                  <CardTitle className="text-white text-base">Distribuição por categoria</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {overviewStockDistPie.length ? (
-                    <div className="h-[280px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie data={overviewStockDistPie} dataKey="value" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={2}>
-                            {overviewStockDistPie.map((entry, idx) => (
-                              <Cell key={idx} fill={(entry as any).color} />
-                            ))}
-                          </Pie>
-                          <Tooltip formatter={(v) => `${v}`} />
-                          <Legend />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-                  )}
-                </CardContent>
-              </Card>
+			            <div className="flex items-center justify-between">
+			              <div className="text-white text-base font-semibold">Gráficos</div>
+			              <Button
+			                variant="outline"
+			                size="sm"
+			                onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+			                disabled={overviewLoading || insightsLoading}
+			              >
+			                Reset
+			              </Button>
+			            </div>
+			            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+			              {chartSlots.map((slot, idx) => {
+			                const preset = presetSupports(slot.presetId)
+			                const viewOptions = presetViewOptions(slot.presetId)
+			                const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
+			                const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
+			                const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
 
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">Entrada vs Saída</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {overviewMovSeries.length ? (
-                    <div className="h-[280px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={overviewMovSeries}>
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                          <XAxis dataKey="day" tickFormatter={fmtDayShort} />
-                          <YAxis />
-                          <Tooltip labelFormatter={(d) => fmtDayShort(String(d))} />
-                          <Legend />
-                          <Bar dataKey="entrada" name="Entrada" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                          <Bar dataKey="saida" name="Saída" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+			                return (
+			                  <Card key={`${slot.presetId}-${idx}`} className="bg-black/20 border border-white/10">
+			                    <CardHeader className="space-y-2">
+			                      <div className="flex items-center justify-between gap-2">
+			                        <Select
+			                          value={slot.presetId}
+			                          onValueChange={(v) => {
+			                            const nextId = v as any
+			                            const nextPreset = presetSupports(nextId)
+			                            const nextView = nextPreset?.defaultView || presetViewOptions(nextId)[0]
+			                            setChartSlot(idx, { presetId: nextId, view: nextView as any })
+			                          }}
+			                        >
+			                          <SelectTrigger className="h-8 w-full">
+			                            <SelectValue />
+			                          </SelectTrigger>
+			                          <SelectContent>
+			                            {CHART_PRESETS.map((p) => (
+			                              <SelectItem key={p.id} value={p.id}>
+			                                {p.label}
+			                              </SelectItem>
+			                            ))}
+			                          </SelectContent>
+			                        </Select>
+			                      </div>
+			                      <div className="flex flex-wrap items-center gap-2">
+			                        {preset.supportsMetric ? (
+			                          <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
+			                            <SelectTrigger className="h-8 w-24">
+			                              <SelectValue />
+			                            </SelectTrigger>
+			                            <SelectContent>
+			                              <SelectItem value="qtd">Qtd</SelectItem>
+			                              <SelectItem value="valor">R$</SelectItem>
+			                            </SelectContent>
+			                          </Select>
+			                        ) : null}
 
-            <Card className="bg-black/20 border border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white text-base">Tendências (30d)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {Array.isArray(insightsTrends?.buckets) && insightsTrends.buckets.length ? (
-                  <div className="h-[260px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={(insightsTrends.buckets || []).slice(-30)}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                        <XAxis dataKey="bucket" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                        <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="entradaQtd" name="Entradas" fill="#22c55e" />
-                        <Bar dataKey="saidaQtd" name="Saídas" fill="#ef4444" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                ) : (
-                  <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-                )}
-                <div className="text-xs text-blue-200/60 mt-2">
-                  Saldo (qtd):{' '}
-                  <span className="font-mono">
-                    {insightsTrends?.totals ? Number(insightsTrends.totals.saldoQtd || 0).toFixed(0) : '-'}
-                  </span>
-                  {' • '}
-                  Saldo (valor):{' '}
-                  <span className="font-mono">
-                    {insightsTrends?.totals ? fmtMoneyBRL(Number(insightsTrends.totals.saldoValor || 0)) : '-'}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
+			                        {preset.supportsView && viewOptions.length > 1 ? (
+			                          <Select value={view} onValueChange={(v) => setChartSlot(idx, { view: v as any })}>
+			                            <SelectTrigger className="h-8 w-28">
+			                              <SelectValue />
+			                            </SelectTrigger>
+			                            <SelectContent>
+			                              {viewOptions.map((vv) => (
+			                                <SelectItem key={vv} value={vv}>
+			                                  {vv === 'bar' ? 'Barras' : vv === 'line' ? 'Linhas' : 'Pizza'}
+			                                </SelectItem>
+			                              ))}
+			                            </SelectContent>
+			                          </Select>
+			                        ) : null}
+
+			                        {preset.supportsTopN ? (
+			                          <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
+			                            <SelectTrigger className="h-8 w-20">
+			                              <SelectValue />
+			                            </SelectTrigger>
+			                            <SelectContent>
+			                              <SelectItem value="5">Top 5</SelectItem>
+			                              <SelectItem value="8">Top 8</SelectItem>
+			                              <SelectItem value="10">Top 10</SelectItem>
+			                              <SelectItem value="15">Top 15</SelectItem>
+			                            </SelectContent>
+			                          </Select>
+			                        ) : null}
+			                      </div>
+			                    </CardHeader>
+			                    <CardContent>
+			                      {renderChart({ ...slot, view, metric, topN })}
+			                    </CardContent>
+			                  </Card>
+			                )
+			              })}
+			            </div>
+			            <div className="text-xs text-blue-200/60">
+			              Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
+			            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <Card className="bg-black/20 border border-white/10">
