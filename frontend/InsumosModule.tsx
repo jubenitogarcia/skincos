@@ -544,6 +544,24 @@ export function InsumosModule() {
   const [createNovoLote, setCreateNovoLote] = React.useState(false)
   const [createLoading, setCreateLoading] = React.useState(false)
 
+  const [editOpen, setEditOpen] = React.useState(false)
+  const [editTarget, setEditTarget] = React.useState<Insumo | null>(null)
+  const [editCodigo, setEditCodigo] = React.useState('')
+  const [editProduto, setEditProduto] = React.useState('')
+  const [editCategoria, setEditCategoria] = React.useState('')
+  const [editMarca, setEditMarca] = React.useState('')
+  const [editTipoUnidade, setEditTipoUnidade] = React.useState('')
+  const [editEspecificacao, setEditEspecificacao] = React.useState('')
+  const [editConcentracao, setEditConcentracao] = React.useState('')
+  const [editVolume, setEditVolume] = React.useState('')
+  const [editFonte, setEditFonte] = React.useState('')
+  const [editCalibre, setEditCalibre] = React.useState('')
+  const [editPrecoCusto, setEditPrecoCusto] = React.useState('')
+  const [editEstoqueMinimo, setEditEstoqueMinimo] = React.useState('')
+  const [editLote, setEditLote] = React.useState('')
+  const [editDataValidade, setEditDataValidade] = React.useState('')
+  const [editSaving, setEditSaving] = React.useState(false)
+
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
   const [lotSelecionado, setLotSelecionado] = React.useState<Insumo | null>(null)
   const [lotEditLote, setLotEditLote] = React.useState('')
@@ -1183,6 +1201,25 @@ export function InsumosModule() {
     setLotDialogOpen(true)
   }, [])
 
+  const openEditDialog = React.useCallback((i: Insumo) => {
+    setEditTarget(i)
+    setEditCodigo(String(i.codigoBarras || ''))
+    setEditProduto(String(i.produto || ''))
+    setEditCategoria(String(i.categoria || ''))
+    setEditMarca(String(i.marca || ''))
+    setEditTipoUnidade(String(i.tipoUnidade || ''))
+    setEditEspecificacao(String(i.especificacao || ''))
+    setEditConcentracao(String(i.concentracao || ''))
+    setEditVolume(String(i.volume || ''))
+    setEditFonte(String(i.fonte || ''))
+    setEditCalibre(String(i.calibre || ''))
+    setEditPrecoCusto(i.precoCusto != null ? String(i.precoCusto) : '')
+    setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
+    setEditLote(String(i.lote || ''))
+    setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
+    setEditOpen(true)
+  }, [])
+
   const loadInsumosFull = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setInsumosLoading(true)
@@ -1386,7 +1423,7 @@ export function InsumosModule() {
     }
   }, [canUseApi, isAuthed, unidade, overviewPeriod])
 
-	  const saveLot = React.useCallback(async () => {
+  const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
       toast.error('Registro do insumo ausente.')
       return
@@ -1409,6 +1446,93 @@ export function InsumosModule() {
       setLotSaving(false)
     }
   }, [canUseApi, isAuthed, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, refreshInsumos, unidade])
+
+  const saveEdit = React.useCallback(async () => {
+    const registro = String(editTarget?.registro || '').trim()
+    if (!registro) {
+      toast.error('Registro do insumo ausente.')
+      return
+    }
+    if (!canUseApi || !isAuthed) return
+    const codigoBarras = editCodigo.trim()
+    const produto = editProduto.trim()
+    if (!codigoBarras) return toast.error('Informe o código de barras')
+    if (!produto) return toast.error('Informe o produto')
+
+    setEditSaving(true)
+    try {
+      await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
+        method: 'PUT',
+        queueLabel: 'Edição de insumo',
+        body: {
+          codigoBarras,
+          produto,
+          categoria: editCategoria.trim(),
+          marca: editMarca.trim(),
+          tipoUnidade: editTipoUnidade.trim(),
+          especificacao: editEspecificacao.trim(),
+          concentracao: editConcentracao.trim(),
+          volume: editVolume.trim(),
+          fonte: editFonte.trim(),
+          calibre: editCalibre.trim(),
+          precoCusto: editPrecoCusto.trim(),
+          estoqueMinimo: Number(editEstoqueMinimo) || 0,
+          lote: editLote.trim(),
+          dataValidade: dateInputToIso(editDataValidade)
+        }
+      })
+      toast.success('Insumo atualizado')
+      setEditOpen(false)
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setEditSaving(false)
+    }
+  }, [
+    canUseApi,
+    editCalibre,
+    editCategoria,
+    editCodigo,
+    editConcentracao,
+    editDataValidade,
+    editEspecificacao,
+    editEstoqueMinimo,
+    editFonte,
+    editLote,
+    editMarca,
+    editPrecoCusto,
+    editProduto,
+    editTarget?.registro,
+    editTipoUnidade,
+    editVolume,
+    isAuthed,
+    loadOverview,
+    mutateJson,
+    refreshInsumos,
+    unidade
+  ])
+
+  const deleteEdit = React.useCallback(async () => {
+    const registro = String(editTarget?.registro || '').trim()
+    if (!registro) return
+    if (!canUseApi || !isAuthed) return
+    if (!window.confirm('Excluir este insumo? Esta ação não pode ser desfeita.')) return
+    setEditSaving(true)
+    try {
+      await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
+        method: 'DELETE',
+        queueLabel: 'Exclusão de insumo'
+      })
+      toast.success('Insumo excluído')
+      setEditOpen(false)
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setEditSaving(false)
+    }
+  }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
 
 	  const loadInsights = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -3138,10 +3262,120 @@ export function InsumosModule() {
 		              </Card>
 			      </div>
 
-	      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
-	        <DialogContent className="max-w-xl">
-	          <DialogHeader>
-	            <DialogTitle>Editar lote/validade</DialogTitle>
+		      <Dialog
+		        open={editOpen}
+		        onOpenChange={(v) => {
+		          setEditOpen(v)
+		          if (!v) setEditTarget(null)
+		        }}
+		      >
+		        <DialogContent className="max-w-2xl">
+		          <DialogHeader>
+		            <DialogTitle>Editar insumo</DialogTitle>
+		            <DialogDescription>
+		              {editTarget?.produto || '-'} • <span className="font-mono">{editTarget?.codigoBarras || '-'}</span>
+		              {editTarget?.registro ? <span> • Reg {editTarget.registro}</span> : null}
+		            </DialogDescription>
+		          </DialogHeader>
+
+		          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
+		              <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} placeholder="789..." />
+		            </div>
+		            <div className="md:col-span-2">
+		              <div className="text-xs text-muted-foreground mb-1">Produto</div>
+		              <Input value={editProduto} onChange={(e) => setEditProduto(e.target.value)} placeholder="Nome do produto" />
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
+		              <Input value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} placeholder="ex: Anestésicos" list="edit-insumos-categorias" />
+		              <datalist id="edit-insumos-categorias">
+		                {lotCategorias.map((c) => (
+		                  <option key={c} value={c} />
+		                ))}
+		              </datalist>
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Marca</div>
+		              <Input value={editMarca} onChange={(e) => setEditMarca(e.target.value)} placeholder="ex: Galderma" list="edit-insumos-marcas" />
+		              <datalist id="edit-insumos-marcas">
+		                {insumosMarcas.map((m) => (
+		                  <option key={m} value={m} />
+		                ))}
+		              </datalist>
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
+		              <Input value={editTipoUnidade} onChange={(e) => setEditTipoUnidade(e.target.value)} placeholder="ex: Frasco" list="insumos-tipos-unidade" />
+		              <datalist id="insumos-tipos-unidade">
+		                {insumosTiposUnidade.map((t) => (
+		                  <option key={t} value={t} />
+		                ))}
+		              </datalist>
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
+		              <Input value={editPrecoCusto} onChange={(e) => setEditPrecoCusto(e.target.value)} placeholder="ex: 120,00" />
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Estoque mínimo</div>
+		              <Input value={editEstoqueMinimo} onChange={(e) => setEditEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Lote</div>
+		              <Input value={editLote} onChange={(e) => setEditLote(e.target.value)} placeholder="ex: L2026-01" />
+		            </div>
+		            <div>
+		              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
+		              <Input value={editDataValidade} onChange={(e) => setEditDataValidade(e.target.value)} placeholder="ex: 31/12/2026" />
+		            </div>
+		          </div>
+
+		          <details className="mt-2 rounded-lg border border-white/10 bg-black/10 p-3">
+		            <summary className="cursor-pointer select-none text-sm text-blue-100/80">Detalhes (opcional)</summary>
+		            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+		              <div className="md:col-span-2">
+		                <div className="text-xs text-muted-foreground mb-1">Especificação / Modelo</div>
+		                <Input value={editEspecificacao} onChange={(e) => setEditEspecificacao(e.target.value)} placeholder="ex: Base, Lidocaine" />
+		              </div>
+		              <div>
+		                <div className="text-xs text-muted-foreground mb-1">Concentração</div>
+		                <Input value={editConcentracao} onChange={(e) => setEditConcentracao(e.target.value)} placeholder="ex: 300U" />
+		              </div>
+		              <div>
+		                <div className="text-xs text-muted-foreground mb-1">Volume</div>
+		                <Input value={editVolume} onChange={(e) => setEditVolume(e.target.value)} placeholder="ex: 1ml" />
+		              </div>
+		              <div>
+		                <div className="text-xs text-muted-foreground mb-1">Calibre / Bitola</div>
+		                <Input value={editCalibre} onChange={(e) => setEditCalibre(e.target.value)} placeholder="ex: 30G" />
+		              </div>
+		              <div className="md:col-span-2">
+		                <div className="text-xs text-muted-foreground mb-1">Fonte</div>
+		                <Input value={editFonte} onChange={(e) => setEditFonte(e.target.value)} placeholder="ex: Tabela 2025" />
+		              </div>
+		            </div>
+		          </details>
+
+		          <DialogFooter>
+		            <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editSaving}>
+		              Cancelar
+		            </Button>
+		            <Button variant="destructive" onClick={deleteEdit} disabled={editSaving || !isAuthed}>
+		              Excluir
+		            </Button>
+		            <Button onClick={saveEdit} disabled={editSaving || !isAuthed}>
+		              {editSaving ? 'Salvando…' : 'Salvar'}
+		            </Button>
+		          </DialogFooter>
+		        </DialogContent>
+		      </Dialog>
+
+		      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
+		        <DialogContent className="max-w-xl">
+		          <DialogHeader>
+		            <DialogTitle>Editar lote/validade</DialogTitle>
 	            <DialogDescription>
 	              {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
 	            </DialogDescription>
@@ -3736,17 +3970,27 @@ export function InsumosModule() {
 	                            <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
 	                          </td>
                           <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
-                          <td className="p-3 text-right">
-                            <Button
-                              variant="secondary"
-                              className="h-8 px-2 text-xs"
-                              onClick={() => {
-                                if (i.codigoBarras) setQuickCodigo(i.codigoBarras)
-                              }}
-                            >
-                              Usar
-                            </Button>
-                          </td>
+	                          <td className="p-3 text-right">
+	                            <div className="flex items-center justify-end gap-2">
+	                              <Button
+	                                variant="secondary"
+	                                className="h-8 px-2 text-xs"
+	                                onClick={() => {
+	                                  if (i.codigoBarras) setQuickCodigo(i.codigoBarras)
+	                                }}
+	                              >
+	                                Usar
+	                              </Button>
+	                              <Button
+	                                variant="outline"
+	                                className="h-8 px-2 text-xs"
+	                                onClick={() => openEditDialog(i)}
+	                                disabled={!isAuthed}
+	                              >
+	                                Editar
+	                              </Button>
+	                            </div>
+	                          </td>
                         </tr>
                       )
                     })}
