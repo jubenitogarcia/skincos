@@ -710,46 +710,46 @@ export default function AppFunctionalNeatlab() {
 		                                                <div className="flex items-center gap-1 ml-2">
 		                                                    <Button
 		                                                    size="icon"
-		                                                        variant="outline"
-		                                                        className="bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+		                                                        variant="ghost"
+		                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
 		                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
 		                                                            } catch { /* ignore */ }
 	                                                        }}
-	                                                        title="Entrada"
-	                                                        aria-label="Entrada"
-	                                                    >
-	                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
+		                                                        title="Entrada"
+		                                                        aria-label="Entrada"
+		                                                    >
+		                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-9 w-9" />
 		                                                    </Button>
 		                                                    <Button
 		                                                    size="icon"
-		                                                        variant="outline"
-		                                                        className="bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+		                                                        variant="ghost"
+		                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
 		                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
 		                                                            } catch { /* ignore */ }
 	                                                        }}
-	                                                        title="Saída"
-	                                                        aria-label="Saída"
-	                                                    >
-	                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
+		                                                        title="Saída"
+		                                                        aria-label="Saída"
+		                                                    >
+		                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-9 w-9" />
 		                                                    </Button>
 		                                                    <Button
 		                                                    size="icon"
-		                                                        variant="outline"
-		                                                        className="bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+		                                                        variant="ghost"
+		                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
 		                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
 		                                                            } catch { /* ignore */ }
 	                                                        }}
-	                                                        title="Transferência"
-	                                                        aria-label="Transferência"
-	                                                    >
-	                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
-	                                                    </Button>
+		                                                        title="Transferência"
+		                                                        aria-label="Transferência"
+		                                                    >
+		                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
+		                                                    </Button>
 	                                                </div>
 		                                            </>
 			                                        ) : null}
@@ -859,8 +859,8 @@ export default function AppFunctionalNeatlab() {
                                         <div className="flex items-center gap-1">
                                             <Button
                                                 size="icon"
-                                                variant="outline"
-                                                className="bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+                                                variant="ghost"
+                                                className="bg-transparent text-white hover:bg-white/[0.10]"
                                                 onClick={() => {
                                                     try {
                                                         window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
@@ -869,12 +869,12 @@ export default function AppFunctionalNeatlab() {
                                                 title="Entrada"
                                                 aria-label="Entrada"
                                             >
-                                                <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
+                                                <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-9 w-9" />
                                             </Button>
                                             <Button
                                                 size="icon"
-                                                variant="outline"
-                                                className="bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+                                                variant="ghost"
+                                                className="bg-transparent text-white hover:bg-white/[0.10]"
                                                 onClick={() => {
                                                     try {
                                                         window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
@@ -883,12 +883,12 @@ export default function AppFunctionalNeatlab() {
                                                 title="Saída"
                                                 aria-label="Saída"
                                             >
-                                                <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
+                                                <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-9 w-9" />
                                             </Button>
                                             <Button
                                                 size="icon"
-                                                variant="outline"
-                                                className="bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+                                                variant="ghost"
+                                                className="bg-transparent text-white hover:bg-white/[0.10]"
                                                 onClick={() => {
                                                     try {
                                                         window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
@@ -897,7 +897,7 @@ export default function AppFunctionalNeatlab() {
                                                 title="Transferência"
                                                 aria-label="Transferência"
                                             >
-                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
+                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
                                             </Button>
                                         </div>
                                     </div>
