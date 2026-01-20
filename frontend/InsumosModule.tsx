@@ -2686,7 +2686,7 @@ export function InsumosModule() {
 		              <Card className="bg-black/20 border border-white/10">
 		                <CardHeader>
 		                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                        <img src="/icons/money.png" alt="" aria-hidden className="h-4 w-4" />
+                        <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
                         Valor em estoque
                       </CardTitle>
 		                </CardHeader>
@@ -2701,7 +2701,7 @@ export function InsumosModule() {
 	              <Card className="bg-black/20 border border-white/10">
 	                <CardHeader>
 	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/emergency.png" alt="" aria-hidden className="h-4 w-4" />
+                      <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
                       Críticos
                     </CardTitle>
 	                </CardHeader>
@@ -2714,7 +2714,7 @@ export function InsumosModule() {
 	              <Card className="bg-black/20 border border-white/10">
 	                <CardHeader>
 	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/warning.png" alt="" aria-hidden className="h-4 w-4" />
+                      <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
                       Estoque baixo
                     </CardTitle>
 	                </CardHeader>
@@ -2727,7 +2727,7 @@ export function InsumosModule() {
 	              <Card className="bg-black/20 border border-white/10">
 	                <CardHeader>
 	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/hourglass.png" alt="" aria-hidden className="h-4 w-4" />
+                      <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
                       Vencendo
                     </CardTitle>
 	                </CardHeader>
@@ -2740,7 +2740,7 @@ export function InsumosModule() {
 	              <Card className="bg-black/20 border border-white/10">
 	                <CardHeader>
 	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/dinamite.png" alt="" aria-hidden className="h-4 w-4" />
+                      <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
                       Expirado c/ estoque
                     </CardTitle>
 	                </CardHeader>
@@ -2753,7 +2753,7 @@ export function InsumosModule() {
 		              <Card className="bg-black/20 border border-white/10">
 		                <CardHeader>
 		                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                        <img src="/icons/chart.png" alt="" aria-hidden className="h-4 w-4" />
+                        <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
                         Movimentações
                       </CardTitle>
 		                </CardHeader>
@@ -2895,7 +2895,7 @@ export function InsumosModule() {
 				                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
 				                        <div className="flex items-center justify-between gap-2">
 				                          <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-4 w-4" />
+                                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
                                 Vencendo
                               </div>
 				                          <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
@@ -2947,7 +2947,7 @@ export function InsumosModule() {
 				                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
 				                        <div className="flex items-center justify-between gap-2">
 				                          <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-4 w-4" />
+                                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
                                 Expirado c/ estoque
                               </div>
 				                          <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
