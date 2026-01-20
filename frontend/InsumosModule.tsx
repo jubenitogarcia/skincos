@@ -327,32 +327,61 @@ function BarcodeScannerInline({
   const videoRef = React.useRef<HTMLVideoElement | null>(null)
   const rafRef = React.useRef<number | null>(null)
   const streamRef = React.useRef<MediaStream | null>(null)
+  const zxingReaderRef = React.useRef<any>(null)
+  const zxingControlsRef = React.useRef<any>(null)
+  const runTokenRef = React.useRef(0)
+  const mountedRef = React.useRef(true)
   const [error, setError] = React.useState<string | null>(null)
   const [supported, setSupported] = React.useState(true)
+  const [starting, setStarting] = React.useState(false)
+  const [running, setRunning] = React.useState(false)
+  const [needsGesture, setNeedsGesture] = React.useState(false)
+  const [mode, setMode] = React.useState<'BARCODE_DETECTOR' | 'ZXING' | 'NONE'>('BARCODE_DETECTOR')
 
-  React.useEffect(() => {
-    const Detector = (globalThis as any).BarcodeDetector
-    if (!Detector) {
+  const stop = React.useCallback(() => {
+    runTokenRef.current += 1
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+    try {
+      zxingControlsRef.current?.stop?.()
+    } catch {
+      // ignore
+    }
+    zxingControlsRef.current = null
+    try {
+      zxingReaderRef.current?.reset?.()
+    } catch {
+      // ignore
+    }
+    zxingReaderRef.current = null
+    if (streamRef.current) {
+      for (const t of streamRef.current.getTracks()) t.stop()
+    }
+    streamRef.current = null
+    if (mountedRef.current) {
+      setRunning(false)
+      setStarting(false)
+    }
+  }, [])
+
+  const start = React.useCallback(async (origin: 'auto' | 'gesture') => {
+    stop()
+    setError(null)
+    setNeedsGesture(false)
+    setStarting(true)
+    setSupported(true)
+
+    if (!navigator?.mediaDevices?.getUserMedia) {
       setSupported(false)
+      setMode('NONE')
+      if (mountedRef.current) setStarting(false)
       return
     }
 
-    let cancelled = false
-    const detector = new Detector({
-      formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e']
-    })
+    const token = runTokenRef.current
 
-    const stop = () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-      if (streamRef.current) {
-        for (const t of streamRef.current.getTracks()) t.stop()
-      }
-      streamRef.current = null
-    }
-
-    const tick = async () => {
-      if (cancelled) return
+    const tickBarcodeDetector = async (detector: any, tickToken: number) => {
+      if (tickToken !== runTokenRef.current) return
       const video = videoRef.current
       if (!video) return
       try {
@@ -366,41 +395,109 @@ function BarcodeScannerInline({
       } catch {
         // ignore detection errors and keep trying
       }
-      rafRef.current = requestAnimationFrame(() => { void tick() })
+      rafRef.current = requestAnimationFrame(() => { void tickBarcodeDetector(detector, tickToken) })
     }
 
-    ;(async () => {
-      try {
+    const Detector = (globalThis as any).BarcodeDetector
+    try {
+      if (Detector) {
+        setMode('BARCODE_DETECTOR')
+        const detector = new Detector({
+          formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e']
+        })
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: 'environment' } as any },
           audio: false
         })
-        if (cancelled) {
+        if (token !== runTokenRef.current) {
           for (const t of stream.getTracks()) t.stop()
           return
         }
         streamRef.current = stream
         const video = videoRef.current
-        if (video) {
-          video.srcObject = stream
-          await video.play()
-          rafRef.current = requestAnimationFrame(() => { void tick() })
-        }
-      } catch (e: any) {
-        setError(e?.message || 'Não foi possível acessar a câmera.')
+        if (!video) throw new Error('Pré-visualização indisponível.')
+        video.srcObject = stream
+        await video.play()
+        if (token !== runTokenRef.current) return
+        setRunning(true)
+        rafRef.current = requestAnimationFrame(() => { void tickBarcodeDetector(detector, token) })
+        return
       }
-    })()
 
+      setMode('ZXING')
+      const mod: any = await import('@zxing/browser')
+      const Reader = mod?.BrowserMultiFormatReader
+      if (!Reader) throw new Error('Scanner indisponível.')
+      const reader = new Reader()
+      zxingReaderRef.current = reader
+
+      const video = videoRef.current
+      if (!video) throw new Error('Pré-visualização indisponível.')
+
+      const controls = await reader.decodeFromConstraints(
+        { video: { facingMode: { ideal: 'environment' } } } as any,
+        video,
+        (result: any) => {
+          if (token !== runTokenRef.current) return
+          const raw = result?.getText ? String(result.getText() || '') : ''
+          if (!raw) return
+          stop()
+          onDetected(raw)
+        }
+      )
+      if (token !== runTokenRef.current) {
+        try {
+          controls?.stop?.()
+        } catch {
+          // ignore
+        }
+        return
+      }
+      zxingControlsRef.current = controls
+      setRunning(true)
+    } catch (e: any) {
+      const name = String(e?.name || '')
+      const message = String(e?.message || '')
+
+      // Safari/iOS: algumas versões exigem gesto explícito para pedir permissão de câmera.
+      if (origin === 'auto' && (name === 'NotAllowedError' || name === 'SecurityError')) {
+        setNeedsGesture(true)
+      }
+
+      if (name === 'NotFoundError') {
+        setSupported(false)
+        setMode('NONE')
+        setError('Nenhuma câmera foi encontrada neste dispositivo.')
+      } else if (!location?.protocol?.startsWith('https') && location?.hostname !== 'localhost') {
+        setSupported(false)
+        setMode('NONE')
+        setError('O scanner precisa de HTTPS para acessar a câmera.')
+      } else {
+        setError(message || 'Não foi possível iniciar o scanner. Verifique a permissão de câmera no navegador.')
+      }
+    } finally {
+      if (mountedRef.current && token === runTokenRef.current) setStarting(false)
+    }
+  }, [onDetected, stop])
+
+  React.useEffect(() => {
+    void start('auto')
     return () => {
-      cancelled = true
+      mountedRef.current = false
       stop()
     }
-  }, [onDetected])
+  }, [start, stop])
 
   if (!supported) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-        <div className="text-sm text-blue-100/70">Scanner não suportado neste navegador (BarcodeDetector indisponível).</div>
+      <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm text-blue-50 font-semibold">Scanner indisponível</div>
+          <Button variant="secondary" onClick={onClose}>Fechar</Button>
+        </div>
+        <div className="text-sm text-blue-100/70">
+          Este navegador não suporta leitura automática de códigos. Digite o código manualmente ou use Chrome/Edge.
+        </div>
       </div>
     )
   }
@@ -408,8 +505,22 @@ function BarcodeScannerInline({
   return (
     <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-blue-100/80">Aponte a câmera para o código de barras</div>
-        <Button variant="secondary" onClick={onClose}>Fechar</Button>
+        <div className="text-sm text-blue-100/80">
+          {mode === 'ZXING' ? 'Scanner (compatível)' : 'Scanner (rápido)'} • Aponte a câmera para o código
+        </div>
+        <div className="flex items-center gap-2">
+          {!running ? (
+            <Button
+              variant="outline"
+              onClick={() => void start('gesture')}
+              disabled={starting}
+              title={needsGesture ? 'Clique para solicitar permissão de câmera' : 'Tentar novamente'}
+            >
+              {starting ? 'Iniciando…' : (needsGesture ? 'Ativar câmera' : 'Tentar novamente')}
+            </Button>
+          ) : null}
+          <Button variant="secondary" onClick={() => { stop(); onClose() }}>Fechar</Button>
+        </div>
       </div>
       {error ? <div className="text-sm text-red-200">{error}</div> : null}
       <video ref={videoRef} className="w-full max-w-xl rounded-lg border border-white/10 bg-black" playsInline muted />
@@ -2410,9 +2521,9 @@ export function InsumosModule() {
           setQuickRegistro('')
         }}
       >
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl dark bg-corporate-900 border-white/10 text-white">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="text-white">
               {quickOp === 'ENTRADA'
                 ? 'Entrada'
                 : quickOp === 'BAIXA'
@@ -2421,13 +2532,13 @@ export function InsumosModule() {
                     ? 'Transferência'
                     : 'Operação'}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-blue-100/70">
               Preencha os dados para registrar a operação na unidade selecionada.
             </DialogDescription>
           </DialogHeader>
 
           {!isAuthed ? (
-            <div className="text-sm text-blue-100/70">Faça login no CRM para usar as operações de Insumos.</div>
+            <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
           ) : null}
 
           <div className="space-y-3">

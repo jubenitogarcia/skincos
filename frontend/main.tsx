@@ -18,6 +18,14 @@ import { RootProviders } from '@/RootProviders'
 
 import "./main.css"
 
+// Ensure design-system tokens (bg-background, etc.) use the intended dark palette.
+// Dialogs are rendered in a portal (outside the app root), so this must live on <html>/<body>.
+try {
+  document.documentElement.classList.add('dark')
+  document.body.classList.add('dark')
+  document.documentElement.style.colorScheme = 'dark'
+} catch { /* ignore */ }
+
 // Global error handling - only in DEV
 if (import.meta.env.DEV) {
   ; (function installRuntimeDebug() {
