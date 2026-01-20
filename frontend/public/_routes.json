@@ -4,6 +4,8 @@
         "/api/health",
         "/api/insumos",
         "/api/insumos/*",
+        "/api/unit-monitor",
+        "/api/unit-monitor/*",
         "/share",
         "/share/*"
     ],
