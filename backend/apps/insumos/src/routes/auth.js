@@ -26,6 +26,64 @@ export async function handleAuthRoutes({
     d1,
 }) {
     if (d1?.enabled) {
+        const normalizeRole = (role) => String(role || 'CONSULTOR').trim().toUpperCase();
+        const normalizeAllowedUnits = (value) => {
+            if (!value) return [];
+            if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+            if (typeof value === 'string') {
+                const s = value.trim();
+                if (!s) return [];
+                try {
+                    const parsed = JSON.parse(s);
+                    if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
+                } catch {}
+                return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
+            }
+            return [];
+        };
+
+        const sha256Hex = async (input) => {
+            const data = new TextEncoder().encode(String(input || ''));
+            const hash = await crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(hash))
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+        };
+
+        const slugifyUsername = (raw) => {
+            const s = String(raw || '').trim().toLowerCase();
+            // keep [a-z0-9._-]
+            const cleaned = s
+                .normalize('NFKD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9._-]+/g, '.')
+                .replace(/^\.+|\.+$/g, '')
+                .replace(/\.+/g, '.');
+            return cleaned.slice(0, 40);
+        };
+
+        const suggestUsername = (name, email) => {
+            const local = String(email || '').split('@')[0] || '';
+            const base = slugifyUsername(local) || slugifyUsername(name) || 'user';
+            return base.length >= 3 ? base : `${base}${Math.floor(100 + Math.random() * 900)}`;
+        };
+
+        const ensureUniqueUsername = async (base) => {
+            const b = String(base || '').trim();
+            if (!b) return null;
+            // 1) try base
+            const taken0 = await env.DB.prepare('SELECT 1 FROM insumos_users WHERE LOWER(username)=LOWER(?) LIMIT 1').bind(b).first();
+            if (!taken0) return b;
+            // 2) add numeric suffixes
+            for (let i = 0; i < 20; i++) {
+                const suffix = String(Math.floor(10 + Math.random() * 90));
+                const candidate = `${b.slice(0, Math.max(0, 40 - (suffix.length + 1)))}-${suffix}`.slice(0, 40);
+                const taken = await env.DB.prepare('SELECT 1 FROM insumos_users WHERE LOWER(username)=LOWER(?) LIMIT 1').bind(candidate).first();
+                if (!taken) return candidate;
+            }
+            return null;
+        };
+
         // GET /auth/me
         if (url.pathname === "/auth/me") {
             if (!sessionUsername) {
@@ -124,6 +182,131 @@ export async function handleAuthRoutes({
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ error: `Login error: ${err.message}` }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/register (invite-based signup)
+        if ((url.pathname === "/auth/register" || url.pathname === "/auth/signup") && request.method === "POST") {
+            try {
+                if (!env?.DB) {
+                    return withCORS(JSON.stringify({ success: false, error: "DB_NOT_CONFIGURED" }), { status: 500 }, appOrigin);
+                }
+                const body = await request.json().catch(() => ({}));
+                const name = String(body.name || '').trim();
+                const email = String(body.email || body.username || '').trim();
+                const password = String(body.password || body.senha || '').toString();
+                const inviteToken = String(body.token || body.invite || body.inviteToken || '').trim();
+
+                if (!inviteToken) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_REQUIRED" }), { status: 400 }, appOrigin);
+                }
+                if (!name) {
+                    return withCORS(JSON.stringify({ success: false, error: "NAME_REQUIRED" }), { status: 400 }, appOrigin);
+                }
+                if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+                    return withCORS(JSON.stringify({ success: false, error: "EMAIL_INVALID" }), { status: 400 }, appOrigin);
+                }
+                if (!password || password.length < 6) {
+                    return withCORS(JSON.stringify({ success: false, error: "PASSWORD_TOO_SHORT" }), { status: 400 }, appOrigin);
+                }
+
+                const inviteHash = await sha256Hex(inviteToken);
+                const now = new Date().toISOString();
+
+                const invite = await env.DB.prepare(
+                    `SELECT id, role, allowed_units_json, max_uses, uses_count, expires_at, revoked
+                     FROM insumos_invites
+                     WHERE token_hash = ?
+                     LIMIT 1`
+                )
+                    .bind(inviteHash)
+                    .first();
+
+                if (!invite?.id) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_INVALID" }), { status: 401 }, appOrigin);
+                }
+                if (Number(invite.revoked || 0)) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_REVOKED" }), { status: 403 }, appOrigin);
+                }
+                const maxUses = Math.max(1, parseInt(String(invite.max_uses || 1), 10) || 1);
+                const usesCount = Math.max(0, parseInt(String(invite.uses_count || 0), 10) || 0);
+                if (usesCount >= maxUses) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXHAUSTED" }), { status: 403 }, appOrigin);
+                }
+                const expiresAt = invite.expires_at ? String(invite.expires_at) : '';
+                if (expiresAt) {
+                    const exp = new Date(expiresAt).getTime();
+                    if (Number.isFinite(exp) && Date.now() > exp) {
+                        return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXPIRED" }), { status: 403 }, appOrigin);
+                    }
+                }
+
+                const existing = await d1.getUserByIdentifier(email);
+                if (existing) {
+                    return withCORS(JSON.stringify({ success: false, error: "EMAIL_TAKEN" }), { status: 409 }, appOrigin);
+                }
+
+                const base = suggestUsername(name, email);
+                const candidate = await ensureUniqueUsername(base);
+                if (!candidate || !validateUsername(candidate)) {
+                    return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
+                }
+
+                const role = normalizeRole(invite.role || 'CONSULTOR');
+                const allowedUnits = normalizeAllowedUnits(invite.allowed_units_json || '');
+                const hash = await bcrypt.hash(password, 10);
+
+                await env.DB.prepare(
+                    `INSERT INTO insumos_users
+                     (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+                )
+                    .bind(
+                        candidate,
+                        email,
+                        name,
+                        hash,
+                        role,
+                        '',
+                        JSON.stringify(allowedUnits),
+                        now,
+                        now
+                    )
+                    .run();
+
+                await env.DB.prepare(
+                    `UPDATE insumos_invites
+                     SET uses_count = uses_count + 1
+                     WHERE id = ?`
+                )
+                    .bind(invite.id)
+                    .run();
+
+                const userDb = await d1.getUserByUsername(candidate);
+                const user = userDb
+                    ? {
+                        name: userDb.displayName || userDb.username,
+                        displayName: userDb.displayName || userDb.username,
+                        username: userDb.username,
+                        email: userDb.email,
+                        role: userDb.role || "CONSULTOR",
+                        photoUrl: userDb.photoUrl,
+                        allowedUnits: userDb.allowedUnits || [],
+                    }
+                    : {
+                        name,
+                        displayName: name,
+                        username: candidate,
+                        email,
+                        role,
+                        photoUrl: '',
+                        allowedUnits,
+                    };
+
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: candidate });
+                return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 201, headers: headersOut }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
             }
         }
 

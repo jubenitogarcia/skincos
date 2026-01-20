@@ -8,12 +8,13 @@ interface FormState {
     name: string
     email: string
     password: string
+    inviteToken: string
 }
 
 export function AuthScreen() {
     const { signIn, signUp, loading } = useAuth()
     const [mode, setMode] = useState<'signin' | 'signup'>('signin')
-    const [form, setForm] = useState<FormState>({ name: '', email: '', password: '' })
+    const [form, setForm] = useState<FormState>({ name: '', email: '', password: '', inviteToken: '' })
     const [error, setError] = useState<string | null>(null)
     const [isVisible, setIsVisible] = useState(false)
 
@@ -32,7 +33,7 @@ export function AuthScreen() {
             if (mode === 'signin') {
                 await signIn(form.email, form.password)
             } else {
-                await signUp(form.name, form.email, form.password)
+                await signUp(form.name, form.email, form.password, form.inviteToken)
             }
         } catch (err: any) {
             setError(err.message || 'Erro desconhecido')
@@ -166,6 +167,28 @@ export function AuthScreen() {
                                     />
                                 </div>
                             </div>
+
+                            {mode === 'signup' && (
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium text-slate-200 block">
+                                        Token de acesso
+                                    </label>
+                                    <div className="relative">
+                                        <Input
+                                            name="inviteToken"
+                                            value={form.inviteToken}
+                                            onChange={onChange}
+                                            placeholder="Cole o token gerado pelo gestor"
+                                            autoComplete="off"
+                                            required
+                                            className="bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:bg-white/15 focus:border-blue-400/50 h-12 text-base backdrop-blur-sm"
+                                        />
+                                    </div>
+                                    <div className="text-xs text-slate-400 leading-relaxed">
+                                        Por segurança, a criação de conta exige um token gerado por um gestor.
+                                    </div>
+                                </div>
+                            )}
                             
                             <div className="space-y-2">
                                 <label className="text-sm font-medium text-slate-200 block">

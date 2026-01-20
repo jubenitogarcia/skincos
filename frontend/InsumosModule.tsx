@@ -76,6 +76,20 @@ type Movimentacao = {
   observacoes?: string
 }
 
+type Invite = {
+  id: string
+  tokenHint?: string
+  role?: string
+  allowedUnits?: string[]
+  maxUses?: number
+  usesCount?: number
+  expiresAt?: string | null
+  revoked?: boolean
+  note?: string
+  createdBy?: string
+  createdAt?: string
+}
+
 type NotificationsSummary = {
   generatedAt?: string
   unidade?: string
@@ -602,6 +616,24 @@ export function InsumosModule() {
   const [csrfToken, setCsrfToken] = React.useState<string | null>(null)
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
+
+  const actorRole = String(user?.role || '').trim().toUpperCase()
+  const canManageInvites = actorRole === 'ADMIN' || actorRole === 'GESTOR'
+  const inviteRoleOptions = actorRole === 'ADMIN'
+    ? ['OPERADOR', 'GERENTE', 'GESTOR', 'ADMIN']
+    : ['OPERADOR', 'GERENTE', 'GESTOR']
+
+  const [inviteOpen, setInviteOpen] = React.useState(false)
+  const [invitesLoading, setInvitesLoading] = React.useState(false)
+  const [invites, setInvites] = React.useState<Invite[]>([])
+  const [inviteRole, setInviteRole] = React.useState<string>('OPERADOR')
+  const [inviteMaxUses, setInviteMaxUses] = React.useState<string>('1')
+  const [inviteExpiresInDays, setInviteExpiresInDays] = React.useState<string>('30')
+  const [inviteAllowedUnits, setInviteAllowedUnits] = React.useState<string>('')
+  const [inviteNote, setInviteNote] = React.useState<string>('')
+  const [inviteCreateLoading, setInviteCreateLoading] = React.useState(false)
+  const [inviteTokenOnce, setInviteTokenOnce] = React.useState<string | null>(null)
+  const [inviteTokenHint, setInviteTokenHint] = React.useState<string | null>(null)
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
@@ -1332,6 +1364,111 @@ export function InsumosModule() {
     },
     [csrfToken, enqueueOffline, offlineDialogOpen, refreshCsrf]
   )
+
+  const parseUnitsInput = React.useCallback((raw: string) => {
+    const s = String(raw || '').trim()
+    if (!s) return []
+    return s
+      .split(/[,;|]/g)
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+  }, [])
+
+  const loadInvites = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed || !canManageInvites) return
+    setInvitesLoading(true)
+    try {
+      const out = await apiJson<{ success?: boolean; data?: Invite[] }>(
+        `/admin/invites?${new URLSearchParams({ unidade, limit: '50' }).toString()}`
+      )
+      setInvites(Array.isArray(out?.data) ? out!.data! : [])
+    } catch {
+      setInvites([])
+    } finally {
+      setInvitesLoading(false)
+    }
+  }, [apiJson, canManageInvites, canUseApi, isAuthed, unidade])
+
+  React.useEffect(() => {
+    if (!inviteOpen) return
+    setInviteTokenOnce(null)
+    setInviteTokenHint(null)
+    setInviteNote('')
+    setInviteRole((cur) => (inviteRoleOptions.includes(cur) ? cur : 'OPERADOR'))
+    setInviteAllowedUnits((cur) => {
+      if (cur.trim()) return cur
+      return allowedUnits.length ? allowedUnits.join(',') : ''
+    })
+    void loadInvites()
+  }, [allowedUnits.join('|'), inviteOpen, inviteRoleOptions.join('|'), loadInvites])
+
+  const createInvite = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed || !canManageInvites) return
+    setInviteCreateLoading(true)
+    setInviteTokenOnce(null)
+    setInviteTokenHint(null)
+    try {
+      const maxUses = Math.max(1, Math.min(50, parseInt(inviteMaxUses, 10) || 1))
+      const expiresInDays = Math.max(1, Math.min(365, parseInt(inviteExpiresInDays, 10) || 30))
+      const allowed = parseUnitsInput(inviteAllowedUnits)
+      const out = await mutateJson<{ success?: boolean; data?: Invite; token?: string }>(
+        `/admin/invites?${new URLSearchParams({ unidade }).toString()}`,
+        {
+          method: 'POST',
+          queueLabel: 'Convite',
+          body: {
+            role: inviteRole,
+            maxUses,
+            expiresInDays,
+            allowedUnits: allowed,
+            note: inviteNote
+          }
+        }
+      )
+      const token = (out as any)?.token ? String((out as any).token) : null
+      const hint = (out as any)?.data?.tokenHint ? String((out as any).data.tokenHint) : null
+      if (token) {
+        setInviteTokenOnce(token)
+        setInviteTokenHint(hint)
+        toast.success('Token gerado')
+        void loadInvites()
+      } else {
+        toast.error('Não foi possível gerar o token.')
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao gerar token.')
+    } finally {
+      setInviteCreateLoading(false)
+    }
+  }, [
+    canManageInvites,
+    canUseApi,
+    inviteAllowedUnits,
+    inviteExpiresInDays,
+    inviteMaxUses,
+    inviteNote,
+    inviteRole,
+    isAuthed,
+    loadInvites,
+    mutateJson,
+    parseUnitsInput,
+    unidade
+  ])
+
+  const revokeInvite = React.useCallback(async (id: string) => {
+    if (!canUseApi || !isAuthed || !canManageInvites) return
+    if (!window.confirm('Revogar este token?')) return
+    try {
+      await mutateJson(`/admin/invites/${encodeURIComponent(id)}/revoke?${new URLSearchParams({ unidade }).toString()}`, {
+        method: 'POST',
+        queueLabel: 'Revogar token'
+      })
+      toast.success('Token revogado')
+      void loadInvites()
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao revogar token.')
+    }
+  }, [canManageInvites, canUseApi, isAuthed, loadInvites, mutateJson, unidade])
 
   const removeShareHistory = React.useCallback(
     (id: string) => {
@@ -2876,6 +3013,169 @@ export function InsumosModule() {
       </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={inviteOpen}
+        onOpenChange={(open) => {
+          setInviteOpen(open)
+          if (!open) {
+            setInviteTokenOnce(null)
+            setInviteTokenHint(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl dark bg-corporate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Convites de acesso</DialogTitle>
+            <DialogDescription className="text-blue-100/70">
+              Gere um token para criação de conta (por segurança, o token é mostrado apenas uma vez).
+            </DialogDescription>
+          </DialogHeader>
+
+          {!canManageInvites ? (
+            <div className="text-sm text-blue-100/80">Sem permissão para gerar tokens.</div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Hierarquia</div>
+                  <Select value={inviteRole} onValueChange={setInviteRole}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {inviteRoleOptions.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Usos</div>
+                  <Input value={inviteMaxUses} onChange={(e) => setInviteMaxUses(e.target.value)} type="number" min={1} max={50} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Expira em (dias)</div>
+                  <Input value={inviteExpiresInDays} onChange={(e) => setInviteExpiresInDays(e.target.value)} type="number" min={1} max={365} />
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Unidades (opcional)</div>
+                  <Input
+                    value={inviteAllowedUnits}
+                    onChange={(e) => setInviteAllowedUnits(e.target.value)}
+                    placeholder="ex: novo-hamburgo, barra-shopping-sul"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Observação (opcional)</div>
+                <Input value={inviteNote} onChange={(e) => setInviteNote(e.target.value)} placeholder="ex: Equipe recepção" />
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <Button
+                  className="!bg-blue-600 hover:!bg-blue-700 !text-white"
+                  onClick={() => void createInvite()}
+                  disabled={!isAuthed || inviteCreateLoading}
+                >
+                  {inviteCreateLoading ? 'Gerando…' : 'Gerar token'}
+                </Button>
+                <Button variant="secondary" onClick={() => void loadInvites()} disabled={!isAuthed || invitesLoading}>
+                  {invitesLoading ? 'Atualizando…' : 'Atualizar'}
+                </Button>
+              </div>
+
+              {inviteTokenOnce ? (
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
+                  <div className="text-sm text-blue-50 font-semibold">
+                    Token gerado {inviteTokenHint ? <span className="text-blue-200/70 font-normal">({inviteTokenHint})</span> : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input value={inviteTokenOnce} readOnly className="font-mono" />
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(inviteTokenOnce)
+                          toast.success('Copiado.')
+                        } catch (e: any) {
+                          toast.error(e?.message || 'Não foi possível copiar.')
+                        }
+                      }}
+                    >
+                      Copiar
+                    </Button>
+                  </div>
+                  <div className="text-xs text-blue-200/60">
+                    Envie este token ao usuário. Ele deve usar na tela “Criar Conta”.
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm text-blue-50 font-semibold">Tokens recentes</div>
+                  <div className="text-xs text-blue-200/60">{invites.length} itens</div>
+                </div>
+                <div className="mt-2 overflow-auto max-h-[40vh] rounded-lg border border-white/10">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-black/30 text-blue-100/80">
+                      <tr>
+                        <th className="text-left p-2">Token</th>
+                        <th className="text-left p-2">Role</th>
+                        <th className="text-left p-2">Usos</th>
+                        <th className="text-left p-2">Expira</th>
+                        <th className="text-right p-2">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {invites.map((it) => (
+                        <tr key={it.id} className="hover:bg-white/5">
+                          <td className="p-2 font-mono text-blue-50">{it.tokenHint || it.id.slice(0, 8)}</td>
+                          <td className="p-2 text-blue-100/80">{String(it.role || '')}</td>
+                          <td className="p-2 text-blue-100/70">
+                            {(Number(it.usesCount) || 0)}/{(Number(it.maxUses) || 1)}
+                          </td>
+                          <td className="p-2 text-blue-100/70">{it.expiresAt ? fmtDate(it.expiresAt) : '-'}</td>
+                          <td className="p-2 text-right">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => void revokeInvite(it.id)}
+                              disabled={!!it.revoked}
+                            >
+                              Revogar
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                      {!invites.length ? (
+                        <tr>
+                          <td className="p-2 text-blue-100/70" colSpan={5}>
+                            {invitesLoading ? 'Carregando…' : 'Sem tokens.'}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInviteOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
 		      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
 	        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
 	          <div>
@@ -2901,6 +3201,11 @@ export function InsumosModule() {
 	            >
 	              {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
 	            </Button>
+              {canManageInvites ? (
+                <Button variant="outline" onClick={() => setInviteOpen(true)} disabled={!isAuthed}>
+                  Convidar usuário
+                </Button>
+              ) : null}
 	          </div>
 	        </div>
 

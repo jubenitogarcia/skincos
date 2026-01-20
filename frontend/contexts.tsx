@@ -23,7 +23,7 @@ interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<void>
-  signUp: (name: string, email: string, password: string) => Promise<void>
+  signUp: (name: string, email: string, password: string, inviteToken: string) => Promise<void>
   signOut: () => void
   updateProfile: (data: Partial<Pick<AuthUser, 'name' | 'avatarUrl'>>) => void
   token: string | null
@@ -81,12 +81,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = '/'
   }
 
-  const signUp = async (_name: string, _email: string, _password: string) => {
+  const signUp = async (name: string, email: string, password: string, inviteToken: string) => {
     if (isNoAuthMode()) {
       logNoAuthMode('AuthContext.signUp', 'Bypassing signup redirect - already authenticated in NO_AUTH mode')
       return Promise.resolve()
     }
-    throw new Error('Criação de conta ainda não está disponível no CRM. Peça para um admin cadastrar no módulo Insumos.')
+    const res = await fetch('/api/insumos/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name, email, password, token: inviteToken })
+    })
+    const text = await res.text()
+    let json: any = null
+    try { json = text ? JSON.parse(text) : null } catch { json = null }
+    if (!res.ok) {
+      const code = String(json?.error || json?.code || '')
+      const friendly =
+        code === 'TOKEN_REQUIRED' ? 'Informe o token de acesso.'
+        : code === 'TOKEN_INVALID' ? 'Token inválido.'
+        : code === 'TOKEN_REVOKED' ? 'Token revogado.'
+        : code === 'TOKEN_EXPIRED' ? 'Token expirado.'
+        : code === 'TOKEN_EXHAUSTED' ? 'Token já foi utilizado.'
+        : code === 'EMAIL_TAKEN' ? 'Este email já está cadastrado.'
+        : code === 'PASSWORD_TOO_SHORT' ? 'Senha muito curta (mín. 6).'
+        : code === 'EMAIL_INVALID' ? 'Email inválido.'
+        : code === 'NAME_REQUIRED' ? 'Informe seu nome.'
+        : (json?.error || json?.message || `HTTP ${res.status}`)
+      throw new Error(friendly)
+    }
+
+    // Confirm session is actually established (cookie survived the proxy) before reloading.
+    const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
+    if (!meRes || !meRes.ok) {
+      throw new Error('Conta criada, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
+    }
+
+    window.location.href = '/'
   }
 
   const signOut = () => {
