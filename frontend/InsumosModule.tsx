@@ -506,6 +506,7 @@ export function InsumosModule() {
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const insumosSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const skipInsumosQueryEffectRef = React.useRef(true)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -516,8 +517,13 @@ export function InsumosModule() {
   const shareSyncedRef = React.useRef<Set<string>>(new Set())
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
+  const [insumosFull, setInsumosFull] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
   const [insumosQuery, setInsumosQuery] = React.useState('')
+  const [insumosMode, setInsumosMode] = React.useState<'full' | 'paged'>('full')
+  const [insumosPagina, setInsumosPagina] = React.useState(1)
+  const [insumosLimite, setInsumosLimite] = React.useState(200)
+  const [insumosTotal, setInsumosTotal] = React.useState<number | null>(null)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createScanOpen, setCreateScanOpen] = React.useState(false)
   const [createCodigo, setCreateCodigo] = React.useState('')
@@ -538,9 +544,6 @@ export function InsumosModule() {
   const [createNovoLote, setCreateNovoLote] = React.useState(false)
   const [createLoading, setCreateLoading] = React.useState(false)
 
-  const [lotFiltroCategoria, setLotFiltroCategoria] = React.useState('')
-  const [lotFiltroValidade, setLotFiltroValidade] = React.useState<'TODOS' | 'OK' | 'VENCENDO' | 'EXPIRADO' | 'SEM_VALIDADE'>('TODOS')
-  const [lotBusca, setLotBusca] = React.useState('')
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
   const [lotSelecionado, setLotSelecionado] = React.useState<Insumo | null>(null)
   const [lotEditLote, setLotEditLote] = React.useState('')
@@ -550,6 +553,7 @@ export function InsumosModule() {
   const [movimentacoes, setMovimentacoes] = React.useState<Movimentacao[]>([])
   const [movLoading, setMovLoading] = React.useState(false)
   const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'>('TODOS')
+  const [movGroupTransfers, setMovGroupTransfers] = React.useState(true)
   const [movDe, setMovDe] = React.useState('')
   const [movAte, setMovAte] = React.useState('')
   const [movPagina, setMovPagina] = React.useState(1)
@@ -613,7 +617,7 @@ export function InsumosModule() {
     })
   }, [])
 
-  const canUseApi = !!health?.ok && !!health?.sheetsConfigured
+  const canUseApi = !!health?.ok
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
 
@@ -1179,19 +1183,76 @@ export function InsumosModule() {
     setLotDialogOpen(true)
   }, [])
 
-  const loadInsumos = React.useCallback(async () => {
+  const loadInsumosFull = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setInsumosLoading(true)
     try {
       const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?unidade=${encodeURIComponent(unidade)}`)
-      setInsumos(Array.isArray(out?.data) ? out.data : [])
+      const items = Array.isArray(out?.data) ? out.data : []
+      setInsumos(items)
+      setInsumosFull(items)
+      setInsumosTotal(items.length)
+      setInsumosMode('full')
+      setInsumosPagina(1)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setInsumos([])
+      setInsumosFull([])
+      setInsumosTotal(null)
     } finally {
       setInsumosLoading(false)
     }
   }, [canUseApi, isAuthed, unidade])
+
+  const loadInsumosPaged = React.useCallback(
+    async (opts?: { pagina?: number; limite?: number; q?: string }): Promise<number | null> => {
+      if (!canUseApi || !isAuthed) return null
+      const pagina = Math.max(1, opts?.pagina ?? insumosPagina)
+      const limite = Math.max(1, Math.min(1000, opts?.limite ?? insumosLimite))
+      const q = String(opts?.q ?? insumosQuery).trim()
+
+      setInsumosLoading(true)
+      try {
+        const params = new URLSearchParams()
+        params.set('unidade', unidade)
+        params.set('pagina', String(pagina))
+        params.set('limite', String(limite))
+        if (q) params.set('q', q)
+        const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
+        const items = Array.isArray(out?.data) ? out.data : []
+        const total = Number(out?.resumo?.total)
+        const totalOut = Number.isFinite(total) ? total : null
+        setInsumos(items)
+        setInsumosTotal(totalOut)
+        setInsumosMode('paged')
+        setInsumosPagina(pagina)
+        setInsumosLimite(limite)
+        return totalOut
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e))
+        setInsumos([])
+        setInsumosTotal(null)
+        return null
+      } finally {
+        setInsumosLoading(false)
+      }
+    },
+    [canUseApi, insumosLimite, insumosPagina, insumosQuery, isAuthed, unidade]
+  )
+
+  const refreshInsumos = React.useCallback(
+    async (opts?: { pagina?: number }) => {
+      if (!canUseApi || !isAuthed) return
+      if (insumosMode === 'paged') {
+        const pagina = Math.max(1, opts?.pagina ?? insumosPagina)
+        const q = insumosQuery.trim()
+        await loadInsumosPaged({ pagina, limite: insumosLimite, q })
+        return
+      }
+      await loadInsumosFull()
+    },
+    [canUseApi, insumosLimite, insumosMode, insumosPagina, insumosQuery, isAuthed, loadInsumosFull, loadInsumosPaged]
+  )
 
 	  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
 	    if (!canUseApi || !isAuthed) return
@@ -1229,6 +1290,8 @@ export function InsumosModule() {
   React.useEffect(() => {
     setMovPagina(1)
   }, [unidade, movAte, movDe, movLimite, movTipo])
+
+  const INSUMOS_PAGED_THRESHOLD = 800
 
   const loadOverview = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -1337,15 +1400,15 @@ export function InsumosModule() {
 	        body: { lote: lotEditLote.trim(), dataValidade },
 	        queueLabel: 'Atualização de lote/validade'
 	      })
-	      toast.success('Lote/validade atualizados.')
+      toast.success('Lote/validade atualizados.')
       setLotDialogOpen(false)
-      await Promise.allSettled([loadInsumos(), loadOverview()])
+      await Promise.allSettled([refreshInsumos(), loadOverview()])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setLotSaving(false)
     }
-  }, [canUseApi, isAuthed, loadInsumos, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, unidade])
+  }, [canUseApi, isAuthed, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, refreshInsumos, unidade])
 
 	  const loadInsights = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -1422,7 +1485,7 @@ export function InsumosModule() {
           toast.success(kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
         }
 
-        await Promise.allSettled([loadInsumos(), loadMovimentacoes()])
+        await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
         return true
       } catch (e) {
         const code = (e as any)?.code
@@ -1442,7 +1505,6 @@ export function InsumosModule() {
       canUseApi,
       isAuthed,
       quickLoteNeedsPick,
-      loadInsumos,
       loadMovimentacoes,
       mutateJson,
       quickCodigo,
@@ -1451,6 +1513,7 @@ export function InsumosModule() {
       quickObs,
       quickQuantidade,
       quickRegistro,
+      refreshInsumos,
       unidade
     ]
   )
@@ -1485,7 +1548,7 @@ export function InsumosModule() {
       toast.success('Transferência registrada')
 
       // Refresh what the user is seeing (estoque + movimentações)
-      await Promise.allSettled([loadInsumos(), loadMovimentacoes(), loadOverview()])
+      await Promise.allSettled([refreshInsumos(), loadMovimentacoes(), loadOverview()])
       return true
     } catch (e) {
       const code = (e as any)?.code
@@ -1504,7 +1567,6 @@ export function InsumosModule() {
     canUseApi,
     isAuthed,
     quickLoteNeedsPick,
-    loadInsumos,
     loadMovimentacoes,
     loadOverview,
     mutateJson,
@@ -1512,6 +1574,7 @@ export function InsumosModule() {
     quickObs,
     quickQuantidade,
     quickRegistro,
+    refreshInsumos,
     transferFrom,
     transferTo
   ])
@@ -1548,16 +1611,45 @@ export function InsumosModule() {
     return () => window.removeEventListener('skincos:insumos:op', onOp as EventListener)
   }, [])
 
-	  React.useEffect(() => {
-	    if (!canUseApi || !isAuthed) return
-	    void loadInsumos()
-	    void loadMovimentacoes()
-	    void loadShareHistory()
-	  }, [canUseApi, isAuthed, loadInsumos, loadMovimentacoes, loadShareHistory])
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    void loadMovimentacoes()
+    void loadShareHistory()
+  }, [canUseApi, isAuthed, loadMovimentacoes, loadShareHistory])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    let cancelled = false
+    void (async () => {
+      skipInsumosQueryEffectRef.current = true
+      // Fast path: load first page and decide if we should load full data set.
+      const total = await loadInsumosPaged({ pagina: 1, limite: insumosLimite, q: '' })
+      if (cancelled) return
+      if (total != null && total <= INSUMOS_PAGED_THRESHOLD) {
+        await loadInsumosFull()
+      }
+      skipInsumosQueryEffectRef.current = false
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [INSUMOS_PAGED_THRESHOLD, canUseApi, insumosLimite, isAuthed, loadInsumosFull, loadInsumosPaged, unidade])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    if (insumosMode !== 'paged') return
+    if (skipInsumosQueryEffectRef.current) return
+    const q = insumosQuery.trim()
+    const t = window.setTimeout(() => {
+      void loadInsumosPaged({ pagina: 1, limite: insumosLimite, q })
+    }, 350)
+    return () => window.clearTimeout(t)
+  }, [canUseApi, insumosLimite, insumosMode, insumosQuery, isAuthed, loadInsumosPaged, unidade])
 
   const filteredInsumos = React.useMemo(() => {
     const q = insumosQuery.trim().toLowerCase()
     if (!q) return insumos
+    if (insumosMode === 'paged') return insumos
     return insumos.filter((i) => {
       const hay = [i.codigoBarras, i.produto, i.categoria, i.marca, i.lote]
         .filter(Boolean)
@@ -1565,43 +1657,30 @@ export function InsumosModule() {
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [insumos, insumosQuery])
+  }, [insumos, insumosMode, insumosQuery])
 
   const lotCategorias = React.useMemo(() => {
-    return Array.from(new Set((insumos || []).map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
+    const base = (insumosFull?.length ? insumosFull : insumos) || []
+    return Array.from(new Set(base.map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
-  }, [insumos])
+  }, [insumos, insumosFull])
 
   const insumosMarcas = React.useMemo(() => {
-    return Array.from(new Set((insumos || []).map((i) => String(i.marca || '').trim()).filter(Boolean))).sort((a, b) =>
+    const base = (insumosFull?.length ? insumosFull : insumos) || []
+    return Array.from(new Set(base.map((i) => String(i.marca || '').trim()).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
-  }, [insumos])
+  }, [insumos, insumosFull])
 
   const insumosTiposUnidade = React.useMemo(() => {
+    const base = (insumosFull?.length ? insumosFull : insumos) || []
     const fromData = Array.from(
-      new Set((insumos || []).map((i) => String(i.tipoUnidade || '').trim()).filter(Boolean))
+      new Set(base.map((i) => String(i.tipoUnidade || '').trim()).filter(Boolean))
     ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
     const fixed = ['Frasco', 'Seringa', 'Unidade', 'Caixa', 'ml']
     return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
-  }, [insumos])
-
-  const insumosLoteFiltrados = React.useMemo(() => {
-    const q = lotBusca.trim().toLowerCase()
-    return (insumos || []).filter((i) => {
-      if (lotFiltroCategoria && String(i.categoria || '') !== lotFiltroCategoria) return false
-      const st = String(i.statusValidade?.status || 'OK').toUpperCase()
-      if (lotFiltroValidade === 'SEM_VALIDADE') {
-        if (i.dataValidade) return false
-      } else if (lotFiltroValidade !== 'TODOS') {
-        if (!st || st !== lotFiltroValidade) return false
-      }
-      if (!q) return true
-      const hay = [i.produto, i.marca, i.categoria, i.codigoBarras, i.lote, i.dataValidade].filter(Boolean).join(' ').toLowerCase()
-      return hay.includes(q)
-    })
-  }, [insumos, lotBusca, lotFiltroCategoria, lotFiltroValidade])
+  }, [insumos, insumosFull])
 
   type ChartPresetId =
     | 'stock_category'
@@ -2041,6 +2120,58 @@ export function InsumosModule() {
     return `${h}h`
   }, [])
 
+  const movimentacoesView = React.useMemo(() => {
+    const list = Array.isArray(movimentacoes) ? movimentacoes : []
+    if (!movGroupTransfers || movTipo !== 'TODOS') return list
+
+    const byTransfer = new Map<string, Movimentacao[]>()
+    for (const m of list) {
+      const id = String((m as any)?.transferId || '').trim()
+      if (!id) continue
+      const arr = byTransfer.get(id) || []
+      arr.push(m)
+      byTransfer.set(id, arr)
+    }
+
+    const seen = new Set<string>()
+    const out: Movimentacao[] = []
+    for (const m of list) {
+      const id = String((m as any)?.transferId || '').trim()
+      if (!id) {
+        out.push(m)
+        continue
+      }
+      if (seen.has(id)) continue
+      seen.add(id)
+
+      const group = byTransfer.get(id) || [m]
+      if (group.length < 2) {
+        out.push(m)
+        continue
+      }
+
+      const pick = group.reduce((best, cur) => {
+        const bt = new Date(best?.dataHora || 0).getTime()
+        const ct = new Date(cur?.dataHora || 0).getTime()
+        return ct > bt ? cur : best
+      }, group[0])
+
+      const quantidade = group.reduce((acc, cur) => Math.max(acc, Number(cur?.quantidade) || 0), 0)
+      const unidadeOrigem = String((pick as any)?.unidadeOrigem || '').trim()
+      const unidadeDestino = String((pick as any)?.unidadeDestino || '').trim()
+
+      out.push({
+        ...pick,
+        tipo: 'TRANSFERÊNCIA',
+        quantidade,
+        unidadeOrigem,
+        unidadeDestino,
+        transferId: id
+      } as any)
+    }
+    return out
+  }, [movGroupTransfers, movTipo, movimentacoes])
+
   return (
     <div className="p-6 space-y-6">
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
@@ -2341,21 +2472,24 @@ export function InsumosModule() {
       </DialogContent>
       </Dialog>
 
-	      <div className="max-w-6xl mx-auto mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-	        <div className="flex items-center gap-2">
-	          <Select value={unidade} onValueChange={(v) => setUnidade(v)}>
-	            <SelectTrigger className="w-64">
-	              <SelectValue placeholder="Selecione a unidade" />
-	            </SelectTrigger>
-	            <SelectContent>
-	              {unidadeOptions.map((u) => (
-	                <SelectItem key={u} value={u}>
-	                  {unidadeLabel(u)}
-	                </SelectItem>
-	              ))}
-	            </SelectContent>
-	          </Select>
-	        </div>
+		      <div className="max-w-6xl mx-auto mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+		        <div className="flex items-center gap-2">
+		          <div className="space-y-1">
+		            <div className="text-xs text-blue-200/70">Unidade</div>
+		            <Select value={unidade} onValueChange={(v) => setUnidade(v)}>
+		              <SelectTrigger className="w-64">
+		                <SelectValue placeholder="Selecione" />
+		              </SelectTrigger>
+		              <SelectContent>
+		                {unidadeOptions.map((u) => (
+		                  <SelectItem key={u} value={u}>
+		                    {unidadeLabel(u)}
+		                  </SelectItem>
+		                ))}
+		              </SelectContent>
+		            </Select>
+		          </div>
+		        </div>
 	        <div className="flex items-center gap-2">
 	          <Button
 	            size="icon"
@@ -2416,7 +2550,7 @@ export function InsumosModule() {
 	            </Select>
 	            <Button
 	              variant="secondary"
-	              onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), loadInsumos()])}
+	              onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])}
 	              disabled={(!isAuthed) || overviewLoading || insightsLoading}
 	            >
 	              {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
@@ -2505,14 +2639,14 @@ export function InsumosModule() {
 		                    </span>
 		                  </span>
 		                  <span>•</span>
-		                  <span>
-		                    validade:{' '}
-		                    <span className="font-mono">
-		                      {insumosLoteFiltrados.length}
-		                    </span>
-		                  </span>
-		                </div>
-		              </CardHeader>
+			                  <span>
+			                    validade:{' '}
+			                    <span className="font-mono">
+			                      {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
+			                    </span>
+			                  </span>
+			                </div>
+			              </CardHeader>
 		              <CardContent className="space-y-3">
 		                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
 		                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
@@ -2609,99 +2743,112 @@ export function InsumosModule() {
 		                  </div>
 		                </details>
 
-		                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-		                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-		                    Validade (lotes)
-		                  </summary>
-		                  <div className="mt-3 space-y-2">
-		                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-		                      <div>
-		                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-		                        <Select
-		                          value={lotFiltroCategoria || '__ALL__'}
-		                          onValueChange={(v) => setLotFiltroCategoria(v === '__ALL__' ? '' : String(v))}
-		                        >
-		                          <SelectTrigger>
-		                            <SelectValue placeholder="Todas" />
-		                          </SelectTrigger>
-		                          <SelectContent>
-		                            <SelectItem value="__ALL__">Todas</SelectItem>
-		                            {lotCategorias.map((c) => (
-		                              <SelectItem key={c} value={c}>
-		                                {c}
-		                              </SelectItem>
-		                            ))}
-		                          </SelectContent>
-		                        </Select>
-		                      </div>
-		                      <div>
-		                        <div className="text-xs text-blue-200/70 mb-1">Validade</div>
-		                        <Select value={lotFiltroValidade} onValueChange={(v) => setLotFiltroValidade(v as any)}>
-		                          <SelectTrigger>
-		                            <SelectValue />
-		                          </SelectTrigger>
-		                          <SelectContent>
-		                            <SelectItem value="TODOS">Todos</SelectItem>
-		                            <SelectItem value="OK">OK</SelectItem>
-		                            <SelectItem value="VENCENDO">Vencendo</SelectItem>
-		                            <SelectItem value="EXPIRADO">Expirado</SelectItem>
-		                            <SelectItem value="SEM_VALIDADE">Sem validade</SelectItem>
-		                          </SelectContent>
-		                        </Select>
-		                      </div>
-		                      <div>
-		                        <div className="text-xs text-blue-200/70 mb-1">Busca</div>
-		                        <Input value={lotBusca} onChange={(e) => setLotBusca(e.target.value)} placeholder="produto, código, lote..." />
-		                      </div>
-		                    </div>
-
-		                    {!insumosLoteFiltrados.length ? (
-		                      <div className="text-sm text-blue-100/70">Nenhum item para os filtros.</div>
-		                    ) : (
-		                      <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-		                        <table className="w-full text-sm">
-		                          <thead className="text-blue-200/70">
-		                            <tr className="border-b border-white/10">
-		                              <th className="text-left p-3">Produto</th>
-		                              <th className="text-left p-3">Lote</th>
-		                              <th className="text-left p-3">Validade</th>
-		                              <th className="text-left p-3">Status</th>
-		                              <th className="text-right p-3">Estoque</th>
-		                              <th className="text-right p-3">Ações</th>
-		                            </tr>
-		                          </thead>
-		                          <tbody className="text-blue-50/90 divide-y divide-white/5">
-		                            {insumosLoteFiltrados.map((i) => {
-		                              const st = String(i.statusValidade?.status || (i.dataValidade ? 'OK' : '—')).toUpperCase()
-		                              const badgeVariant = st === 'EXPIRADO' ? 'destructive' : st === 'VENCENDO' ? 'secondary' : 'default'
-		                              return (
-		                                <tr key={String(i.registro || i.codigoBarras)} className="hover:bg-white/5">
-		                                  <td className="p-3">
-		                                    <div className="font-medium">{i.produto || '-'}</div>
-		                                    <div className="text-xs text-blue-200/60">{i.categoria || ''}</div>
-		                                  </td>
-		                                  <td className="p-3">
-		                                    <span className="font-mono">{i.lote ? String(i.lote) : '-'}</span>
-		                                  </td>
+			                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+			                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
+			                  <div className="mt-3 space-y-3">
+			                    <div className="text-xs text-blue-200/60">
+			                      Lista resumida (até 50 itens) gerada automaticamente para a unidade.
+			                    </div>
+			                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+			                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+			                        <div className="flex items-center justify-between gap-2">
+			                          <div className="text-sm text-blue-100/80">⏳ Vencendo</div>
+			                          <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
+			                        </div>
+			                        <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
+			                          <table className="min-w-full text-sm">
+			                            <thead className="bg-black/30 text-blue-100/80">
+			                              <tr>
+			                                <th className="text-left p-3">Produto</th>
+			                                <th className="text-left p-3">Validade</th>
+			                                <th className="text-right p-3">Estoque</th>
+			                                <th className="text-right p-3">Ação</th>
+			                              </tr>
+			                            </thead>
+			                            <tbody className="divide-y divide-white/5 text-blue-50/90">
+			                              {(overviewNotifications?.expiringSoon || []).map((it: any, idx: number) => (
+			                                <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
 			                                  <td className="p-3">
-			                                    <span className="font-mono">{i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '-'}</span>
+			                                    <div className="font-medium">{it.produto || '-'}</div>
+			                                    <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
 			                                  </td>
-		                                  <td className="p-3">
-		                                    <Badge variant={badgeVariant}>{st}</Badge>
-		                                  </td>
-		                                  <td className="p-3 text-right font-mono">{Number(i.estoqueAtual) || 0}</td>
-		                                  <td className="p-3 text-right">
-		                                    <Button variant="secondary" onClick={() => openLotDialog(i)} disabled={!isAuthed}>
-		                                      Detalhes
-		                                    </Button>
-		                                  </td>
-		                                </tr>
-		                              )
-		                            })}
-		                          </tbody>
-		                        </table>
-		                      </div>
-			                    )}
+			                                  <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
+			                                  <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
+			                                  <td className="p-3 text-right">
+			                                    <Button
+			                                      variant="secondary"
+			                                      className="h-8 px-2 text-xs"
+			                                      onClick={() => {
+			                                        if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
+			                                      }}
+			                                      disabled={!isAuthed}
+			                                    >
+			                                      Usar
+			                                    </Button>
+			                                  </td>
+			                                </tr>
+			                              ))}
+			                              {!(overviewNotifications?.expiringSoon || []).length ? (
+			                                <tr>
+			                                  <td className="p-3 text-blue-100/70" colSpan={4}>
+			                                    {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+			                                  </td>
+			                                </tr>
+			                              ) : null}
+			                            </tbody>
+			                          </table>
+			                        </div>
+			                      </div>
+			                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+			                        <div className="flex items-center justify-between gap-2">
+			                          <div className="text-sm text-blue-100/80">🧨 Expirado c/ estoque</div>
+			                          <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
+			                        </div>
+			                        <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
+			                          <table className="min-w-full text-sm">
+			                            <thead className="bg-black/30 text-blue-100/80">
+			                              <tr>
+			                                <th className="text-left p-3">Produto</th>
+			                                <th className="text-left p-3">Validade</th>
+			                                <th className="text-right p-3">Estoque</th>
+			                                <th className="text-right p-3">Ação</th>
+			                              </tr>
+			                            </thead>
+			                            <tbody className="divide-y divide-white/5 text-blue-50/90">
+			                              {(overviewNotifications?.expiredWithStock || []).map((it: any, idx: number) => (
+			                                <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+			                                  <td className="p-3">
+			                                    <div className="font-medium">{it.produto || '-'}</div>
+			                                    <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
+			                                  </td>
+			                                  <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
+			                                  <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
+			                                  <td className="p-3 text-right">
+			                                    <Button
+			                                      variant="secondary"
+			                                      className="h-8 px-2 text-xs"
+			                                      onClick={() => {
+			                                        if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
+			                                      }}
+			                                      disabled={!isAuthed}
+			                                    >
+			                                      Usar
+			                                    </Button>
+			                                  </td>
+			                                </tr>
+			                              ))}
+			                              {!(overviewNotifications?.expiredWithStock || []).length ? (
+			                                <tr>
+			                                  <td className="p-3 text-blue-100/70" colSpan={4}>
+			                                    {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+			                                  </td>
+			                                </tr>
+			                              ) : null}
+			                            </tbody>
+			                          </table>
+			                        </div>
+			                      </div>
+			                    </div>
 			                  </div>
 			                </details>
 
@@ -3178,15 +3325,15 @@ export function InsumosModule() {
                   </CardContent>
                 </Card>
               ) : null}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
+	              <div className="flex flex-wrap items-center justify-between gap-2">
+	                <div className="flex items-center gap-2">
                   <Input
                     value={insumosQuery}
                     onChange={(e) => setInsumosQuery(e.target.value)}
                     placeholder="Buscar por código, produto, categoria…"
                     className="w-80"
                   />
-                  <Button variant="secondary" onClick={loadInsumos} disabled={insumosLoading || !isAuthed}>
+                  <Button variant="secondary" onClick={() => void refreshInsumos({ pagina: 1 })} disabled={insumosLoading || !isAuthed}>
                     {insumosLoading ? 'Carregando…' : 'Recarregar'}
                   </Button>
                   <Button
@@ -3197,16 +3344,86 @@ export function InsumosModule() {
                   >
                     Exportar
                   </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setCreateOpen((v) => !v)}
-                    disabled={!isAuthed}
-                  >
-                    {createOpen ? 'Fechar' : 'Adicionar'}
-                  </Button>
-                </div>
-                <div className="text-xs text-blue-200/60">{filteredInsumos.length} itens</div>
-              </div>
+	                  <Button
+	                    variant="outline"
+	                    onClick={() => setCreateOpen((v) => !v)}
+	                    disabled={!isAuthed}
+	                  >
+	                    {createOpen ? 'Fechar' : 'Adicionar'}
+	                  </Button>
+	                </div>
+	                <div className="text-xs text-blue-200/60">
+	                  {insumosTotal != null ? (
+	                    <>
+	                      {filteredInsumos.length} de <span className="font-mono">{insumosTotal}</span> itens
+	                    </>
+	                  ) : (
+	                    `${filteredInsumos.length} itens`
+	                  )}
+	                </div>
+	              </div>
+	              {insumosMode === 'paged' ? (
+	                <div className="flex flex-wrap items-center justify-between gap-2">
+	                  <div className="text-xs text-blue-200/60">
+	                    Página <span className="font-mono">{insumosPagina}</span>
+	                    {insumosTotal != null ? (
+	                      <>
+	                        {' '}
+	                        de <span className="font-mono">{Math.max(1, Math.ceil(insumosTotal / insumosLimite))}</span>
+	                      </>
+	                    ) : null}
+	                  </div>
+	                  <div className="flex flex-wrap items-center gap-2">
+	                    <div className="w-40">
+	                      <Select
+	                        value={String(insumosLimite)}
+	                        onValueChange={(v) => {
+	                          const lim = Math.max(1, Math.min(1000, parseInt(String(v), 10) || 200))
+	                          setInsumosLimite(lim)
+	                          void refreshInsumos({ pagina: 1 })
+	                        }}
+	                      >
+	                        <SelectTrigger className="h-9">
+	                          <SelectValue />
+	                        </SelectTrigger>
+	                        <SelectContent>
+	                          <SelectItem value="50">50</SelectItem>
+	                          <SelectItem value="100">100</SelectItem>
+	                          <SelectItem value="200">200</SelectItem>
+	                          <SelectItem value="400">400</SelectItem>
+	                        </SelectContent>
+	                      </Select>
+	                    </div>
+	                    <Button
+	                      variant="outline"
+	                      onClick={() => void refreshInsumos({ pagina: Math.max(1, insumosPagina - 1) })}
+	                      disabled={insumosLoading || !isAuthed || insumosPagina <= 1}
+	                    >
+	                      Anterior
+	                    </Button>
+	                    <Button
+	                      variant="secondary"
+	                      onClick={() => void refreshInsumos({ pagina: insumosPagina + 1 })}
+	                      disabled={
+	                        insumosLoading ||
+	                        !isAuthed ||
+	                        (insumosTotal != null ? insumosPagina >= Math.max(1, Math.ceil(insumosTotal / insumosLimite)) : filteredInsumos.length < insumosLimite)
+	                      }
+	                    >
+	                      Próxima
+	                    </Button>
+	                    {insumosTotal != null && insumosTotal <= INSUMOS_PAGED_THRESHOLD && !insumosFull.length ? (
+	                      <Button
+	                        variant="outline"
+	                        onClick={() => void loadInsumosFull()}
+	                        disabled={insumosLoading || !isAuthed}
+	                      >
+	                        Carregar tudo
+	                      </Button>
+	                    ) : null}
+	                  </div>
+	                </div>
+	              ) : null}
 
 	              {createOpen ? (
 	                <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
@@ -3370,7 +3587,7 @@ export function InsumosModule() {
                   ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs text-blue-200/60">
-                      Dica: para listar nas unidades, a planilha precisa ter colunas da unidade e estoque inicial.
+                      Dica: preencha só o essencial agora e complete os detalhes depois (categoria, lote, validade, etc.).
                     </div>
                     <Button
                       onClick={async () => {
@@ -3423,7 +3640,7 @@ export function InsumosModule() {
                           setCreateDataValidade('')
                           setCreateNovoLote(false)
                           setCreateOpen(false)
-                          await loadInsumos()
+                          await refreshInsumos({ pagina: 1 })
                         } catch (e) {
                           const status = (e as any)?.status
                           const msg = e instanceof Error ? e.message : String(e)
@@ -3574,15 +3791,15 @@ export function InsumosModule() {
                   <div className="text-xs text-blue-200/70 mb-1">Até</div>
 	                  <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="DD/MM/AAAA" />
                 </div>
-                <div className="w-40">
-                  <div className="text-xs text-blue-200/70 mb-1">Por página</div>
-                  <Select
-                    value={String(movLimite)}
-                    onValueChange={(v) => {
-                      const lim = Math.max(1, Math.min(200, parseInt(String(v), 10) || 50))
-                      void loadMovimentacoes({ pagina: 1, limite: lim })
-                    }}
-                  >
+				                <div className="w-40">
+				                  <div className="text-xs text-blue-200/70 mb-1">Por página</div>
+				                  <Select
+				                    value={String(movLimite)}
+				                    onValueChange={(v) => {
+				                      const lim = Math.max(1, Math.min(200, parseInt(String(v), 10) || 50))
+				                      void loadMovimentacoes({ pagina: 1, limite: lim })
+				                    }}
+				                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -3591,14 +3808,24 @@ export function InsumosModule() {
                       <SelectItem value="50">50</SelectItem>
                       <SelectItem value="100">100</SelectItem>
                       <SelectItem value="200">200</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-			                <Button
-			                  variant="secondary"
-			                  onClick={() => void Promise.allSettled([loadMovimentacoes(), loadInsights()])}
-			                  disabled={movLoading || !isAuthed}
-			                >
+				                    </SelectContent>
+				                  </Select>
+				                </div>
+				                <div className="flex items-center gap-2">
+				                  <Button
+				                    variant={movGroupTransfers ? 'secondary' : 'outline'}
+				                    onClick={() => setMovGroupTransfers((v) => !v)}
+				                    disabled={movTipo !== 'TODOS'}
+				                    title={movTipo !== 'TODOS' ? 'Disponível apenas quando Tipo = Todos' : 'Agrupa entrada/saída de transferências em uma linha'}
+				                  >
+				                    Agrupar transferências
+				                  </Button>
+				                </div>
+				                <Button
+				                  variant="secondary"
+				                  onClick={() => void Promise.allSettled([loadMovimentacoes(), loadInsights()])}
+				                  disabled={movLoading || !isAuthed}
+				                >
 			                  {movLoading ? 'Carregando…' : 'Filtrar'}
 			                </Button>
 			              </div>
@@ -3710,16 +3937,20 @@ export function InsumosModule() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {movimentacoes.map((m, idx) => (
-                      <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
-                        <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
-                        <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
-                        <td className="p-3 text-blue-50">{m.produto || '-'}</td>
-                        <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
-                        <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
-                        <td className="p-3 text-blue-100/70">{m.unidade ? unidadeLabel(m.unidade) : '-'}</td>
-                        <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
-                        <td className="p-3 text-blue-100/60">
+	                    {movimentacoesView.map((m, idx) => (
+	                      <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
+	                        <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
+	                        <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
+	                        <td className="p-3 text-blue-50">{m.produto || '-'}</td>
+	                        <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
+	                        <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
+	                        <td className="p-3 text-blue-100/70">
+	                          {m.transferId
+	                            ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
+	                            : (m.unidade ? unidadeLabel(m.unidade) : '-')}
+	                        </td>
+	                        <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
+	                        <td className="p-3 text-blue-100/60">
                           <div className="space-y-1">
                             {m.transferId ? (
                               <div>
@@ -3745,13 +3976,13 @@ export function InsumosModule() {
                         </td>
                       </tr>
                     ))}
-                    {!movimentacoes.length ? (
-                      <tr>
-                        <td className="p-3 text-blue-100/70" colSpan={8}>
-                          {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
-                        </td>
-                      </tr>
-                    ) : null}
+	                    {!movimentacoesView.length ? (
+	                      <tr>
+	                        <td className="p-3 text-blue-100/70" colSpan={8}>
+	                          {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
+	                        </td>
+	                      </tr>
+	                    ) : null}
                   </tbody>
                 </table>
 			              </div>
