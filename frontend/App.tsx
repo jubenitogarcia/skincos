@@ -124,12 +124,17 @@ const mockActivities = [
     { id: 'a2', type: 'email', subject: 'Envio de proposta', description: 'Proposta enviada', date: new Date().toISOString(), userId: 'u1' }
 ] as any
 
-const modules: { key: string; label: string; icon: string; component: React.ReactNode }[] = [
+const modules: { key: string; label: string; icon: React.ReactNode; component: React.ReactNode }[] = [
     { key: 'capabilities', label: 'Plataforma', icon: '🧭', component: <CapabilitiesCenter /> },
     { key: 'jobs', label: 'Execuções', icon: '🏃', component: <JobsCenter /> },
     { key: 'status', label: 'Status', icon: '📡', component: <SystemStatusModule /> },
     { key: 'unit-monitor', label: 'Unit Monitor', icon: '📹', component: <UnitMonitor /> },
-    { key: 'insumos', label: 'Insumos', icon: '🧴', component: <InsumosModule /> },
+    {
+        key: 'insumos',
+        label: 'Insumos',
+        icon: <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-5 w-5" />,
+        component: <InsumosModule />
+    },
     { key: 'dashboard', label: 'Analítica', icon: '📊', component: <ReportsDashboard /> },
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
@@ -177,6 +182,8 @@ const modules: { key: string; label: string; icon: string; component: React.Reac
 
 export default function AppFunctionalNeatlab() {
     const { isAuthenticated, user, signOut } = useAuth()
+
+    const DEFAULT_MODULE_KEY = 'insumos'
 
 	    const [profileOpen, setProfileOpen] = useState(false)
 	    const [profileLoading, setProfileLoading] = useState(false)
@@ -232,7 +239,7 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(['unit-monitor', 'insumos', 'status', 'notifications']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY]), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
@@ -269,10 +276,15 @@ export default function AppFunctionalNeatlab() {
 	    const [active, setActive] = useState<string>(() => {
 	        try {
 	            const saved = localStorage.getItem('app.activeModule')
-	            const candidate = saved || 'unit-monitor'
-	            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : 'unit-monitor'
-	        } catch { return 'unit-monitor' }
+	            const candidate = saved || DEFAULT_MODULE_KEY
+	            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
+	        } catch { return DEFAULT_MODULE_KEY }
 	    })
+
+	    React.useEffect(() => {
+	        if (UNLOCKED_MODULE_KEYS.has(active)) return
+	        setActive(DEFAULT_MODULE_KEY)
+	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
 	    const [search, setSearch] = useState('')
 	    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
 	        online: boolean | null
@@ -407,7 +419,10 @@ export default function AppFunctionalNeatlab() {
 		    ), [modulesSorted, search])
 
     // Resolve active module once for rendering content independently of sidebar filtering
-    const activeModule = useMemo(() => modules.find(m => m.key === active), [active])
+    const activeModule = useMemo(
+        () => modules.find(m => m.key === active) || modules.find(m => m.key === DEFAULT_MODULE_KEY),
+        [DEFAULT_MODULE_KEY, active]
+    )
 
 	    if (!isAuthenticated) {
 	        return <AuthScreen />
@@ -693,47 +708,47 @@ export default function AppFunctionalNeatlab() {
 		                                                    </SelectContent>
 		                                                </Select>
 		                                                <div className="flex items-center gap-1 ml-2">
-		                                                    <Button
-		                                                        variant="outline"
-		                                                        className="h-8 w-8 p-0 bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12]"
-		                                                        onClick={() => {
-		                                                            try {
-		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
-		                                                            } catch { /* ignore */ }
-		                                                        }}
-		                                                        title="Entrada"
-		                                                        aria-label="Entrada"
-		                                                    >
-		                                                        +
-		                                                    </Button>
-		                                                    <Button
-		                                                        variant="outline"
-		                                                        className="h-8 w-8 p-0 bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12]"
-		                                                        onClick={() => {
-		                                                            try {
-		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
-		                                                            } catch { /* ignore */ }
-		                                                        }}
-		                                                        title="Saída"
-		                                                        aria-label="Saída"
-		                                                    >
-		                                                        −
-		                                                    </Button>
-		                                                    <Button
-		                                                        variant="outline"
-		                                                        className="h-8 w-8 p-0 bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12]"
-		                                                        onClick={() => {
-		                                                            try {
-		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
-		                                                            } catch { /* ignore */ }
-		                                                        }}
-		                                                        title="Transferência"
-		                                                        aria-label="Transferência"
-		                                                    >
-		                                                        ⟲
-		                                                    </Button>
-		                                                </div>
-		                                            </>
+	                                                    <Button
+	                                                        variant="outline"
+	                                                        className="h-9 w-9 p-0 bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+	                                                        onClick={() => {
+	                                                            try {
+	                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
+	                                                            } catch { /* ignore */ }
+	                                                        }}
+	                                                        title="Entrada"
+	                                                        aria-label="Entrada"
+	                                                    >
+	                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
+	                                                    </Button>
+	                                                    <Button
+	                                                        variant="outline"
+	                                                        className="h-9 w-9 p-0 bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+	                                                        onClick={() => {
+	                                                            try {
+	                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
+	                                                            } catch { /* ignore */ }
+	                                                        }}
+	                                                        title="Saída"
+	                                                        aria-label="Saída"
+	                                                    >
+	                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
+	                                                    </Button>
+	                                                    <Button
+	                                                        variant="outline"
+	                                                        className="h-9 w-9 p-0 bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+	                                                        onClick={() => {
+	                                                            try {
+	                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
+	                                                            } catch { /* ignore */ }
+	                                                        }}
+	                                                        title="Transferência"
+	                                                        aria-label="Transferência"
+	                                                    >
+	                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
+	                                                    </Button>
+	                                                </div>
+	                                            </>
 		                                        ) : null}
 		                                        {active === 'unit-monitor' ? (
 		                                            <>
@@ -783,27 +798,29 @@ export default function AppFunctionalNeatlab() {
                                         )}
                                     </div>
 
-	                                    {/* Premium Notifications */}
-	                                    <HeaderNotificationsButton
-	                                        onOpen={() => {
-	                                            setSearch('')
-	                                            setActive('notifications')
-	                                        }}
-	                                    />
+	                                    {UNLOCKED_MODULE_KEYS.has('notifications') ? (
+	                                        <HeaderNotificationsButton
+	                                            onOpen={() => {
+	                                                setSearch('')
+	                                                setActive('notifications')
+	                                            }}
+	                                        />
+	                                    ) : null}
 
-	                                    {/* Settings Button */}
-	                                    <Button
-	                                        variant="outline"
-	                                        className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
-	                                        onClick={() => {
-	                                            setSearch('')
-	                                            setActive('status')
-	                                        }}
-	                                        title="Status do sistema"
-	                                        aria-label="Status do sistema"
-	                                    >
-	                                        <span className="text-lg">⚙️</span>
-	                                    </Button>
+	                                    {UNLOCKED_MODULE_KEYS.has('status') ? (
+	                                        <Button
+	                                            variant="outline"
+	                                            className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
+	                                            onClick={() => {
+	                                                setSearch('')
+	                                                setActive('status')
+	                                            }}
+	                                            title="Status do sistema"
+	                                            aria-label="Status do sistema"
+	                                        >
+	                                            <span className="text-lg">⚙️</span>
+	                                        </Button>
+	                                    ) : null}
 	                                </div>
                             </div>
                         </header>

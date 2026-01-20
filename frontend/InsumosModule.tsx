@@ -2614,44 +2614,44 @@ export function InsumosModule() {
 		            </Select>
 		          </div>
 		        </div>
-	        <div className="flex items-center gap-2">
-	          <Button
-	            size="icon"
-	            className="!bg-green-600 hover:!bg-green-700 !text-white"
-	            title="Entrada"
-	            onClick={() => {
-	              setQuickScanOpen(false)
-	              setQuickOp('ENTRADA')
-	            }}
-	            disabled={!isAuthed}
-	          >
-	            +
-	          </Button>
-	          <Button
-	            size="icon"
-	            variant="destructive"
-	            title="Saída"
-	            onClick={() => {
-	              setQuickScanOpen(false)
-	              setQuickOp('BAIXA')
-	            }}
-	            disabled={!isAuthed}
-	          >
-	            −
-	          </Button>
-	          <Button
-	            size="icon"
-	            className="!bg-blue-600 hover:!bg-blue-700 !text-white"
-	            title="Transferência"
-	            onClick={() => {
-	              setQuickScanOpen(false)
-	              setQuickOp('TRANSFERENCIA')
-	            }}
-	            disabled={!isAuthed}
-	          >
-	            ⟲
-	          </Button>
-	        </div>
+		        <div className="flex items-center gap-2">
+		          <Button
+		            size="icon"
+		            className="!bg-green-600 hover:!bg-green-700 !text-white"
+		            title="Entrada"
+		            onClick={() => {
+		              setQuickScanOpen(false)
+		              setQuickOp('ENTRADA')
+		            }}
+		            disabled={!isAuthed}
+		          >
+		            <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
+		          </Button>
+		          <Button
+		            size="icon"
+		            variant="destructive"
+		            title="Saída"
+		            onClick={() => {
+		              setQuickScanOpen(false)
+		              setQuickOp('BAIXA')
+		            }}
+		            disabled={!isAuthed}
+		          >
+		            <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
+		          </Button>
+		          <Button
+		            size="icon"
+		            className="!bg-blue-600 hover:!bg-blue-700 !text-white"
+		            title="Transferência"
+		            onClick={() => {
+		              setQuickScanOpen(false)
+		              setQuickOp('TRANSFERENCIA')
+		            }}
+		            disabled={!isAuthed}
+		          >
+		            <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
+		          </Button>
+		        </div>
 	      </div>
 
 	      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3">
