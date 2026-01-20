@@ -23,6 +23,7 @@ import {
     d1Ajuste,
     d1Transfer,
     d1ListMovimentacoes,
+    d1ListInsumosPaged,
     d1GetUserByUsername,
     d1GetUserByIdentifier,
     d1UpdateUserProfile,
@@ -1488,6 +1489,12 @@ export default {
             appOrigin,
             withCORS,
             requireRoles,
+            appendAuditLog,
+            spreadsheetId,
+            accessToken,
+            ip,
+            userAgent,
+            idempotencyKey,
             bcrypt,
             validateUsername,
         });
@@ -1752,6 +1759,7 @@ export default {
 	        const d1 = useD1 ? {
 	            enabled: true,
 	            listInsumos: ({ unidade }) => d1ListInsumos({ env, unidades: UNIDADES, unidade }),
+	            listInsumosPaged: ({ unidade, q, pagina, limite }) => d1ListInsumosPaged({ env, unidades: UNIDADES, unidade, q, pagina, limite }),
 	            createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
 	            updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
 	            deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),

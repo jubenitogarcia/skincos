@@ -51,6 +51,12 @@ export async function handleAdminRoutes({
   appOrigin,
   withCORS,
   requireRoles,
+  appendAuditLog,
+  spreadsheetId,
+  accessToken,
+  ip,
+  userAgent,
+  idempotencyKey,
   bcrypt,
   validateUsername,
 }) {
@@ -155,6 +161,24 @@ export async function handleAdminRoutes({
         .run();
 
       const user = publicUser({ username, displayName, email, role, allowedUnits, ativo: !!ativo, createdAt: now, updatedAt: now, photoUrl: String(body.photoUrl || '') });
+      try {
+        await appendAuditLog?.({
+          env,
+          spreadsheetId,
+          accessToken,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey,
+          action: 'CREATE_USER',
+          entity: 'USER',
+          entityId: username,
+          unidade: '',
+          before: null,
+          after: { username, email, displayName, role, allowedUnits, ativo: !!ativo }
+        });
+      } catch {}
       return withCORS(JSON.stringify({ success: true, data: user, oneTimePassword: password }), { status: 201 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -211,6 +235,24 @@ export async function handleAdminRoutes({
         updatedAt: row.updatedAt || null,
       };
 
+      try {
+        await appendAuditLog?.({
+          env,
+          spreadsheetId,
+          accessToken,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey,
+          action: 'UPDATE_USER',
+          entity: 'USER',
+          entityId: out.username,
+          unidade: '',
+          before: null,
+          after: { username: out.username, email: out.email, displayName: out.displayName, role: out.role, allowedUnits: out.allowedUnits, ativo: out.ativo }
+        });
+      } catch {}
       return withCORS(JSON.stringify({ success: true, data: out }), { status: 200 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -237,6 +279,24 @@ export async function handleAdminRoutes({
       if ((r?.meta?.changes || 0) === 0) {
         return withCORS(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }), { status: 404 }, appOrigin);
       }
+      try {
+        await appendAuditLog?.({
+          env,
+          spreadsheetId,
+          accessToken,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey,
+          action: 'RESET_PASSWORD',
+          entity: 'USER',
+          entityId: target,
+          unidade: '',
+          before: null,
+          after: { username: target }
+        });
+      } catch {}
       return withCORS(JSON.stringify({ success: true, oneTimePassword: password }), { status: 200 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -245,4 +305,3 @@ export async function handleAdminRoutes({
 
   return null;
 }
-

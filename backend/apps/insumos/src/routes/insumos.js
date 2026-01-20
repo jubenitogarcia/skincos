@@ -51,6 +51,16 @@ export async function handleInsumosRoutes({
         // GET /insumos
         if (url.pathname === "/insumos" && request.method === "GET") {
             try {
+                const q = url.searchParams.get('q') || url.searchParams.get('query') || '';
+                const pagina = url.searchParams.get('pagina') || url.searchParams.get('page') || null;
+                const limite = url.searchParams.get('limite') || url.searchParams.get('limit') || null;
+                const shouldPage = (pagina !== null && pagina !== '') || (limite !== null && limite !== '') || String(q || '').trim();
+
+                if (shouldPage && typeof d1.listInsumosPaged === 'function') {
+                    const out = await d1.listInsumosPaged({ unidade, q, pagina, limite });
+                    return withCORS(JSON.stringify({ success: true, data: out.items, resumo: out.resumo }), { status: 200 }, appOrigin);
+                }
+
                 const items = await d1.listInsumos({ unidade });
                 return withCORS(JSON.stringify({ success: true, data: items }), { status: 200 }, appOrigin);
             } catch (err) {

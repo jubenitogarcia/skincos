@@ -192,6 +192,114 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
   });
 }
 
+export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, limite }) {
+  const page = Math.max(1, toInt(pagina, 1) || 1);
+  const lim = Math.max(1, Math.min(1000, toInt(limite, 200) || 200));
+  const offset = (page - 1) * lim;
+
+  const query = String(q || '').trim();
+  const where = [];
+  const binds = [];
+  if (query) {
+    const like = `%${query}%`;
+    where.push(`(
+      produto LIKE ? COLLATE NOCASE OR
+      codigo_barras LIKE ? COLLATE NOCASE OR
+      categoria LIKE ? COLLATE NOCASE OR
+      marca LIKE ? COLLATE NOCASE OR
+      lote LIKE ? COLLATE NOCASE
+    )`);
+    binds.push(like, like, like, like, like);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const countRow = await env.DB.prepare(`SELECT COUNT(1) AS n FROM insumos_items ${whereSql}`)
+    .bind(...binds)
+    .first();
+  const total = toInt(countRow?.n, 0);
+
+  const itemsRes = await env.DB.prepare(
+    `SELECT
+        registro,
+        codigo_barras,
+        produto,
+        categoria,
+        marca,
+        especificacao,
+        concentracao,
+        volume,
+        calibre,
+        tipo_unidade,
+        fonte,
+        preco_custo,
+        estoque_minimo,
+        lote,
+        data_validade,
+        data_cadastro,
+        data_atualizacao
+     FROM insumos_items
+     ${whereSql}
+     ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC
+     LIMIT ? OFFSET ?`
+  )
+    .bind(...binds, lim, offset)
+    .all();
+  const items = itemsRes?.results || [];
+
+  const registros = items.map((it) => String(it.registro || '').trim()).filter(Boolean);
+  const byRegistro = new Map();
+  if (registros.length) {
+    const placeholders = registros.map(() => '?').join(',');
+    const stocksRes = await env.DB.prepare(
+      `SELECT registro, unidade, quantidade
+       FROM insumos_stocks
+       WHERE registro IN (${placeholders})`
+    )
+      .bind(...registros)
+      .all();
+    const stocks = stocksRes?.results || [];
+    for (const s of stocks) {
+      const reg = String(s.registro || '').trim();
+      if (!reg) continue;
+      const map = byRegistro.get(reg) || {};
+      map[String(s.unidade || '').trim()] = toInt(s.quantidade, 0);
+      byRegistro.set(reg, map);
+    }
+  }
+
+  const mapped = items.map((it) => {
+    const registro = String(it.registro || '').trim();
+    const estoques = byRegistro.get(registro) || {};
+    const estoqueAtual = toInt(estoques?.[unidade], 0);
+    const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    return {
+      registro,
+      codigoBarras: String(it.codigo_barras || ''),
+      categoria: String(it.categoria || ''),
+      marca: String(it.marca || ''),
+      produto: String(it.produto || ''),
+      especificacao: String(it.especificacao || ''),
+      concentracao: String(it.concentracao || ''),
+      volume: String(it.volume || ''),
+      calibre: String(it.calibre || ''),
+      tipoUnidade: String(it.tipo_unidade || ''),
+      fonte: String(it.fonte || ''),
+      lote: String(it.lote || ''),
+      precoCusto: toNumber(it.preco_custo, 0),
+      estoqueAtual,
+      estoqueMinimo: toInt(it.estoque_minimo, 0),
+      dataValidade: dataValidade || null,
+      statusValidade: calcularStatusValidade(dataValidade),
+      estoques: Object.fromEntries((unidades || []).map((u) => [u, toInt(estoques?.[u], 0)])),
+    };
+  });
+
+  return {
+    items: mapped,
+    resumo: { total, pagina: page, limite: lim, q: query || null }
+  };
+}
+
 export async function d1GetInsumoByRegistro(env, registro) {
   const row = await env.DB.prepare(
     `SELECT
