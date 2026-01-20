@@ -35,6 +35,7 @@ export class ErrorBoundary extends Component<Props, State> {
         try {
           if (import.meta.env.DEV) return true
           if (typeof window === 'undefined') return false
+          if (window.localStorage.getItem('skincos.debug') === '1') return true
           return new URLSearchParams(window.location.search).get('debug') === '1'
         } catch {
           return false
@@ -58,13 +59,6 @@ export class ErrorBoundary extends Component<Props, State> {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {this.state.error && (
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground font-mono">
-                    {this.state.error.message}
-                  </p>
-                </div>
-              )}
               {debugEnabled ? (
                 <details className="rounded-lg border bg-muted/30 p-3">
                   <summary className="cursor-pointer text-sm text-muted-foreground">
@@ -72,7 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
                   </summary>
                   <div className="mt-3 space-y-2">
                     <pre className="whitespace-pre-wrap break-words rounded-md bg-black/80 p-3 text-xs text-white/90">
-                      {(this.state.error?.stack || '(stack indisponível)') + '\n' + (this.state.errorInfo || '')}
+                      {`message: ${this.state.error?.message || ''}\n\n${this.state.error?.stack || '(stack indisponível)'}\n${this.state.errorInfo || ''}`}
                     </pre>
                     <Button
                       variant="outline"

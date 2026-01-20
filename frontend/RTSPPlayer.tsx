@@ -61,9 +61,14 @@ export function RTSPPlayer({
         lastAdvanceAt = Date.now()
         return
       }
-      if (Date.now() - lastAdvanceAt > 5000) {
+      const stalledFor = Date.now() - lastAdvanceAt
+      if (stalledFor > 5000 && stalledFor <= 8000) {
         try { hlsRef.current?.startLoad() } catch { /* ignore */ }
         try { v.play().catch(() => {}) } catch { /* ignore */ }
+      }
+      if (stalledFor > 8000) {
+        onErrorRef.current?.('HLS: stream travado, reconectando')
+        setRetryNonce((n) => n + 1)
         lastAdvanceAt = Date.now()
       }
     }, 1000)
@@ -102,9 +107,9 @@ export function RTSPPlayer({
         // Aim for lower latency when using short HLS segments.
         lowLatencyMode: true,
         backBufferLength: 0,
-        maxBufferLength: 6,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 4,
+        maxBufferLength: 4,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 3,
         maxLiveSyncPlaybackRate: 1.5,
         fragLoadingTimeOut: 8000,
         manifestLoadingTimeOut: 8000,
@@ -121,24 +126,30 @@ export function RTSPPlayer({
       })
 
       hls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              setError('Network error - check stream URL and connection')
-              try { hls.startLoad() } catch { /* ignore */ }
-              onErrorRef.current?.('Network error accessing stream')
-              break
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              setError('Media error - stream format may be unsupported')
-              try { hls.recoverMediaError() } catch { /* ignore */ }
-              onErrorRef.current?.('Media decoding error')
-              break
-            default:
-              setError('Fatal streaming error occurred')
-              onErrorRef.current?.('Fatal streaming error')
-              break
+        const isFatal = Boolean(data?.fatal)
+        const kind = String(data?.type || '')
+
+        if (!isFatal) {
+          if (kind === Hls.ErrorTypes.NETWORK_ERROR) {
+            try { hls.startLoad() } catch {}
           }
+          return
         }
+
+        if (kind === Hls.ErrorTypes.NETWORK_ERROR) {
+          setError('Network error - check stream URL and connection')
+          try { hls.startLoad() } catch {}
+          onErrorRef.current?.('Network error accessing stream')
+          return
+        }
+        if (kind === Hls.ErrorTypes.MEDIA_ERROR) {
+          setError('Media error - attempting recovery')
+          try { hls.recoverMediaError() } catch {}
+          onErrorRef.current?.('Media decoding error')
+          return
+        }
+        setError('Fatal streaming error occurred')
+        onErrorRef.current?.('Fatal streaming error')
       })
 
       hls.on(Hls.Events.FRAG_LOADED, () => {

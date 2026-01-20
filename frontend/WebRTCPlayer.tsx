@@ -86,6 +86,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, iceServers, onPlayStateChan
     let failed = false
     let firstFrameTimeout: number | null = null
     let connectTimeout: number | null = null
+    let stallTimer: number | null = null
     let onLoadedData: (() => void) | null = null
     let firstFrameSeen = false
     let videoFrameCbHandle: number | null = null
@@ -107,6 +108,54 @@ export function WebRTCPlayer({ whepUrl, isConnected, iceServers, onPlayStateChan
       failed = true
       setError(msg)
       onErrorRef.current?.(msg)
+    }
+
+    const startStallWatchdog = () => {
+      if (stallTimer) return
+      let lastVideoTime = 0
+      let lastAdvancedAt = Date.now()
+      let lastFramesDecoded: number | null = null
+      stallTimer = window.setInterval(async () => {
+        if (cancelled || failed) return
+        const v = videoRef.current
+        if (!v) return
+        if (v.paused) return
+
+        const cur = Number(v.currentTime || 0) || 0
+        if (cur > lastVideoTime + 0.15) {
+          lastVideoTime = cur
+          lastAdvancedAt = Date.now()
+          return
+        }
+
+        try {
+          const stats = await pc.getStats()
+          let frames: number | null = null
+          stats.forEach((r: any) => {
+            const isInbound = r?.type === 'inbound-rtp' && (r.kind === 'video' || r.mediaType === 'video')
+            if (!isInbound) return
+            const fd = Number(r.framesDecoded)
+            const fr = Number(r.framesReceived)
+            const pr = Number(r.packetsReceived)
+            frames = Number.isFinite(fd) ? fd : (Number.isFinite(fr) ? fr : (Number.isFinite(pr) ? pr : frames))
+          })
+          if (frames != null) {
+            if (lastFramesDecoded == null) {
+              lastFramesDecoded = frames
+            } else if (frames > lastFramesDecoded) {
+              lastFramesDecoded = frames
+              lastAdvancedAt = Date.now()
+              return
+            }
+          }
+        } catch {
+        }
+
+        const since = Date.now() - lastAdvancedAt
+        if (since > 7000) {
+          fail('WebRTC: stream travado (sem frames)')
+        }
+      }, 1000)
     }
 
     pc.oniceconnectionstatechange = () => {
@@ -159,6 +208,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, iceServers, onPlayStateChan
           if (firstFrameTimeout) window.clearTimeout(firstFrameTimeout)
           firstFrameTimeout = null
           if (!cancelled && !failed) onReadyRef.current?.()
+          startStallWatchdog()
         }
 
         // Prefer requestVideoFrameCallback when available (more reliable than loadeddata for "black frame" cases).
@@ -202,6 +252,7 @@ export function WebRTCPlayer({ whepUrl, isConnected, iceServers, onPlayStateChan
       cancelled = true
       if (firstFrameTimeout) window.clearTimeout(firstFrameTimeout)
       if (connectTimeout) window.clearTimeout(connectTimeout)
+      if (stallTimer) window.clearInterval(stallTimer)
       if (videoRef.current && onLoadedData) {
         try { videoRef.current.removeEventListener('loadeddata', onLoadedData as any) } catch { /* ignore */ }
       }

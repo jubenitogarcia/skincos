@@ -455,6 +455,7 @@ export function UnitMonitor() {
   const [webrtcProbe, setWebrtcProbe] = useState(false)
   const [webrtcFailures, setWebrtcFailures] = useState(0)
   const [webrtcRetryAt, setWebrtcRetryAt] = useState(0)
+  const [liveDebugOpen, setLiveDebugOpen] = useState(false)
   const [rtspTestBusy, setRtspTestBusy] = useState(false)
   const [rtspTest, setRtspTest] = useState<RtspTestResult | null>(null)
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false)
@@ -1808,20 +1809,42 @@ export function UnitMonitor() {
 	                              tentando WebRTC{webrtcFailures ? ` (${webrtcFailures})` : ''}
 	                            </Badge>
 	                          ) : null}
-	                          {selectedStream?.webrtcUrlProxy ? (
-	                            <a className="text-xs underline" href={selectedStream.webrtcUrlProxy} target="_blank" rel="noreferrer">
-	                              whep
-	                            </a>
-	                          ) : null}
-	                          {selectedStream?.hlsUrlProxy ? (
-	                            <a className="text-xs underline" href={selectedStream.hlsUrlProxy} target="_blank" rel="noreferrer">
-	                              m3u8
-	                            </a>
-	                          ) : null}
+	                          <Button
+	                            size="sm"
+	                            variant="outline"
+	                            className="h-7 px-2 text-xs"
+	                            onClick={() => setLiveDebugOpen((v) => !v)}
+	                          >
+	                            {liveDebugOpen ? 'Ocultar' : 'Detalhes'}
+	                          </Button>
 	                        </div>
 	                      </CardTitle>
 	                    </CardHeader>
 		                    <CardContent className="space-y-3">
+		                      {liveDebugOpen ? (
+		                        <div className="rounded-xl border border-white/10 bg-black/10 p-3 text-xs text-blue-200/70 space-y-2">
+		                          <div className="flex flex-wrap items-center gap-2">
+		                            <Badge variant="secondary">Gateway: {streamingStatus?.running ? 'on' : 'off'}</Badge>
+		                            <Badge variant="secondary">WebRTC: {canWebrtc ? 'ok' : '—'}</Badge>
+		                            <Badge variant="secondary">HLS: {canHls ? 'ok' : '—'}</Badge>
+		                          </div>
+		                          <div className="flex flex-wrap items-center gap-2">
+		                            {selectedStream?.webrtcUrlProxy ? (
+		                              <a className="underline" href={selectedStream.webrtcUrlProxy} target="_blank" rel="noreferrer">
+		                                Abrir WHEP
+		                              </a>
+		                            ) : null}
+		                            {selectedStream?.hlsUrlProxy ? (
+		                              <a className="underline" href={selectedStream.hlsUrlProxy} target="_blank" rel="noreferrer">
+		                                Abrir M3U8
+		                              </a>
+		                            ) : null}
+		                            <a className="underline" href="/api/unit-monitor/diagnostics" target="_blank" rel="noreferrer">
+		                              Logs
+		                            </a>
+		                          </div>
+		                        </div>
+		                      ) : null}
 		                      <div className="flex flex-col md:flex-row gap-2">
 		                        <Select value={selectedCameraId || ''} onValueChange={(v) => setSelectedCameraId(v)}>
 		                          <SelectTrigger className="flex-1">

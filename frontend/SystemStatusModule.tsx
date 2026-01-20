@@ -154,6 +154,16 @@ export function SystemStatusModule() {
   const [adminOpen, setAdminOpen] = React.useState(false)
   const [auditLoading, setAuditLoading] = React.useState(false)
   const [auditRows, setAuditRows] = React.useState<AuditRow[]>([])
+  const [debugUi, setDebugUi] = React.useState(false)
+
+  React.useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return
+      setDebugUi(window.localStorage.getItem('skincos.debug') === '1')
+    } catch {
+      setDebugUi(false)
+    }
+  }, [])
 
   const refreshMe = React.useCallback(async () => {
     try {
@@ -354,9 +364,23 @@ export function SystemStatusModule() {
             {updatedAt ? <span> • atualizado em {updatedAt}</span> : null}
           </div>
         </div>
-        <Button onClick={refresh} disabled={loading}>
-          {loading ? 'Atualizando…' : 'Atualizar'}
-        </Button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2">
+            <span className="text-xs text-blue-100/70">Debug</span>
+            <Switch
+              checked={debugUi}
+              onCheckedChange={(checked) => {
+                setDebugUi(Boolean(checked))
+                try {
+                  window.localStorage.setItem('skincos.debug', checked ? '1' : '0')
+                } catch {}
+              }}
+            />
+          </div>
+          <Button onClick={refresh} disabled={loading}>
+            {loading ? 'Atualizando…' : 'Atualizar'}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
