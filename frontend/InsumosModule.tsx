@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
+import { Checkbox } from '@/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
@@ -159,6 +160,21 @@ type ShareHistoryItem = SharePayload & {
   createdAt: string
 }
 
+type CategoryPolicy = {
+  slug: string
+  label?: string
+  requiresLot?: boolean
+  requiresExpiry?: boolean
+  fefo?: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+type CategoryPolicySuggestion = {
+  slug: string
+  label: string
+}
+
 type ApiError = {
   error?: string
   message?: string
@@ -211,6 +227,16 @@ const CATEGORIA_CORES: Record<string, string> = {
 function getCategoriaBgColor(categoria?: string | null) {
   const key = String(categoria || '').trim().toLowerCase()
   return CATEGORIA_CORES[key] || '#0ea5e9'
+}
+
+function slugifyCategoria(value?: string | null) {
+  const s0 = String(value || '').trim().toLowerCase()
+  if (!s0) return ''
+  return s0
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
@@ -633,6 +659,22 @@ export function InsumosModule() {
   const shareLoggedRef = React.useRef<string>('')
   const shareSyncedRef = React.useRef<Set<string>>(new Set())
 
+  const [categoryPolicies, setCategoryPolicies] = React.useState<CategoryPolicy[]>([])
+  const [categoryPoliciesLoading, setCategoryPoliciesLoading] = React.useState(false)
+
+  const [adminCategoryPolicies, setAdminCategoryPolicies] = React.useState<CategoryPolicy[]>([])
+  const [adminCategorySuggestions, setAdminCategorySuggestions] = React.useState<CategoryPolicySuggestion[]>([])
+  const [adminCategoryPoliciesLoading, setAdminCategoryPoliciesLoading] = React.useState(false)
+
+  const [policyFormLabel, setPolicyFormLabel] = React.useState('')
+  const [policyFormSlug, setPolicyFormSlug] = React.useState('')
+  const [policyFormSlugTouched, setPolicyFormSlugTouched] = React.useState(false)
+  const [policyFormRequiresLot, setPolicyFormRequiresLot] = React.useState(false)
+  const [policyFormRequiresExpiry, setPolicyFormRequiresExpiry] = React.useState(false)
+  const [policyFormFefo, setPolicyFormFefo] = React.useState(false)
+  const [policyFormEditingSlug, setPolicyFormEditingSlug] = React.useState<string | null>(null)
+  const [policyFormSuggestion, setPolicyFormSuggestion] = React.useState('__NONE__')
+
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
   const [insumosFull, setInsumosFull] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
@@ -759,6 +801,32 @@ export function InsumosModule() {
   const canUseApi = !!health?.ok
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
+
+  const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
+
+  const categoryPolicyBySlug = React.useMemo(() => {
+    const map = new Map<string, CategoryPolicy>()
+    for (const p of categoryPolicies || []) {
+      const slug = String(p?.slug || '').trim()
+      if (!slug) continue
+      map.set(slug, p)
+    }
+    return map
+  }, [Array.isArray(categoryPolicies) ? categoryPolicies.map((p) => String(p?.slug || '')).join('|') : ''])
+
+  const getPolicyForCategoria = React.useCallback(
+    (categoria?: string | null) => {
+      const slug = slugifyCategoria(categoria)
+      const p = slug ? categoryPolicyBySlug.get(slug) : undefined
+      return {
+        slug,
+        requiresLot: !!p?.requiresLot,
+        requiresExpiry: !!p?.requiresExpiry,
+        fefo: !!p?.fefo
+      }
+    },
+    [categoryPolicyBySlug]
+  )
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -953,11 +1021,14 @@ export function InsumosModule() {
     if (!quickOp) return
     if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
     if (!quickAutoFefo) return
+    const categoria = String(quickLookupItems?.[0]?.categoria || '').trim()
+    const policy = getPolicyForCategoria(categoria)
+    if (!policy.fefo) return
     if (!quickLotes.length) return
     const suggested = quickLotes[0]?.registro
     if (!suggested) return
     setQuickRegistro((cur) => (cur ? cur : suggested))
-  }, [quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickOp])
+  }, [getPolicyForCategoria, quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickLookupItems?.[0]?.categoria, quickOp])
 
   const persistShareHistory = React.useCallback(
     (next: ShareHistoryItem[]) => {
@@ -990,6 +1061,69 @@ export function InsumosModule() {
     }
   }, [apiJson, canUseApi, isAuthed, persistShareHistory])
 
+  const loadCategoryPolicies = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    setCategoryPoliciesLoading(true)
+    try {
+      const out = await apiJson<{ success?: boolean; data?: CategoryPolicy[] }>(`/categorias/policies`)
+      const list = Array.isArray(out?.data) ? out.data : []
+      setCategoryPolicies(
+        list
+          .map((p) => ({
+            slug: String((p as any)?.slug || '').trim(),
+            label: (p as any)?.label ? String((p as any).label) : '',
+            requiresLot: !!(p as any)?.requiresLot,
+            requiresExpiry: !!(p as any)?.requiresExpiry,
+            fefo: !!(p as any)?.fefo,
+            createdAt: (p as any)?.createdAt ?? null,
+            updatedAt: (p as any)?.updatedAt ?? null
+          }))
+          .filter((p) => p.slug)
+      )
+    } catch {
+      setCategoryPolicies([])
+    } finally {
+      setCategoryPoliciesLoading(false)
+    }
+  }, [apiJson, canUseApi, isAuthed])
+
+  const loadAdminCategoryPolicies = React.useCallback(
+    async (opts?: { includeSuggestions?: boolean }) => {
+      if (!canUseApi || !isAuthed || !isManagerRole) return
+      const includeSuggestions = opts?.includeSuggestions !== false
+      setAdminCategoryPoliciesLoading(true)
+      try {
+        const out = await apiJson<{ success?: boolean; data?: CategoryPolicy[]; suggestions?: CategoryPolicySuggestion[] }>(
+          `/admin/categories?includeSuggestions=${includeSuggestions ? 'true' : 'false'}`
+        )
+        setAdminCategoryPolicies(
+          (Array.isArray(out?.data) ? out.data : [])
+            .map((p) => ({
+              slug: String((p as any)?.slug || '').trim(),
+              label: (p as any)?.label ? String((p as any).label) : '',
+              requiresLot: !!(p as any)?.requiresLot,
+              requiresExpiry: !!(p as any)?.requiresExpiry,
+              fefo: !!(p as any)?.fefo,
+              createdAt: (p as any)?.createdAt ?? null,
+              updatedAt: (p as any)?.updatedAt ?? null
+            }))
+            .filter((p) => p.slug)
+        )
+        setAdminCategorySuggestions(
+          (Array.isArray(out?.suggestions) ? out.suggestions : [])
+            .map((s) => ({ slug: String((s as any)?.slug || '').trim(), label: String((s as any)?.label || '').trim() }))
+            .filter((s) => s.slug && s.label)
+        )
+      } catch {
+        setAdminCategoryPolicies([])
+        setAdminCategorySuggestions([])
+      } finally {
+        setAdminCategoryPoliciesLoading(false)
+      }
+    },
+    [apiJson, canUseApi, isAuthed, isManagerRole]
+  )
+
   React.useEffect(() => {
     try {
       const raw = localStorage.getItem(SHARE_HISTORY_KEY)
@@ -1001,21 +1135,31 @@ export function InsumosModule() {
     }
   }, [SHARE_HISTORY_KEY])
 
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    void loadCategoryPolicies()
+  }, [canUseApi, isAuthed, loadCategoryPolicies])
 
-	  React.useEffect(() => {
-	    const mapTab = (raw: string | null): 'overview' | 'insumos' | 'mov' | null => {
-	      const value = String(raw || '')
-	        .trim()
-	        .toLowerCase()
-	      if (!value) return null
-	      if (['overview', 'resumo', 'dashboard'].includes(value)) return 'overview'
-	      if (['insumos', 'cadastro', 'cadastrar', 'novo'].includes(value)) return 'insumos'
-	      if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'overview'
-	      if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
-	      if (['alertas', 'avisos'].includes(value)) return 'overview'
-	      if (['insights'].includes(value)) return 'overview'
-	      return null
-	    }
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed || !isManagerRole) return
+    void loadAdminCategoryPolicies({ includeSuggestions: true })
+  }, [canUseApi, isAuthed, isManagerRole, loadAdminCategoryPolicies])
+
+
+  React.useEffect(() => {
+    const mapTab = (raw: string | null): 'overview' | 'insumos' | 'mov' | null => {
+      const value = String(raw || '')
+        .trim()
+        .toLowerCase()
+      if (!value) return null
+      if (['overview', 'resumo', 'dashboard'].includes(value)) return 'overview'
+      if (['insumos', 'cadastro', 'cadastrar', 'novo'].includes(value)) return 'insumos'
+      if (['lotes', 'validade', 'lotes-validade'].includes(value)) return 'overview'
+      if (['mov', 'movimentacoes', 'historico', 'histórico'].includes(value)) return 'mov'
+      if (['alertas', 'avisos'].includes(value)) return 'overview'
+      if (['insights'].includes(value)) return 'overview'
+      return null
+    }
 
     const mapActionLabel = (raw: string) => {
       const value = raw.toLowerCase()
@@ -1028,16 +1172,16 @@ export function InsumosModule() {
       return null
     }
 
-	    try {
-	      const params = new URLSearchParams(window.location.search)
-	      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
-	      if (requestedTab) {
-	        setTimeout(() => {
-	          if (requestedTab === 'overview') overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-	          else if (requestedTab === 'insumos') insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-	          else if (requestedTab === 'mov') movSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-	        }, 250)
-	      }
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
+      if (requestedTab) {
+        setTimeout(() => {
+          if (requestedTab === 'overview') overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          else if (requestedTab === 'insumos') insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          else if (requestedTab === 'mov') movSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 250)
+      }
 
       const action = String(
         params.get('insumosAction') || params.get('action') || params.get('type') || params.get('tipo') || ''
@@ -1047,10 +1191,10 @@ export function InsumosModule() {
       const wantsScanner = params.get('scanner') === '1' || actionLabel === 'Scanner'
       const wantsQuickAction = ['Entrada', 'Saída', 'Ajuste', 'Transferência'].includes(actionLabel || '')
 
-	      if (wantsCadastro) {
-	        setCreateOpen(true)
-	        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
-	      }
+      if (wantsCadastro) {
+        setCreateOpen(true)
+        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+      }
 
       if (wantsScanner) {
         setQuickScanOpen(true)
@@ -1072,21 +1216,21 @@ export function InsumosModule() {
       const shareFilesRaw = params.get('shareFiles') || ''
       const shareFiles = shareFilesRaw
         ? shareFilesRaw
-            .split(',')
-            .map((item) => item.trim())
-            .filter(Boolean)
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
         : []
       const hasShare = Boolean(shareId || shareTitle || shareText || shareUrl || shareFiles.length)
 
-	      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
-	        setSharePayload(payload)
-	        setShareSourceId(sourceId || null)
-	        setShareHidden(false)
-	        setCreateOpen(true)
-	        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
-	        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
-	        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
-	        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
+      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
+        setSharePayload(payload)
+        setShareSourceId(sourceId || null)
+        setShareHidden(false)
+        setCreateOpen(true)
+        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
+        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
+        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
         if (payload.files && payload.files.length) {
           const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
           setCreateFonte((prev) => (prev ? prev : filesSummary))
@@ -1097,12 +1241,14 @@ export function InsumosModule() {
         setShareLoading(true)
         void (async () => {
           try {
-            const res = await fetch(`/share/${encodeURIComponent(shareId)}`, { cache: 'no-store' })
-            if (!res.ok) throw new Error('share fetch failed')
-            const data = (await res.json()) as SharePayload
+            const data = await apiJson<SharePayload>(`/share/${encodeURIComponent(shareId)}`)
             const files = (data.files || []).map((f) => ({
               ...f,
-              url: f.name ? `/share/${encodeURIComponent(shareId)}?file=${encodeURIComponent(f.name)}` : undefined
+              url:
+                f.url ||
+                (f.name
+                  ? `/api/insumos/share/${encodeURIComponent(shareId)}?file=${encodeURIComponent(f.name)}`
+                  : undefined)
             }))
             applySharePayload({ ...data, files }, shareId)
           } catch {
@@ -1152,16 +1298,16 @@ export function InsumosModule() {
       .join(' ')
   }, [])
 
-	  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
-	    setCreateOpen(true)
-	    setSharePayload(payload)
-	    setShareSourceId(payload.id || null)
-	    setShareHidden(false)
-	    setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
-	    if (payload.title) setCreateProduto(payload.title)
-	    if (payload.text) setCreateEspecificacao(payload.text)
-	    if (payload.url) setCreateFonte(payload.url)
-	    if (payload.files && payload.files.length) {
+  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
+    setCreateOpen(true)
+    setSharePayload(payload)
+    setShareSourceId(payload.id || null)
+    setShareHidden(false)
+    setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+    if (payload.title) setCreateProduto(payload.title)
+    if (payload.text) setCreateEspecificacao(payload.text)
+    if (payload.url) setCreateFonte(payload.url)
+    if (payload.files && payload.files.length) {
       const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
       setCreateFonte((prev) => (prev ? prev : filesSummary))
     }
@@ -1262,6 +1408,19 @@ export function InsumosModule() {
     return e instanceof TypeError || /Failed to fetch|NetworkError|fetch failed/i.test(msg)
   }
 
+  const policyErrorToast = (e: unknown) => {
+    const code = String((e as any)?.code || '').toUpperCase()
+    if (code === 'POLICY_REQUIRES_LOT') {
+      toast.error('Esta categoria exige Lote. Abra o cadastro do item e preencha o lote.')
+      return true
+    }
+    if (code === 'POLICY_REQUIRES_EXPIRY') {
+      toast.error('Esta categoria exige Data de validade. Abra o cadastro do item e preencha a validade.')
+      return true
+    }
+    return false
+  }
+
   const enqueueOffline = React.useCallback(
     (item: Omit<OfflineQueueItem, 'id' | 'ts'>) => {
       const queue = readOfflineQueue()
@@ -1331,6 +1490,132 @@ export function InsumosModule() {
       }
     },
     [csrfToken, enqueueOffline, offlineDialogOpen, refreshCsrf]
+  )
+
+  React.useEffect(() => {
+    if (policyFormSlugTouched) return
+    setPolicyFormSlug(slugifyCategoria(policyFormLabel))
+  }, [policyFormLabel, policyFormSlugTouched])
+
+  const resetPolicyForm = React.useCallback(() => {
+    setPolicyFormLabel('')
+    setPolicyFormSlug('')
+    setPolicyFormSlugTouched(false)
+    setPolicyFormRequiresLot(false)
+    setPolicyFormRequiresExpiry(false)
+    setPolicyFormFefo(false)
+    setPolicyFormEditingSlug(null)
+    setPolicyFormSuggestion('__NONE__')
+  }, [])
+
+  const startEditPolicyForm = React.useCallback((p: CategoryPolicy) => {
+    setPolicyFormLabel(String(p?.label || ''))
+    setPolicyFormSlug(String(p?.slug || ''))
+    setPolicyFormSlugTouched(true)
+    setPolicyFormRequiresLot(!!p?.requiresLot)
+    setPolicyFormRequiresExpiry(!!p?.requiresExpiry)
+    setPolicyFormFefo(!!p?.fefo)
+    setPolicyFormEditingSlug(String(p?.slug || '') || null)
+    setPolicyFormSuggestion('__NONE__')
+  }, [])
+
+  const saveCategoryPolicy = React.useCallback(async () => {
+    if (!isManagerRole || !isAuthed) return
+    const label = String(policyFormLabel || '').trim()
+    const slugInput = String(policyFormSlug || '').trim()
+    const slug = slugifyCategoria(slugInput || label)
+    if (!slug) {
+      toast.error('Informe a categoria (nome)')
+      return
+    }
+    const requiresLot = !!policyFormRequiresLot
+    const requiresExpiry = !!policyFormRequiresExpiry
+    const fefo = !!policyFormFefo
+    if (fefo && !requiresExpiry) {
+      toast.error('FEFO exige validade obrigatória')
+      return
+    }
+
+    try {
+      const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
+        '/admin/categories',
+        {
+          method: 'POST',
+          queueLabel: 'Política por categoria',
+          body: {
+            slug,
+            label,
+            requiresLot,
+            requiresExpiry,
+            fefo
+          }
+        },
+        { needsCsrf: true }
+      )
+
+      if ((out as any)?.queued) {
+        toast.message('Mudança salva na fila offline.')
+        resetPolicyForm()
+        return
+      }
+
+      toast.success(policyFormEditingSlug ? 'Política atualizada.' : 'Política criada.')
+      resetPolicyForm()
+      await Promise.allSettled([loadAdminCategoryPolicies({ includeSuggestions: true }), loadCategoryPolicies()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }, [
+    isAuthed,
+    isManagerRole,
+    loadAdminCategoryPolicies,
+    loadCategoryPolicies,
+    mutateJson,
+    policyFormEditingSlug,
+    policyFormFefo,
+    policyFormLabel,
+    policyFormRequiresExpiry,
+    policyFormRequiresLot,
+    policyFormSlug,
+    resetPolicyForm
+  ])
+
+  const deleteCategoryPolicy = React.useCallback(
+    async (slugRaw: string) => {
+      if (!isManagerRole || !isAuthed) return
+      const slug = String(slugRaw || '').trim()
+      if (!slug) return
+      const ok = window.confirm(`Remover política da categoria "${slug}"?`)
+      if (!ok) return
+
+      try {
+        const out = await mutateJson<{ success?: boolean }>(
+          `/admin/categories/${encodeURIComponent(slug)}`,
+          { method: 'DELETE', queueLabel: 'Política por categoria' },
+          { needsCsrf: true }
+        )
+        if ((out as any)?.queued) {
+          setAdminCategoryPolicies((prev) => prev.filter((p) => String(p?.slug || '') !== slug))
+          toast.message('Remoção salva na fila offline.')
+          return
+        }
+
+        toast.success('Política removida.')
+        if (policyFormEditingSlug === slug) resetPolicyForm()
+        await Promise.allSettled([loadAdminCategoryPolicies({ includeSuggestions: true }), loadCategoryPolicies()])
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [
+      isAuthed,
+      isManagerRole,
+      loadAdminCategoryPolicies,
+      loadCategoryPolicies,
+      mutateJson,
+      policyFormEditingSlug,
+      resetPolicyForm
+    ]
   )
 
   const removeShareHistory = React.useCallback(
@@ -1539,24 +1824,24 @@ export function InsumosModule() {
     [canUseApi, insumosLimite, insumosMode, insumosPagina, insumosQuery, isAuthed, loadInsumosFull, loadInsumosPaged]
   )
 
-	  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
-	    if (!canUseApi || !isAuthed) return
-	    setMovLoading(true)
-	    try {
+  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
+    if (!canUseApi || !isAuthed) return
+    setMovLoading(true)
+    try {
       const pagina = Math.max(1, opts?.pagina ?? movPagina)
       const limite = Math.max(1, Math.min(200, opts?.limite ?? movLimite))
       const params = new URLSearchParams()
       params.set('unidade', unidade)
-	      params.set('limite', String(limite))
-	      params.set('pagina', String(pagina))
-	      if (movTipo !== 'TODOS') params.set('tipo', movTipo)
-	      const deIso = dateInputToIso(movDe)
-	      const ateIso = dateInputToIso(movAte)
-	      if (deIso) params.set('de', deIso)
-	      if (ateIso) params.set('ate', ateIso)
-	      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
-	        `/movimentacoes?${params.toString()}`
-	      )
+      params.set('limite', String(limite))
+      params.set('pagina', String(pagina))
+      if (movTipo !== 'TODOS') params.set('tipo', movTipo)
+      const deIso = dateInputToIso(movDe)
+      const ateIso = dateInputToIso(movAte)
+      if (deIso) params.set('de', deIso)
+      if (ateIso) params.set('ate', ateIso)
+      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
+        `/movimentacoes?${params.toString()}`
+      )
       const list = (out as any)?.movimentos ?? out?.data
       setMovimentacoes(Array.isArray(list) ? list : [])
       const total = Number((out as any)?.resumo?.totalMovimentacoes)
@@ -1677,18 +1962,19 @@ export function InsumosModule() {
       return
     }
     if (!canUseApi || !isAuthed) return
-	    setLotSaving(true)
-	    try {
-	      const dataValidade = dateInputToIso(lotEditValidade)
-	      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
-	        method: 'PUT',
-	        body: { lote: lotEditLote.trim(), dataValidade },
-	        queueLabel: 'Atualização de lote/validade'
-	      })
+    setLotSaving(true)
+    try {
+      const dataValidade = dateInputToIso(lotEditValidade)
+      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
+        method: 'PUT',
+        body: { lote: lotEditLote.trim(), dataValidade },
+        queueLabel: 'Atualização de lote/validade'
+      })
       toast.success('Lote/validade atualizados.')
       setLotDialogOpen(false)
       await Promise.allSettled([refreshInsumos(), loadOverview()])
     } catch (e) {
+      if (policyErrorToast(e)) return
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setLotSaving(false)
@@ -1733,6 +2019,7 @@ export function InsumosModule() {
       setEditOpen(false)
       await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
     } catch (e) {
+      if (policyErrorToast(e)) return
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
@@ -1782,27 +2069,27 @@ export function InsumosModule() {
     }
   }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
 
-	  const loadInsights = React.useCallback(async () => {
+  const loadInsights = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setInsightsLoading(true)
     try {
       const base = new URLSearchParams()
       base.set('unidade', unidade)
 
-	      const trendsParams = new URLSearchParams(base.toString())
-	      trendsParams.set('groupBy', 'day')
-	      const days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
-	      trendsParams.set('days', String(days))
-	      const deIso = dateInputToIso(movDe)
-	      const ateIso = dateInputToIso(movAte)
-	      if (deIso) trendsParams.set('from', deIso)
-	      if (ateIso) trendsParams.set('to', ateIso)
+      const trendsParams = new URLSearchParams(base.toString())
+      trendsParams.set('groupBy', 'day')
+      const days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+      trendsParams.set('days', String(days))
+      const deIso = dateInputToIso(movDe)
+      const ateIso = dateInputToIso(movAte)
+      if (deIso) trendsParams.set('from', deIso)
+      if (ateIso) trendsParams.set('to', ateIso)
 
-	      const turnoverParams = new URLSearchParams(base.toString())
-	      turnoverParams.set('days', String(days))
-	      turnoverParams.set('mode', 'saida')
-	      if (deIso) turnoverParams.set('from', deIso)
-	      if (ateIso) turnoverParams.set('to', ateIso)
+      const turnoverParams = new URLSearchParams(base.toString())
+      turnoverParams.set('days', String(days))
+      turnoverParams.set('mode', 'saida')
+      if (deIso) turnoverParams.set('from', deIso)
+      if (ateIso) turnoverParams.set('to', ateIso)
 
       const [alertas, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
@@ -1821,7 +2108,7 @@ export function InsumosModule() {
     } finally {
       setInsightsLoading(false)
     }
-	  }, [canUseApi, isAuthed, movAte, movDe, movTipo, overviewPeriod, unidade])
+  }, [canUseApi, isAuthed, movAte, movDe, movTipo, overviewPeriod, unidade])
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
@@ -1867,6 +2154,7 @@ export function InsumosModule() {
           toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
           return false
         }
+        if (policyErrorToast(e)) return false
         toast.error(e instanceof Error ? e.message : String(e))
         return false
       } finally {
@@ -1930,6 +2218,7 @@ export function InsumosModule() {
         toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
         return false
       }
+      if (policyErrorToast(e)) return false
       toast.error(e instanceof Error ? e.message : String(e))
       return false
     } finally {
@@ -2081,13 +2370,13 @@ export function InsumosModule() {
     defaultView?: ChartView
     layout?: ChartLayout
   }> = [
-    { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-    { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-    { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
-    { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
-    { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
-    { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' }
-  ]
+      { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+      { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+      { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
+      { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
+      { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
+      { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' }
+    ]
 
   const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
     try {
@@ -2347,10 +2636,10 @@ export function InsumosModule() {
         const series =
           presetId === 'mov_saldo'
             ? movSeriesForCharts.map((p) => ({
-                day: p.day,
-                saldoQtd: (Number(p.entrada) || 0) - (Number(p.saida) || 0),
-                saldoValor: (Number(p.entradaValor) || 0) - (Number(p.saidaValor) || 0)
-              }))
+              day: p.day,
+              saldoQtd: (Number(p.entrada) || 0) - (Number(p.saida) || 0),
+              saldoValor: (Number(p.entradaValor) || 0) - (Number(p.saidaValor) || 0)
+            }))
             : movSeriesForCharts
 
         const xFormatter = (d: any) => fmtDayShort(String(d))
@@ -2725,7 +3014,9 @@ export function InsumosModule() {
               <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-xs text-blue-200/70">Lote/registro</div>
-                  {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') && quickLotesForPicker.length > 1 ? (
+                  {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
+                    quickLotesForPicker.length > 1 &&
+                    getPolicyForCategoria(String(quickLookupItems?.[0]?.categoria || '')).fefo ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -2873,1621 +3164,1839 @@ export function InsumosModule() {
               </Button>
             )}
           </DialogFooter>
-      </DialogContent>
+        </DialogContent>
       </Dialog>
 
-		      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-	        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-	          <div>
-	            <div className="text-white text-lg font-semibold">Visão geral</div>
-	            <div className="text-sm text-blue-100/70">KPIs, gráficos e alertas para a unidade atual.</div>
-	          </div>
-	          <div className="flex items-center gap-2">
-	            <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
-	              <SelectTrigger className="w-24">
-	                <SelectValue />
-	              </SelectTrigger>
-	              <SelectContent>
-	                <SelectItem value="7d">7d</SelectItem>
-	                <SelectItem value="30d">30d</SelectItem>
-	                <SelectItem value="90d">90d</SelectItem>
-	                <SelectItem value="1y">1 ano</SelectItem>
-	              </SelectContent>
-	            </Select>
-	            <Button
-	              variant="secondary"
-	              onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])}
-	              disabled={(!isAuthed) || overviewLoading || insightsLoading}
-	            >
-	              {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
-	            </Button>
-	          </div>
-	        </div>
+      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="text-white text-lg font-semibold">Visão geral</div>
+            <div className="text-sm text-blue-100/70">KPIs, gráficos e alertas para a unidade atual.</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7d">7d</SelectItem>
+                <SelectItem value="30d">30d</SelectItem>
+                <SelectItem value="90d">90d</SelectItem>
+                <SelectItem value="1y">1 ano</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="secondary"
+              onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])}
+              disabled={(!isAuthed) || overviewLoading || insightsLoading}
+            >
+              {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
+            </Button>
+          </div>
+        </div>
 
-	              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-		              <Card className="bg-black/20 border border-white/10">
-		                <CardHeader>
-		                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                        <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-                        Valor em estoque
-                      </CardTitle>
-		                </CardHeader>
-	                <CardContent>
-	                  <div className="text-lg text-blue-50 font-mono">
-	                    {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
-	                  </div>
-	                  <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
-	                </CardContent>
-	              </Card>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
+                Valor em estoque
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">
+                {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
+              </div>
+              <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+            </CardContent>
+          </Card>
 
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-                      Críticos
-                    </CardTitle>
-	                </CardHeader>
-	                <CardContent>
-	                  <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-	                  <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
-	                </CardContent>
-	              </Card>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
+                Críticos
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
+              <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+            </CardContent>
+          </Card>
 
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-                      Estoque baixo
-                    </CardTitle>
-	                </CardHeader>
-	                <CardContent>
-	                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-	                  <div className="text-xs text-blue-200/60">atenção</div>
-	                </CardContent>
-	              </Card>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
+                Estoque baixo
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
+              <div className="text-xs text-blue-200/60">atenção</div>
+            </CardContent>
+          </Card>
 
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                      Vencendo
-                    </CardTitle>
-	                </CardHeader>
-	                <CardContent>
-	                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-	                  <div className="text-xs text-blue-200/60">janela próxima</div>
-	                </CardContent>
-	              </Card>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
+                Vencendo
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
+              <div className="text-xs text-blue-200/60">janela próxima</div>
+            </CardContent>
+          </Card>
 
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                      <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                      Expirado c/ estoque
-                    </CardTitle>
-	                </CardHeader>
-	                <CardContent>
-	                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-	                  <div className="text-xs text-blue-200/60">risco imediato</div>
-	                </CardContent>
-	              </Card>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
+                Expirado c/ estoque
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
+              <div className="text-xs text-blue-200/60">risco imediato</div>
+            </CardContent>
+          </Card>
 
-		              <Card className="bg-black/20 border border-white/10">
-		                <CardHeader>
-		                  <CardTitle className="text-white text-sm flex items-center gap-2">
-                        <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
-                        Movimentações
-                      </CardTitle>
-		                </CardHeader>
-		                <CardContent>
-	                  <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
-	                  <div className="text-sm text-blue-100/80">
-	                    <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
-                    <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-	                  </div>
-	                  <div className="text-xs text-blue-200/60">
-	                    saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-	                  </div>
-	                </CardContent>
-	              </Card>
-	            </div>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
+                Movimentações
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
+              <div className="text-sm text-blue-100/80">
+                <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
+                <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+              </div>
+              <div className="text-xs text-blue-200/60">
+                saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
-			            <Card className="bg-black/20 border border-white/10">
-			              <CardHeader className="flex flex-row items-center justify-between gap-2">
-			                <CardTitle className="text-white text-base">Alertas</CardTitle>
-		                <div className="flex items-center gap-2 text-xs text-blue-200/60">
-		                  <span>
-		                    estoque:{' '}
-		                    <span className="font-mono">
-		                      {Number.isFinite(Number(overviewNotifications?.counts?.lowStock)) ? Number(overviewNotifications?.counts?.lowStock) : insightsAlertasFiltrados.length}
-		                    </span>
-		                  </span>
-		                  <span>•</span>
-			                  <span>
-			                    validade:{' '}
-			                    <span className="font-mono">
-			                      {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
-			                    </span>
-			                  </span>
-			                </div>
-			              </CardHeader>
-		              <CardContent className="space-y-3">
-		                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-		                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-		                    Estoque abaixo do mínimo
-		                  </summary>
-		                  <div className="mt-3 space-y-2">
-		                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-		                      <div>
-		                        <div className="text-xs text-blue-200/70 mb-1">Status</div>
-		                        <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-		                          <SelectTrigger>
-		                            <SelectValue />
-		                          </SelectTrigger>
-			                          <SelectContent>
-			                            <SelectItem value="TODOS">Todos</SelectItem>
-			                            <SelectItem value="ATENCAO">Estoque baixo</SelectItem>
-			                            <SelectItem value="URGENTE">Críticos</SelectItem>
-			                          </SelectContent>
-			                        </Select>
-		                      </div>
-		                      <div>
-		                        <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-		                        <Select
-		                          value={alertasCategoria || '__ALL__'}
-		                          onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
-		                        >
-		                          <SelectTrigger>
-		                            <SelectValue />
-		                          </SelectTrigger>
-		                          <SelectContent>
-		                            <SelectItem value="__ALL__">Todas</SelectItem>
-		                            {alertasCategorias.map((c) => (
-		                              <SelectItem key={c} value={c}>
-		                                {c}
-		                              </SelectItem>
-		                            ))}
-		                          </SelectContent>
-		                        </Select>
-		                      </div>
-		                      <div>
-		                        <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
-		                        <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
-		                      </div>
-		                    </div>
+        {isManagerRole ? (
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between gap-2">
+              <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => void Promise.allSettled([loadAdminCategoryPolicies({ includeSuggestions: true }), loadCategoryPolicies()])}
+                  disabled={!isAuthed || adminCategoryPoliciesLoading || categoryPoliciesLoading}
+                >
+                  {adminCategoryPoliciesLoading ? 'Carregando…' : 'Recarregar'}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="text-xs text-blue-200/60">
+                Configure quais categorias exigem <span className="font-medium text-blue-100/80">lote</span> e/ou <span className="font-medium text-blue-100/80">validade</span>, e habilite <span className="font-medium text-blue-100/80">FEFO</span> quando aplicável.
+              </div>
 
-		                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-		                      <table className="min-w-full text-sm">
-		                        <thead className="bg-black/30 text-blue-100/80">
-		                          <tr>
-		                            <th className="text-left p-3">Produto</th>
-		                            <th className="text-left p-3">Categoria</th>
-		                            <th className="text-left p-3">Status</th>
-		                            <th className="text-right p-3">Atual</th>
-		                            <th className="text-right p-3">Mín</th>
-		                            <th className="text-right p-3">Dif</th>
-		                            <th className="text-right p-3">%</th>
-		                          </tr>
-		                        </thead>
-		                        <tbody className="divide-y divide-white/5">
-		                          {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
-		                            const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
-		                            return (
-		                              <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-		                                <td className="p-3 text-blue-50">
-		                                  <div className="text-blue-50">{a.produto || '-'}</div>
-		                                  <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
-		                                </td>
-		                                <td className="p-3 text-blue-100/80">
-		                                  <div className="flex items-center gap-2">
-		                                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
-		                                    <span className="truncate">{a.categoria || '-'}</span>
-		                                  </div>
-		                                </td>
-		                                <td className="p-3">
-		                                  <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
-		                                </td>
-		                                <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
-		                                <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
-		                                <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
-		                                <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
-		                              </tr>
-		                            )
-		                          })}
-		                          {!insightsAlertasFiltrados.length ? (
-		                            <tr>
-		                              <td className="p-3 text-blue-100/70" colSpan={7}>
-		                                {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
-		                              </td>
-		                            </tr>
-		                          ) : null}
-		                        </tbody>
-		                      </table>
-		                    </div>
-		                  </div>
-		                </details>
-
-			                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-			                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
-			                  <div className="mt-3 space-y-3">
-			                    <div className="text-xs text-blue-200/60">
-			                      Lista resumida (até 50 itens) gerada automaticamente para a unidade.
-			                    </div>
-			                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-				                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-				                        <div className="flex items-center justify-between gap-2">
-				                          <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                                Vencendo
-                              </div>
-				                          <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
-				                        </div>
-			                        <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
-			                          <table className="min-w-full text-sm">
-			                            <thead className="bg-black/30 text-blue-100/80">
-			                              <tr>
-			                                <th className="text-left p-3">Produto</th>
-			                                <th className="text-left p-3">Validade</th>
-			                                <th className="text-right p-3">Estoque</th>
-			                                <th className="text-right p-3">Ação</th>
-			                              </tr>
-			                            </thead>
-			                            <tbody className="divide-y divide-white/5 text-blue-50/90">
-			                              {(overviewNotifications?.expiringSoon || []).map((it: any, idx: number) => (
-			                                <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-			                                  <td className="p-3">
-			                                    <div className="font-medium">{it.produto || '-'}</div>
-			                                    <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
-			                                  </td>
-			                                  <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
-			                                  <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
-			                                  <td className="p-3 text-right">
-			                                    <Button
-			                                      variant="secondary"
-			                                      className="h-8 px-2 text-xs"
-			                                      onClick={() => {
-			                                        if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
-			                                      }}
-			                                      disabled={!isAuthed}
-			                                    >
-			                                      Usar
-			                                    </Button>
-			                                  </td>
-			                                </tr>
-			                              ))}
-			                              {!(overviewNotifications?.expiringSoon || []).length ? (
-			                                <tr>
-			                                  <td className="p-3 text-blue-100/70" colSpan={4}>
-			                                    {overviewLoading ? 'Carregando…' : 'Sem itens.'}
-			                                  </td>
-			                                </tr>
-			                              ) : null}
-			                            </tbody>
-			                          </table>
-			                        </div>
-			                      </div>
-				                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-				                        <div className="flex items-center justify-between gap-2">
-				                          <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                                Expirado c/ estoque
-                              </div>
-				                          <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
-				                        </div>
-			                        <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
-			                          <table className="min-w-full text-sm">
-			                            <thead className="bg-black/30 text-blue-100/80">
-			                              <tr>
-			                                <th className="text-left p-3">Produto</th>
-			                                <th className="text-left p-3">Validade</th>
-			                                <th className="text-right p-3">Estoque</th>
-			                                <th className="text-right p-3">Ação</th>
-			                              </tr>
-			                            </thead>
-			                            <tbody className="divide-y divide-white/5 text-blue-50/90">
-			                              {(overviewNotifications?.expiredWithStock || []).map((it: any, idx: number) => (
-			                                <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-			                                  <td className="p-3">
-			                                    <div className="font-medium">{it.produto || '-'}</div>
-			                                    <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
-			                                  </td>
-			                                  <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
-			                                  <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
-			                                  <td className="p-3 text-right">
-			                                    <Button
-			                                      variant="secondary"
-			                                      className="h-8 px-2 text-xs"
-			                                      onClick={() => {
-			                                        if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
-			                                      }}
-			                                      disabled={!isAuthed}
-			                                    >
-			                                      Usar
-			                                    </Button>
-			                                  </td>
-			                                </tr>
-			                              ))}
-			                              {!(overviewNotifications?.expiredWithStock || []).length ? (
-			                                <tr>
-			                                  <td className="p-3 text-blue-100/70" colSpan={4}>
-			                                    {overviewLoading ? 'Carregando…' : 'Sem itens.'}
-			                                  </td>
-			                                </tr>
-			                              ) : null}
-			                            </tbody>
-			                          </table>
-			                        </div>
-			                      </div>
-			                    </div>
-			                  </div>
-			                </details>
-
-				                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-				                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-				                    Ações recomendadas
-				                  </summary>
-				                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-			                    <div className="space-y-2">
-			                      <div className="text-sm text-blue-100/80">Reposição</div>
-			                      {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-			                        <button
-			                          key={String(r.codigoBarras)}
-			                          className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-			                          onClick={() => {
-			                            if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
-			                          }}
-			                        >
-			                          <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-			                          <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-			                          <div className="text-xs text-blue-100/70 mt-1">
-			                            sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-			                            {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-			                          </div>
-			                        </button>
-			                      ))}
-			                      {!overviewActionables?.reposicao?.length ? (
-			                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
-			                      ) : null}
-			                    </div>
-			                    <div className="space-y-2">
-			                      <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-			                      {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-			                        <button
-			                          key={`${t.codigoBarras}-${t.from}-${t.to}`}
-			                          className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-			                          onClick={() => {
-			                            if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-			                            if (t.qty != null) setQuickQuantidade(String(t.qty))
-			                            if (t.from) setTransferFrom(String(t.from))
-			                            if (t.to) setTransferTo(String(t.to))
-			                          }}
-			                        >
-			                          <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-			                          <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-			                          <div className="text-xs text-blue-100/70 mt-1">
-			                            <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-			                            <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-			                            <span className="font-mono">{t.qty ?? '-'}</span>
-			                          </div>
-			                        </button>
-			                      ))}
-			                      {!overviewActionables?.transferencias?.length ? (
-			                        <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
-			                      ) : null}
-				                    </div>
-				                  </div>
-				                </details>
-
-			                <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-			                  <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-			                    Qualidade do cadastro{' '}
-			                    <span className="text-xs text-blue-200/60">
-			                      • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} issues` : overviewLoading ? 'Carregando…' : '—'}
-			                    </span>
-			                  </summary>
-			                  <div className="mt-3 space-y-2">
-			                    <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
-			                      {overviewQuality?.summary?.bySeverity ? (
-			                        <>
-			                          <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-			                          <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
-			                          <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
-			                        </>
-			                      ) : null}
-			                      {!overviewQuality?.summary?.total ? (
-			                        <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem issues.'}</span>
-			                      ) : null}
-			                    </div>
-
-			                    {overviewQuality?.issues?.length ? (
-			                      <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-			                        <table className="min-w-full text-sm">
-			                          <thead className="bg-black/30 text-blue-100/80">
-			                            <tr>
-			                              <th className="text-left p-3">Sev</th>
-			                              <th className="text-left p-3">Código</th>
-			                              <th className="text-left p-3">Mensagem</th>
-			                            </tr>
-			                          </thead>
-			                          <tbody className="divide-y divide-white/5">
-			                            {(overviewQuality.issues || []).slice(0, 30).map((it, idx) => {
-			                              const sev = String(it.severity || '').toUpperCase()
-			                              const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
-			                              return (
-			                                <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
-			                                  <td className="p-3">
-			                                    <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
-			                                  </td>
-			                                  <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
-			                                  <td className="p-3 text-blue-50">
-			                                    {it.message || '-'}
-			                                    {(it.codigoBarras || it.produto) ? (
-			                                      <div className="text-xs text-blue-200/60 mt-1">
-			                                        {(it.codigoBarras ? `#${it.codigoBarras}` : '')}
-			                                        {it.codigoBarras && it.produto ? ' • ' : ''}
-			                                        {it.produto || ''}
-			                                      </div>
-			                                    ) : null}
-			                                  </td>
-			                                </tr>
-			                              )
-			                            })}
-			                          </tbody>
-			                        </table>
-			                      </div>
-			                    ) : null}
-			                  </div>
-			                </details>
-				              </CardContent>
-				            </Card>
-
-			            <div className="flex flex-wrap items-center justify-between gap-2">
-			              <div className="text-white text-base font-semibold">Gráficos</div>
-			              <div className="flex items-center gap-2">
-			                <Button
-			                  variant="outline"
-			                  size="sm"
-			                  onClick={() => {
-			                    if (chartSlots.length >= MAX_CHARTS) return
-			                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
-			                  }}
-			                  disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
-			                >
-			                  + Adicionar
-			                </Button>
-			                <Button
-			                  variant="outline"
-			                  size="sm"
-			                  onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
-			                  disabled={overviewLoading || insightsLoading}
-			                >
-			                  Reset
-			                </Button>
-			              </div>
-			            </div>
-			            <div
-			              className={`grid gap-3 ${
-			                chartSlots.length === 1
-			                  ? 'grid-cols-1'
-			                  : chartSlots.length === 2
-			                    ? 'grid-cols-1 lg:grid-cols-2'
-			                    : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
-			              }`}
-			            >
-			              {chartSlots.map((slot, idx) => {
-			                const preset = presetSupports(slot.presetId)
-			                const viewOptions = presetViewOptions(slot.presetId)
-			                const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
-			                const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
-			                const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
-			                const layout = (preset as any).layout as ChartLayout | undefined
-			                const baseH =
-			                  chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
-			                const height =
-			                  layout === 'tall'
-			                    ? baseH + (chartSlots.length === 1 ? 180 : 120)
-			                    : baseH
-			                const cardSpan =
-			                  chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
-
-			                return (
-			                  <Card
-			                    key={`${slot.presetId}-${idx}`}
-			                    className={`bg-black/20 border border-white/10 ${cardSpan}`}
-			                  >
-			                    <CardHeader className="space-y-2">
-			                      <div className="flex items-center gap-2">
-			                        <Select
-			                          value={slot.presetId}
-			                          onValueChange={(v) => {
-			                            const nextId = v as any
-			                            const nextPreset = presetSupports(nextId)
-			                            const nextView = nextPreset?.defaultView || presetViewOptions(nextId)[0]
-			                            setChartSlot(idx, { presetId: nextId, view: nextView as any })
-			                          }}
-			                        >
-			                          <SelectTrigger className="h-8 w-full">
-			                            <SelectValue />
-			                          </SelectTrigger>
-			                          <SelectContent>
-			                            {CHART_PRESETS.map((p) => (
-			                              <SelectItem key={p.id} value={p.id}>
-			                                {p.label}
-			                              </SelectItem>
-			                            ))}
-			                          </SelectContent>
-			                        </Select>
-			                        {chartSlots.length > 1 ? (
-			                          <Button
-			                            variant="outline"
-			                            className="h-8 w-8 p-0"
-			                            title="Remover gráfico"
-			                            aria-label="Remover gráfico"
-			                            onClick={() => {
-			                              setChartSlots((prev) => prev.filter((_, i) => i !== idx))
-			                            }}
-			                          >
-			                            ×
-			                          </Button>
-			                        ) : null}
-			                      </div>
-			                      <div className="flex flex-wrap items-center gap-2">
-			                        {preset.supportsMetric ? (
-			                          <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
-			                            <SelectTrigger className="h-8 w-24">
-			                              <SelectValue />
-			                            </SelectTrigger>
-			                            <SelectContent>
-			                              <SelectItem value="qtd">Qtd</SelectItem>
-			                              <SelectItem value="valor">R$</SelectItem>
-			                            </SelectContent>
-			                          </Select>
-			                        ) : null}
-
-			                        {preset.supportsView && viewOptions.length > 1 ? (
-			                          <Select value={view} onValueChange={(v) => setChartSlot(idx, { view: v as any })}>
-			                            <SelectTrigger className="h-8 w-28">
-			                              <SelectValue />
-			                            </SelectTrigger>
-			                            <SelectContent>
-			                              {viewOptions.map((vv) => (
-			                                <SelectItem key={vv} value={vv}>
-			                                  {vv === 'bar' ? 'Barras' : vv === 'line' ? 'Linhas' : 'Pizza'}
-			                                </SelectItem>
-			                              ))}
-			                            </SelectContent>
-			                          </Select>
-			                        ) : null}
-
-			                        {preset.supportsTopN ? (
-			                          <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
-			                            <SelectTrigger className="h-8 w-20">
-			                              <SelectValue />
-			                            </SelectTrigger>
-			                            <SelectContent>
-			                              <SelectItem value="5">Top 5</SelectItem>
-			                              <SelectItem value="8">Top 8</SelectItem>
-			                              <SelectItem value="10">Top 10</SelectItem>
-			                              <SelectItem value="15">Top 15</SelectItem>
-			                            </SelectContent>
-			                          </Select>
-			                        ) : null}
-			                      </div>
-			                    </CardHeader>
-			                    <CardContent>
-			                      {renderChart({ ...slot, view, metric, topN }, { height })}
-			                    </CardContent>
-			                  </Card>
-			                )
-			              })}
-			            </div>
-			            <div className="text-xs text-blue-200/60">
-			              Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
-			            </div>
-
-		              <Card className="bg-black/20 border border-white/10">
-		                <CardHeader>
-		                  <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-		                </CardHeader>
-		                <CardContent className="space-y-1">
-	                  <div className="text-sm text-blue-100/80">
-	                    Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-	                    {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
-	                  </div>
-	                  <div className="text-sm text-blue-100/80">
-	                    Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-	                    {overviewRoi?.perdas?.valorRiscoVencendo != null
-	                      ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
-	                      : '-'}
-	                  </div>
-	                  <div className="text-sm text-blue-100/80">
-	                    Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
-	                  </div>
-		                  <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-		                </CardContent>
-		              </Card>
-			      </div>
-
-		      <Dialog
-		        open={editOpen}
-		        onOpenChange={(v) => {
-		          setEditOpen(v)
-		          if (!v) setEditTarget(null)
-		        }}
-		      >
-		        <DialogContent className="max-w-2xl">
-		          <DialogHeader>
-		            <DialogTitle>Editar insumo</DialogTitle>
-		            <DialogDescription>
-		              {editTarget?.produto || '-'} • <span className="font-mono">{editTarget?.codigoBarras || '-'}</span>
-		              {editTarget?.registro ? <span> • Reg {editTarget.registro}</span> : null}
-		            </DialogDescription>
-		          </DialogHeader>
-
-		          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
-		              <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} placeholder="789..." />
-		            </div>
-		            <div className="md:col-span-2">
-		              <div className="text-xs text-muted-foreground mb-1">Produto</div>
-		              <Input value={editProduto} onChange={(e) => setEditProduto(e.target.value)} placeholder="Nome do produto" />
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-		              <Input value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} placeholder="ex: Anestésicos" list="edit-insumos-categorias" />
-		              <datalist id="edit-insumos-categorias">
-		                {lotCategorias.map((c) => (
-		                  <option key={c} value={c} />
-		                ))}
-		              </datalist>
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Marca</div>
-		              <Input value={editMarca} onChange={(e) => setEditMarca(e.target.value)} placeholder="ex: Galderma" list="edit-insumos-marcas" />
-		              <datalist id="edit-insumos-marcas">
-		                {insumosMarcas.map((m) => (
-		                  <option key={m} value={m} />
-		                ))}
-		              </datalist>
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
-		              <Input value={editTipoUnidade} onChange={(e) => setEditTipoUnidade(e.target.value)} placeholder="ex: Frasco" list="insumos-tipos-unidade" />
-		              <datalist id="insumos-tipos-unidade">
-		                {insumosTiposUnidade.map((t) => (
-		                  <option key={t} value={t} />
-		                ))}
-		              </datalist>
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
-		              <Input value={editPrecoCusto} onChange={(e) => setEditPrecoCusto(e.target.value)} placeholder="ex: 120,00" />
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Estoque mínimo</div>
-		              <Input value={editEstoqueMinimo} onChange={(e) => setEditEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Lote</div>
-		              <Input value={editLote} onChange={(e) => setEditLote(e.target.value)} placeholder="ex: L2026-01" />
-		            </div>
-		            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
-		              <Input value={editDataValidade} onChange={(e) => setEditDataValidade(e.target.value)} placeholder="ex: 31/12/2026" />
-		            </div>
-		          </div>
-
-		          <details className="mt-2 rounded-lg border border-white/10 bg-black/10 p-3">
-		            <summary className="cursor-pointer select-none text-sm text-blue-100/80">Detalhes (opcional)</summary>
-		            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-		              <div className="md:col-span-2">
-		                <div className="text-xs text-muted-foreground mb-1">Especificação / Modelo</div>
-		                <Input value={editEspecificacao} onChange={(e) => setEditEspecificacao(e.target.value)} placeholder="ex: Base, Lidocaine" />
-		              </div>
-		              <div>
-		                <div className="text-xs text-muted-foreground mb-1">Concentração</div>
-		                <Input value={editConcentracao} onChange={(e) => setEditConcentracao(e.target.value)} placeholder="ex: 300U" />
-		              </div>
-		              <div>
-		                <div className="text-xs text-muted-foreground mb-1">Volume</div>
-		                <Input value={editVolume} onChange={(e) => setEditVolume(e.target.value)} placeholder="ex: 1ml" />
-		              </div>
-		              <div>
-		                <div className="text-xs text-muted-foreground mb-1">Calibre / Bitola</div>
-		                <Input value={editCalibre} onChange={(e) => setEditCalibre(e.target.value)} placeholder="ex: 30G" />
-		              </div>
-		              <div className="md:col-span-2">
-		                <div className="text-xs text-muted-foreground mb-1">Fonte</div>
-		                <Input value={editFonte} onChange={(e) => setEditFonte(e.target.value)} placeholder="ex: Tabela 2025" />
-		              </div>
-		            </div>
-		          </details>
-
-		          <DialogFooter>
-		            <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editSaving}>
-		              Cancelar
-		            </Button>
-		            <Button variant="destructive" onClick={deleteEdit} disabled={editSaving || !isAuthed}>
-		              Excluir
-		            </Button>
-		            <Button onClick={saveEdit} disabled={editSaving || !isAuthed}>
-		              {editSaving ? 'Salvando…' : 'Salvar'}
-		            </Button>
-		          </DialogFooter>
-		        </DialogContent>
-		      </Dialog>
-
-		      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
-		        <DialogContent className="max-w-xl">
-		          <DialogHeader>
-		            <DialogTitle>Editar lote/validade</DialogTitle>
-	            <DialogDescription>
-	              {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
-	            </DialogDescription>
-	          </DialogHeader>
-
-	          {lotSelecionado ? (
-	            <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
-	              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-	                <div>
-	                  <div className="text-xs text-muted-foreground">Categoria</div>
-	                  <div className="text-blue-100/80">{lotSelecionado.categoria || '-'}</div>
-	                </div>
-	                <div>
-	                  <div className="text-xs text-muted-foreground">Marca</div>
-	                  <div className="text-blue-100/80">{lotSelecionado.marca || '-'}</div>
-	                </div>
-	                {lotSelecionado.concentracao ? (
-	                  <div>
-	                    <div className="text-xs text-muted-foreground">Concentração</div>
-	                    <div className="text-blue-100/80">{lotSelecionado.concentracao}</div>
-	                  </div>
-	                ) : null}
-	                {lotSelecionado.volume ? (
-	                  <div>
-	                    <div className="text-xs text-muted-foreground">Volume</div>
-	                    <div className="text-blue-100/80">{lotSelecionado.volume}</div>
-	                  </div>
-	                ) : null}
-	                {lotSelecionado.calibre ? (
-	                  <div>
-	                    <div className="text-xs text-muted-foreground">Calibre</div>
-	                    <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
-	                  </div>
-	                ) : null}
-	                {lotSelecionado.fonte ? (
-	                  <div>
-	                    <div className="text-xs text-muted-foreground">Fonte</div>
-	                    <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
-	                  </div>
-	                ) : null}
-	              </div>
-	            </div>
-	          ) : null}
-
-	          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-	            <div>
-	              <div className="text-xs text-muted-foreground mb-1">Lote</div>
-	              <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
-	            </div>
-	            <div>
-		              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
-		              <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 31/12/2026" />
-	            </div>
-	          </div>
-
-	          <DialogFooter>
-	            <Button variant="secondary" onClick={() => setLotDialogOpen(false)}>
-	              Cancelar
-	            </Button>
-	            <Button onClick={saveLot} disabled={lotSaving || !isAuthed}>
-	              {lotSaving ? 'Salvando…' : 'Salvar'}
-	            </Button>
-	          </DialogFooter>
-	        </DialogContent>
-	      </Dialog>
-
-		      <div ref={insumosSectionRef} className="max-w-6xl mx-auto space-y-3">
-		        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-		          <div>
-		            <div className="text-white text-lg font-semibold">Insumos</div>
-		            <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
-		          </div>
-		          <div className="flex flex-wrap items-center gap-2">
-		            {offlineQueueCount > 0 ? (
-		              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-		                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-		              </Button>
-		            ) : null}
-		          </div>
-		        </div>
-
-	              {sharePayload && !shareHidden ? (
-	                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-blue-50 font-semibold">Compartilhamento recebido</div>
-                    <Button variant="secondary" size="sm" onClick={() => setShareHidden(true)}>
-                      Fechar
-                    </Button>
+              <div className="rounded-xl border border-white/10 bg-black/10 p-3 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                  <div className="md:col-span-2">
+                    <div className="text-xs text-blue-200/70 mb-1">Categoria (nome)</div>
+                    <Input
+                      value={policyFormLabel}
+                      onChange={(e) => {
+                        const next = e.target.value
+                        setPolicyFormLabel(next)
+                      }}
+                      placeholder="Ex: Toxina botulínica"
+                      disabled={!isAuthed}
+                    />
                   </div>
-                  {shareLoading ? <div className="mt-2 text-xs text-blue-200/60">Carregando anexos…</div> : null}
-                  <div className="mt-2 space-y-1">
-                    {sharePayload.title ? (
-                      <div>
-                        <span className="text-blue-200/70">Título:</span> {sharePayload.title}
-                      </div>
-                    ) : null}
-                    {sharePayload.text ? (
-                      <div>
-                        <span className="text-blue-200/70">Texto:</span> {sharePayload.text}
-                      </div>
-                    ) : null}
-                    {sharePayload.url ? (
-                      <div className="truncate">
-                        <span className="text-blue-200/70">Link:</span>{' '}
-                        <a className="underline" href={sharePayload.url} target="_blank" rel="noreferrer">
-                          {sharePayload.url}
-                        </a>
-                      </div>
-                    ) : null}
-                    {sharePayload.files && sharePayload.files.length ? (
-                      <div className="space-y-1">
-                        <div className="text-blue-200/70">Arquivos:</div>
-                        <div className="flex flex-wrap gap-2">
-                          {sharePayload.files.map((f, idx) => (
-                            <span key={`${f.name}-${idx}`} className="text-xs">
-                              {f.url ? (
-                                <a className="underline" href={f.url} target="_blank" rel="noreferrer">
-                                  {f.name}
-                                </a>
-                              ) : (
-                                f.name
-                              )}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="mt-2 text-xs text-blue-200/60">
-                    Preenchi o cadastro com os dados compartilhados. Revise antes de salvar.
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Slug (opcional)</div>
+                    <Input
+                      value={policyFormSlug}
+                      onChange={(e) => {
+                        setPolicyFormSlugTouched(true)
+                        setPolicyFormSlug(e.target.value)
+                      }}
+                      placeholder={slugifyCategoria(policyFormLabel) || 'ex: toxina-botulinica'}
+                      disabled={!isAuthed}
+                    />
                   </div>
                 </div>
-              ) : null}
-              {shareHistory.length ? (
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader className="flex flex-row items-center justify-between gap-2">
-                    <CardTitle className="text-white text-sm">Importações recentes</CardTitle>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-blue-200/60">{shareHistory.length} itens</span>
-                      <Button variant="secondary" size="sm" onClick={clearShareHistory}>
-                        Limpar
-                      </Button>
+
+                {adminCategorySuggestions.length ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                    <div className="md:col-span-2">
+                      <div className="text-xs text-blue-200/70 mb-1">Sugestões (já usadas em itens)</div>
+                      <Select
+                        value={policyFormSuggestion}
+                        onValueChange={(v) => {
+                          const next = String(v)
+                          setPolicyFormSuggestion(next)
+                          if (next === '__NONE__') return
+                          const hit = adminCategorySuggestions.find((s) => s.slug === next)
+                          if (!hit) return
+                          setPolicyFormLabel(hit.label)
+                          setPolicyFormSlugTouched(true)
+                          setPolicyFormSlug(hit.slug)
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Escolher…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__NONE__">(nenhuma)</SelectItem>
+                          {adminCategorySuggestions.map((s) => (
+                            <SelectItem key={s.slug} value={s.slug}>
+                              {s.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {shareHistoryLoading ? <div className="text-xs text-blue-200/60">Sincronizando…</div> : null}
-                    {shareHistory.slice(0, 6).map((item) => (
-                      <div key={item.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-sm text-blue-50">
-                            {item.title || item.url || 'Conteúdo compartilhado'}
-                          </div>
-                          <div className="text-xs text-blue-200/60">{fmtDate(item.createdAt)}</div>
-                        </div>
-                        {item.text ? <div className="text-xs text-blue-200/70 mt-1">{item.text}</div> : null}
-                        {item.files && item.files.length ? (
-                          <div className="mt-1 flex flex-wrap gap-2 text-xs text-blue-200/70">
-                            {item.files.map((f, idx) => (
-                              <span key={`${item.id}-${idx}`} className="truncate">
-                                {f.url ? (
-                                  <a className="underline" href={f.url} target="_blank" rel="noreferrer">
-                                    {f.name}
-                                  </a>
-                                ) : (
-                                  f.name
-                                )}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => applyShareToForm(item)}>
-                            Usar no cadastro
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => removeShareHistory(item.id)}>
-                            Remover
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              ) : null}
-	              <div className="flex flex-wrap items-center justify-between gap-2">
-	                <div className="flex items-center gap-2">
-                  <Input
-                    value={insumosQuery}
-                    onChange={(e) => setInsumosQuery(e.target.value)}
-                    placeholder="Buscar por código, produto, categoria…"
-                    className="w-80"
-                  />
-                  <Button variant="secondary" onClick={() => void refreshInsumos({ pagina: 1 })} disabled={insumosLoading || !isAuthed}>
-                    {insumosLoading ? 'Carregando…' : 'Recarregar'}
-                  </Button>
+                    <div className="text-xs text-blue-200/60">
+                      {policyFormEditingSlug ? (
+                        <Badge variant="secondary">Editando: {policyFormEditingSlug}</Badge>
+                      ) : (
+                        <Badge variant="secondary">Nova política</Badge>
+                      )}
+                    </div>
+                  </div>
+                ) : policyFormEditingSlug ? (
+                  <div className="text-xs text-blue-200/60">
+                    <Badge variant="secondary">Editando: {policyFormEditingSlug}</Badge>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="policy-requires-lot"
+                      checked={policyFormRequiresLot}
+                      onCheckedChange={(checked) => setPolicyFormRequiresLot(!!checked)}
+                    />
+                    <label htmlFor="policy-requires-lot" className="text-sm text-blue-100/80 cursor-pointer">
+                      Lote obrigatório
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="policy-requires-expiry"
+                      checked={policyFormRequiresExpiry}
+                      onCheckedChange={(checked) => {
+                        const next = !!checked
+                        setPolicyFormRequiresExpiry(next)
+                        if (!next) setPolicyFormFefo(false)
+                      }}
+                    />
+                    <label htmlFor="policy-requires-expiry" className="text-sm text-blue-100/80 cursor-pointer">
+                      Validade obrigatória
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="policy-fefo"
+                      checked={policyFormFefo}
+                      onCheckedChange={(checked) => {
+                        const next = !!checked
+                        setPolicyFormFefo(next)
+                        if (next) setPolicyFormRequiresExpiry(true)
+                      }}
+                    />
+                    <label htmlFor="policy-fefo" className="text-sm text-blue-100/80 cursor-pointer">
+                      FEFO (sugere lote por validade)
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+                    onClick={() => resetPolicyForm()}
                     disabled={!isAuthed}
-                    title="Exportar CSV"
                   >
-                    Exportar
+                    Limpar
                   </Button>
-	                  <Button
-	                    variant="outline"
-	                    onClick={() => setCreateOpen((v) => !v)}
-	                    disabled={!isAuthed}
-	                  >
-	                    {createOpen ? 'Fechar' : 'Adicionar'}
-	                  </Button>
-	                </div>
-	                <div className="text-xs text-blue-200/60">
-	                  {insumosTotal != null ? (
-	                    <>
-	                      {filteredInsumos.length} de <span className="font-mono">{insumosTotal}</span> itens
-	                    </>
-	                  ) : (
-	                    `${filteredInsumos.length} itens`
-	                  )}
-	                </div>
-	              </div>
-	              {insumosMode === 'paged' ? (
-	                <div className="flex flex-wrap items-center justify-between gap-2">
-	                  <div className="text-xs text-blue-200/60">
-	                    Página <span className="font-mono">{insumosPagina}</span>
-	                    {insumosTotal != null ? (
-	                      <>
-	                        {' '}
-	                        de <span className="font-mono">{Math.max(1, Math.ceil(insumosTotal / insumosLimite))}</span>
-	                      </>
-	                    ) : null}
-	                  </div>
-	                  <div className="flex flex-wrap items-center gap-2">
-	                    <div className="w-40">
-	                      <Select
-	                        value={String(insumosLimite)}
-	                        onValueChange={(v) => {
-	                          const lim = Math.max(1, Math.min(1000, parseInt(String(v), 10) || 200))
-	                          setInsumosLimite(lim)
-	                          void refreshInsumos({ pagina: 1 })
-	                        }}
-	                      >
-	                        <SelectTrigger className="h-9">
-	                          <SelectValue />
-	                        </SelectTrigger>
-	                        <SelectContent>
-	                          <SelectItem value="50">50</SelectItem>
-	                          <SelectItem value="100">100</SelectItem>
-	                          <SelectItem value="200">200</SelectItem>
-	                          <SelectItem value="400">400</SelectItem>
-	                        </SelectContent>
-	                      </Select>
-	                    </div>
-	                    <Button
-	                      variant="outline"
-	                      onClick={() => void refreshInsumos({ pagina: Math.max(1, insumosPagina - 1) })}
-	                      disabled={insumosLoading || !isAuthed || insumosPagina <= 1}
-	                    >
-	                      Anterior
-	                    </Button>
-	                    <Button
-	                      variant="secondary"
-	                      onClick={() => void refreshInsumos({ pagina: insumosPagina + 1 })}
-	                      disabled={
-	                        insumosLoading ||
-	                        !isAuthed ||
-	                        (insumosTotal != null ? insumosPagina >= Math.max(1, Math.ceil(insumosTotal / insumosLimite)) : filteredInsumos.length < insumosLimite)
-	                      }
-	                    >
-	                      Próxima
-	                    </Button>
-	                    {insumosTotal != null && insumosTotal <= INSUMOS_PAGED_THRESHOLD && !insumosFull.length ? (
-	                      <Button
-	                        variant="outline"
-	                        onClick={() => void loadInsumosFull()}
-	                        disabled={insumosLoading || !isAuthed}
-	                      >
-	                        Carregar tudo
-	                      </Button>
-	                    ) : null}
-	                  </div>
-	                </div>
-	              ) : null}
+                  <Button
+                    className="!bg-blue-600 hover:!bg-blue-700 !text-white"
+                    onClick={() => void saveCategoryPolicy()}
+                    disabled={!isAuthed}
+                  >
+                    {policyFormEditingSlug ? 'Salvar alterações' : 'Criar política'}
+                  </Button>
+                </div>
+              </div>
 
-	              {createOpen ? (
-	                <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
-	                  <div className="text-sm text-blue-100/70">
-	                    Cadastro rápido (campos mínimos) + detalhes opcionais (como no app antigo de Insumos).
-	                  </div>
-	                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                      <div className="flex items-center gap-2">
-                        <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
-                        <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
-                          {createScanOpen ? 'Fechar' : 'Scan'}
-                        </Button>
-                      </div>
-                      <div className="mt-2">
-                        {createLookupLoading ? (
-                          <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
-                        ) : createLookupError ? (
-                          <div className="text-xs text-red-200">{createLookupError}</div>
-                        ) : createLookupItems.length ? (
-                          <div className="text-xs text-blue-200/70">
-                            Encontramos um cadastro para este código e pré-preenchemos alguns campos (produto/categoria/marca). Se quiser, você pode cadastrar um novo lote.
+              <div className="overflow-auto rounded-xl border border-white/10">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-black/30 text-blue-100/80">
+                    <tr>
+                      <th className="text-left p-3">Categoria</th>
+                      <th className="text-left p-3">Regras</th>
+                      <th className="text-right p-3">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {(adminCategoryPolicies || []).map((p) => (
+                      <tr key={p.slug} className="hover:bg-white/5">
+                        <td className="p-3 text-blue-50">
+                          <div className="text-blue-50">{p.label || p.slug}</div>
+                          <div className="text-xs text-blue-200/60 font-mono">{p.slug}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap gap-2">
+                            {p.requiresLot ? <Badge variant="secondary">lote</Badge> : <Badge variant="secondary">lote opcional</Badge>}
+                            {p.requiresExpiry ? <Badge variant="secondary">validade</Badge> : <Badge variant="secondary">validade opcional</Badge>}
+                            {p.fefo ? <Badge>FEFO</Badge> : <Badge variant="secondary">sem FEFO</Badge>}
                           </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="md:col-span-2">
-                      <div className="text-xs text-blue-200/70 mb-1">Produto</div>
-                      <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="Nome do produto" />
-                    </div>
-	                    <div>
-	                      <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-	                      <Input
-	                        value={createCategoria}
-	                        onChange={(e) => setCreateCategoria(e.target.value)}
-	                        placeholder="ex: Anestésicos"
-	                        list="insumos-categorias"
-	                      />
-	                      <datalist id="insumos-categorias">
-	                        {lotCategorias.map((c) => (
-	                          <option key={c} value={c} />
-	                        ))}
-	                      </datalist>
-	                    </div>
-	                    <div>
-	                      <div className="text-xs text-blue-200/70 mb-1">Marca</div>
-	                      <Input
-	                        value={createMarca}
-	                        onChange={(e) => setCreateMarca(e.target.value)}
-	                        placeholder="ex: Galderma"
-	                        list="insumos-marcas"
-	                      />
-	                      <datalist id="insumos-marcas">
-	                        {insumosMarcas.map((m) => (
-	                          <option key={m} value={m} />
-	                        ))}
-	                      </datalist>
-	                    </div>
-	                    <div>
-	                      <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
-	                      <Input
-	                        value={createTipoUnidade}
-	                        onChange={(e) => setCreateTipoUnidade(e.target.value)}
-	                        placeholder="ex: Frasco"
-	                        list="insumos-tipos-unidade"
-	                      />
-	                      <datalist id="insumos-tipos-unidade">
-	                        {insumosTiposUnidade.map((u) => (
-	                          <option key={u} value={u} />
-	                        ))}
-	                      </datalist>
-	                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Preço custo</div>
-                      <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="R$ 0,00" />
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Estoque inicial ({unidadeLabel(unidade)})</div>
-                      <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} type="number" min={0} />
-                    </div>
-                    <div>
-                      <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
-                      <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} type="number" min={0} />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <div className="text-xs text-blue-200/70">Lote</div>
-                        <Button
-                          variant={createNovoLote ? 'secondary' : 'outline'}
-                          size="sm"
-                          type="button"
-                          onClick={() => setCreateNovoLote((v) => !v)}
-                          title="Ative quando estiver cadastrando um lote adicional para um código já existente."
-                        >
-                          {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
-                        </Button>
-                      </div>
-                      <Input
-                        value={createLote}
-                        onChange={(e) => setCreateLote(e.target.value)}
-                        placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'}
-                      />
-                    </div>
-	                    <div>
-	                      <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
-	                      <Input
-	                        value={createDataValidade}
-	                        onChange={(e) => setCreateDataValidade(e.target.value)}
-	                        placeholder={createNovoLote ? 'recomendado (DD/MM/AAAA)' : 'DD/MM/AAAA'}
-	                      />
-	                    </div>
-	                  </div>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" className="h-8 px-2" onClick={() => startEditPolicyForm(p)}>
+                              Editar
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              className="h-8 px-2"
+                              onClick={() => void deleteCategoryPolicy(p.slug)}
+                            >
+                              Remover
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!adminCategoryPoliciesLoading && !(adminCategoryPolicies || []).length ? (
+                      <tr>
+                        <td className="p-3 text-blue-100/70" colSpan={3}>
+                          Sem políticas cadastradas.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
-	                  <details className="rounded-lg border border-white/10 bg-black/10 p-3">
-	                    <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-	                      Detalhes (opcional)
-	                    </summary>
-	                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-	                      <div className="md:col-span-2">
-	                        <div className="text-xs text-blue-200/70 mb-1">Especificação / Modelo</div>
-	                        <Input
-	                          value={createEspecificacao}
-	                          onChange={(e) => setCreateEspecificacao(e.target.value)}
-	                          placeholder="ex: Base, Lidocaine"
-	                        />
-	                      </div>
-	                      <div>
-	                        <div className="text-xs text-blue-200/70 mb-1">Concentração</div>
-	                        <Input
-	                          value={createConcentracao}
-	                          onChange={(e) => setCreateConcentracao(e.target.value)}
-	                          placeholder="ex: 300U"
-	                        />
-	                      </div>
-	                      <div>
-	                        <div className="text-xs text-blue-200/70 mb-1">Volume</div>
-	                        <Input
-	                          value={createVolume}
-	                          onChange={(e) => setCreateVolume(e.target.value)}
-	                          placeholder="ex: 1ml"
-	                        />
-	                      </div>
-	                      <div>
-	                        <div className="text-xs text-blue-200/70 mb-1">Calibre / Bitola</div>
-	                        <Input
-	                          value={createCalibre}
-	                          onChange={(e) => setCreateCalibre(e.target.value)}
-	                          placeholder="ex: 30G"
-	                        />
-	                      </div>
-	                      <div className="md:col-span-2">
-	                        <div className="text-xs text-blue-200/70 mb-1">Fonte</div>
-	                        <Input
-	                          value={createFonte}
-	                          onChange={(e) => setCreateFonte(e.target.value)}
-	                          placeholder="ex: Tabela 2025"
-	                        />
-	                      </div>
-	                    </div>
-	                  </details>
-
-	                  {createScanOpen ? (
-	                    <BarcodeScannerInline
-	                      onDetected={(code) => {
-                        setCreateCodigo(code)
-                        setCreateScanOpen(false)
-                        toast.success('Código detectado')
-                      }}
-                      onClose={() => setCreateScanOpen(false)}
-                    />
-                  ) : null}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-blue-200/60">
-                      Dica: preencha só o essencial agora e complete os detalhes depois (categoria, lote, validade, etc.).
-                    </div>
-                    <Button
-                      onClick={async () => {
-                        const codigoBarras = createCodigo.trim()
-                        if (!codigoBarras) return toast.error('Informe o código de barras')
-                        if (createNovoLote && !createLote.trim()) return toast.error('Informe o lote (Novo lote: on)')
-                        const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
-                        const produto = createProduto.trim() || (createNovoLote ? String(existing?.produto || '').trim() : '')
-                        if (!produto) return toast.error('Informe o produto')
-
-                        setCreateLoading(true)
-                        try {
-                          await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
-                            method: 'POST',
-                            queueLabel: 'Cadastro de insumo',
-                            body: {
-                              codigoBarras,
-                              produto,
-                              allowDuplicateLot: createNovoLote,
-	                              categoria: createCategoria.trim(),
-	                              marca: createMarca.trim(),
-	                              tipoUnidade: createTipoUnidade.trim(),
-	                              especificacao: createEspecificacao.trim(),
-	                              concentracao: createConcentracao.trim(),
-	                              volume: createVolume.trim(),
-	                              fonte: createFonte.trim(),
-	                              calibre: createCalibre.trim(),
-	                              precoCusto: createPrecoCusto.trim(),
-	                              estoqueInicial: Number(createEstoqueInicial) || 0,
-	                              estoqueMinimo: Number(createEstoqueMinimo) || 0,
-	                              lote: createLote.trim(),
-	                              dataValidade: dateInputToIso(createDataValidade)
-                            }
-                          })
-                          toast.success('Insumo cadastrado')
-                          setCreateCodigo('')
-                          setCreateProduto('')
-                          setCreateCategoria('')
-	                          setCreateMarca('')
-	                          setCreateTipoUnidade('')
-	                          setCreateEspecificacao('')
-	                          setCreateConcentracao('')
-	                          setCreateVolume('')
-	                          setCreateFonte('')
-	                          setCreateCalibre('')
-	                          setCreatePrecoCusto('')
-	                          setCreateEstoqueInicial('0')
-	                          setCreateEstoqueMinimo('5')
-                          setCreateLote('')
-                          setCreateDataValidade('')
-                          setCreateNovoLote(false)
-                          setCreateOpen(false)
-                          await refreshInsumos({ pagina: 1 })
-                        } catch (e) {
-                          const status = (e as any)?.status
-                          const msg = e instanceof Error ? e.message : String(e)
-                          if (status === 409 && /código de barras já cadastrado/i.test(msg)) {
-                            setCreateNovoLote(true)
-                            toast.error('Código já existe. Ative “Novo lote” e informe Lote/Validade para cadastrar um lote adicional.')
-                            return
-                          }
-                          toast.error(msg)
-                        } finally {
-                          setCreateLoading(false)
-                        }
-                      }}
-                      disabled={createLoading || !isAuthed}
+        <Card className="bg-black/20 border border-white/10">
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
+            <CardTitle className="text-white text-base">Alertas</CardTitle>
+            <div className="flex items-center gap-2 text-xs text-blue-200/60">
+              <span>
+                estoque:{' '}
+                <span className="font-mono">
+                  {Number.isFinite(Number(overviewNotifications?.counts?.lowStock)) ? Number(overviewNotifications?.counts?.lowStock) : insightsAlertasFiltrados.length}
+                </span>
+              </span>
+              <span>•</span>
+              <span>
+                validade:{' '}
+                <span className="font-mono">
+                  {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
+                </span>
+              </span>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+                Estoque abaixo do mínimo
+              </summary>
+              <div className="mt-3 space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Status</div>
+                    <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="TODOS">Todos</SelectItem>
+                        <SelectItem value="ATENCAO">Estoque baixo</SelectItem>
+                        <SelectItem value="URGENTE">Críticos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+                    <Select
+                      value={alertasCategoria || '__ALL__'}
+                      onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
                     >
-                      {createLoading ? 'Salvando…' : 'Salvar'}
-                    </Button>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__ALL__">Todas</SelectItem>
+                        {alertasCategorias.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
+                    <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
+                  </div>
+                </div>
+
+                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-black/30 text-blue-100/80">
+                      <tr>
+                        <th className="text-left p-3">Produto</th>
+                        <th className="text-left p-3">Categoria</th>
+                        <th className="text-left p-3">Status</th>
+                        <th className="text-right p-3">Atual</th>
+                        <th className="text-right p-3">Mín</th>
+                        <th className="text-right p-3">Dif</th>
+                        <th className="text-right p-3">%</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
+                        const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
+                        return (
+                          <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                            <td className="p-3 text-blue-50">
+                              <div className="text-blue-50">{a.produto || '-'}</div>
+                              <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
+                            </td>
+                            <td className="p-3 text-blue-100/80">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
+                                <span className="truncate">{a.categoria || '-'}</span>
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
+                            </td>
+                            <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
+                            <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
+                            <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
+                            <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
+                          </tr>
+                        )
+                      })}
+                      {!insightsAlertasFiltrados.length ? (
+                        <tr>
+                          <td className="p-3 text-blue-100/70" colSpan={7}>
+                            {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+
+            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
+              <div className="mt-3 space-y-3">
+                <div className="text-xs text-blue-200/60">
+                  Lista resumida (até 50 itens) gerada automaticamente para a unidade.
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
+                        <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
+                        Vencendo
+                      </div>
+                      <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
+                    </div>
+                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-left p-3">Validade</th>
+                            <th className="text-right p-3">Estoque</th>
+                            <th className="text-right p-3">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-blue-50/90">
+                          {(overviewNotifications?.expiringSoon || []).map((it: any, idx: number) => (
+                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3">
+                                <div className="font-medium">{it.produto || '-'}</div>
+                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
+                              </td>
+                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
+                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
+                              <td className="p-3 text-right">
+                                <Button
+                                  variant="secondary"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => {
+                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
+                                  }}
+                                  disabled={!isAuthed}
+                                >
+                                  Usar
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                          {!(overviewNotifications?.expiringSoon || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
+                        <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
+                        Expirado c/ estoque
+                      </div>
+                      <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
+                    </div>
+                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-left p-3">Validade</th>
+                            <th className="text-right p-3">Estoque</th>
+                            <th className="text-right p-3">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-blue-50/90">
+                          {(overviewNotifications?.expiredWithStock || []).map((it: any, idx: number) => (
+                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3">
+                                <div className="font-medium">{it.produto || '-'}</div>
+                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
+                              </td>
+                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
+                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
+                              <td className="p-3 text-right">
+                                <Button
+                                  variant="secondary"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => {
+                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
+                                  }}
+                                  disabled={!isAuthed}
+                                >
+                                  Usar
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                          {!(overviewNotifications?.expiredWithStock || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+                Ações recomendadas
+              </summary>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="text-sm text-blue-100/80">Reposição</div>
+                  {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
+                    <button
+                      key={String(r.codigoBarras)}
+                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                      onClick={() => {
+                        if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
+                      }}
+                    >
+                      <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
+                      <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
+                      <div className="text-xs text-blue-100/70 mt-1">
+                        sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
+                        {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
+                      </div>
+                    </button>
+                  ))}
+                  {!overviewActionables?.reposicao?.length ? (
+                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
+                  {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
+                    <button
+                      key={`${t.codigoBarras}-${t.from}-${t.to}`}
+                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                      onClick={() => {
+                        if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
+                        if (t.qty != null) setQuickQuantidade(String(t.qty))
+                        if (t.from) setTransferFrom(String(t.from))
+                        if (t.to) setTransferTo(String(t.to))
+                      }}
+                    >
+                      <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
+                      <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
+                      <div className="text-xs text-blue-100/70 mt-1">
+                        <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+                        <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
+                        <span className="font-mono">{t.qty ?? '-'}</span>
+                      </div>
+                    </button>
+                  ))}
+                  {!overviewActionables?.transferencias?.length ? (
+                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+                  ) : null}
+                </div>
+              </div>
+            </details>
+
+            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+                Qualidade do cadastro{' '}
+                <span className="text-xs text-blue-200/60">
+                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} issues` : overviewLoading ? 'Carregando…' : '—'}
+                </span>
+              </summary>
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+                  {overviewQuality?.summary?.bySeverity ? (
+                    <>
+                      <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
+                      <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
+                      <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
+                    </>
+                  ) : null}
+                  {!overviewQuality?.summary?.total ? (
+                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem issues.'}</span>
+                  ) : null}
+                </div>
+
+                {overviewQuality?.issues?.length ? (
+                  <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-black/30 text-blue-100/80">
+                        <tr>
+                          <th className="text-left p-3">Sev</th>
+                          <th className="text-left p-3">Código</th>
+                          <th className="text-left p-3">Mensagem</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {(overviewQuality.issues || []).slice(0, 30).map((it, idx) => {
+                          const sev = String(it.severity || '').toUpperCase()
+                          const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+                          return (
+                            <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3">
+                                <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+                              </td>
+                              <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
+                              <td className="p-3 text-blue-50">
+                                {it.message || '-'}
+                                {(it.codigoBarras || it.produto) ? (
+                                  <div className="text-xs text-blue-200/60 mt-1">
+                                    {(it.codigoBarras ? `#${it.codigoBarras}` : '')}
+                                    {it.codigoBarras && it.produto ? ' • ' : ''}
+                                    {it.produto || ''}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-white text-base font-semibold">Gráficos</div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (chartSlots.length >= MAX_CHARTS) return
+                setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+              }}
+              disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+            >
+              + Adicionar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+              disabled={overviewLoading || insightsLoading}
+            >
+              Reset
+            </Button>
+          </div>
+        </div>
+        <div
+          className={`grid gap-3 ${chartSlots.length === 1
+            ? 'grid-cols-1'
+            : chartSlots.length === 2
+              ? 'grid-cols-1 lg:grid-cols-2'
+              : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
+            }`}
+        >
+          {chartSlots.map((slot, idx) => {
+            const preset = presetSupports(slot.presetId)
+            const viewOptions = presetViewOptions(slot.presetId)
+            const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
+            const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
+            const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+            const layout = (preset as any).layout as ChartLayout | undefined
+            const baseH =
+              chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
+            const height =
+              layout === 'tall'
+                ? baseH + (chartSlots.length === 1 ? 180 : 120)
+                : baseH
+            const cardSpan =
+              chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
+
+            return (
+              <Card
+                key={`${slot.presetId}-${idx}`}
+                className={`bg-black/20 border border-white/10 ${cardSpan}`}
+              >
+                <CardHeader className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={slot.presetId}
+                      onValueChange={(v) => {
+                        const nextId = v as any
+                        const nextPreset = presetSupports(nextId)
+                        const nextView = nextPreset?.defaultView || presetViewOptions(nextId)[0]
+                        setChartSlot(idx, { presetId: nextId, view: nextView as any })
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CHART_PRESETS.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {chartSlots.length > 1 ? (
+                      <Button
+                        variant="outline"
+                        className="h-8 w-8 p-0"
+                        title="Remover gráfico"
+                        aria-label="Remover gráfico"
+                        onClick={() => {
+                          setChartSlots((prev) => prev.filter((_, i) => i !== idx))
+                        }}
+                      >
+                        ×
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {preset.supportsMetric ? (
+                      <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
+                        <SelectTrigger className="h-8 w-24">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="qtd">Qtd</SelectItem>
+                          <SelectItem value="valor">R$</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+
+                    {preset.supportsView && viewOptions.length > 1 ? (
+                      <Select value={view} onValueChange={(v) => setChartSlot(idx, { view: v as any })}>
+                        <SelectTrigger className="h-8 w-28">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {viewOptions.map((vv) => (
+                            <SelectItem key={vv} value={vv}>
+                              {vv === 'bar' ? 'Barras' : vv === 'line' ? 'Linhas' : 'Pizza'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+
+                    {preset.supportsTopN ? (
+                      <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
+                        <SelectTrigger className="h-8 w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">Top 5</SelectItem>
+                          <SelectItem value="8">Top 8</SelectItem>
+                          <SelectItem value="10">Top 10</SelectItem>
+                          <SelectItem value="15">Top 15</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {renderChart({ ...slot, view, metric, topN }, { height })}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+        <div className="text-xs text-blue-200/60">
+          Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
+        </div>
+
+        <Card className="bg-black/20 border border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <div className="text-sm text-blue-100/80">
+              Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+              {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
+            </div>
+            <div className="text-sm text-blue-100/80">
+              Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+              {overviewRoi?.perdas?.valorRiscoVencendo != null
+                ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
+                : '-'}
+            </div>
+            <div className="text-sm text-blue-100/80">
+              Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
+            </div>
+            <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Dialog
+        open={editOpen}
+        onOpenChange={(v) => {
+          setEditOpen(v)
+          if (!v) setEditTarget(null)
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar insumo</DialogTitle>
+            <DialogDescription>
+              {editTarget?.produto || '-'} • <span className="font-mono">{editTarget?.codigoBarras || '-'}</span>
+              {editTarget?.registro ? <span> • Reg {editTarget.registro}</span> : null}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
+              <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} placeholder="789..." />
+            </div>
+            <div className="md:col-span-2">
+              <div className="text-xs text-muted-foreground mb-1">Produto</div>
+              <Input value={editProduto} onChange={(e) => setEditProduto(e.target.value)} placeholder="Nome do produto" />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
+              <Input value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} placeholder="ex: Anestésicos" list="edit-insumos-categorias" />
+              <datalist id="edit-insumos-categorias">
+                {lotCategorias.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Marca</div>
+              <Input value={editMarca} onChange={(e) => setEditMarca(e.target.value)} placeholder="ex: Galderma" list="edit-insumos-marcas" />
+              <datalist id="edit-insumos-marcas">
+                {insumosMarcas.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
+              <Input value={editTipoUnidade} onChange={(e) => setEditTipoUnidade(e.target.value)} placeholder="ex: Frasco" list="insumos-tipos-unidade" />
+              <datalist id="insumos-tipos-unidade">
+                {insumosTiposUnidade.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
+              <Input value={editPrecoCusto} onChange={(e) => setEditPrecoCusto(e.target.value)} placeholder="ex: 120,00" />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Estoque mínimo</div>
+              <Input value={editEstoqueMinimo} onChange={(e) => setEditEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Lote</div>
+              <Input value={editLote} onChange={(e) => setEditLote(e.target.value)} placeholder="ex: L2026-01" />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
+              <Input value={editDataValidade} onChange={(e) => setEditDataValidade(e.target.value)} placeholder="ex: 31/12/2026" />
+            </div>
+          </div>
+
+          <details className="mt-2 rounded-lg border border-white/10 bg-black/10 p-3">
+            <summary className="cursor-pointer select-none text-sm text-blue-100/80">Detalhes (opcional)</summary>
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="md:col-span-2">
+                <div className="text-xs text-muted-foreground mb-1">Especificação / Modelo</div>
+                <Input value={editEspecificacao} onChange={(e) => setEditEspecificacao(e.target.value)} placeholder="ex: Base, Lidocaine" />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">Concentração</div>
+                <Input value={editConcentracao} onChange={(e) => setEditConcentracao(e.target.value)} placeholder="ex: 300U" />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">Volume</div>
+                <Input value={editVolume} onChange={(e) => setEditVolume(e.target.value)} placeholder="ex: 1ml" />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">Calibre / Bitola</div>
+                <Input value={editCalibre} onChange={(e) => setEditCalibre(e.target.value)} placeholder="ex: 30G" />
+              </div>
+              <div className="md:col-span-2">
+                <div className="text-xs text-muted-foreground mb-1">Fonte</div>
+                <Input value={editFonte} onChange={(e) => setEditFonte(e.target.value)} placeholder="ex: Tabela 2025" />
+              </div>
+            </div>
+          </details>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editSaving}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={deleteEdit} disabled={editSaving || !isAuthed}>
+              Excluir
+            </Button>
+            <Button onClick={saveEdit} disabled={editSaving || !isAuthed}>
+              {editSaving ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Editar lote/validade</DialogTitle>
+            <DialogDescription>
+              {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          {lotSelecionado ? (
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-muted-foreground">Categoria</div>
+                  <div className="text-blue-100/80">{lotSelecionado.categoria || '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Marca</div>
+                  <div className="text-blue-100/80">{lotSelecionado.marca || '-'}</div>
+                </div>
+                {lotSelecionado.concentracao ? (
+                  <div>
+                    <div className="text-xs text-muted-foreground">Concentração</div>
+                    <div className="text-blue-100/80">{lotSelecionado.concentracao}</div>
+                  </div>
+                ) : null}
+                {lotSelecionado.volume ? (
+                  <div>
+                    <div className="text-xs text-muted-foreground">Volume</div>
+                    <div className="text-blue-100/80">{lotSelecionado.volume}</div>
+                  </div>
+                ) : null}
+                {lotSelecionado.calibre ? (
+                  <div>
+                    <div className="text-xs text-muted-foreground">Calibre</div>
+                    <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
+                  </div>
+                ) : null}
+                {lotSelecionado.fonte ? (
+                  <div>
+                    <div className="text-xs text-muted-foreground">Fonte</div>
+                    <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Lote</div>
+              <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
+              <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 31/12/2026" />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setLotDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveLot} disabled={lotSaving || !isAuthed}>
+              {lotSaving ? 'Salvando…' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div ref={insumosSectionRef} className="max-w-6xl mx-auto space-y-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-white text-lg font-semibold">Insumos</div>
+            <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {offlineQueueCount > 0 ? (
+              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        {sharePayload && !shareHidden ? (
+          <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-blue-50 font-semibold">Compartilhamento recebido</div>
+              <Button variant="secondary" size="sm" onClick={() => setShareHidden(true)}>
+                Fechar
+              </Button>
+            </div>
+            {shareLoading ? <div className="mt-2 text-xs text-blue-200/60">Carregando anexos…</div> : null}
+            <div className="mt-2 space-y-1">
+              {sharePayload.title ? (
+                <div>
+                  <span className="text-blue-200/70">Título:</span> {sharePayload.title}
+                </div>
+              ) : null}
+              {sharePayload.text ? (
+                <div>
+                  <span className="text-blue-200/70">Texto:</span> {sharePayload.text}
+                </div>
+              ) : null}
+              {sharePayload.url ? (
+                <div className="truncate">
+                  <span className="text-blue-200/70">Link:</span>{' '}
+                  <a className="underline" href={sharePayload.url} target="_blank" rel="noreferrer">
+                    {sharePayload.url}
+                  </a>
+                </div>
+              ) : null}
+              {sharePayload.files && sharePayload.files.length ? (
+                <div className="space-y-1">
+                  <div className="text-blue-200/70">Arquivos:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {sharePayload.files.map((f, idx) => (
+                      <span key={`${f.name}-${idx}`} className="text-xs">
+                        {f.url ? (
+                          <a className="underline" href={f.url} target="_blank" rel="noreferrer">
+                            {f.name}
+                          </a>
+                        ) : (
+                          f.name
+                        )}
+                      </span>
+                    ))}
                   </div>
                 </div>
               ) : null}
+            </div>
+            <div className="mt-2 text-xs text-blue-200/60">
+              Preenchi o cadastro com os dados compartilhados. Revise antes de salvar.
+            </div>
+          </div>
+        ) : null}
+        {shareHistory.length ? (
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm">Importações recentes</CardTitle>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-blue-200/60">{shareHistory.length} itens</span>
+                <Button variant="secondary" size="sm" onClick={clearShareHistory}>
+                  Limpar
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {shareHistoryLoading ? <div className="text-xs text-blue-200/60">Sincronizando…</div> : null}
+              {shareHistory.slice(0, 6).map((item) => (
+                <div key={item.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm text-blue-50">
+                      {item.title || item.url || 'Conteúdo compartilhado'}
+                    </div>
+                    <div className="text-xs text-blue-200/60">{fmtDate(item.createdAt)}</div>
+                  </div>
+                  {item.text ? <div className="text-xs text-blue-200/70 mt-1">{item.text}</div> : null}
+                  {item.files && item.files.length ? (
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-blue-200/70">
+                      {item.files.map((f, idx) => (
+                        <span key={`${item.id}-${idx}`} className="truncate">
+                          {f.url ? (
+                            <a className="underline" href={f.url} target="_blank" rel="noreferrer">
+                              {f.name}
+                            </a>
+                          ) : (
+                            f.name
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => applyShareToForm(item)}>
+                      Usar no cadastro
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => removeShareHistory(item.id)}>
+                      Remover
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Input
+              value={insumosQuery}
+              onChange={(e) => setInsumosQuery(e.target.value)}
+              placeholder="Buscar por código, produto, categoria…"
+              className="w-80"
+            />
+            <Button variant="secondary" onClick={() => void refreshInsumos({ pagina: 1 })} disabled={insumosLoading || !isAuthed}>
+              {insumosLoading ? 'Carregando…' : 'Recarregar'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+              disabled={!isAuthed}
+              title="Exportar CSV"
+            >
+              Exportar
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setCreateOpen((v) => !v)}
+              disabled={!isAuthed}
+            >
+              {createOpen ? 'Fechar' : 'Adicionar'}
+            </Button>
+          </div>
+          <div className="text-xs text-blue-200/60">
+            {insumosTotal != null ? (
+              <>
+                {filteredInsumos.length} de <span className="font-mono">{insumosTotal}</span> itens
+              </>
+            ) : (
+              `${filteredInsumos.length} itens`
+            )}
+          </div>
+        </div>
+        {insumosMode === 'paged' ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-blue-200/60">
+              Página <span className="font-mono">{insumosPagina}</span>
+              {insumosTotal != null ? (
+                <>
+                  {' '}
+                  de <span className="font-mono">{Math.max(1, Math.ceil(insumosTotal / insumosLimite))}</span>
+                </>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-40">
+                <Select
+                  value={String(insumosLimite)}
+                  onValueChange={(v) => {
+                    const lim = Math.max(1, Math.min(1000, parseInt(String(v), 10) || 200))
+                    setInsumosLimite(lim)
+                    void refreshInsumos({ pagina: 1 })
+                  }}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                    <SelectItem value="200">200</SelectItem>
+                    <SelectItem value="400">400</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => void refreshInsumos({ pagina: Math.max(1, insumosPagina - 1) })}
+                disabled={insumosLoading || !isAuthed || insumosPagina <= 1}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void refreshInsumos({ pagina: insumosPagina + 1 })}
+                disabled={
+                  insumosLoading ||
+                  !isAuthed ||
+                  (insumosTotal != null ? insumosPagina >= Math.max(1, Math.ceil(insumosTotal / insumosLimite)) : filteredInsumos.length < insumosLimite)
+                }
+              >
+                Próxima
+              </Button>
+              {insumosTotal != null && insumosTotal <= INSUMOS_PAGED_THRESHOLD && !insumosFull.length ? (
+                <Button
+                  variant="outline"
+                  onClick={() => void loadInsumosFull()}
+                  disabled={insumosLoading || !isAuthed}
+                >
+                  Carregar tudo
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
+        {createOpen ? (
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
+            <div className="text-sm text-blue-100/70">
+              Cadastro rápido (campos mínimos) + detalhes opcionais (como no app antigo de Insumos).
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
+                <div className="flex items-center gap-2">
+                  <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
+                  <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
+                    {createScanOpen ? 'Fechar' : 'Scan'}
+                  </Button>
+                </div>
+                <div className="mt-2">
+                  {createLookupLoading ? (
+                    <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
+                  ) : createLookupError ? (
+                    <div className="text-xs text-red-200">{createLookupError}</div>
+                  ) : createLookupItems.length ? (
+                    <div className="text-xs text-blue-200/70">
+                      Encontramos um cadastro para este código e pré-preenchemos alguns campos (produto/categoria/marca). Se quiser, você pode cadastrar um novo lote.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <div className="text-xs text-blue-200/70 mb-1">Produto</div>
+                <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="Nome do produto" />
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+                <Input
+                  value={createCategoria}
+                  onChange={(e) => setCreateCategoria(e.target.value)}
+                  placeholder="ex: Anestésicos"
+                  list="insumos-categorias"
+                />
+                <datalist id="insumos-categorias">
+                  {lotCategorias.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Marca</div>
+                <Input
+                  value={createMarca}
+                  onChange={(e) => setCreateMarca(e.target.value)}
+                  placeholder="ex: Galderma"
+                  list="insumos-marcas"
+                />
+                <datalist id="insumos-marcas">
+                  {insumosMarcas.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
+                <Input
+                  value={createTipoUnidade}
+                  onChange={(e) => setCreateTipoUnidade(e.target.value)}
+                  placeholder="ex: Frasco"
+                  list="insumos-tipos-unidade"
+                />
+                <datalist id="insumos-tipos-unidade">
+                  {insumosTiposUnidade.map((u) => (
+                    <option key={u} value={u} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Preço custo</div>
+                <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="R$ 0,00" />
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Estoque inicial ({unidadeLabel(unidade)})</div>
+                <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} type="number" min={0} />
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
+                <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} type="number" min={0} />
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="text-xs text-blue-200/70">Lote</div>
+                  <Button
+                    variant={createNovoLote ? 'secondary' : 'outline'}
+                    size="sm"
+                    type="button"
+                    onClick={() => setCreateNovoLote((v) => !v)}
+                    title="Ative quando estiver cadastrando um lote adicional para um código já existente."
+                  >
+                    {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
+                  </Button>
+                </div>
+                <Input
+                  value={createLote}
+                  onChange={(e) => setCreateLote(e.target.value)}
+                  placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'}
+                />
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
+                <Input
+                  value={createDataValidade}
+                  onChange={(e) => setCreateDataValidade(e.target.value)}
+                  placeholder={createNovoLote ? 'recomendado (DD/MM/AAAA)' : 'DD/MM/AAAA'}
+                />
+              </div>
+            </div>
+
+            <details className="rounded-lg border border-white/10 bg-black/10 p-3">
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+                Detalhes (opcional)
+              </summary>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="md:col-span-2">
+                  <div className="text-xs text-blue-200/70 mb-1">Especificação / Modelo</div>
+                  <Input
+                    value={createEspecificacao}
+                    onChange={(e) => setCreateEspecificacao(e.target.value)}
+                    placeholder="ex: Base, Lidocaine"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Concentração</div>
+                  <Input
+                    value={createConcentracao}
+                    onChange={(e) => setCreateConcentracao(e.target.value)}
+                    placeholder="ex: 300U"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Volume</div>
+                  <Input
+                    value={createVolume}
+                    onChange={(e) => setCreateVolume(e.target.value)}
+                    placeholder="ex: 1ml"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Calibre / Bitola</div>
+                  <Input
+                    value={createCalibre}
+                    onChange={(e) => setCreateCalibre(e.target.value)}
+                    placeholder="ex: 30G"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <div className="text-xs text-blue-200/70 mb-1">Fonte</div>
+                  <Input
+                    value={createFonte}
+                    onChange={(e) => setCreateFonte(e.target.value)}
+                    placeholder="ex: Tabela 2025"
+                  />
+                </div>
+              </div>
+            </details>
+
+            {createScanOpen ? (
+              <BarcodeScannerInline
+                onDetected={(code) => {
+                  setCreateCodigo(code)
+                  setCreateScanOpen(false)
+                  toast.success('Código detectado')
+                }}
+                onClose={() => setCreateScanOpen(false)}
+              />
+            ) : null}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs text-blue-200/60">
+                Dica: preencha só o essencial agora e complete os detalhes depois (categoria, lote, validade, etc.).
+              </div>
+              <Button
+                onClick={async () => {
+                  const codigoBarras = createCodigo.trim()
+                  if (!codigoBarras) return toast.error('Informe o código de barras')
+                  const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                  const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
+                  const policy = getPolicyForCategoria(categoria)
+                  const validadeIso = dateInputToIso(createDataValidade)
+
+                  const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
+                  if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
+
+                  if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
+                    return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pela categoria)' : 'Informe o lote (Novo lote: on)')
+                  }
+                  if (policy.requiresExpiry && !validadeIso) {
+                    return toast.error('Informe a data de validade (obrigatória pela categoria)')
+                  }
+
+                  const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
+                  if (!produto) return toast.error('Informe o produto')
+
+                  setCreateLoading(true)
+                  try {
+                    await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
+                      method: 'POST',
+                      queueLabel: 'Cadastro de insumo',
+                      body: {
+                        codigoBarras,
+                        produto,
+                        allowDuplicateLot,
+                        categoria,
+                        marca: createMarca.trim(),
+                        tipoUnidade: createTipoUnidade.trim(),
+                        especificacao: createEspecificacao.trim(),
+                        concentracao: createConcentracao.trim(),
+                        volume: createVolume.trim(),
+                        fonte: createFonte.trim(),
+                        calibre: createCalibre.trim(),
+                        precoCusto: createPrecoCusto.trim(),
+                        estoqueInicial: Number(createEstoqueInicial) || 0,
+                        estoqueMinimo: Number(createEstoqueMinimo) || 0,
+                        lote: createLote.trim(),
+                        dataValidade: validadeIso
+                      }
+                    })
+                    toast.success('Insumo cadastrado')
+                    setCreateCodigo('')
+                    setCreateProduto('')
+                    setCreateCategoria('')
+                    setCreateMarca('')
+                    setCreateTipoUnidade('')
+                    setCreateEspecificacao('')
+                    setCreateConcentracao('')
+                    setCreateVolume('')
+                    setCreateFonte('')
+                    setCreateCalibre('')
+                    setCreatePrecoCusto('')
+                    setCreateEstoqueInicial('0')
+                    setCreateEstoqueMinimo('5')
+                    setCreateLote('')
+                    setCreateDataValidade('')
+                    setCreateNovoLote(false)
+                    setCreateOpen(false)
+                    await refreshInsumos({ pagina: 1 })
+                  } catch (e) {
+                    const status = (e as any)?.status
+                    const msg = e instanceof Error ? e.message : String(e)
+                    if (status === 409 && /código de barras já cadastrado/i.test(msg)) {
+                      setCreateNovoLote(true)
+                      toast.error('Código já existe. Ative “Novo lote” e informe Lote/Validade para cadastrar um lote adicional.')
+                      return
+                    }
+                    if (policyErrorToast(e)) return
+                    toast.error(msg)
+                  } finally {
+                    setCreateLoading(false)
+                  }
+                }}
+                disabled={createLoading || !isAuthed}
+              >
+                {createLoading ? 'Salvando…' : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+          <table className="min-w-full text-sm">
+            <thead className="bg-black/30 text-blue-100/80">
+              <tr>
+                <th className="text-left p-3">Produto</th>
+                <th className="text-left p-3">Categoria</th>
+                <th className="text-left p-3">Código</th>
+                <th className="text-right p-3">Estoque</th>
+                <th className="text-right p-3">Mínimo</th>
+                <th className="text-left p-3">Validade</th>
+                <th className="text-right p-3">Valor</th>
+                <th className="text-right p-3">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {filteredInsumos.map((i) => {
+                const estoque = Number(i.estoqueAtual) || 0
+                const min = Number(i.estoqueMinimo) || 0
+                const stockStatus = min > 0 ? calcularStatusEstoque(estoque, min) : 'OK'
+                const isCritico = min > 0 && stockStatus === 'URGENTE'
+                const isLowStock = min > 0 && stockStatus === 'ATENCAO'
+                const validadeStatus = String(i.statusValidade?.status || '').toUpperCase()
+                const isVencendo = validadeStatus === 'VENCENDO'
+                const isExpirado = validadeStatus === 'EXPIRADO'
+                const valor = (Number(i.precoCusto) || 0) * estoque
+                const otherStocks = i.estoques
+                  ? Object.entries(i.estoques)
+                    .filter(([u, v]) => u !== unidade && (Number(v) || 0) > 0)
+                    .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
+                  : []
+                const otherSummary = otherStocks.length
+                  ? `${otherStocks
+                    .slice(0, 2)
+                    .map(([u, v]) => `${unidadeLabel(u)}: ${Number(v) || 0}`)
+                    .join(' • ')}${otherStocks.length > 2 ? ` • +${otherStocks.length - 2}` : ''}`
+                  : ''
+
+                return (
+                  <tr key={`${i.registro || ''}-${i.codigoBarras || ''}`} className="hover:bg-white/5">
+                    <td className="p-3">
+                      <div className="text-blue-50">{i.produto || '-'}</div>
+                      <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
+                      {isCritico || isLowStock || isVencendo || isExpirado ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {isCritico ? <Badge variant="destructive">Críticos</Badge> : null}
+                          {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
+                          {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
+                          {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="p-3 text-blue-100/80">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: getCategoriaBgColor(i.categoria || 'Outros') }}
+                        />
+                        <span className="truncate">{i.categoria || '-'}</span>
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
+                    </td>
+                    <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="font-mono">{estoque}</span>
+                      </div>
+                      {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
+                    </td>
+                    <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
+                    <td className="p-3">
+                      <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
+                    </td>
+                    <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
+                    <td className="p-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => {
+                            if (i.codigoBarras) setQuickCodigo(i.codigoBarras)
+                          }}
+                        >
+                          Usar
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => openEditDialog(i)}
+                          disabled={!isAuthed}
+                        >
+                          Editar
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+              {!filteredInsumos.length ? (
+                <tr>
+                  <td className="p-3 text-blue-100/70" colSpan={8}>
+                    {insumosLoading ? 'Carregando…' : isAuthed ? 'Sem itens.' : 'Faça login para carregar.'}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div ref={movSectionRef} className="max-w-6xl mx-auto space-y-3">
+        <div>
+          <div className="text-white text-lg font-semibold">Movimentações</div>
+          <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-48">
+            <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
+            <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TODOS">Todos</SelectItem>
+                <SelectItem value="ENTRADA">Entrada</SelectItem>
+                <SelectItem value="SAÍDA">Saída</SelectItem>
+                <SelectItem value="AJUSTE">Ajuste</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-48">
+            <div className="text-xs text-blue-200/70 mb-1">De</div>
+            <Input value={movDe} onChange={(e) => setMovDe(e.target.value)} placeholder="DD/MM/AAAA" />
+          </div>
+          <div className="w-48">
+            <div className="text-xs text-blue-200/70 mb-1">Até</div>
+            <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="DD/MM/AAAA" />
+          </div>
+          <div className="w-40">
+            <div className="text-xs text-blue-200/70 mb-1">Por página</div>
+            <Select
+              value={String(movLimite)}
+              onValueChange={(v) => {
+                const lim = Math.max(1, Math.min(200, parseInt(String(v), 10) || 50))
+                void loadMovimentacoes({ pagina: 1, limite: lim })
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+                <SelectItem value="200">200</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={movGroupTransfers ? 'secondary' : 'outline'}
+              onClick={() => setMovGroupTransfers((v) => !v)}
+              disabled={movTipo !== 'TODOS'}
+              title={movTipo !== 'TODOS' ? 'Disponível apenas quando Tipo = Todos' : 'Agrupa entrada/saída de transferências em uma linha'}
+            >
+              Agrupar transferências
+            </Button>
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => void Promise.allSettled([loadMovimentacoes(), loadInsights()])}
+            disabled={movLoading || !isAuthed}
+          >
+            {movLoading ? 'Carregando…' : 'Filtrar'}
+          </Button>
+        </div>
+
+        <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+          <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+            Giro por categoria (saídas){' '}
+            <span className="text-xs text-blue-200/60">
+              • {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
+            </span>
+          </summary>
+          <div className="mt-3 space-y-2">
+            {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
               <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                 <table className="min-w-full text-sm">
                   <thead className="bg-black/30 text-blue-100/80">
                     <tr>
-                      <th className="text-left p-3">Produto</th>
                       <th className="text-left p-3">Categoria</th>
-                      <th className="text-left p-3">Código</th>
-                      <th className="text-right p-3">Estoque</th>
-                      <th className="text-right p-3">Mínimo</th>
-                      <th className="text-left p-3">Validade</th>
-                      <th className="text-right p-3">Valor</th>
-                      <th className="text-right p-3">Ações</th>
-                    </tr>
-                  </thead>
-	                  <tbody className="divide-y divide-white/5">
-	                    {filteredInsumos.map((i) => {
-	                      const estoque = Number(i.estoqueAtual) || 0
-	                      const min = Number(i.estoqueMinimo) || 0
-	                      const stockStatus = min > 0 ? calcularStatusEstoque(estoque, min) : 'OK'
-	                      const isCritico = min > 0 && stockStatus === 'URGENTE'
-	                      const isLowStock = min > 0 && stockStatus === 'ATENCAO'
-	                      const validadeStatus = String(i.statusValidade?.status || '').toUpperCase()
-	                      const isVencendo = validadeStatus === 'VENCENDO'
-	                      const isExpirado = validadeStatus === 'EXPIRADO'
-	                      const valor = (Number(i.precoCusto) || 0) * estoque
-	                      const otherStocks = i.estoques
-	                        ? Object.entries(i.estoques)
-	                            .filter(([u, v]) => u !== unidade && (Number(v) || 0) > 0)
-                            .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
-                        : []
-                      const otherSummary = otherStocks.length
-                        ? `${otherStocks
-                            .slice(0, 2)
-                            .map(([u, v]) => `${unidadeLabel(u)}: ${Number(v) || 0}`)
-                            .join(' • ')}${otherStocks.length > 2 ? ` • +${otherStocks.length - 2}` : ''}`
-                        : ''
-
-	                      return (
-	                        <tr key={`${i.registro || ''}-${i.codigoBarras || ''}`} className="hover:bg-white/5">
-	                          <td className="p-3">
-	                            <div className="text-blue-50">{i.produto || '-'}</div>
-	                            <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
-	                            {isCritico || isLowStock || isVencendo || isExpirado ? (
-	                              <div className="mt-1 flex flex-wrap gap-1">
-	                                {isCritico ? <Badge variant="destructive">Críticos</Badge> : null}
-	                                {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
-	                                {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
-	                                {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
-	                              </div>
-	                            ) : null}
-	                          </td>
-                          <td className="p-3 text-blue-100/80">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className="inline-block h-2.5 w-2.5 rounded-full"
-                                style={{ backgroundColor: getCategoriaBgColor(i.categoria || 'Outros') }}
-                              />
-                              <span className="truncate">{i.categoria || '-'}</span>
-                            </div>
-                          </td>
-                          <td className="p-3">
-                            <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
-                          </td>
-	                          <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
-	                            <div className="flex items-center justify-end gap-2">
-	                              <span className="font-mono">{estoque}</span>
-	                            </div>
-	                            {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
-	                          </td>
-	                          <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
-	                          <td className="p-3">
-	                            <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
-	                          </td>
-                          <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
-	                          <td className="p-3 text-right">
-	                            <div className="flex items-center justify-end gap-2">
-	                              <Button
-	                                variant="secondary"
-	                                className="h-8 px-2 text-xs"
-	                                onClick={() => {
-	                                  if (i.codigoBarras) setQuickCodigo(i.codigoBarras)
-	                                }}
-	                              >
-	                                Usar
-	                              </Button>
-	                              <Button
-	                                variant="outline"
-	                                className="h-8 px-2 text-xs"
-	                                onClick={() => openEditDialog(i)}
-	                                disabled={!isAuthed}
-	                              >
-	                                Editar
-	                              </Button>
-	                            </div>
-	                          </td>
-                        </tr>
-                      )
-                    })}
-                    {!filteredInsumos.length ? (
-                      <tr>
-                        <td className="p-3 text-blue-100/70" colSpan={8}>
-                          {insumosLoading ? 'Carregando…' : isAuthed ? 'Sem itens.' : 'Faça login para carregar.'}
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-		      </div>
-
-		      <div ref={movSectionRef} className="max-w-6xl mx-auto space-y-3">
-		        <div>
-		          <div className="text-white text-lg font-semibold">Movimentações</div>
-		          <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
-		        </div>
-
-			              <div className="flex flex-wrap items-end gap-2">
-			                <div className="w-48">
-			                  <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
-		                  <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
-	                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="TODOS">Todos</SelectItem>
-                      <SelectItem value="ENTRADA">Entrada</SelectItem>
-                      <SelectItem value="SAÍDA">Saída</SelectItem>
-                      <SelectItem value="AJUSTE">Ajuste</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="w-48">
-                  <div className="text-xs text-blue-200/70 mb-1">De</div>
-	                  <Input value={movDe} onChange={(e) => setMovDe(e.target.value)} placeholder="DD/MM/AAAA" />
-                </div>
-                <div className="w-48">
-                  <div className="text-xs text-blue-200/70 mb-1">Até</div>
-	                  <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="DD/MM/AAAA" />
-                </div>
-				                <div className="w-40">
-				                  <div className="text-xs text-blue-200/70 mb-1">Por página</div>
-				                  <Select
-				                    value={String(movLimite)}
-				                    onValueChange={(v) => {
-				                      const lim = Math.max(1, Math.min(200, parseInt(String(v), 10) || 50))
-				                      void loadMovimentacoes({ pagina: 1, limite: lim })
-				                    }}
-				                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="25">25</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                      <SelectItem value="200">200</SelectItem>
-				                    </SelectContent>
-				                  </Select>
-				                </div>
-				                <div className="flex items-center gap-2">
-				                  <Button
-				                    variant={movGroupTransfers ? 'secondary' : 'outline'}
-				                    onClick={() => setMovGroupTransfers((v) => !v)}
-				                    disabled={movTipo !== 'TODOS'}
-				                    title={movTipo !== 'TODOS' ? 'Disponível apenas quando Tipo = Todos' : 'Agrupa entrada/saída de transferências em uma linha'}
-				                  >
-				                    Agrupar transferências
-				                  </Button>
-				                </div>
-				                <Button
-				                  variant="secondary"
-				                  onClick={() => void Promise.allSettled([loadMovimentacoes(), loadInsights()])}
-				                  disabled={movLoading || !isAuthed}
-				                >
-			                  {movLoading ? 'Carregando…' : 'Filtrar'}
-			                </Button>
-			              </div>
-
-			              <details className="rounded-xl border border-white/10 bg-black/10 p-3">
-			                <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-			                  Giro por categoria (saídas){' '}
-			                  <span className="text-xs text-blue-200/60">
-			                    • {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
-			                  </span>
-			                </summary>
-			                <div className="mt-3 space-y-2">
-			                  {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-			                    <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-			                      <table className="min-w-full text-sm">
-			                        <thead className="bg-black/30 text-blue-100/80">
-			                          <tr>
-			                            <th className="text-left p-3">Categoria</th>
-			                            <th className="text-right p-3">Qtd</th>
-			                            <th className="text-right p-3">Valor</th>
-			                          </tr>
-			                        </thead>
-			                        <tbody className="divide-y divide-white/5">
-			                          {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idx: number) => (
-			                            <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
-			                              <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
-			                              <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
-			                              <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
-			                            </tr>
-			                          ))}
-			                        </tbody>
-			                      </table>
-			                    </div>
-			                  ) : (
-			                    <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-			                  )}
-			                  <div className="text-xs text-blue-200/60">
-			                    Usa os filtros desta seção (De/Até) e o período da Visão geral ({overviewPeriod}).
-			                  </div>
-			                </div>
-			              </details>
-
-			              <div className="flex items-center justify-end">
-			                <Button
-			                  variant="outline"
-			                  size="sm"
-			                  onClick={() => {
-			                    const deIso = dateInputToIso(movDe)
-			                    const ateIso = dateInputToIso(movAte)
-			                    const params = new URLSearchParams({
-			                      unidade,
-			                      ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-			                      ...(deIso ? { de: deIso } : {}),
-			                      ...(ateIso ? { ate: ateIso } : {})
-			                    })
-			                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
-			                  }}
-			                  disabled={!isAuthed}
-			                >
-			                  Exportar CSV
-			                </Button>
-			              </div>
-
-		              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
-		                <div>
-		                  Página <span className="font-mono">{movPagina}</span>
-                  {movTotal != null ? (
-                    <>
-                      {' '}
-                      de <span className="font-mono">{Math.max(1, Math.ceil(movTotal / movLimite))}</span> • total{' '}
-                      <span className="font-mono">{movTotal}</span>
-                    </>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => void loadMovimentacoes({ pagina: Math.max(1, movPagina - 1) })}
-                    disabled={movLoading || !isAuthed || movPagina <= 1}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => void loadMovimentacoes({ pagina: movPagina + 1 })}
-                    disabled={
-                      movLoading ||
-                      !isAuthed ||
-                      (movTotal != null ? movPagina >= Math.max(1, Math.ceil(movTotal / movLimite)) : movimentacoes.length < movLimite)
-                    }
-                  >
-                    Próxima
-                  </Button>
-                </div>
-              </div>
-
-			              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-			                <table className="min-w-full text-sm">
-                  <thead className="bg-black/30 text-blue-100/80">
-                    <tr>
-                      <th className="text-left p-3">Data</th>
-                      <th className="text-left p-3">Tipo</th>
-                      <th className="text-left p-3">Produto</th>
-                      <th className="text-left p-3">Código</th>
                       <th className="text-right p-3">Qtd</th>
-                      <th className="text-left p-3">Unidade</th>
-                      <th className="text-left p-3">Usuário</th>
-                      <th className="text-left p-3">Detalhe</th>
+                      <th className="text-right p-3">Valor</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-	                    {movimentacoesView.map((m, idx) => (
-	                      <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
-	                        <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
-	                        <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
-	                        <td className="p-3 text-blue-50">{m.produto || '-'}</td>
-	                        <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
-	                        <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
-	                        <td className="p-3 text-blue-100/70">
-	                          {m.transferId
-	                            ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
-	                            : (m.unidade ? unidadeLabel(m.unidade) : '-')}
-	                        </td>
-	                        <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
-	                        <td className="p-3 text-blue-100/60">
-                          <div className="space-y-1">
-                            {m.transferId ? (
-                              <div>
-                                <div>
-                                  Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
-                                  {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
-                                </div>
-                                <div className="font-mono text-xs">{m.transferId}</div>
-                              </div>
-                            ) : m.motivo ? (
-                              <span>Motivo: {m.motivo}</span>
-                            ) : (
-                              <span>{m.observacoes || '-'}</span>
-                            )}
-                            {m.registroInsumo || m.lote || m.dataValidade ? (
-                              <div className="text-xs text-blue-200/60">
-                                {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
-                                {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
-                                {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
-                              </div>
-                            ) : null}
-                          </div>
-                        </td>
+                    {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idx: number) => (
+                      <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
+                        <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
+                        <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
+                        <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
                       </tr>
                     ))}
-	                    {!movimentacoesView.length ? (
-	                      <tr>
-	                        <td className="p-3 text-blue-100/70" colSpan={8}>
-	                          {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
-	                        </td>
-	                      </tr>
-	                    ) : null}
                   </tbody>
                 </table>
-			              </div>
-		      </div>
-	    </div>
-	  )
+              </div>
+            ) : (
+              <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+            )}
+            <div className="text-xs text-blue-200/60">
+              Usa os filtros desta seção (De/Até) e o período da Visão geral ({overviewPeriod}).
+            </div>
+          </div>
+        </details>
+
+        <div className="flex items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const deIso = dateInputToIso(movDe)
+              const ateIso = dateInputToIso(movAte)
+              const params = new URLSearchParams({
+                unidade,
+                ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+                ...(deIso ? { de: deIso } : {}),
+                ...(ateIso ? { ate: ateIso } : {})
+              })
+              window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+            }}
+            disabled={!isAuthed}
+          >
+            Exportar CSV
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+          <div>
+            Página <span className="font-mono">{movPagina}</span>
+            {movTotal != null ? (
+              <>
+                {' '}
+                de <span className="font-mono">{Math.max(1, Math.ceil(movTotal / movLimite))}</span> • total{' '}
+                <span className="font-mono">{movTotal}</span>
+              </>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void loadMovimentacoes({ pagina: Math.max(1, movPagina - 1) })}
+              disabled={movLoading || !isAuthed || movPagina <= 1}
+            >
+              Anterior
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void loadMovimentacoes({ pagina: movPagina + 1 })}
+              disabled={
+                movLoading ||
+                !isAuthed ||
+                (movTotal != null ? movPagina >= Math.max(1, Math.ceil(movTotal / movLimite)) : movimentacoes.length < movLimite)
+              }
+            >
+              Próxima
+            </Button>
+          </div>
+        </div>
+
+        <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+          <table className="min-w-full text-sm">
+            <thead className="bg-black/30 text-blue-100/80">
+              <tr>
+                <th className="text-left p-3">Data</th>
+                <th className="text-left p-3">Tipo</th>
+                <th className="text-left p-3">Produto</th>
+                <th className="text-left p-3">Código</th>
+                <th className="text-right p-3">Qtd</th>
+                <th className="text-left p-3">Unidade</th>
+                <th className="text-left p-3">Usuário</th>
+                <th className="text-left p-3">Detalhe</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {movimentacoesView.map((m, idx) => (
+                <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
+                  <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
+                  <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
+                  <td className="p-3 text-blue-50">{m.produto || '-'}</td>
+                  <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
+                  <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
+                  <td className="p-3 text-blue-100/70">
+                    {m.transferId
+                      ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
+                      : (m.unidade ? unidadeLabel(m.unidade) : '-')}
+                  </td>
+                  <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
+                  <td className="p-3 text-blue-100/60">
+                    <div className="space-y-1">
+                      {m.transferId ? (
+                        <div>
+                          <div>
+                            Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
+                            {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
+                          </div>
+                          <div className="font-mono text-xs">{m.transferId}</div>
+                        </div>
+                      ) : m.motivo ? (
+                        <span>Motivo: {m.motivo}</span>
+                      ) : (
+                        <span>{m.observacoes || '-'}</span>
+                      )}
+                      {m.registroInsumo || m.lote || m.dataValidade ? (
+                        <div className="text-xs text-blue-200/60">
+                          {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
+                          {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
+                          {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!movimentacoesView.length ? (
+                <tr>
+                  <td className="p-3 text-blue-100/70" colSpan={8}>
+                    {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
 }

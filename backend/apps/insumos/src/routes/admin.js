@@ -3,6 +3,23 @@
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
 const ROLE_INVITES = ['ADMIN', 'GESTOR'];
 
+function slugifyCategory(value) {
+  const s0 = String(value || '').trim().toLowerCase();
+  if (!s0) return '';
+  return s0
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function toBoolInt(v) {
+  if (v === true || v === 1 || v === '1') return 1;
+  const s = String(v ?? '').trim().toLowerCase();
+  if (s === 'true' || s === 'yes' || s === 'y' || s === 'sim') return 1;
+  return 0;
+}
+
 function normalizeRole(role) {
   return String(role || 'CONSULTOR').trim().toUpperCase();
 }
@@ -121,6 +138,157 @@ export async function handleAdminRoutes({
     return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
   }
 
+  // GET /admin/categories
+  if (url.pathname === '/admin/categories' && request.method === 'GET') {
+    try {
+      const includeSuggestions = String(url.searchParams.get('includeSuggestions') || '').trim() === 'true';
+      const rows = await env.DB.prepare(
+        `SELECT slug, label, requires_lot, requires_expiry, fefo, created_at, updated_at
+         FROM insumos_categories
+         ORDER BY COALESCE(NULLIF(label, ''), slug) COLLATE NOCASE ASC`
+      ).all();
+
+      const data = (rows?.results || []).map((r) => ({
+        slug: String(r.slug || ''),
+        label: String(r.label || ''),
+        requiresLot: Number(r.requires_lot || 0) ? true : false,
+        requiresExpiry: Number(r.requires_expiry || 0) ? true : false,
+        fefo: Number(r.fefo || 0) ? true : false,
+        createdAt: r.created_at || null,
+        updatedAt: r.updated_at || null,
+      }));
+
+      let suggestions = [];
+      if (includeSuggestions) {
+        const sugRows = await env.DB.prepare(
+          `SELECT DISTINCT categoria
+           FROM insumos_items
+           WHERE categoria IS NOT NULL AND TRIM(categoria) != ''
+           ORDER BY categoria COLLATE NOCASE ASC
+           LIMIT 250`
+        ).all();
+        suggestions = (sugRows?.results || [])
+          .map((r) => String(r.categoria || '').trim())
+          .filter(Boolean)
+          .map((label) => ({ label, slug: slugifyCategory(label) }))
+          .filter((x) => x.slug);
+      }
+
+      return withCORS(JSON.stringify({ success: true, data, suggestions }), { status: 200 }, appOrigin);
+    } catch (err) {
+      return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+    }
+  }
+
+  // POST /admin/categories (upsert)
+  if (url.pathname === '/admin/categories' && request.method === 'POST') {
+    try {
+      const body = await request.json().catch(() => ({}));
+      const label = String(body.label || body.name || '').trim();
+      const slug = slugifyCategory(body.slug || label);
+      if (!slug) {
+        return withCORS(JSON.stringify({ success: false, error: 'SLUG_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+
+      const requiresLot = toBoolInt(body.requiresLot ?? body.requires_lot);
+      const requiresExpiry = toBoolInt(body.requiresExpiry ?? body.requires_expiry);
+      const fefo = toBoolInt(body.fefo);
+      if (fefo && !requiresExpiry) {
+        return withCORS(JSON.stringify({ success: false, error: 'FEFO_REQUIRES_EXPIRY' }), { status: 400 }, appOrigin);
+      }
+
+      const now = new Date().toISOString();
+      const existing = await env.DB.prepare(
+        `SELECT slug, label, requires_lot, requires_expiry, fefo, created_at, updated_at
+         FROM insumos_categories
+         WHERE slug = ? LIMIT 1`
+      ).bind(slug).first();
+
+      const createdAt = existing?.created_at || now;
+
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO insumos_categories
+         (slug, label, requires_lot, requires_expiry, fefo, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(slug, label, requiresLot, requiresExpiry, fefo, createdAt, now)
+        .run();
+
+      try {
+        await appendAuditLog?.({
+          env,
+          spreadsheetId,
+          accessToken,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey,
+          action: existing ? 'UPDATE_CATEGORY_POLICY' : 'CREATE_CATEGORY_POLICY',
+          entity: 'CATEGORY_POLICY',
+          entityId: slug,
+          unidade: '',
+          before: existing || null,
+          after: { slug, label, requiresLot: !!requiresLot, requiresExpiry: !!requiresExpiry, fefo: !!fefo }
+        });
+      } catch { }
+
+      return withCORS(
+        JSON.stringify({
+          success: true,
+          data: { slug, label, requiresLot: !!requiresLot, requiresExpiry: !!requiresExpiry, fefo: !!fefo, createdAt, updatedAt: now }
+        }),
+        { status: 200 },
+        appOrigin
+      );
+    } catch (err) {
+      return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+    }
+  }
+
+  // DELETE /admin/categories/:slug
+  if (url.pathname.startsWith('/admin/categories/') && request.method === 'DELETE') {
+    try {
+      const slug = decodeURIComponent(url.pathname.slice('/admin/categories/'.length)).trim();
+      if (!slug) {
+        return withCORS(JSON.stringify({ success: false, error: 'SLUG_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+      const existing = await env.DB.prepare(
+        `SELECT slug, label, requires_lot, requires_expiry, fefo, created_at, updated_at
+         FROM insumos_categories
+         WHERE slug = ? LIMIT 1`
+      ).bind(slug).first();
+      if (!existing?.slug) {
+        return withCORS(JSON.stringify({ success: false, error: 'NOT_FOUND' }), { status: 404 }, appOrigin);
+      }
+
+      await env.DB.prepare('DELETE FROM insumos_categories WHERE slug = ?').bind(slug).run();
+
+      try {
+        await appendAuditLog?.({
+          env,
+          spreadsheetId,
+          accessToken,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey,
+          action: 'DELETE_CATEGORY_POLICY',
+          entity: 'CATEGORY_POLICY',
+          entityId: slug,
+          unidade: '',
+          before: existing,
+          after: null
+        });
+      } catch { }
+
+      return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
+    } catch (err) {
+      return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+    }
+  }
+
   // GET /admin/invites
   if (url.pathname === '/admin/invites' && request.method === 'GET') {
     try {
@@ -208,7 +376,7 @@ export async function handleAdminRoutes({
           before: null,
           after: { role, allowedUnits, maxUses, expiresAt, tokenHint, note }
         });
-      } catch {}
+      } catch { }
 
       const invite = publicInvite({
         id,
@@ -271,7 +439,7 @@ export async function handleAdminRoutes({
           before: publicInvite(existing),
           after: { revoked: true }
         });
-      } catch {}
+      } catch { }
 
       return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
     } catch (err) {
@@ -388,7 +556,7 @@ export async function handleAdminRoutes({
           before: null,
           after: { username, email, displayName, role, allowedUnits, ativo: !!ativo }
         });
-      } catch {}
+      } catch { }
       return withCORS(JSON.stringify({ success: true, data: user, oneTimePassword: password }), { status: 201 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -462,7 +630,7 @@ export async function handleAdminRoutes({
           before: null,
           after: { username: out.username, email: out.email, displayName: out.displayName, role: out.role, allowedUnits: out.allowedUnits, ativo: out.ativo }
         });
-      } catch {}
+      } catch { }
       return withCORS(JSON.stringify({ success: true, data: out }), { status: 200 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -506,7 +674,7 @@ export async function handleAdminRoutes({
           before: null,
           after: { username: target }
         });
-      } catch {}
+      } catch { }
       return withCORS(JSON.stringify({ success: true, oneTimePassword: password }), { status: 200 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);

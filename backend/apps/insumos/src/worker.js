@@ -13,6 +13,7 @@ import { handleMovimentacoesRoutes } from './routes/movimentacoes.js';
 import { handleInsumosRoutes } from './routes/insumos.js';
 import { handleInsightsRoutes } from './routes/insights.js';
 import { handleShareRoutes } from './routes/share.js';
+import { handleCategoriasRoutes } from './routes/categorias.js';
 import {
     shouldUseD1,
     d1ListInsumos,
@@ -1137,39 +1138,39 @@ function setIfPresent(row, headerMap, headerKeyLower, value) {
     row[idx] = value ?? '';
 }
 
-	function parseMovimentacoes(values) {
-	    if (!values || values.length < 2) return [];
-	    const headers = values[0] || [];
-	    const map = getHeaderMap(headers);
-	    return values.slice(1).map((row) => {
+function parseMovimentacoes(values) {
+    if (!values || values.length < 2) return [];
+    const headers = values[0] || [];
+    const map = getHeaderMap(headers);
+    return values.slice(1).map((row) => {
         const r = row || [];
         const get = (key) => {
             const idx = map[key];
             return idx === undefined ? '' : (r[idx] ?? '');
         };
         const dataHora = (get('data/hora') || '').toString();
-	        return {
-	            id: get('id movimentação') || '',
-	            dataHora,
-	            tipo: get('tipo') || '',
-	            codigoBarras: get('código de barras') || '',
-	            produto: get('produto') || '',
-	            quantidade: Number(get('quantidade')) || 0,
-	            estoqueAnterior: Number(get('estoque anterior')) || 0,
-	            estoqueNovo: Number(get('estoque novo')) || 0,
-	            unidade: get('unidade') || '',
-	            unidadeOrigem: get('unidade origem') || '',
-	            unidadeDestino: get('unidade destino') || '',
-	            transferId: get('id transferência') || '',
-	            usuario: get('usuário') || '',
-	            motivo: get('motivo') || '',
-	            registroInsumo: get('registro insumo') || '',
-	            lote: get('lote') || '',
-	            dataValidade: get('data validade') || '',
-	            observacoes: get('observações') || ''
-	        };
-	    }).filter((m) => m.dataHora || m.tipo || m.codigoBarras || m.produto);
-	}
+        return {
+            id: get('id movimentação') || '',
+            dataHora,
+            tipo: get('tipo') || '',
+            codigoBarras: get('código de barras') || '',
+            produto: get('produto') || '',
+            quantidade: Number(get('quantidade')) || 0,
+            estoqueAnterior: Number(get('estoque anterior')) || 0,
+            estoqueNovo: Number(get('estoque novo')) || 0,
+            unidade: get('unidade') || '',
+            unidadeOrigem: get('unidade origem') || '',
+            unidadeDestino: get('unidade destino') || '',
+            transferId: get('id transferência') || '',
+            usuario: get('usuário') || '',
+            motivo: get('motivo') || '',
+            registroInsumo: get('registro insumo') || '',
+            lote: get('lote') || '',
+            dataValidade: get('data validade') || '',
+            observacoes: get('observações') || ''
+        };
+    }).filter((m) => m.dataHora || m.tipo || m.codigoBarras || m.produto);
+}
 
 /**
  * Convert structured data back to rows for Sheets
@@ -1264,8 +1265,8 @@ export default {
             return withCORS(null, { status: 204 }, appOrigin);
         }
 
-	        // Public endpoints (must not depend on Google auth / secrets)
-	        if (url.pathname === "/health") {
+        // Public endpoints (must not depend on Google auth / secrets)
+        if (url.pathname === "/health") {
             const sheetsEnv = {
                 spreadsheetIdPresent: !!env?.SPREADSHEET_ID,
                 serviceAccountEmailPresent: !!env?.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -1277,28 +1278,28 @@ export default {
                 sheetsEnv.privateKeyPresent ? null : 'GOOGLE_PRIVATE_KEY',
             ].filter(Boolean);
 
-	            const storageMode = await shouldUseD1(env) ? 'd1' : 'sheets';
-	            return withCORS(
-	                JSON.stringify({
-	                    ok: true,
-	                    service: "insumos",
-	                    runtime: "cloudflare-workers",
-	                    storage: storageMode,
-	                    dbConfigured: !!env?.DB,
-	                    sheetsConfigured: sheetsMissing.length === 0,
-	                    unidades: UNIDADES,
-	                    sheets: {
-	                        ...sheetsEnv,
-	                        missing: sheetsMissing,
-	                        hint: sheetsMissing.length === 0
-	                            ? 'Sheets enabled'
-	                            : 'Sheets disabled (configure missing env vars for local dev or secrets in Cloudflare)'
-	                    },
-	                }),
-	                { status: 200 },
-	                appOrigin
-	            );
-	        }
+            const storageMode = await shouldUseD1(env) ? 'd1' : 'sheets';
+            return withCORS(
+                JSON.stringify({
+                    ok: true,
+                    service: "insumos",
+                    runtime: "cloudflare-workers",
+                    storage: storageMode,
+                    dbConfigured: !!env?.DB,
+                    sheetsConfigured: sheetsMissing.length === 0,
+                    unidades: UNIDADES,
+                    sheets: {
+                        ...sheetsEnv,
+                        missing: sheetsMissing,
+                        hint: sheetsMissing.length === 0
+                            ? 'Sheets enabled'
+                            : 'Sheets disabled (configure missing env vars for local dev or secrets in Cloudflare)'
+                    },
+                }),
+                { status: 200 },
+                appOrigin
+            );
+        }
         if (url.pathname === "/api/metrics" || url.pathname === "/metrics") {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
         }
@@ -1316,32 +1317,32 @@ export default {
             // If rate limiting fails, continue without blocking
         }
 
-	        const useD1 = await shouldUseD1(env);
+        const useD1 = await shouldUseD1(env);
 
-	        // Get credentials and authenticate (Sheets mode only)
-	        let accessToken = '';
-	        let spreadsheetId = '';
-	        const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
-	        const userRange = env.USER_SHEET_RANGE || 'Usuarios!A:AZ';
-	        const movimentacoesRange = env.MOVIMENTACOES_RANGE || 'Movimentacoes!A:AZ';
-	        const insumosSheetName = sheetRange.split('!')[0] || 'Insumos';
-	        const movimentacoesSheetName = movimentacoesRange.split('!')[0] || 'Movimentacoes';
+        // Get credentials and authenticate (Sheets mode only)
+        let accessToken = '';
+        let spreadsheetId = '';
+        const sheetRange = env.SHEET_RANGE || 'Insumos!A:AZ';
+        const userRange = env.USER_SHEET_RANGE || 'Usuarios!A:AZ';
+        const movimentacoesRange = env.MOVIMENTACOES_RANGE || 'Movimentacoes!A:AZ';
+        const insumosSheetName = sheetRange.split('!')[0] || 'Insumos';
+        const movimentacoesSheetName = movimentacoesRange.split('!')[0] || 'Movimentacoes';
 
-	        if (!useD1) {
-	            try {
-	                if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) {
-	                    throw new Error("GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY not configured");
-	                }
-	                accessToken = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
-	            } catch (err) {
-	                return withCORS(JSON.stringify({ error: `Auth failed: ${err.message}` }), { status: 500 }, appOrigin);
-	            }
+        if (!useD1) {
+            try {
+                if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) {
+                    throw new Error("GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY not configured");
+                }
+                accessToken = await authenticate(env.GOOGLE_SERVICE_ACCOUNT_EMAIL, env.GOOGLE_PRIVATE_KEY);
+            } catch (err) {
+                return withCORS(JSON.stringify({ error: `Auth failed: ${err.message}` }), { status: 500 }, appOrigin);
+            }
 
-	            spreadsheetId = env.SPREADSHEET_ID || '';
-	            if (!spreadsheetId) {
-	                return withCORS(JSON.stringify({ error: "SPREADSHEET_ID not configured" }), { status: 500 }, appOrigin);
-	            }
-	        }
+            spreadsheetId = env.SPREADSHEET_ID || '';
+            if (!spreadsheetId) {
+                return withCORS(JSON.stringify({ error: "SPREADSHEET_ID not configured" }), { status: 500 }, appOrigin);
+            }
+        }
 
         const sessionSecret = env.SESSION_SECRET || '';
 
@@ -1740,37 +1741,37 @@ export default {
             }
         }
 
-	        // Ensure optional columns exist for app features (Sheets only)
-	        if (!useD1) {
-	            if (url.pathname.startsWith("/insumos") || url.pathname.startsWith("/relatorios") || url.pathname.startsWith("/alertas") || url.pathname.startsWith("/analytics") || url.pathname.startsWith("/movimentacoes")) {
-	                try {
-	                    await ensureHeaderColumns({
-	                        spreadsheetId,
-	                        sheetName: insumosSheetName,
-	                        accessToken,
-	                        requiredHeaders: ['LOTE', 'DATA VALIDADE']
-	                    });
-	                } catch (e) {
-	                    // ignore header upgrade failures; read-only still works
-	                }
-	            }
-	        }
+        // Ensure optional columns exist for app features (Sheets only)
+        if (!useD1) {
+            if (url.pathname.startsWith("/insumos") || url.pathname.startsWith("/relatorios") || url.pathname.startsWith("/alertas") || url.pathname.startsWith("/analytics") || url.pathname.startsWith("/movimentacoes")) {
+                try {
+                    await ensureHeaderColumns({
+                        spreadsheetId,
+                        sheetName: insumosSheetName,
+                        accessToken,
+                        requiredHeaders: ['LOTE', 'DATA VALIDADE']
+                    });
+                } catch (e) {
+                    // ignore header upgrade failures; read-only still works
+                }
+            }
+        }
 
-	        const d1 = useD1 ? {
-	            enabled: true,
-	            listInsumos: ({ unidade }) => d1ListInsumos({ env, unidades: UNIDADES, unidade }),
-	            listInsumosPaged: ({ unidade, q, pagina, limite }) => d1ListInsumosPaged({ env, unidades: UNIDADES, unidade, q, pagina, limite }),
-	            createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
-	            updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
-	            deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),
-	            entradaBaixa: ({ unidade, body, kind }) => d1EntradaBaixa({ env, unidade, body, kind }),
-	            ajuste: ({ unidade, body }) => d1Ajuste({ env, unidade, body }),
-	            transfer: ({ body }) => d1Transfer({ env, body }),
-	            listMovimentacoes: ({ unidade, tipo, de, ate, pagina, limite, codigoBarras }) =>
-	                d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina, limite, codigoBarras }),
-	        } : { enabled: false };
+        const d1 = useD1 ? {
+            enabled: true,
+            listInsumos: ({ unidade }) => d1ListInsumos({ env, unidades: UNIDADES, unidade }),
+            listInsumosPaged: ({ unidade, q, pagina, limite }) => d1ListInsumosPaged({ env, unidades: UNIDADES, unidade, q, pagina, limite }),
+            createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
+            updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
+            deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),
+            entradaBaixa: ({ unidade, body, kind }) => d1EntradaBaixa({ env, unidade, body, kind }),
+            ajuste: ({ unidade, body }) => d1Ajuste({ env, unidade, body }),
+            transfer: ({ body }) => d1Transfer({ env, body }),
+            listMovimentacoes: ({ unidade, tipo, de, ate, pagina, limite, codigoBarras }) =>
+                d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina, limite, codigoBarras }),
+        } : { enabled: false };
 
-	        const movResp = await handleMovimentacoesRoutes({
+        const movResp = await handleMovimentacoesRoutes({
             request,
             url,
             appOrigin,
@@ -1783,14 +1784,14 @@ export default {
             readSheet,
             parseMovimentacoes,
             sheetRange,
-	            parseInsumos,
-	            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
-	            unidade,
-	            d1,
-	        });
+            parseInsumos,
+            normalizeInsumos: (rows, u) => normalizeInsumos(rows, u, config),
+            unidade,
+            d1,
+        });
         if (movResp) return movResp;
 
-	        const insumosResp = await handleInsumosRoutes({
+        const insumosResp = await handleInsumosRoutes({
             request,
             url,
             env,
@@ -1833,10 +1834,20 @@ export default {
             userAgent,
             idempotencyKey,
 
-	            qrSvg,
-	            d1,
-	        });
+            qrSvg,
+            d1,
+        });
         if (insumosResp) return insumosResp;
+
+        const categoriasResp = await handleCategoriasRoutes({
+            request,
+            url,
+            env,
+            appOrigin,
+            withCORS,
+            requireRoles,
+        });
+        if (categoriasResp) return categoriasResp;
 
         const shareResp = await handleShareRoutes({
             request,

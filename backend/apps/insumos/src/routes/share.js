@@ -31,8 +31,9 @@ export async function handleShareRoutes({
     withCORS,
     requireRoles,
 }) {
-    const basePath = '/share/history';
-    if (!url.pathname.startsWith(basePath)) return null;
+    const historyBasePath = '/share/history';
+    const shareBasePath = '/share/';
+    if (!url.pathname.startsWith(historyBasePath) && !url.pathname.startsWith(shareBasePath)) return null;
 
     const auth = await requireRoles(ROLE_ANY);
     if (!auth.ok) return auth.response;
@@ -42,10 +43,62 @@ export async function handleShareRoutes({
     }
 
     if (!env.DB) {
-        return withCORS(JSON.stringify({ success: true, data: [], source: 'no-db' }), { status: 200 }, appOrigin);
+        // history endpoints are safe to treat as empty; share-by-id should 404 to avoid confusion
+        if (url.pathname.startsWith(historyBasePath)) {
+            return withCORS(JSON.stringify({ success: true, data: [], source: 'no-db' }), { status: 200 }, appOrigin);
+        }
+        return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
     }
 
-    if (url.pathname === basePath && request.method === 'GET') {
+    // GET /share/:id (read a single share payload, per-user)
+    if (url.pathname.startsWith(shareBasePath) && request.method === 'GET') {
+        try {
+            const id = decodeURIComponent(url.pathname.slice(shareBasePath.length)).trim();
+            if (!id) {
+                return withCORS(JSON.stringify({ success: false, error: 'ID ausente' }), { status: 400 }, appOrigin);
+            }
+
+            const row = await env.DB.prepare(
+                `SELECT id, created_at as createdAt, title, text, url, files_json as filesJson, source_id as sourceId
+                 FROM share_history
+                 WHERE id = ? AND user = ?
+                 LIMIT 1`
+            )
+                .bind(id, username)
+                .first();
+
+            if (!row?.id) {
+                return withCORS(JSON.stringify({ success: false, error: 'NOT_FOUND' }), { status: 404 }, appOrigin);
+            }
+
+            const payload = {
+                id: row.id,
+                createdAt: row.createdAt,
+                title: row.title || '',
+                text: row.text || '',
+                url: row.url || '',
+                sourceId: row.sourceId || '',
+                files: safeJson(row.filesJson || '[]', []),
+            };
+
+            const fileName = String(url.searchParams.get('file') || '').trim();
+            if (fileName) {
+                const files = normalizeFiles(payload.files);
+                const hit = files.find((f) => String(f.name || '').trim() === fileName);
+                const targetUrl = hit?.url ? String(hit.url) : '';
+                if (!targetUrl) {
+                    return withCORS(JSON.stringify({ success: false, error: 'FILE_NOT_FOUND' }), { status: 404 }, appOrigin);
+                }
+                return withCORS('', { status: 302, headers: { Location: targetUrl } }, appOrigin);
+            }
+
+            return withCORS(JSON.stringify(payload), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
+    }
+
+    if (url.pathname === historyBasePath && request.method === 'GET') {
         try {
             const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit') || '12', 10) || 12));
             const pagina = Math.max(1, parseInt(url.searchParams.get('pagina') || '1', 10) || 1);
@@ -79,7 +132,7 @@ export async function handleShareRoutes({
         }
     }
 
-    if (url.pathname === basePath && request.method === 'POST') {
+    if (url.pathname === historyBasePath && request.method === 'POST') {
         try {
             const body = await request.json().catch(() => ({}));
             const id = String(body.id || crypto.randomUUID());
@@ -109,9 +162,9 @@ export async function handleShareRoutes({
         }
     }
 
-    if (url.pathname.startsWith(`${basePath}/`) && request.method === 'DELETE') {
+    if (url.pathname.startsWith(`${historyBasePath}/`) && request.method === 'DELETE') {
         try {
-            const id = url.pathname.slice(basePath.length + 1);
+            const id = url.pathname.slice(historyBasePath.length + 1);
             if (!id) {
                 return withCORS(JSON.stringify({ success: false, error: 'ID ausente' }), { status: 400 }, appOrigin);
             }
