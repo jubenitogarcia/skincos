@@ -748,7 +748,7 @@ export default function AppFunctionalNeatlab() {
 		                                                        title="Transferência"
 		                                                        aria-label="Transferência"
 		                                                    >
-		                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
+		                                                        <img src="/icons/shortcut-transferencia.png" alt="" aria-hidden className="h-9 w-9" />
 		                                                    </Button>
 	                                                </div>
 		                                            </>
@@ -897,7 +897,7 @@ export default function AppFunctionalNeatlab() {
                                                 title="Transferência"
                                                 aria-label="Transferência"
                                             >
-                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
+                                                <img src="/icons/shortcut-transferencia.png" alt="" aria-hidden className="h-9 w-9" />
                                             </Button>
                                         </div>
                                     </div>
