@@ -2596,65 +2596,7 @@ export function InsumosModule() {
       </DialogContent>
       </Dialog>
 
-		      <div className="max-w-6xl mx-auto mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-		        <div className="flex items-center gap-2">
-		          <div className="space-y-1">
-		            <div className="text-xs text-blue-200/70">Unidade</div>
-		            <Select value={unidade} onValueChange={(v) => setUnidade(v)}>
-		              <SelectTrigger className="w-64">
-		                <SelectValue placeholder="Selecione" />
-		              </SelectTrigger>
-		              <SelectContent>
-		                {unidadeOptions.map((u) => (
-		                  <SelectItem key={u} value={u}>
-		                    {unidadeLabel(u)}
-		                  </SelectItem>
-		                ))}
-		              </SelectContent>
-		            </Select>
-		          </div>
-		        </div>
-		        <div className="flex items-center gap-2">
-		          <Button
-		            size="icon"
-		            className="!bg-green-600 hover:!bg-green-700 !text-white"
-		            title="Entrada"
-		            onClick={() => {
-		              setQuickScanOpen(false)
-		              setQuickOp('ENTRADA')
-		            }}
-		            disabled={!isAuthed}
-		          >
-		            <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
-		          </Button>
-		          <Button
-		            size="icon"
-		            variant="destructive"
-		            title="Saída"
-		            onClick={() => {
-		              setQuickScanOpen(false)
-		              setQuickOp('BAIXA')
-		            }}
-		            disabled={!isAuthed}
-		          >
-		            <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
-		          </Button>
-		          <Button
-		            size="icon"
-		            className="!bg-blue-600 hover:!bg-blue-700 !text-white"
-		            title="Transferência"
-		            onClick={() => {
-		              setQuickScanOpen(false)
-		              setQuickOp('TRANSFERENCIA')
-		            }}
-		            disabled={!isAuthed}
-		          >
-		            <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
-		          </Button>
-		        </div>
-	      </div>
-
-	      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3">
+		      <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
 	        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
 	          <div>
 	            <div className="text-white text-lg font-semibold">Visão geral</div>

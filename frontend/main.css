@@ -92,6 +92,16 @@
 }
 
 @layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
   #spark-app {
     --tomato-contrast: #fff;
     --red-contrast: #fff;

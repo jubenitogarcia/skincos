@@ -667,19 +667,19 @@ export default function AppFunctionalNeatlab() {
 
                     {/* Premium Main Area */}
                     <div className="flex-1 flex flex-col overflow-hidden">
-                        {/* Premium Header */}
-                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-6">
-                            <div className="flex items-center justify-between">
-	                                <div className="flex items-center gap-4">
-	                                    <div className="animate-fade-in">
-	                                        <h1 className="text-2xl font-bold text-white leading-tight">
-	                                            {modules.find(m => m.key === active)?.label || 'Dashboard'}
-	                                        </h1>
-	                                    </div>
-		                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-		                                    <div className="hidden lg:flex items-center gap-2">
-		                                        {active === 'insumos' ? (
-		                                            <>
+	                        {/* Premium Header */}
+	                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-6">
+	                            <div className="flex items-center justify-between">
+		                                <div className="flex items-center gap-4">
+		                                    <div className="animate-fade-in">
+		                                        <h1 className="text-2xl font-bold text-white leading-tight">
+		                                            {modules.find(m => m.key === active)?.label || 'Dashboard'}
+		                                        </h1>
+		                                    </div>
+			                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
+			                                    <div className="hidden lg:flex items-center gap-2">
+			                                        {active === 'insumos' ? (
+			                                            <>
 		                                                <span className="text-xs text-blue-200/70">Unidade</span>
 		                                                <Select
 		                                                    value={insumosUnit}
@@ -748,8 +748,8 @@ export default function AppFunctionalNeatlab() {
 	                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
 	                                                    </Button>
 	                                                </div>
-	                                            </>
-		                                        ) : null}
+		                                            </>
+			                                        ) : null}
 		                                        {active === 'unit-monitor' ? (
 		                                            <>
 		                                                <span className="text-xs text-blue-200/70">Unidade</span>
@@ -823,6 +823,80 @@ export default function AppFunctionalNeatlab() {
 	                                    ) : null}
 	                                </div>
                             </div>
+
+                            {active === 'insumos' ? (
+                                <div className="mt-4 flex flex-col gap-2 lg:hidden">
+                                    <div className="flex items-center gap-2">
+                                        <Select
+                                            value={insumosUnit}
+                                            onValueChange={(v) => {
+                                                setInsumosUnit(v)
+                                                try { localStorage.setItem(INSUMOS_UNIT_KEY, v) } catch { /* ignore */ }
+                                                try {
+                                                    window.dispatchEvent(
+                                                        new CustomEvent('skincos:insumos:unidade', { detail: { unidade: v } })
+                                                    )
+                                                } catch { /* ignore */ }
+                                            }}
+                                        >
+                                            <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
+                                                <SelectValue placeholder="Selecione a unidade" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {(insumosHeaderStatus?.unidades?.length
+                                                    ? insumosHeaderStatus.unidades
+                                                    : ['novo-hamburgo', 'barra-shopping-sul']
+                                                ).map((u) => (
+                                                    <SelectItem key={u} value={u}>
+                                                        {formatUnitLabel(u)}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <div className="flex items-center gap-1">
+                                            <Button
+                                                variant="outline"
+                                                className="h-10 w-10 p-0 bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+                                                onClick={() => {
+                                                    try {
+                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
+                                                    } catch { /* ignore */ }
+                                                }}
+                                                title="Entrada"
+                                                aria-label="Entrada"
+                                            >
+                                                <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                className="h-10 w-10 p-0 bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+                                                onClick={() => {
+                                                    try {
+                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
+                                                    } catch { /* ignore */ }
+                                                }}
+                                                title="Saída"
+                                                aria-label="Saída"
+                                            >
+                                                <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                className="h-10 w-10 p-0 bg-transparent border-white/20 text-white hover:bg-white/[0.10]"
+                                                onClick={() => {
+                                                    try {
+                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
+                                                    } catch { /* ignore */ }
+                                                }}
+                                                title="Transferência"
+                                                aria-label="Transferência"
+                                            >
+                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : null}
                         </header>
 
                         {/* NO_AUTH DEBUG BANNER */}
