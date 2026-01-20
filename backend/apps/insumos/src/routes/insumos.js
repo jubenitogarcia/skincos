@@ -182,7 +182,7 @@ export async function handleInsumosRoutes({
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
                 const out = await d1.entradaBaixa({ unidade, body, kind: 'ENTRADA' });
-                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
                 await appendAuditLog({
                     env,
@@ -214,7 +214,7 @@ export async function handleInsumosRoutes({
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
                 const out = await d1.entradaBaixa({ unidade, body, kind: 'BAIXA' });
-                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
                 await appendAuditLog({
                     env,
@@ -246,7 +246,7 @@ export async function handleInsumosRoutes({
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
                 const out = await d1.transfer({ body });
-                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
                 await appendAuditLog({
                     env,
@@ -286,7 +286,7 @@ export async function handleInsumosRoutes({
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
                 const out = await d1.ajuste({ unidade, body });
-                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [] }), { status: out.status || 400 }, appOrigin);
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
                 await appendAuditLog({
                     env,

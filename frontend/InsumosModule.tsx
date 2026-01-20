@@ -181,6 +181,13 @@ type ApiError = {
   success?: boolean
   code?: string
   registros?: string[]
+  candidates?: Array<{
+    registro?: string
+    lote?: string
+    dataValidade?: string | null
+    estoque?: number
+    categoria?: string
+  }>
 }
 
 type OfflineQueueItem = {
@@ -607,6 +614,7 @@ async function apiJson<T>(
   ex.status = res.status
   ex.code = err.code
   ex.registros = Array.isArray(err.registros) ? err.registros : []
+  ex.candidates = Array.isArray((err as any).candidates) ? (err as any).candidates : []
   throw ex
 }
 
@@ -633,6 +641,7 @@ export function InsumosModule() {
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickRegistro, setQuickRegistro] = React.useState('')
   const [quickRegistros, setQuickRegistros] = React.useState<string[]>([])
+  const [quickCandidates, setQuickCandidates] = React.useState<Array<{ registro: string; lote: string; dataValidade: string | null; estoque: number }>>([])
   const [quickAutoFefo, setQuickAutoFefo] = React.useState(true)
   const [quickScanOpen, setQuickScanOpen] = React.useState(false)
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
@@ -747,6 +756,7 @@ export function InsumosModule() {
   const [overviewResumo, setOverviewResumo] = React.useState<EstoqueResumo | null>(null)
   const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
   const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
+  const [purchaseDialogOpen, setPurchaseDialogOpen] = React.useState(false)
   const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '90d' | '1y'>('30d')
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
@@ -875,8 +885,9 @@ export function InsumosModule() {
     return list.sort(sortByValidade)
   }, [insumos, quickCodigo, quickOp, quickLookupCode, quickLookupCtxUnidade, quickLookupItems, transferFrom, unidade])
 
-  const quickLoteNeedsPick = (quickRegistros.length > 1) || (quickLotes.length > 1)
+  const quickLoteNeedsPick = (quickCandidates.length > 1) || (quickRegistros.length > 1) || (quickLotes.length > 1)
   const quickLotesForPicker = React.useMemo(() => {
+    if (quickCandidates.length) return quickCandidates
     if (quickRegistros.length) {
       const set = new Set(quickRegistros)
       const filtered = quickLotes.filter((l) => set.has(l.registro))
@@ -884,17 +895,19 @@ export function InsumosModule() {
       return quickRegistros.map((registro) => ({ registro, lote: '', dataValidade: null as any, estoque: 0 }))
     }
     return quickLotes
-  }, [quickLotes, quickRegistros.join('|')])
+  }, [quickCandidates, quickLotes, quickRegistros.join('|')])
 
   React.useEffect(() => {
     if (!quickOp) return
     setQuickRegistros([])
+    setQuickCandidates([])
     setQuickRegistro('')
   }, [quickOp])
 
   React.useEffect(() => {
     if (!quickOp) return
     setQuickRegistros([])
+    setQuickCandidates([])
     setQuickRegistro('')
   }, [quickCodigo])
 
@@ -2149,8 +2162,32 @@ export function InsumosModule() {
       } catch (e) {
         const code = (e as any)?.code
         const registros = Array.isArray((e as any)?.registros) ? (e as any).registros : []
+        const candidatesRaw = Array.isArray((e as any)?.candidates) ? (e as any).candidates : []
         if (String(code || '').toUpperCase() === 'AMBIGUOUS') {
-          setQuickRegistros(registros)
+          if (candidatesRaw.length) {
+            const candidates = candidatesRaw
+              .map((c: any) => ({
+                registro: String(c?.registro || '').trim(),
+                lote: String(c?.lote || '').trim(),
+                dataValidade: c?.dataValidade ? String(c.dataValidade) : null,
+                estoque: Number.isFinite(Number(c?.estoque)) ? Number(c.estoque) : 0
+              }))
+              .filter((c: any) => c.registro)
+              .sort((a: any, b: any) => {
+                const sa = (Number(a.estoque) || 0) > 0 ? 0 : 1
+                const sb = (Number(b.estoque) || 0) > 0 ? 0 : 1
+                if (sa !== sb) return sa - sb
+                const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY
+                const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY
+                if (da !== db) return da - db
+                return String(a.registro).localeCompare(String(b.registro))
+              })
+            setQuickCandidates(candidates)
+            setQuickRegistros(candidates.map((c: any) => c.registro))
+          } else {
+            setQuickCandidates([])
+            setQuickRegistros(registros)
+          }
           toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
           return false
         }
@@ -2213,8 +2250,32 @@ export function InsumosModule() {
     } catch (e) {
       const code = (e as any)?.code
       const registros = Array.isArray((e as any)?.registros) ? (e as any).registros : []
+      const candidatesRaw = Array.isArray((e as any)?.candidates) ? (e as any).candidates : []
       if (String(code || '').toUpperCase() === 'AMBIGUOUS') {
-        setQuickRegistros(registros)
+        if (candidatesRaw.length) {
+          const candidates = candidatesRaw
+            .map((c: any) => ({
+              registro: String(c?.registro || '').trim(),
+              lote: String(c?.lote || '').trim(),
+              dataValidade: c?.dataValidade ? String(c.dataValidade) : null,
+              estoque: Number.isFinite(Number(c?.estoque)) ? Number(c.estoque) : 0
+            }))
+            .filter((c: any) => c.registro)
+            .sort((a: any, b: any) => {
+              const sa = (Number(a.estoque) || 0) > 0 ? 0 : 1
+              const sb = (Number(b.estoque) || 0) > 0 ? 0 : 1
+              if (sa !== sb) return sa - sb
+              const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY
+              const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY
+              if (da !== db) return da - db
+              return String(a.registro).localeCompare(String(b.registro))
+            })
+          setQuickCandidates(candidates)
+          setQuickRegistros(candidates.map((c: any) => c.registro))
+        } else {
+          setQuickCandidates([])
+          setQuickRegistros(registros)
+        }
         toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
         return false
       }
@@ -2944,6 +3005,7 @@ export function InsumosModule() {
           setQuickOp(null)
           setQuickScanOpen(false)
           setQuickRegistros([])
+          setQuickCandidates([])
           setQuickRegistro('')
         }}
       >
@@ -3163,6 +3225,157 @@ export function InsumosModule() {
                 {quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída'}
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
+        <DialogContent className="max-w-3xl dark bg-corporate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Lista de compra</DialogTitle>
+            <DialogDescription className="text-blue-100/70">
+              Sugestões de reposição para {unidadeLabel(unidade)} (baseado em estoque mínimo).
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const items = (overviewActionables?.reposicao || []).slice()
+            const totalValue = items.reduce((acc, it) => acc + (Number(it.estimatedValue) || 0), 0)
+            const totalQty = items.reduce((acc, it) => acc + (Number(it.suggestedPurchaseQty) || 0), 0)
+
+            const byCat = new Map<string, any[]>()
+            for (const it of items) {
+              const cat = String(it.categoria || 'Outros').trim() || 'Outros'
+              const prev = byCat.get(cat) || []
+              prev.push(it)
+              byCat.set(cat, prev)
+            }
+            const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+
+            const escapeCsv = (v: any) => {
+              const s = String(v ?? '')
+              if (/[\";\n\r]/.test(s)) return `"${s.replace(/\"/g, '""')}"`
+              return s
+            }
+            const toCsv = () => {
+              const header = ['Categoria', 'Produto', 'Código', 'Qtd sugerida', 'Valor estimado (R$)']
+              const rows = items.map((it) => [
+                it.categoria || '',
+                it.produto || '',
+                it.codigoBarras || '',
+                Number(it.suggestedPurchaseQty) || 0,
+                Number(it.estimatedValue) || 0
+              ])
+              return [header, ...rows].map((r) => r.map(escapeCsv).join(';')).join('\n')
+            }
+
+            return (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm text-blue-100/80">
+                    <span className="font-mono">{items.length}</span> itens •{' '}
+                    <span className="font-mono">{totalQty}</span> unidades sugeridas •{' '}
+                    <span className="font-mono">{fmtMoneyBRL(totalValue)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(toCsv())
+                          toast.success('Lista copiada (CSV)')
+                        } catch {
+                          toast.error('Não foi possível copiar')
+                        }
+                      }}
+                      disabled={!items.length}
+                    >
+                      Copiar CSV
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        const csv = toCsv()
+                        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `lista-compra-${unidade}-${new Date().toISOString().slice(0, 10)}.csv`
+                        document.body.appendChild(a)
+                        a.click()
+                        a.remove()
+                        setTimeout(() => URL.revokeObjectURL(url), 2000)
+                      }}
+                      disabled={!items.length}
+                    >
+                      Baixar CSV
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-black/30 text-blue-100/80">
+                      <tr>
+                        <th className="text-left p-3">Produto</th>
+                        <th className="text-left p-3">Categoria</th>
+                        <th className="text-left p-3">Código</th>
+                        <th className="text-right p-3">Qtd sugerida</th>
+                        <th className="text-right p-3">Valor</th>
+                        <th className="text-right p-3">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {cats.flatMap(([cat, list]) => {
+                        const rows = list.map((it, idx) => (
+                          <tr key={`${String(it.codigoBarras || '')}-${idx}`} className="hover:bg-white/5">
+                            <td className="p-3 text-blue-50">
+                              <div className="font-medium">{it.produto || '-'}</div>
+                            </td>
+                            <td className="p-3 text-blue-100/80">{it.categoria || cat}</td>
+                            <td className="p-3 font-mono text-blue-100/80">{it.codigoBarras || ''}</td>
+                            <td className="p-3 text-right font-mono text-blue-100/80">{it.suggestedPurchaseQty ?? 0}</td>
+                            <td className="p-3 text-right font-mono text-blue-100/80">
+                              {fmtMoneyBRL(Number(it.estimatedValue) || 0)}
+                            </td>
+                            <td className="p-3 text-right">
+                              <Button
+                                variant="outline"
+                                className="h-8 px-2 text-xs"
+                                onClick={() => {
+                                  setQuickOp('ENTRADA')
+                                  setQuickCodigo(String(it.codigoBarras || ''))
+                                  setQuickQuantidade(String(it.suggestedPurchaseQty ?? 1))
+                                  setQuickObs('Reposição sugerida')
+                                  setPurchaseDialogOpen(false)
+                                }}
+                                disabled={!isAuthed}
+                              >
+                                Registrar entrada
+                              </Button>
+                            </td>
+                          </tr>
+                        ))
+                        return rows
+                      })}
+                      {!items.length ? (
+                        <tr>
+                          <td className="p-3 text-blue-100/70" colSpan={6}>
+                            {overviewLoading ? 'Carregando…' : 'Sem recomendações de compra.'}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPurchaseDialogOpen(false)}>
+              Fechar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3724,13 +3937,27 @@ export function InsumosModule() {
               </summary>
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <div className="text-sm text-blue-100/80">Reposição</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm text-blue-100/80">Reposição</div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPurchaseDialogOpen(true)}
+                      disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                      title="Ver lista de compra completa"
+                    >
+                      Lista de compra
+                    </Button>
+                  </div>
                   {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
                     <button
                       key={String(r.codigoBarras)}
                       className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                       onClick={() => {
+                        setQuickOp('ENTRADA')
                         if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
+                        if (r.suggestedPurchaseQty != null) setQuickQuantidade(String(r.suggestedPurchaseQty))
+                        setQuickObs('Reposição sugerida')
                       }}
                     >
                       <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
@@ -3752,10 +3979,12 @@ export function InsumosModule() {
                       key={`${t.codigoBarras}-${t.from}-${t.to}`}
                       className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                       onClick={() => {
+                        setQuickOp('TRANSFERENCIA')
                         if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
                         if (t.qty != null) setQuickQuantidade(String(t.qty))
                         if (t.from) setTransferFrom(String(t.from))
                         if (t.to) setTransferTo(String(t.to))
+                        setQuickObs('Transferência sugerida')
                       }}
                     >
                       <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>

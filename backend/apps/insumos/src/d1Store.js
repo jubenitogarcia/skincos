@@ -88,7 +88,37 @@ async function listRegistrosByCodigo(env, codigo) {
   return rows?.results || [];
 }
 
-async function pickRegistroOrAmbiguous(env, { codigo, registro }) {
+async function listPickCandidates(env, { codigo, unidade }) {
+  const normCodigo = String(codigo || '').trim();
+  if (!normCodigo) return [];
+  const unit = String(unidade || '').trim();
+
+  const rows = await env.DB.prepare(
+    `SELECT i.registro, i.lote, i.data_validade, i.categoria,
+            COALESCE(s.quantidade, 0) AS quantidade
+     FROM insumos_items i
+     LEFT JOIN insumos_stocks s
+       ON s.registro = i.registro AND s.unidade = ?
+     WHERE i.codigo_barras = ?
+     ORDER BY (CASE WHEN i.data_validade IS NULL OR i.data_validade = '' THEN 1 ELSE 0 END),
+              i.data_validade ASC,
+              i.registro ASC`
+  )
+    .bind(unit, normCodigo)
+    .all();
+
+  return (rows?.results || [])
+    .map((r) => ({
+      registro: String(r.registro || '').trim(),
+      lote: String(r.lote || '').trim(),
+      dataValidade: r.data_validade ? String(r.data_validade) : null,
+      categoria: String(r.categoria || '').trim(),
+      estoque: toInt(r.quantidade, 0),
+    }))
+    .filter((r) => r.registro);
+}
+
+async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFefo = true }) {
   const normCodigo = String(codigo || '').trim();
   const normRegistro = String(registro || '').trim();
   if (!normCodigo) return { ok: false, code: 'BAD_REQUEST', error: 'Código inválido' };
@@ -116,17 +146,37 @@ async function pickRegistroOrAmbiguous(env, { codigo, registro }) {
     return { ok: true, registro: normRegistro };
   }
 
-  const regs = await listRegistrosByCodigo(env, normCodigo);
-  if (!regs.length) return { ok: false, code: 'NOT_FOUND', error: 'Insumo não encontrado' };
-  if (regs.length > 1) {
+  const candidates = await listPickCandidates(env, { codigo: normCodigo, unidade });
+  if (!candidates.length) return { ok: false, code: 'NOT_FOUND', error: 'Insumo não encontrado' };
+  if (candidates.length > 1) {
+    const categoria = String(candidates.find((c) => c.categoria)?.categoria || '').trim();
+    const policy = categoria
+      ? await getCategoryPolicy(env, categoria)
+      : { slug: '', requiresLot: false, requiresExpiry: false, fefo: false };
+
+    if (allowFefo && policy?.fefo) {
+      const pool = candidates.filter((c) => toInt(c?.estoque, 0) > 0);
+      const source = pool.length ? pool : candidates;
+      const picked = source
+        .slice()
+        .sort((a, b) => {
+          const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY;
+          const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY;
+          if (da !== db) return da - db;
+          return String(a.registro).localeCompare(String(b.registro));
+        })[0];
+      if (picked?.registro) return { ok: true, registro: picked.registro, pickedBy: 'FEFO', policy };
+    }
+
     return {
       ok: false,
       code: 'AMBIGUOUS',
-      error: 'Código possui múltiplos registros (lotes). Informe o registro.',
-      registros: regs.map((r) => String(r.registro || '').trim()).filter(Boolean)
+      error: 'Código possui múltiplos registros (lotes). Selecione o lote/registro.',
+      registros: candidates.map((r) => String(r.registro || '').trim()).filter(Boolean),
+      candidates
     };
   }
-  return { ok: true, registro: String(regs[0].registro).trim() };
+  return { ok: true, registro: String(candidates[0].registro).trim() };
 }
 
 async function nextRegistro(env) {
@@ -507,10 +557,11 @@ export async function d1EntradaBaixa({ env, unidade, body, kind }) {
   const observacoes = String(body?.observacoes || '').trim();
   if (!codigo || !quantidade) return { ok: false, status: 400, error: 'Código e quantidade são obrigatórios' };
 
-  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro });
+  const unit = String(unidade || '').trim();
+  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: unit, allowFefo: kind === 'BAIXA' });
   if (!pick.ok) {
     const status = pick.code === 'NOT_FOUND' ? 404 : pick.code === 'AMBIGUOUS' ? 409 : 400;
-    return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [] };
+    return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [], candidates: pick.candidates || [] };
   }
   const reg = pick.registro;
 
@@ -528,7 +579,6 @@ export async function d1EntradaBaixa({ env, unidade, body, kind }) {
   });
   if (!policyCheck.ok) return policyCheck;
 
-  const unit = String(unidade || '').trim();
   const beforeRow = await env.DB.prepare(
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
   ).bind(reg, unit).first();
@@ -587,10 +637,11 @@ export async function d1Ajuste({ env, unidade, body }) {
   if (!motivo) return { ok: false, status: 400, error: 'Motivo é obrigatório para ajuste' };
   if (!Number.isFinite(novoEstoque) || novoEstoque < 0) return { ok: false, status: 400, error: 'novoEstoque inválido' };
 
-  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro });
+  const unit = String(unidade || '').trim();
+  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: unit, allowFefo: false });
   if (!pick.ok) {
     const status = pick.code === 'NOT_FOUND' ? 404 : pick.code === 'AMBIGUOUS' ? 409 : 400;
-    return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [] };
+    return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [], candidates: pick.candidates || [] };
   }
   const reg = pick.registro;
 
@@ -608,7 +659,6 @@ export async function d1Ajuste({ env, unidade, body }) {
   });
   if (!policyCheck.ok) return policyCheck;
 
-  const unit = String(unidade || '').trim();
   const beforeRow = await env.DB.prepare(
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
   ).bind(reg, unit).first();
@@ -667,10 +717,10 @@ export async function d1Transfer({ env, body }) {
   if (!fromUnidade || !toUnidade) return { ok: false, status: 400, error: 'Unidade origem e destino são obrigatórias' };
   if (fromUnidade === toUnidade) return { ok: false, status: 400, error: 'Origem e destino devem ser diferentes' };
 
-  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro });
+  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: fromUnidade, allowFefo: true });
   if (!pick.ok) {
     const status = pick.code === 'NOT_FOUND' ? 404 : pick.code === 'AMBIGUOUS' ? 409 : 400;
-    return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [] };
+    return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [], candidates: pick.candidates || [] };
   }
   const reg = pick.registro;
 
