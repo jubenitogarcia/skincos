@@ -114,6 +114,7 @@ const CapabilitiesCenter = lazy(() => import('@/CapabilitiesCenter').then(m => (
 const JobsCenter = lazy(() => import('@/JobsCenter').then(m => ({ default: m.JobsCenter })))
 const UnitMonitor = lazy(() => import('@/UnitMonitor').then(m => ({ default: m.UnitMonitor })))
 const InsumosModule = lazy(() => import('@/InsumosModule').then(m => ({ default: m.InsumosModule })))
+const UsersModule = lazy(() => import('@/UsersModule').then(m => ({ default: m.UsersModule })))
 const SystemStatusModule = lazy(() => import('@/SystemStatusModule').then(m => ({ default: m.SystemStatusModule })))
 
 // TODO: Add remaining modules if needed
@@ -135,6 +136,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
         icon: <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-5 w-5" />,
         component: <InsumosModule />
     },
+    { key: 'users', label: 'Usuários', icon: '👤', component: <UsersModule /> },
     { key: 'dashboard', label: 'Analítica', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <ReportsDashboard /> },
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
