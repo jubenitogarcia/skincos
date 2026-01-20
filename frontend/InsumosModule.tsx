@@ -614,6 +614,12 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
+  const [quickLookupLoading, setQuickLookupLoading] = React.useState(false)
+  const [quickLookupError, setQuickLookupError] = React.useState<string | null>(null)
+  const [quickLookupCtxUnidade, setQuickLookupCtxUnidade] = React.useState<string | null>(null)
+  const [quickLookupCode, setQuickLookupCode] = React.useState<string | null>(null)
+  const [quickLookupItems, setQuickLookupItems] = React.useState<Insumo[]>([])
+  const quickLookupTokenRef = React.useRef(0)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const insumosSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
@@ -654,6 +660,10 @@ export function InsumosModule() {
   const [createDataValidade, setCreateDataValidade] = React.useState('')
   const [createNovoLote, setCreateNovoLote] = React.useState(false)
   const [createLoading, setCreateLoading] = React.useState(false)
+  const [createLookupLoading, setCreateLookupLoading] = React.useState(false)
+  const [createLookupError, setCreateLookupError] = React.useState<string | null>(null)
+  const [createLookupItems, setCreateLookupItems] = React.useState<Insumo[]>([])
+  const createLookupTokenRef = React.useRef(0)
 
   const [editOpen, setEditOpen] = React.useState(false)
   const [editTarget, setEditTarget] = React.useState<Insumo | null>(null)
@@ -759,7 +769,15 @@ export function InsumosModule() {
     const codigo = quickCodigo.trim()
     if (!codigo) return []
     const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
-    const items = (insumos || [])
+    const fromLookup =
+      ctxUnidade &&
+      quickLookupCtxUnidade === ctxUnidade &&
+      quickLookupCode === codigo &&
+      Array.isArray(quickLookupItems) &&
+      quickLookupItems.length
+
+    const source = fromLookup ? quickLookupItems : (insumos || [])
+    const items = source
       .filter((i) => String(i.codigoBarras || '').trim() === codigo && String(i.registro || '').trim())
       .map((i) => {
         const registro = String(i.registro || '').trim()
@@ -787,7 +805,7 @@ export function InsumosModule() {
     }
 
     return list.sort(sortByValidade)
-  }, [insumos, quickCodigo, quickOp, transferFrom, unidade])
+  }, [insumos, quickCodigo, quickOp, quickLookupCode, quickLookupCtxUnidade, quickLookupItems, transferFrom, unidade])
 
   const quickLoteNeedsPick = (quickRegistros.length > 1) || (quickLotes.length > 1)
   const quickLotesForPicker = React.useMemo(() => {
@@ -811,6 +829,125 @@ export function InsumosModule() {
     setQuickRegistros([])
     setQuickRegistro('')
   }, [quickCodigo])
+
+  const lookupInsumosByCodigo = React.useCallback(
+    async ({ codigoBarras, ctxUnidade }: { codigoBarras: string; ctxUnidade: string }) => {
+      const codigo = String(codigoBarras || '').trim()
+      if (!codigo) return []
+      const params = new URLSearchParams({
+        unidade: ctxUnidade,
+        q: codigo,
+        pagina: '1',
+        limite: '80'
+      })
+      const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
+      const list = Array.isArray(out?.data) ? out.data : []
+      const exact = list.filter((i) => String(i.codigoBarras || '').trim() === codigo)
+      return exact.length ? exact : list
+    },
+    [apiJson]
+  )
+
+  React.useEffect(() => {
+    if (!quickOp) return
+    if (!canUseApi || !isAuthed) return
+    const codigo = quickCodigo.trim()
+    if (!codigo) {
+      setQuickLookupLoading(false)
+      setQuickLookupError(null)
+      setQuickLookupItems([])
+      setQuickLookupCode(null)
+      setQuickLookupCtxUnidade(null)
+      return
+    }
+    const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
+    const token = ++quickLookupTokenRef.current
+    setQuickLookupLoading(true)
+    setQuickLookupError(null)
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade })
+          if (token !== quickLookupTokenRef.current) return
+          setQuickLookupItems(items)
+          setQuickLookupCode(codigo)
+          setQuickLookupCtxUnidade(ctxUnidade)
+          if (!items.length) setQuickLookupError('Nenhum insumo encontrado para este código.')
+        } catch (e: any) {
+          if (token !== quickLookupTokenRef.current) return
+          setQuickLookupError(e?.message || 'Falha ao buscar o insumo.')
+          setQuickLookupItems([])
+          setQuickLookupCode(codigo)
+          setQuickLookupCtxUnidade(ctxUnidade)
+        } finally {
+          if (token !== quickLookupTokenRef.current) return
+          setQuickLookupLoading(false)
+        }
+      })()
+    }, 250)
+
+    return () => window.clearTimeout(t)
+  }, [canUseApi, isAuthed, lookupInsumosByCodigo, quickCodigo, quickOp, transferFrom, unidade])
+
+  const createLookupApplyPrefill = React.useCallback((items: Insumo[]) => {
+    const it = Array.isArray(items) && items.length ? items[0] : null
+    if (!it) return
+    if (!createProduto.trim() && it.produto) setCreateProduto(String(it.produto))
+    if (!createCategoria.trim() && it.categoria) setCreateCategoria(String(it.categoria))
+    if (!createMarca.trim() && it.marca) setCreateMarca(String(it.marca))
+    if (!createTipoUnidade.trim() && it.tipoUnidade) setCreateTipoUnidade(String(it.tipoUnidade))
+    if (!createEspecificacao.trim() && (it as any).especificacao) setCreateEspecificacao(String((it as any).especificacao))
+    if (!createConcentracao.trim() && (it as any).concentracao) setCreateConcentracao(String((it as any).concentracao))
+    if (!createVolume.trim() && (it as any).volume) setCreateVolume(String((it as any).volume))
+    if (!createFonte.trim() && (it as any).fonte) setCreateFonte(String((it as any).fonte))
+    if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
+    if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
+  }, [
+    createCalibre,
+    createCategoria,
+    createConcentracao,
+    createEspecificacao,
+    createFonte,
+    createMarca,
+    createPrecoCusto,
+    createProduto,
+    createTipoUnidade,
+    createVolume
+  ])
+
+  React.useEffect(() => {
+    if (!createOpen) return
+    if (!canUseApi || !isAuthed) return
+    const codigo = createCodigo.trim()
+    if (!codigo) {
+      setCreateLookupLoading(false)
+      setCreateLookupError(null)
+      setCreateLookupItems([])
+      return
+    }
+    const token = ++createLookupTokenRef.current
+    setCreateLookupLoading(true)
+    setCreateLookupError(null)
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: unidade })
+          if (token !== createLookupTokenRef.current) return
+          setCreateLookupItems(items)
+          if (!items.length) setCreateLookupError('Nenhum insumo encontrado para este código.')
+          createLookupApplyPrefill(items)
+        } catch (e: any) {
+          if (token !== createLookupTokenRef.current) return
+          setCreateLookupError(e?.message || 'Falha ao buscar o insumo.')
+          setCreateLookupItems([])
+        } finally {
+          if (token !== createLookupTokenRef.current) return
+          setCreateLookupLoading(false)
+        }
+      })()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [canUseApi, createCodigo, createLookupApplyPrefill, createOpen, isAuthed, lookupInsumosByCodigo, unidade])
 
   React.useEffect(() => {
     if (!quickOp) return
@@ -2550,6 +2687,38 @@ export function InsumosModule() {
                   {quickScanOpen ? 'Fechar' : 'Scan'}
                 </Button>
               </div>
+              <div className="mt-2">
+                {quickLookupLoading ? (
+                  <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
+                ) : quickLookupError ? (
+                  <div className="text-xs text-red-200">{quickLookupError}</div>
+                ) : quickLookupItems.length ? (
+                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm text-blue-50 font-semibold">
+                        {String(quickLookupItems[0]?.produto || '').trim() || 'Insumo'}
+                      </div>
+                      <div className="text-xs text-blue-200/60">
+                        {(() => {
+                          const ctx = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
+                          const total = quickLookupItems.reduce((acc, it) => {
+                            const v = ctx && (it as any)?.estoques ? Number((it as any).estoques?.[ctx] ?? 0) : Number((it as any).estoqueAtual ?? 0)
+                            return acc + (Number.isFinite(v) ? v : 0)
+                          }, 0)
+                          return `Estoque: ${Math.max(0, total)}`
+                        })()}
+                        {' • '}
+                        {Array.from(new Set(quickLookupItems.map((it) => String((it as any)?.registro || '').trim()).filter(Boolean))).length} registros
+                      </div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
+                      {quickLookupItems[0]?.categoria ? <span>Categoria: {String(quickLookupItems[0].categoria)}</span> : null}
+                      {quickLookupItems[0]?.marca ? <span>Marca: {String(quickLookupItems[0].marca)}</span> : null}
+                      <span className="font-mono">Código: {quickCodigo.trim()}</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {quickLoteNeedsPick ? (
@@ -3749,6 +3918,17 @@ export function InsumosModule() {
                         <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
                           {createScanOpen ? 'Fechar' : 'Scan'}
                         </Button>
+                      </div>
+                      <div className="mt-2">
+                        {createLookupLoading ? (
+                          <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
+                        ) : createLookupError ? (
+                          <div className="text-xs text-red-200">{createLookupError}</div>
+                        ) : createLookupItems.length ? (
+                          <div className="text-xs text-blue-200/70">
+                            Encontramos um cadastro para este código e pré-preenchemos alguns campos (produto/categoria/marca). Se quiser, você pode cadastrar um novo lote.
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     <div className="md:col-span-2">
