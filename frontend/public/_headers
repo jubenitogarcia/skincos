@@ -4,6 +4,9 @@
 /icons/*
   Cache-Control: no-store
 
+/brand/*
+  Cache-Control: no-store
+
 /manifest.json
   Cache-Control: no-store
 

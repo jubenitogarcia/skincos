@@ -396,11 +396,11 @@ body {
   
   /* Gradient Backgrounds */
   .gradient-blue {
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    background: linear-gradient(135deg, #575755 0%, #2f2f2f 100%);
   }
   
   .gradient-premium {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #6b6b6b 0%, #111111 100%);
   }
   
   /* Premium Shadows */
@@ -492,17 +492,17 @@ body {
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
 
-  --color-brand-50: #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-200: #bfdbfe;
-  --color-brand-300: #93c5fd;
-  --color-brand-400: #60a5fa;
-  --color-brand-500: #3b82f6;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
-  --color-brand-800: #1e40af;
-  --color-brand-900: #1e3a8a;
-  --color-brand-950: #172554;
+  --color-brand-50: #f7f7f7;
+  --color-brand-100: #ededed;
+  --color-brand-200: #d7d7d6;
+  --color-brand-300: #b7b7b5;
+  --color-brand-400: #8c8c89;
+  --color-brand-500: #575755;
+  --color-brand-600: #444443;
+  --color-brand-700: #2f2f2f;
+  --color-brand-800: #1f1f1f;
+  --color-brand-900: #111111;
+  --color-brand-950: #0a0a0a;
 
   --color-corporate-50: #f8fafc;
   --color-corporate-100: #f1f5f9;

@@ -518,14 +518,14 @@ export default function AppFunctionalNeatlab() {
             </Dialog>
 
             {/* Premium Background with animated gradient */}
-            <div className="min-h-screen relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-corporate-900 via-brand-900 to-corporate-800">
-                    <div className="absolute inset-0 bg-gradient-to-r from-brand-600/20 via-purple-600/20 to-cyan-600/20"></div>
+                <div className="min-h-screen relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800">
+                    <div className="absolute inset-0 bg-gradient-to-r from-brand-700/20 via-brand-600/10 to-brand-700/20"></div>
                     {/* Animated background patterns */}
                     <div className="absolute inset-0">
-                        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-500/10 rounded-full blur-3xl animate-pulse"></div>
-                        <div className="absolute bottom-1/3 right-1/4 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
-                        <div className="absolute top-2/3 left-1/2 w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
+                        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-700/10 rounded-full blur-3xl animate-pulse"></div>
+                        <div className="absolute bottom-1/3 right-1/4 w-80 h-80 bg-brand-600/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
+                        <div className="absolute top-2/3 left-1/2 w-72 h-72 bg-brand-700/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
                     </div>
                 </div>
 
@@ -552,13 +552,17 @@ export default function AppFunctionalNeatlab() {
                                 {/* Premium Logo */}
                                 <div className="relative">
                                     <div className="w-12 h-12 rounded-2xl bg-gradient-blue flex items-center justify-center shadow-premium border border-white/20">
-                                        <div className="text-xl font-bold text-white tracking-tight">EF</div>
-                                        <div className="absolute -inset-1 bg-gradient-to-r from-brand-600 via-purple-600 to-cyan-600 rounded-2xl blur opacity-30 animate-pulse"></div>
+                                        <img src="/brand/espacofacial-mark-white.svg" alt="" aria-hidden className="h-6 w-6" />
+                                        <div className="absolute -inset-1 bg-gradient-to-r from-brand-700 via-brand-600 to-brand-700 rounded-2xl blur opacity-30 animate-pulse"></div>
                                     </div>
                                 </div>
                                 <div className={`flex-1 min-w-0 ${sidebarExpanded ? '' : 'hidden'}`}>
-                                    <h1 className="text-lg font-bold text-white leading-tight truncate">Espaço Facial</h1>
-                                    <p className="text-xs text-blue-300/80 truncate">CRM Enterprise</p>
+                                    <img
+                                        src="/brand/espacofacial-logo-light.svg"
+                                        alt="Espaço Facial"
+                                        className="h-8 w-auto max-w-full"
+                                    />
+                                    <p className="text-[10px] text-blue-100/70 tracking-[0.25em] uppercase truncate mt-1">CRM</p>
                                 </div>
                                 <button
                                     type="button"

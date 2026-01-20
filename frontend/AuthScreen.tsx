@@ -43,13 +43,13 @@ export function AuthScreen() {
     return (
         <div className="min-h-screen relative overflow-hidden">
             {/* Premium Background with animated gradient */}
-            <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 via-purple-600/20 to-cyan-600/20"></div>
+            <div className="absolute inset-0 bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800">
+                <div className="absolute inset-0 bg-gradient-to-r from-brand-700/20 via-brand-600/10 to-brand-700/20"></div>
                 {/* Animated background patterns */}
                 <div className="absolute inset-0">
-                    <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
-                    <div className="absolute bottom-1/3 right-1/4 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
-                    <div className="absolute top-2/3 left-1/2 w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
+                    <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-700/10 rounded-full blur-3xl animate-pulse"></div>
+                    <div className="absolute bottom-1/3 right-1/4 w-80 h-80 bg-brand-600/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
+                    <div className="absolute top-2/3 left-1/2 w-72 h-72 bg-brand-700/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
                 </div>
             </div>
 
@@ -62,26 +62,28 @@ export function AuthScreen() {
                     <div className="flex items-center justify-center mb-8">
                         {/* Premium Logo Design */}
                         <div className="relative">
-                            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 via-blue-600 to-blue-700 flex items-center justify-center shadow-2xl shadow-blue-500/25 border border-white/20 backdrop-blur-sm">
-                                <div className="text-3xl font-bold text-white tracking-tight">EF</div>
-                                <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 via-purple-600 to-cyan-600 rounded-2xl blur opacity-30 animate-pulse"></div>
+                            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-600 via-brand-700 to-brand-800 flex items-center justify-center shadow-2xl shadow-black/30 border border-white/15 backdrop-blur-sm">
+                                <img src="/brand/espacofacial-mark-white.svg" alt="" aria-hidden className="h-9 w-9" />
+                                <div className="absolute -inset-1 bg-gradient-to-r from-brand-600 via-brand-700 to-brand-800 rounded-2xl blur opacity-30 animate-pulse"></div>
                             </div>
                         </div>
                     </div>
                     
                     <div className="space-y-3">
-                        <h1 className="text-4xl lg:text-5xl font-bold text-white tracking-tight">
-                            <span className="bg-gradient-to-r from-white via-blue-100 to-white bg-clip-text text-transparent">
-                                Espaço Facial
-                            </span>
-                            <span className="block text-2xl lg:text-3xl font-semibold bg-gradient-to-r from-blue-300 via-purple-300 to-cyan-300 bg-clip-text text-transparent mt-1">
-                                CRM Enterprise
-                            </span>
-                        </h1>
+                        <div className="flex items-center justify-center">
+                            <img
+                                src="/brand/espacofacial-logo-light.svg"
+                                alt="Espaço Facial"
+                                className="h-16 w-auto max-w-[420px]"
+                            />
+                        </div>
+                        <div className="text-sm text-blue-100/70 tracking-[0.3em] uppercase">
+                            CRM
+                        </div>
                         <p className="text-slate-300 text-base lg:text-lg max-w-md mx-auto leading-relaxed">
                             Plataforma unificada de relacionamento e crescimento empresarial
                         </p>
-                        <div className="flex items-center justify-center gap-2 text-sm text-blue-300/80">
+                        <div className="flex items-center justify-center gap-2 text-sm text-blue-100/70">
                             <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
                             <span>Sistema Online</span>
                         </div>
