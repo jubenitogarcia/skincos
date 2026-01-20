@@ -194,7 +194,8 @@ export function PerformanceAlerts() {
     setAlerts(prev => [alert, ...prev])
 
     // Show toast notification
-    toast.error(`🚨 ${alert.title}`, {
+    toast.error(alert.title, {
+      icon: <img src="/icons/emergency.png" alt="" aria-hidden className="h-4 w-4" />,
       description: alert.message,
       action: {
         label: "Reconhecer",

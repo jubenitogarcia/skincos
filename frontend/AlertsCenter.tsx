@@ -196,7 +196,8 @@ export function AlertsCenter() {
     setNotifications(prev => [notification, ...prev])
 
     // Show toast notification
-    toast.error(`🚨 ${rule.name}`, {
+    toast.error(rule.name, {
+      icon: <img src="/icons/emergency.png" alt="" aria-hidden className="h-4 w-4" />,
       description: rule.description,
       action: {
         label: "Ver Detalhes",

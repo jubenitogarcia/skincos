@@ -207,7 +207,10 @@ const prebuiltTemplates = [
         </div>
 
         <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3>📊 Relatório de Performance</h3>
+          <h3 className="flex items-center gap-2">
+            <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
+            Relatório de Performance
+          </h3>
           <p>Seus resultados melhoraram 25% no último mês!</p>
         </div>
 

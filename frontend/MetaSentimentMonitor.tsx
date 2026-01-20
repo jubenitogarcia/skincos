@@ -411,7 +411,10 @@ export function MetaSentimentMonitor() {
       {/* Crisis Alerts */}
       {crisisAlerts.filter(alert => alert.isActive).length > 0 && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-red-800">🚨 Alertas Críticos</h3>
+          <h3 className="text-lg font-semibold text-red-800 flex items-center gap-2">
+            <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
+            Alertas Críticos
+          </h3>
           {crisisAlerts.filter(alert => alert.isActive).map(alert => (
             <Card key={alert.id} className="border-red-200 bg-red-50">
               <CardContent className="p-4">

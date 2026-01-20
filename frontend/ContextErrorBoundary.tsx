@@ -59,7 +59,9 @@ export class ContextErrorBoundary extends Component<Props, State> {
           padding: '2rem'
         }}>
           <div style={{ textAlign: 'center', maxWidth: '600px' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🚨</div>
+            <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'center' }}>
+              <img src="/icons/emergency.png" alt="" aria-hidden style={{ width: '72px', height: '72px' }} />
+            </div>
             <h1 style={{ margin: '0 0 1rem 0', fontSize: '1.5rem' }}>
               Erro na Inicialização dos Contextos
             </h1>

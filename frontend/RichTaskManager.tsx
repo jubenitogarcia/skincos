@@ -104,7 +104,7 @@ export function RichTaskManager() {
     {
       id: 't2',
       title: 'Configurar CI/CD Pipeline',
-      description: '# Pipeline DevOps\n\nConfiguração completa de integração e deploy contínuo.\n\n## Etapas\n1. **Setup GitHub Actions**\n   - Testes automatizados\n   - Build da aplicação\n   - Deploy para staging\n\n2. **Configuração Docker**\n   ```dockerfile\n   FROM node:18-alpine\n   WORKDIR /app\n   COPY package*.json ./\n   RUN npm ci\n   ```\n\n3. **Deploy Production**\n   - Configurar AWS/Vercel\n   - Monitoramento de performance\n   - Rollback automático\n\n> ⚠️ **Atenção:** Testar pipeline em ambiente de staging primeiro.',
+      description: '# Pipeline DevOps\n\nConfiguração completa de integração e deploy contínuo.\n\n## Etapas\n1. **Setup GitHub Actions**\n   - Testes automatizados\n   - Build da aplicação\n   - Deploy para staging\n\n2. **Configuração Docker**\n   ```dockerfile\n   FROM node:18-alpine\n   WORKDIR /app\n   COPY package*.json ./\n   RUN npm ci\n   ```\n\n3. **Deploy Production**\n   - Configurar AWS/Vercel\n   - Monitoramento de performance\n   - Rollback automático\n\n> ![Atenção](/icons/warning.png) **Atenção:** Testar pipeline em ambiente de staging primeiro.',
       status: 'todo',
       priority: 'medium',
       assignedTo: 'bob-devops',

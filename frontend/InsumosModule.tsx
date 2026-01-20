@@ -2683,66 +2683,84 @@ export function InsumosModule() {
 	        </div>
 
 	              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-	              <Card className="bg-black/20 border border-white/10">
-	                <CardHeader>
-	                  <CardTitle className="text-white text-sm">💰 Valor em estoque</CardTitle>
-	                </CardHeader>
-                <CardContent>
-                  <div className="text-lg text-blue-50 font-mono">
-                    {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
-                  </div>
-                  <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">🚨 Críticos</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-                  <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">⚠️ Estoque baixo</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-                  <div className="text-xs text-blue-200/60">atenção</div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">⏳ Vencendo</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-                  <div className="text-xs text-blue-200/60">janela próxima</div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-black/20 border border-white/10">
-                <CardHeader>
-                  <CardTitle className="text-white text-sm">🧨 Expirado c/ estoque</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-                  <div className="text-xs text-blue-200/60">risco imediato</div>
-                </CardContent>
-              </Card>
+		              <Card className="bg-black/20 border border-white/10">
+		                <CardHeader>
+		                  <CardTitle className="text-white text-sm flex items-center gap-2">
+                        <img src="/icons/money.png" alt="" aria-hidden className="h-4 w-4" />
+                        Valor em estoque
+                      </CardTitle>
+		                </CardHeader>
+	                <CardContent>
+	                  <div className="text-lg text-blue-50 font-mono">
+	                    {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
+	                  </div>
+	                  <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+	                </CardContent>
+	              </Card>
 
 	              <Card className="bg-black/20 border border-white/10">
 	                <CardHeader>
-	                  <CardTitle className="text-white text-sm">📊 Movimentações</CardTitle>
+	                  <CardTitle className="text-white text-sm flex items-center gap-2">
+                      <img src="/icons/emergency.png" alt="" aria-hidden className="h-4 w-4" />
+                      Críticos
+                    </CardTitle>
 	                </CardHeader>
 	                <CardContent>
-                  <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
-                  <div className="text-sm text-blue-100/80">
-                    <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
+	                  <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
+	                  <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+	                </CardContent>
+	              </Card>
+
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-sm flex items-center gap-2">
+                      <img src="/icons/warning.png" alt="" aria-hidden className="h-4 w-4" />
+                      Estoque baixo
+                    </CardTitle>
+	                </CardHeader>
+	                <CardContent>
+	                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
+	                  <div className="text-xs text-blue-200/60">atenção</div>
+	                </CardContent>
+	              </Card>
+
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-sm flex items-center gap-2">
+                      <img src="/icons/hourglass.png" alt="" aria-hidden className="h-4 w-4" />
+                      Vencendo
+                    </CardTitle>
+	                </CardHeader>
+	                <CardContent>
+	                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
+	                  <div className="text-xs text-blue-200/60">janela próxima</div>
+	                </CardContent>
+	              </Card>
+
+	              <Card className="bg-black/20 border border-white/10">
+	                <CardHeader>
+	                  <CardTitle className="text-white text-sm flex items-center gap-2">
+                      <img src="/icons/dinamite.png" alt="" aria-hidden className="h-4 w-4" />
+                      Expirado c/ estoque
+                    </CardTitle>
+	                </CardHeader>
+	                <CardContent>
+	                  <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
+	                  <div className="text-xs text-blue-200/60">risco imediato</div>
+	                </CardContent>
+	              </Card>
+
+		              <Card className="bg-black/20 border border-white/10">
+		                <CardHeader>
+		                  <CardTitle className="text-white text-sm flex items-center gap-2">
+                        <img src="/icons/chart.png" alt="" aria-hidden className="h-4 w-4" />
+                        Movimentações
+                      </CardTitle>
+		                </CardHeader>
+		                <CardContent>
+	                  <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
+	                  <div className="text-sm text-blue-100/80">
+	                    <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
                     <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
 	                  </div>
 	                  <div className="text-xs text-blue-200/60">
@@ -2874,11 +2892,14 @@ export function InsumosModule() {
 			                      Lista resumida (até 50 itens) gerada automaticamente para a unidade.
 			                    </div>
 			                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-			                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-			                        <div className="flex items-center justify-between gap-2">
-			                          <div className="text-sm text-blue-100/80">⏳ Vencendo</div>
-			                          <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
-			                        </div>
+				                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+				                        <div className="flex items-center justify-between gap-2">
+				                          <div className="text-sm text-blue-100/80 flex items-center gap-2">
+                                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-4 w-4" />
+                                Vencendo
+                              </div>
+				                          <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
+				                        </div>
 			                        <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
 			                          <table className="min-w-full text-sm">
 			                            <thead className="bg-black/30 text-blue-100/80">
@@ -2923,11 +2944,14 @@ export function InsumosModule() {
 			                          </table>
 			                        </div>
 			                      </div>
-			                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-			                        <div className="flex items-center justify-between gap-2">
-			                          <div className="text-sm text-blue-100/80">🧨 Expirado c/ estoque</div>
-			                          <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
-			                        </div>
+				                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+				                        <div className="flex items-center justify-between gap-2">
+				                          <div className="text-sm text-blue-100/80 flex items-center gap-2">
+                                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-4 w-4" />
+                                Expirado c/ estoque
+                              </div>
+				                          <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
+				                        </div>
 			                        <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
 			                          <table className="min-w-full text-sm">
 			                            <thead className="bg-black/30 text-blue-100/80">

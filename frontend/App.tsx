@@ -135,7 +135,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
         icon: <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-5 w-5" />,
         component: <InsumosModule />
     },
-    { key: 'dashboard', label: 'Analítica', icon: '📊', component: <ReportsDashboard /> },
+    { key: 'dashboard', label: 'Analítica', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <ReportsDashboard /> },
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
     { key: 'helpdesk', label: 'Help Desk', icon: '🎧', component: <HelpDeskModule /> },
@@ -162,14 +162,14 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'ai-automation', label: 'AI Automação', icon: '🤖', component: <AIAutomationHub /> },
     { key: 'agent-dashboard', label: 'Agentes', icon: '🧑‍💼', component: <AgentDashboard /> },
     { key: 'coaching', label: 'Coaching', icon: '🎯', component: <PerformanceCoaching /> },
-    { key: 'alerts', label: 'Alertas', icon: '🚨', component: <PerformanceAlerts /> },
+    { key: 'alerts', label: 'Alertas', icon: <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />, component: <PerformanceAlerts /> },
     { key: 'backup-recovery', label: 'Backup', icon: '💾', component: <BackupRecoveryCenter /> },
     { key: 'system-monitoring', label: 'Monitoramento', icon: '🖥️', component: <SystemMonitoring /> },
     { key: 'assets', label: 'Ativos', icon: '📦', component: <AssetManagement /> },
     { key: 'manufacturing', label: 'Fabricação', icon: '🏭', component: <ManufacturingModule /> },
     { key: 'hr', label: 'RH', icon: '👥', component: <HRModule /> },
     { key: 'procurement', label: 'Compras', icon: '🛒', component: <ProcurementModule /> },
-    { key: 'accounting', label: 'Financeiro', icon: '💰', component: <Financeiro /> },
+    { key: 'accounting', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, component: <Financeiro /> },
     { key: 'products', label: 'Produtos', icon: '📂', component: <ProductCatalog /> },
     { key: 'pipelines', label: 'Pipelines', icon: '🔀', component: <PipelineManager /> },
     { key: 'lead-scoring', label: 'Lead Scoring', icon: '⭐', component: <LeadScoringSystem /> },
@@ -177,7 +177,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'companies', label: 'Empresas', icon: '🏢', component: <MultiCompanyManagement /> },
     { key: 'notifications-test', label: 'Notif. Tester', icon: '🔔', component: <NotificationTester /> },
     { key: 'api', label: 'API', icon: '🧪', component: <APIExplorer /> },
-    { key: 'reports', label: 'Relatórios', icon: '📊', component: <Relatorios /> },
+    { key: 'reports', label: 'Relatórios', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <Relatorios /> },
 ]
 
 export default function AppFunctionalNeatlab() {

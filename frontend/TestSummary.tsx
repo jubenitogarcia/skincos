@@ -447,7 +447,10 @@ export function TestSummary({ onLog }: TestSummaryProps) {
 
           {overallStatus === 'issues' && (
             <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-              <h4 className="font-medium text-yellow-800 mb-2">⚠️ Some Issues Detected</h4>
+              <h4 className="font-medium text-yellow-800 mb-2 flex items-center gap-2">
+                <img src="/icons/warning.png" alt="" aria-hidden className="h-4 w-4" />
+                Some Issues Detected
+              </h4>
               <p className="text-sm text-yellow-700 mb-2">
                 The system will work but you may experience limitations:
               </p>

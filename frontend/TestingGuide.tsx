@@ -258,7 +258,10 @@ export function TestingGuide() {
             </div>
 
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <h4 className="font-medium text-yellow-800 mb-2">⚠️ Limitations to Expect:</h4>
+              <h4 className="font-medium text-yellow-800 mb-2 flex items-center gap-2">
+                <img src="/icons/warning.png" alt="" aria-hidden className="h-4 w-4" />
+                Limitations to Expect:
+              </h4>
               <ul className="text-sm text-yellow-700 space-y-1">
                 <li>• No audio recording (by design for privacy)</li>
                 <li>• Recording quality limited by display resolution</li>

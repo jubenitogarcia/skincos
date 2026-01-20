@@ -402,7 +402,14 @@ function BootStatusItem({ label, ready }: { label: string; ready: boolean }) {
       }} />
       <span style={{ opacity: ready ? 1 : 0.7 }}>{label}</span>
       <span style={{ marginLeft: 'auto', fontSize: '0.7rem' }}>
-        {ready ? '✅' : '⏳'}
+        {ready ? '✅' : (
+          <img
+            src="/icons/hourglass.png"
+            alt=""
+            aria-hidden
+            style={{ width: '14px', height: '14px', display: 'inline-block', verticalAlign: 'text-bottom' }}
+          />
+        )}
       </span>
     </div>
   )
