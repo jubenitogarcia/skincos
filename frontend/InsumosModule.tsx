@@ -4441,210 +4441,200 @@ export function InsumosModule() {
         </div>
 
         <div style={{ order: overviewOrderIndex.get('charts') ?? 0 }}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-white text-base font-semibold">Gráficos</div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (chartSlots.length >= MAX_CHARTS) return
-                  setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
-                }}
-                disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between gap-2">
+              <CardTitle className="text-white text-base">Gráficos</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (chartSlots.length >= MAX_CHARTS) return
+                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+                  }}
+                  disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+                >
+                  + Adicionar
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
+                  Reset
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div
+                className={`grid gap-3 ${chartSlots.length === 1
+                  ? 'grid-cols-1'
+                  : chartSlots.length === 2
+                    ? 'grid-cols-1 lg:grid-cols-2'
+                    : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
+                  }`}
               >
-                + Adicionar
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
-                disabled={overviewLoading || insightsLoading}
-              >
-                Reset
-              </Button>
-            </div>
-          </div>
-          <div
-            className={`grid gap-3 ${chartSlots.length === 1
-              ? 'grid-cols-1'
-              : chartSlots.length === 2
-                ? 'grid-cols-1 lg:grid-cols-2'
-                : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
-              }`}
-          >
-	          {chartSlots.map((slot, idx) => {
-	            const preset = presetSupports(slot.presetId)
-	            const viewOptions = presetViewOptions(slot.presetId)
-            const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
-            const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
-            const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
-            const layout = (preset as any).layout as ChartLayout | undefined
-            const baseH =
-              chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
-            const height =
-              layout === 'tall'
-                ? baseH + (chartSlots.length === 1 ? 180 : 120)
-                : baseH
-            const cardSpan =
-              chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
+                {chartSlots.map((slot, idx) => {
+                  const preset = presetSupports(slot.presetId)
+                  const viewOptions = presetViewOptions(slot.presetId)
+                  const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
+                  const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
+                  const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+                  const layout = (preset as any).layout as ChartLayout | undefined
+                  const baseH = chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
+                  const height = layout === 'tall' ? baseH + (chartSlots.length === 1 ? 180 : 120) : baseH
+                  const cardSpan = chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
 
-	            return (
-              <Card
-                key={`${slot.presetId}-${idx}`}
-                className={`bg-black/20 border border-white/10 ${cardSpan}`}
-              >
-                <CardHeader className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={slot.presetId}
-                      onValueChange={(v) => {
-                        const nextId = v as any
-                        const nextPreset = presetSupports(nextId)
-                        const nextView = nextPreset?.defaultView || presetViewOptions(nextId)[0]
-                        setChartSlot(idx, { presetId: nextId, view: nextView as any })
-                      }}
-                    >
-                      <SelectTrigger className="h-8 w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CHART_PRESETS.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {chartSlots.length > 1 ? (
-                      <Button
-                        variant="outline"
-                        className="h-8 w-8 p-0"
-                        title="Remover gráfico"
-                        aria-label="Remover gráfico"
-                        onClick={() => {
-                          setChartSlots((prev) => prev.filter((_, i) => i !== idx))
-                        }}
-                      >
-                        ×
-                      </Button>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {preset.supportsMetric ? (
-                      <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
-                        <SelectTrigger className="h-8 w-24">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="qtd">Qtd</SelectItem>
-                          <SelectItem value="valor">R$</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : null}
+                  return (
+                    <Card key={`${slot.presetId}-${idx}`} className={`bg-black/20 border border-white/10 ${cardSpan}`}>
+                      <CardHeader className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={slot.presetId}
+                            onValueChange={(v) => {
+                              const nextId = v as any
+                              const nextPreset = presetSupports(nextId)
+                              const nextView = nextPreset?.defaultView || presetViewOptions(nextId)[0]
+                              setChartSlot(idx, { presetId: nextId, view: nextView as any })
+                            }}
+                          >
+                            <SelectTrigger className="h-8 w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CHART_PRESETS.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {chartSlots.length > 1 ? (
+                            <Button
+                              variant="outline"
+                              className="h-8 w-8 p-0"
+                              title="Remover gráfico"
+                              aria-label="Remover gráfico"
+                              onClick={() => {
+                                setChartSlots((prev) => prev.filter((_, i) => i !== idx))
+                              }}
+                            >
+                              ×
+                            </Button>
+                          ) : null}
+                        </div>
 
-                    {preset.supportsView && viewOptions.length > 1 ? (
-                      <Select value={view} onValueChange={(v) => setChartSlot(idx, { view: v as any })}>
-                        <SelectTrigger className="h-8 w-28">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {viewOptions.map((vv) => (
-                            <SelectItem key={vv} value={vv}>
-                              {vv === 'bar' ? 'Barras' : vv === 'line' ? 'Linhas' : 'Pizza'}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : null}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {preset.supportsMetric ? (
+                            <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
+                              <SelectTrigger className="h-8 w-24">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="qtd">Qtd</SelectItem>
+                                <SelectItem value="valor">R$</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : null}
 
-                    {preset.supportsTopN ? (
-                      <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
-                        <SelectTrigger className="h-8 w-20">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="5">Top 5</SelectItem>
-                          <SelectItem value="8">Top 8</SelectItem>
-                          <SelectItem value="10">Top 10</SelectItem>
-                          <SelectItem value="15">Top 15</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : null}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {renderChart({ ...slot, view, metric, topN }, { height })}
-                </CardContent>
-              </Card>
-            )
-	          })}
-	          </div>
-	          <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
-	            <Card className="bg-black/20 border border-white/10">
-	              <CardHeader>
-	                <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-	              </CardHeader>
-	              <CardContent className="space-y-1">
-	                <div className="text-sm text-blue-100/80">
-	                  Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-	                  {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
-	                </div>
-	                <div className="text-sm text-blue-100/80">
-	                  Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-	                  {overviewRoi?.perdas?.valorRiscoVencendo != null
-	                    ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
-	                    : '-'}
-	                </div>
-	                <div className="text-sm text-blue-100/80">
-	                  Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
-	                </div>
-	                <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-	              </CardContent>
-	            </Card>
+                          {preset.supportsView && viewOptions.length > 1 ? (
+                            <Select value={view} onValueChange={(v) => setChartSlot(idx, { view: v as any })}>
+                              <SelectTrigger className="h-8 w-28">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {viewOptions.map((vv) => (
+                                  <SelectItem key={vv} value={vv}>
+                                    {vv === 'bar' ? 'Barras' : vv === 'line' ? 'Linhas' : 'Pizza'}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : null}
 
-	            <Card className="bg-black/20 border border-white/10">
-	              <CardHeader className="flex flex-row items-center justify-between gap-2">
-	                <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
-	                <div className="text-xs text-blue-200/60">
-	                  {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
-	                </div>
-	              </CardHeader>
-	              <CardContent className="space-y-2">
-	                {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-	                  <div className="overflow-auto max-h-[50vh] rounded-xl border border-white/10">
-	                    <table className="min-w-full text-sm">
-	                      <thead className="bg-black/30 text-blue-100/80">
-	                        <tr>
-	                          <th className="text-left p-3">Categoria</th>
-	                          <th className="text-right p-3">Qtd</th>
-	                          <th className="text-right p-3">Valor</th>
-	                        </tr>
-	                      </thead>
-	                      <tbody className="divide-y divide-white/5">
-	                        {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idxx: number) => (
-	                          <tr key={`${c.categoria || ''}-${idxx}`} className="hover:bg-white/5">
-	                            <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
-	                            <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
-	                            <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
-	                          </tr>
-	                        ))}
-	                      </tbody>
-	                    </table>
-	                  </div>
-	                ) : (
-	                  <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-	                )}
-	                <div className="text-xs text-blue-200/60">
-	                  Usa os filtros de data em Movimentações (De/Até) e o período da Visão geral ({overviewPeriod}).
-	                </div>
-	              </CardContent>
-	            </Card>
-	          </div>
-	          <div className="text-xs text-blue-200/60">
-	            Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
-	          </div>
-	        </div>
+                          {preset.supportsTopN ? (
+                            <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
+                              <SelectTrigger className="h-8 w-20">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="5">Top 5</SelectItem>
+                                <SelectItem value="8">Top 8</SelectItem>
+                                <SelectItem value="10">Top 10</SelectItem>
+                                <SelectItem value="15">Top 15</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : null}
+                        </div>
+                      </CardHeader>
+                      <CardContent>{renderChart({ ...slot, view, metric, topN }, { height })}</CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader>
+                    <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    <div className="text-sm text-blue-100/80">
+                      Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+                      {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
+                    </div>
+                    <div className="text-sm text-blue-100/80">
+                      Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+                      {overviewRoi?.perdas?.valorRiscoVencendo != null
+                        ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
+                        : '-'}
+                    </div>
+                    <div className="text-sm text-blue-100/80">
+                      Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
+                    </div>
+                    <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-black/20 border border-white/10">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2">
+                    <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
+                    <div className="text-xs text-blue-200/60">
+                      {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
+                      <div className="overflow-auto max-h-[50vh] rounded-xl border border-white/10">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-black/30 text-blue-100/80">
+                            <tr>
+                              <th className="text-left p-3">Categoria</th>
+                              <th className="text-right p-3">Qtd</th>
+                              <th className="text-right p-3">Valor</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idxx: number) => (
+                              <tr key={`${c.categoria || ''}-${idxx}`} className="hover:bg-white/5">
+                                <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
+                                <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
+                                <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+                    )}
+                    <div className="text-xs text-blue-200/60">
+                      Usa os filtros de data em Movimentações (De/Até) e o período da Visão geral ({overviewPeriod}).
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="text-xs text-blue-200/60">Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.</div>
+            </CardContent>
+          </Card>
+        </div>
 	      </div>
 	      </div>
 
