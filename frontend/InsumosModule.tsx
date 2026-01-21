@@ -817,10 +817,10 @@ export function InsumosModule() {
     })
   }, [])
 
-  type OverviewPanelId = 'policies' | 'alerts' | 'charts' | 'roi'
+  type OverviewPanelId = 'policies' | 'alerts' | 'charts'
   const OVERVIEW_PANELS_KEY = 'skincos.insumos.layout.overviewPanels.v1'
   const DETAILS_OPEN_KEY = 'skincos.insumos.layout.detailsOpen.v1'
-  const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts', 'roi']
+  const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts']
   const [overviewLayoutEdit, setOverviewLayoutEdit] = React.useState(false)
   const [overviewLayoutOpen, setOverviewLayoutOpen] = React.useState(false)
   const [overviewPanelOrder, setOverviewPanelOrder] = React.useState<OverviewPanelId[]>(() => {
@@ -859,7 +859,7 @@ export function InsumosModule() {
   const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
 
   const visibleOverviewPanels = React.useMemo(() => {
-    const allowed = new Set<OverviewPanelId>(['alerts', 'charts', 'roi', ...(isManagerRole ? (['policies'] as any) : [])])
+    const allowed = new Set<OverviewPanelId>(['alerts', 'charts', ...(isManagerRole ? (['policies'] as any) : [])])
     const ordered = (overviewPanelOrder || []).filter((p) => allowed.has(p))
     for (const p of DEFAULT_OVERVIEW_PANELS) {
       if (allowed.has(p) && !ordered.includes(p)) ordered.push(p)
@@ -2634,6 +2634,18 @@ export function InsumosModule() {
   }, [])
 
   React.useEffect(() => {
+    const onLayout = (event: Event) => {
+      const e = event as CustomEvent<{ action?: 'expandAll' | 'collapseAll' | 'reset' }>
+      const action = e.detail?.action
+      if (action === 'expandAll') setAllDetailsOpen(true)
+      if (action === 'collapseAll') setAllDetailsOpen(false)
+      if (action === 'reset') void resetUserLayoutPrefs()
+    }
+    window.addEventListener('skincos:insumos:layout', onLayout as EventListener)
+    return () => window.removeEventListener('skincos:insumos:layout', onLayout as EventListener)
+  }, [resetUserLayoutPrefs, setAllDetailsOpen])
+
+  React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
     void loadMovimentacoes()
     void loadShareHistory()
@@ -3280,18 +3292,6 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={() => setAllDetailsOpen(true)}>
-          Expandir tudo
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setAllDetailsOpen(false)}>
-          Contrair tudo
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => void resetUserLayoutPrefs()} disabled={!isAuthed}>
-          Resetar layout
-        </Button>
-      </div>
-
       <Dialog
         open={quickOp != null}
         onOpenChange={(open) => {
@@ -3725,9 +3725,7 @@ export function InsumosModule() {
                             ? 'Políticas por categoria'
                             : id === 'alerts'
                               ? 'Alertas e gestão'
-                              : id === 'charts'
-                                ? 'Gráficos'
-                                : 'ROI'
+                              : 'Gráficos'
                         return (
                           <Draggable key={id} draggableId={id} index={idx}>
                             {(dragProvided) => (
@@ -3860,18 +3858,9 @@ export function InsumosModule() {
         {isManagerRole ? (
           <div style={{ order: overviewOrderIndex.get('policies') ?? 0 }}>
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => void Promise.allSettled([loadAdminCategoryPolicies({ includeSuggestions: true }), loadCategoryPolicies()])}
-                  disabled={!isAuthed || adminCategoryPoliciesLoading || categoryPoliciesLoading}
-                >
-                  {adminCategoryPoliciesLoading ? 'Carregando…' : 'Recarregar'}
-                </Button>
-              </div>
-            </CardHeader>
+	              <CardHeader className="flex flex-row items-center justify-between gap-2">
+	              <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
+	            </CardHeader>
             <CardContent className="space-y-3">
               <div className="text-xs text-blue-200/60">
                 Configure quais categorias exigem <span className="font-medium text-blue-100/80">lote</span> e/ou <span className="font-medium text-blue-100/80">validade</span>, e habilite <span className="font-medium text-blue-100/80">FEFO</span> quando aplicável.
@@ -4484,9 +4473,9 @@ export function InsumosModule() {
                 : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
               }`}
           >
-          {chartSlots.map((slot, idx) => {
-            const preset = presetSupports(slot.presetId)
-            const viewOptions = presetViewOptions(slot.presetId)
+	          {chartSlots.map((slot, idx) => {
+	            const preset = presetSupports(slot.presetId)
+	            const viewOptions = presetViewOptions(slot.presetId)
             const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
             const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
             const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
@@ -4500,7 +4489,7 @@ export function InsumosModule() {
             const cardSpan =
               chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
 
-            return (
+	            return (
               <Card
                 key={`${slot.presetId}-${idx}`}
                 className={`bg-black/20 border border-white/10 ${cardSpan}`}
@@ -4589,38 +4578,75 @@ export function InsumosModule() {
                 </CardContent>
               </Card>
             )
-          })}
-          </div>
-          <div className="text-xs text-blue-200/60">
-            Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
-          </div>
-        </div>
+	          })}
+	          </div>
+	          <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
+	            <Card className="bg-black/20 border border-white/10">
+	              <CardHeader>
+	                <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+	              </CardHeader>
+	              <CardContent className="space-y-1">
+	                <div className="text-sm text-blue-100/80">
+	                  Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+	                  {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
+	                </div>
+	                <div className="text-sm text-blue-100/80">
+	                  Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+	                  {overviewRoi?.perdas?.valorRiscoVencendo != null
+	                    ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
+	                    : '-'}
+	                </div>
+	                <div className="text-sm text-blue-100/80">
+	                  Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
+	                </div>
+	                <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
+	              </CardContent>
+	            </Card>
 
-        <div style={{ order: overviewOrderIndex.get('roi') ?? 0 }}>
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              <div className="text-sm text-blue-100/80">
-                Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-                {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
-              </div>
-              <div className="text-sm text-blue-100/80">
-                Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-                {overviewRoi?.perdas?.valorRiscoVencendo != null
-                  ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
-                  : '-'}
-              </div>
-              <div className="text-sm text-blue-100/80">
-                Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
-              </div>
-              <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-      </div>
+	            <Card className="bg-black/20 border border-white/10">
+	              <CardHeader className="flex flex-row items-center justify-between gap-2">
+	                <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
+	                <div className="text-xs text-blue-200/60">
+	                  {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
+	                </div>
+	              </CardHeader>
+	              <CardContent className="space-y-2">
+	                {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
+	                  <div className="overflow-auto max-h-[50vh] rounded-xl border border-white/10">
+	                    <table className="min-w-full text-sm">
+	                      <thead className="bg-black/30 text-blue-100/80">
+	                        <tr>
+	                          <th className="text-left p-3">Categoria</th>
+	                          <th className="text-right p-3">Qtd</th>
+	                          <th className="text-right p-3">Valor</th>
+	                        </tr>
+	                      </thead>
+	                      <tbody className="divide-y divide-white/5">
+	                        {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idxx: number) => (
+	                          <tr key={`${c.categoria || ''}-${idxx}`} className="hover:bg-white/5">
+	                            <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
+	                            <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
+	                            <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
+	                          </tr>
+	                        ))}
+	                      </tbody>
+	                    </table>
+	                  </div>
+	                ) : (
+	                  <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+	                )}
+	                <div className="text-xs text-blue-200/60">
+	                  Usa os filtros de data em Movimentações (De/Até) e o período da Visão geral ({overviewPeriod}).
+	                </div>
+	              </CardContent>
+	            </Card>
+	          </div>
+	          <div className="text-xs text-blue-200/60">
+	            Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
+	          </div>
+	        </div>
+	      </div>
+	      </div>
 
       <Dialog
         open={editOpen}
@@ -4962,41 +4988,9 @@ export function InsumosModule() {
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="w-40">
-              <Select
-                value={String(insumosLimite)}
-                onValueChange={(v) => {
-                  const lim = Math.max(1, Math.min(1000, parseInt(String(v), 10) || 200))
-                  setInsumosLimite(lim)
-                  void refreshInsumos({ pagina: 1 })
-                }}
-              >
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                  <SelectItem value="200">200</SelectItem>
-                  <SelectItem value="400">400</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="text-xs text-blue-200/60">
-              {insumosHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}
-            </div>
+          <div className="text-xs text-blue-200/60">
+            {insumosHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}
           </div>
-          {insumosHasMore ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void loadInsumosPaged({ pagina: insumosPagina + 1, limite: insumosLimite, q: insumosQuery.trim(), append: true })}
-              disabled={insumosLoading || !isAuthed}
-            >
-              Carregar mais
-            </Button>
-          ) : null}
         </div>
 
         {createOpen ? (
@@ -5443,49 +5437,6 @@ export function InsumosModule() {
             {movLoading ? 'Carregando…' : 'Filtrar'}
           </Button>
         </div>
-
-        <details
-          data-pref-key="insumos.details.mov.turnover"
-          open={detailsOpen['insumos.details.mov.turnover'] ?? true}
-          onToggle={(e) => setDetailsKeyOpen('insumos.details.mov.turnover', (e.currentTarget as HTMLDetailsElement).open)}
-          className="rounded-xl border border-white/10 bg-black/10 p-3"
-        >
-          <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-            Giro por categoria (saídas){' '}
-            <span className="text-xs text-blue-200/60">
-              • {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
-            </span>
-          </summary>
-          <div className="mt-3 space-y-2">
-            {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-              <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-black/30 text-blue-100/80">
-                    <tr>
-                      <th className="text-left p-3">Categoria</th>
-                      <th className="text-right p-3">Qtd</th>
-                      <th className="text-right p-3">Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idx: number) => (
-                      <tr key={`${c.categoria || ''}-${idx}`} className="hover:bg-white/5">
-                        <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
-                        <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
-                        <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-            )}
-            <div className="text-xs text-blue-200/60">
-              Usa os filtros desta seção (De/Até) e o período da Visão geral ({overviewPeriod}).
-            </div>
-          </div>
-        </details>
 
         <div className="flex items-center justify-end">
           <Button
