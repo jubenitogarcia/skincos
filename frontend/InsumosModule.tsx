@@ -193,6 +193,7 @@ type ApiError = {
 
 type UserPrefs = {
   overviewPanelOrder?: string[]
+  mainPanelOrder?: string[]
   detailsOpen?: Record<string, boolean>
 }
 
@@ -818,12 +819,33 @@ export function InsumosModule() {
     })
   }, [])
 
+  type MainPanelId = 'insumos' | 'mov'
+  const MAIN_PANELS_KEY = 'skincos.insumos.layout.mainPanels.v1'
+  const DEFAULT_MAIN_PANELS: MainPanelId[] = ['insumos', 'mov']
+
   type OverviewPanelId = 'policies' | 'alerts' | 'charts'
   const OVERVIEW_PANELS_KEY = 'skincos.insumos.layout.overviewPanels.v1'
   const DETAILS_OPEN_KEY = 'skincos.insumos.layout.detailsOpen.v1'
+  const MAIN_PANEL_OPEN_KEYS: Record<MainPanelId, string> = {
+    insumos: 'insumos.panel.insumos',
+    mov: 'insumos.panel.movimentacoes'
+  }
   const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts']
   const [overviewLayoutEdit, setOverviewLayoutEdit] = React.useState(false)
   const [overviewLayoutOpen, setOverviewLayoutOpen] = React.useState(false)
+  const [mainPanelOrder, setMainPanelOrder] = React.useState<MainPanelId[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(MAIN_PANELS_KEY)
+      if (!raw) return DEFAULT_MAIN_PANELS
+      const parsed = JSON.parse(raw)
+      const list = Array.isArray(parsed) ? parsed.map(String) : []
+      const allowed = new Set(DEFAULT_MAIN_PANELS)
+      const cleaned = list.filter((x) => allowed.has(x as any)) as MainPanelId[]
+      return cleaned.length ? cleaned : DEFAULT_MAIN_PANELS
+    } catch {
+      return DEFAULT_MAIN_PANELS
+    }
+  })
   const [overviewPanelOrder, setOverviewPanelOrder] = React.useState<OverviewPanelId[]>(() => {
     try {
       const raw = window.localStorage.getItem(OVERVIEW_PANELS_KEY)
@@ -859,6 +881,15 @@ export function InsumosModule() {
 
   const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
 
+  const visibleMainPanels = React.useMemo(() => {
+    const allowed = new Set(DEFAULT_MAIN_PANELS)
+    const ordered = (mainPanelOrder || []).filter((p) => allowed.has(p))
+    for (const p of DEFAULT_MAIN_PANELS) {
+      if (allowed.has(p) && !ordered.includes(p)) ordered.push(p)
+    }
+    return ordered
+  }, [DEFAULT_MAIN_PANELS.join('|'), mainPanelOrder.join('|')])
+
   const visibleOverviewPanels = React.useMemo(() => {
     const allowed = new Set<OverviewPanelId>(['alerts', 'charts', ...(isManagerRole ? (['policies'] as any) : [])])
     const ordered = (overviewPanelOrder || []).filter((p) => allowed.has(p))
@@ -867,6 +898,15 @@ export function InsumosModule() {
     }
     return ordered
   }, [DEFAULT_OVERVIEW_PANELS.join('|'), isManagerRole, overviewPanelOrder.join('|')])
+
+  const persistMainPanels = React.useCallback((next: MainPanelId[]) => {
+    setMainPanelOrder(next)
+    try {
+      window.localStorage.setItem(MAIN_PANELS_KEY, JSON.stringify(next))
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const persistOverviewPanels = React.useCallback((next: OverviewPanelId[]) => {
     setOverviewPanelOrder(next)
@@ -946,6 +986,12 @@ export function InsumosModule() {
     (prefs: UserPrefs | null | undefined) => {
       if (!prefs || typeof prefs !== 'object') return
 
+      if (Array.isArray(prefs.mainPanelOrder)) {
+        const allowed = new Set(DEFAULT_MAIN_PANELS)
+        const cleaned = prefs.mainPanelOrder.map(String).filter((x) => allowed.has(x as any)) as MainPanelId[]
+        if (cleaned.length) persistMainPanels(cleaned)
+      }
+
       if (Array.isArray(prefs.overviewPanelOrder)) {
         const allowed = new Set(DEFAULT_OVERVIEW_PANELS)
         const cleaned = prefs.overviewPanelOrder.map(String).filter((x) => allowed.has(x as any)) as OverviewPanelId[]
@@ -958,7 +1004,7 @@ export function InsumosModule() {
         persistDetailsOpen(out)
       }
     },
-    [DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistOverviewPanels]
+    [DEFAULT_MAIN_PANELS.join('|'), DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistMainPanels, persistOverviewPanels]
   )
 
   const loadUserPrefs = React.useCallback(async () => {
@@ -991,20 +1037,21 @@ export function InsumosModule() {
       const keys = Array.from(root.querySelectorAll('details[data-pref-key]'))
         .map((el) => el.getAttribute('data-pref-key') || '')
         .filter(Boolean)
-      if (!keys.length) return
+      const allKeys = Array.from(new Set([...keys, ...Object.values(MAIN_PANEL_OPEN_KEYS)]))
+      if (!allKeys.length) return
       setDetailsOpen((prev) => {
         const next = { ...prev }
-        for (const k of keys) next[k] = open
+        for (const k of allKeys) next[k] = open
         try {
           window.localStorage.setItem(DETAILS_OPEN_KEY, JSON.stringify(next))
         } catch {
           // ignore
         }
-        scheduleSaveUserPrefs({ overviewPanelOrder, detailsOpen: next })
+        scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder, detailsOpen: next })
         return next
       })
     },
-    [overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
+    [MAIN_PANEL_OPEN_KEYS.insumos, MAIN_PANEL_OPEN_KEYS.mov, mainPanelOrder.join('|'), overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
   )
 
   const setDetailsKeyOpen = React.useCallback(
@@ -1016,15 +1063,17 @@ export function InsumosModule() {
         } catch {
           // ignore
         }
-        scheduleSaveUserPrefs({ overviewPanelOrder, detailsOpen: next })
+        scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder, detailsOpen: next })
         return next
       })
     },
-    [overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
+    [mainPanelOrder.join('|'), overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
   )
 
   const resetUserLayoutPrefs = React.useCallback(async () => {
+    const nextMain = DEFAULT_MAIN_PANELS
     const nextOverview = DEFAULT_OVERVIEW_PANELS
+    persistMainPanels(nextMain)
     persistOverviewPanels(nextOverview)
     persistDetailsOpen({})
     try {
@@ -1033,18 +1082,36 @@ export function InsumosModule() {
       // ignore
     }
     try {
-      await saveUserPrefs({ overviewPanelOrder: nextOverview, detailsOpen: {} })
+      await saveUserPrefs({ mainPanelOrder: nextMain, overviewPanelOrder: nextOverview, detailsOpen: {} })
       toast.success('Layout resetado.')
     } catch {
       // ignore
     }
-  }, [DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistOverviewPanels, saveUserPrefs])
+  }, [DEFAULT_MAIN_PANELS.join('|'), DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistMainPanels, persistOverviewPanels, saveUserPrefs])
 
   const resetOverviewLayout = React.useCallback(() => {
     const next = DEFAULT_OVERVIEW_PANELS
     persistOverviewPanels(next)
-    scheduleSaveUserPrefs({ overviewPanelOrder: next, detailsOpen })
-  }, [DEFAULT_OVERVIEW_PANELS.join('|'), detailsOpen, persistOverviewPanels, scheduleSaveUserPrefs])
+    scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
+  }, [DEFAULT_OVERVIEW_PANELS.join('|'), detailsOpen, mainPanelOrder.join('|'), persistOverviewPanels, scheduleSaveUserPrefs])
+
+  const resetMainPanelsLayout = React.useCallback(() => {
+    const next = DEFAULT_MAIN_PANELS
+    persistMainPanels(next)
+    scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
+  }, [DEFAULT_MAIN_PANELS.join('|'), detailsOpen, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs])
+
+  const onDragEndMainPanels = React.useCallback(
+    (result: DropResult) => {
+      if (!result.destination) return
+      const next = Array.from(visibleMainPanels)
+      const [moved] = next.splice(result.source.index, 1)
+      next.splice(result.destination.index, 0, moved)
+      persistMainPanels(next)
+      scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
+    },
+    [detailsOpen, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs, visibleMainPanels.join('|')]
+  )
 
   const onDragEndOverview = React.useCallback(
     (result: DropResult) => {
@@ -1053,9 +1120,9 @@ export function InsumosModule() {
       const [moved] = next.splice(result.source.index, 1)
       next.splice(result.destination.index, 0, moved)
       persistOverviewPanels(next)
-      scheduleSaveUserPrefs({ overviewPanelOrder: next, detailsOpen })
+      scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
     },
-    [detailsOpen, persistOverviewPanels, scheduleSaveUserPrefs, visibleOverviewPanels.join('|')]
+    [detailsOpen, mainPanelOrder.join('|'), persistOverviewPanels, scheduleSaveUserPrefs, visibleOverviewPanels.join('|')]
   )
 
   const overviewOrderIndex = React.useMemo(() => {
@@ -1063,6 +1130,12 @@ export function InsumosModule() {
     visibleOverviewPanels.forEach((id, idx) => map.set(id, idx))
     return map
   }, [visibleOverviewPanels.join('|')])
+
+  const mainOrderIndex = React.useMemo(() => {
+    const map = new Map<MainPanelId, number>()
+    visibleMainPanels.forEach((id, idx) => map.set(id, idx))
+    return map
+  }, [visibleMainPanels.join('|')])
 
   const categoryPolicyBySlug = React.useMemo(() => {
     const map = new Map<string, CategoryPolicy>()
@@ -2685,6 +2758,9 @@ export function InsumosModule() {
     return (insumos || []).find((i) => String(i.codigoBarras || '').trim() === code) || null
   }, [insumos, selectedCodigoBarras])
 
+  const insumosPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.insumos] ?? true
+  const movPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.mov] ?? true
+
   React.useEffect(() => {
     insumosRef.current = insumos
   }, [insumos])
@@ -3843,11 +3919,12 @@ export function InsumosModule() {
             <DialogHeader>
               <DialogTitle className="text-white">Organizar caixas</DialogTitle>
               <DialogDescription className="text-blue-100/70">
-                Arraste para reordenar as caixas da Visão geral.
+                Arraste para reordenar as caixas da Visão geral e da Operação.
               </DialogDescription>
             </DialogHeader>
 
             <div className="rounded-xl border border-white/10 bg-black/10 p-2">
+              <div className="px-1 pb-2 text-xs text-blue-200/60">Visão geral</div>
               <DragDropContext onDragEnd={onDragEndOverview}>
                 <Droppable droppableId="overview-layout">
                   {(dropProvided) => (
@@ -3888,9 +3965,49 @@ export function InsumosModule() {
               </DragDropContext>
             </div>
 
+            <div className="rounded-xl border border-white/10 bg-black/10 p-2">
+              <div className="px-1 pb-2 text-xs text-blue-200/60">Operação</div>
+              <DragDropContext onDragEnd={onDragEndMainPanels}>
+                <Droppable droppableId="main-layout">
+                  {(dropProvided) => (
+                    <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="space-y-2">
+                      {visibleMainPanels.map((id, idx) => {
+                        const label = id === 'mov' ? 'Movimentações' : 'Insumos'
+                        return (
+                          <Draggable key={id} draggableId={`main-${id}`} index={idx}>
+                            {(dragProvided) => (
+                              <div
+                                ref={dragProvided.innerRef}
+                                {...dragProvided.draggableProps}
+                                className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
+                              >
+                                <div className="text-sm text-blue-50">{label}</div>
+                                <div
+                                  {...dragProvided.dragHandleProps}
+                                  className="text-xs text-blue-200/70 cursor-grab select-none rounded-md border border-white/10 bg-black/20 px-2 py-1"
+                                  title="Arrastar"
+                                  aria-label="Arrastar"
+                                >
+                                  ↕
+                                </div>
+                              </div>
+                            )}
+                          </Draggable>
+                        )
+                      })}
+                      {dropProvided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </DragDropContext>
+            </div>
+
             <DialogFooter>
               <Button variant="outline" onClick={() => resetOverviewLayout()}>
-                Resetar
+                Resetar visão geral
+              </Button>
+              <Button variant="outline" onClick={() => resetMainPanelsLayout()}>
+                Resetar operação
               </Button>
               <Button variant="secondary" onClick={() => setOverviewLayoutOpen(false)}>
                 Fechar
@@ -4895,7 +5012,7 @@ export function InsumosModule() {
       </Dialog>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div ref={insumosSectionRef} className="space-y-3">
+        <div ref={insumosSectionRef} style={{ order: mainOrderIndex.get('insumos') ?? 0 }} className="space-y-3">
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -4908,9 +5025,28 @@ export function InsumosModule() {
                     Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
                   </Button>
                 ) : null}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.insumos, !insumosPanelOpen)}
+                  title={insumosPanelOpen ? 'Contrair' : 'Expandir'}
+                  aria-label={insumosPanelOpen ? 'Contrair' : 'Expandir'}
+                >
+                  {insumosPanelOpen ? (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </Button>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            {insumosPanelOpen ? (
+              <CardContent className="space-y-3">
 
         {sharePayload && !shareHidden ? (
           <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
@@ -5456,17 +5592,39 @@ export function InsumosModule() {
             </tbody>
           </table>
         </div>
-          </CardContent>
+              </CardContent>
+            ) : null}
         </Card>
       </div>
 
-      <div ref={movSectionRef} className="space-y-3">
+      <div ref={movSectionRef} style={{ order: mainOrderIndex.get('mov') ?? 0 }} className="space-y-3">
         <Card className="bg-black/20 border border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white text-lg">Movimentações</CardTitle>
-            <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+          <CardHeader className="flex flex-row items-start justify-between gap-2">
+            <div>
+              <CardTitle className="text-white text-lg">Movimentações</CardTitle>
+              <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+              onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
+              title={movPanelOpen ? 'Contrair' : 'Expandir'}
+              aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
+            >
+              {movPanelOpen ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </Button>
           </CardHeader>
-          <CardContent className="space-y-3">
+          {movPanelOpen ? (
+            <CardContent className="space-y-3">
 
         {selectedCodigoBarras.trim() ? (
           <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
@@ -5646,7 +5804,8 @@ export function InsumosModule() {
             </tbody>
           </table>
         </div>
-          </CardContent>
+            </CardContent>
+          ) : null}
         </Card>
       </div>
       </div>
