@@ -1,5 +1,6 @@
 import React from 'react'
 import { toast } from 'sonner'
+import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
@@ -188,6 +189,11 @@ type ApiError = {
     estoque?: number
     categoria?: string
   }>
+}
+
+type UserPrefs = {
+  overviewPanelOrder?: string[]
+  detailsOpen?: Record<string, boolean>
 }
 
 type OfflineQueueItem = {
@@ -619,6 +625,7 @@ async function apiJson<T>(
 }
 
 export function InsumosModule() {
+  const rootRef = React.useRef<HTMLDivElement | null>(null)
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
@@ -658,7 +665,6 @@ export function InsumosModule() {
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const insumosSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
-  const skipInsumosQueryEffectRef = React.useRef(true)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -685,13 +691,13 @@ export function InsumosModule() {
   const [policyFormSuggestion, setPolicyFormSuggestion] = React.useState('__NONE__')
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
-  const [insumosFull, setInsumosFull] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
   const [insumosQuery, setInsumosQuery] = React.useState('')
-  const [insumosMode, setInsumosMode] = React.useState<'full' | 'paged'>('full')
   const [insumosPagina, setInsumosPagina] = React.useState(1)
   const [insumosLimite, setInsumosLimite] = React.useState(200)
   const [insumosTotal, setInsumosTotal] = React.useState<number | null>(null)
+  const [insumosHasMore, setInsumosHasMore] = React.useState(false)
+  const insumosRef = React.useRef<Insumo[]>([])
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createScanOpen, setCreateScanOpen] = React.useState(false)
   const [createCodigo, setCreateCodigo] = React.useState('')
@@ -749,6 +755,9 @@ export function InsumosModule() {
   const [movPagina, setMovPagina] = React.useState(1)
   const [movLimite, setMovLimite] = React.useState(50)
   const [movTotal, setMovTotal] = React.useState<number | null>(null)
+  const [movHasMore, setMovHasMore] = React.useState(false)
+  const movRef = React.useRef<Movimentacao[]>([])
+  const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
 
@@ -808,11 +817,251 @@ export function InsumosModule() {
     })
   }, [])
 
+  type OverviewPanelId = 'policies' | 'alerts' | 'charts' | 'roi'
+  const OVERVIEW_PANELS_KEY = 'skincos.insumos.layout.overviewPanels.v1'
+  const DETAILS_OPEN_KEY = 'skincos.insumos.layout.detailsOpen.v1'
+  const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts', 'roi']
+  const [overviewLayoutEdit, setOverviewLayoutEdit] = React.useState(false)
+  const [overviewLayoutOpen, setOverviewLayoutOpen] = React.useState(false)
+  const [overviewPanelOrder, setOverviewPanelOrder] = React.useState<OverviewPanelId[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(OVERVIEW_PANELS_KEY)
+      if (!raw) return DEFAULT_OVERVIEW_PANELS
+      const parsed = JSON.parse(raw)
+      const list = Array.isArray(parsed) ? parsed.map(String) : []
+      const allowed = new Set(DEFAULT_OVERVIEW_PANELS)
+      const cleaned = list.filter((x) => allowed.has(x as any)) as OverviewPanelId[]
+      return cleaned.length ? cleaned : DEFAULT_OVERVIEW_PANELS
+    } catch {
+      return DEFAULT_OVERVIEW_PANELS
+    }
+  })
+
+  const [detailsOpen, setDetailsOpen] = React.useState<Record<string, boolean>>(() => {
+    try {
+      const raw = window.localStorage.getItem(DETAILS_OPEN_KEY)
+      const parsed = raw ? JSON.parse(raw) : null
+      if (!parsed || typeof parsed !== 'object') return {}
+      const out: Record<string, boolean> = {}
+      for (const [k, v] of Object.entries(parsed as any)) {
+        out[String(k)] = !!v
+      }
+      return out
+    } catch {
+      return {}
+    }
+  })
+
   const canUseApi = !!health?.ok
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
 
   const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
+
+  const visibleOverviewPanels = React.useMemo(() => {
+    const allowed = new Set<OverviewPanelId>(['alerts', 'charts', 'roi', ...(isManagerRole ? (['policies'] as any) : [])])
+    const ordered = (overviewPanelOrder || []).filter((p) => allowed.has(p))
+    for (const p of DEFAULT_OVERVIEW_PANELS) {
+      if (allowed.has(p) && !ordered.includes(p)) ordered.push(p)
+    }
+    return ordered
+  }, [DEFAULT_OVERVIEW_PANELS.join('|'), isManagerRole, overviewPanelOrder.join('|')])
+
+  const persistOverviewPanels = React.useCallback((next: OverviewPanelId[]) => {
+    setOverviewPanelOrder(next)
+    try {
+      window.localStorage.setItem(OVERVIEW_PANELS_KEY, JSON.stringify(next))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const persistDetailsOpen = React.useCallback((next: Record<string, boolean>) => {
+    setDetailsOpen(next)
+    try {
+      window.localStorage.setItem(DETAILS_OPEN_KEY, JSON.stringify(next))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const prefsLoadedForUserRef = React.useRef<string | null>(null)
+  const prefsSaveTimerRef = React.useRef<number | null>(null)
+  const pendingPrefsRef = React.useRef<UserPrefs | null>(null)
+
+  const refreshCsrfForPrefs = React.useCallback(async () => {
+    try {
+      const out = await apiJson<{ success?: boolean; user?: InsumosUser; csrfToken?: string }>('/auth/refresh', { method: 'POST' })
+      const next = out?.csrfToken || null
+      setCsrfToken(next)
+      if (out?.user) setUser(out.user)
+      return next
+    } catch {
+      setCsrfToken(null)
+      setUser(null)
+      return null
+    }
+  }, [])
+
+  const saveUserPrefs = React.useCallback(
+    async (prefs: UserPrefs) => {
+      if (!isAuthed) return
+      try {
+        await apiJson<{ success?: boolean }>('/prefs', {
+          method: 'PUT',
+          body: { prefs },
+          csrfToken,
+          retryOnCsrf: refreshCsrfForPrefs
+        })
+      } catch {
+        // ignore (UI already persists in localStorage; server sync is best-effort)
+      }
+    },
+    [csrfToken, isAuthed, refreshCsrfForPrefs]
+  )
+
+  const scheduleSaveUserPrefs = React.useCallback(
+    (prefs: UserPrefs) => {
+      if (!isAuthed) return
+      pendingPrefsRef.current = prefs
+      if (prefsSaveTimerRef.current) window.clearTimeout(prefsSaveTimerRef.current)
+      prefsSaveTimerRef.current = window.setTimeout(() => {
+        const pending = pendingPrefsRef.current
+        pendingPrefsRef.current = null
+        if (!pending) return
+        void saveUserPrefs(pending)
+      }, 700)
+    },
+    [isAuthed, saveUserPrefs]
+  )
+
+  React.useEffect(() => {
+    return () => {
+      if (prefsSaveTimerRef.current) window.clearTimeout(prefsSaveTimerRef.current)
+    }
+  }, [])
+
+  const applyUserPrefs = React.useCallback(
+    (prefs: UserPrefs | null | undefined) => {
+      if (!prefs || typeof prefs !== 'object') return
+
+      if (Array.isArray(prefs.overviewPanelOrder)) {
+        const allowed = new Set(DEFAULT_OVERVIEW_PANELS)
+        const cleaned = prefs.overviewPanelOrder.map(String).filter((x) => allowed.has(x as any)) as OverviewPanelId[]
+        if (cleaned.length) persistOverviewPanels(cleaned)
+      }
+
+      if (prefs.detailsOpen && typeof prefs.detailsOpen === 'object') {
+        const out: Record<string, boolean> = {}
+        for (const [k, v] of Object.entries(prefs.detailsOpen)) out[String(k)] = !!v
+        persistDetailsOpen(out)
+      }
+    },
+    [DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistOverviewPanels]
+  )
+
+  const loadUserPrefs = React.useCallback(async () => {
+    if (!isAuthed) return
+    try {
+      const out = await apiJson<{ success?: boolean; prefs?: UserPrefs | null }>('/prefs')
+      applyUserPrefs(out?.prefs)
+    } catch {
+      // ignore
+    } finally {
+      prefsLoadedForUserRef.current = String(user?.username || '')
+    }
+  }, [applyUserPrefs, isAuthed, user?.username])
+
+  React.useEffect(() => {
+    if (!isAuthed) {
+      prefsLoadedForUserRef.current = null
+      return
+    }
+    const username = String(user?.username || '')
+    if (!username) return
+    if (prefsLoadedForUserRef.current === username) return
+    void loadUserPrefs()
+  }, [isAuthed, loadUserPrefs, user?.username])
+
+  const setAllDetailsOpen = React.useCallback(
+    (open: boolean) => {
+      const root = rootRef.current
+      if (!root) return
+      const keys = Array.from(root.querySelectorAll('details[data-pref-key]'))
+        .map((el) => el.getAttribute('data-pref-key') || '')
+        .filter(Boolean)
+      if (!keys.length) return
+      setDetailsOpen((prev) => {
+        const next = { ...prev }
+        for (const k of keys) next[k] = open
+        try {
+          window.localStorage.setItem(DETAILS_OPEN_KEY, JSON.stringify(next))
+        } catch {
+          // ignore
+        }
+        scheduleSaveUserPrefs({ overviewPanelOrder, detailsOpen: next })
+        return next
+      })
+    },
+    [overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
+  )
+
+  const setDetailsKeyOpen = React.useCallback(
+    (key: string, open: boolean) => {
+      setDetailsOpen((prev) => {
+        const next = { ...prev, [key]: open }
+        try {
+          window.localStorage.setItem(DETAILS_OPEN_KEY, JSON.stringify(next))
+        } catch {
+          // ignore
+        }
+        scheduleSaveUserPrefs({ overviewPanelOrder, detailsOpen: next })
+        return next
+      })
+    },
+    [overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
+  )
+
+  const resetUserLayoutPrefs = React.useCallback(async () => {
+    const nextOverview = DEFAULT_OVERVIEW_PANELS
+    persistOverviewPanels(nextOverview)
+    persistDetailsOpen({})
+    try {
+      window.localStorage.removeItem(DETAILS_OPEN_KEY)
+    } catch {
+      // ignore
+    }
+    try {
+      await saveUserPrefs({ overviewPanelOrder: nextOverview, detailsOpen: {} })
+      toast.success('Layout resetado.')
+    } catch {
+      // ignore
+    }
+  }, [DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistOverviewPanels, saveUserPrefs])
+
+  const resetOverviewLayout = React.useCallback(() => {
+    const next = DEFAULT_OVERVIEW_PANELS
+    persistOverviewPanels(next)
+    scheduleSaveUserPrefs({ overviewPanelOrder: next, detailsOpen })
+  }, [DEFAULT_OVERVIEW_PANELS.join('|'), detailsOpen, persistOverviewPanels, scheduleSaveUserPrefs])
+
+  const onDragEndOverview = React.useCallback(
+    (result: DropResult) => {
+      if (!result.destination) return
+      const next = Array.from(visibleOverviewPanels)
+      const [moved] = next.splice(result.source.index, 1)
+      next.splice(result.destination.index, 0, moved)
+      persistOverviewPanels(next)
+      scheduleSaveUserPrefs({ overviewPanelOrder: next, detailsOpen })
+    },
+    [detailsOpen, persistOverviewPanels, scheduleSaveUserPrefs, visibleOverviewPanels.join('|')]
+  )
+
+  const overviewOrderIndex = React.useMemo(() => {
+    const map = new Map<OverviewPanelId, number>()
+    visibleOverviewPanels.forEach((id, idx) => map.set(id, idx))
+    return map
+  }, [visibleOverviewPanels.join('|')])
 
   const categoryPolicyBySlug = React.useMemo(() => {
     const map = new Map<string, CategoryPolicy>()
@@ -1766,33 +2015,13 @@ export function InsumosModule() {
     setEditOpen(true)
   }, [])
 
-  const loadInsumosFull = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setInsumosLoading(true)
-    try {
-      const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?unidade=${encodeURIComponent(unidade)}`)
-      const items = Array.isArray(out?.data) ? out.data : []
-      setInsumos(items)
-      setInsumosFull(items)
-      setInsumosTotal(items.length)
-      setInsumosMode('full')
-      setInsumosPagina(1)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-      setInsumos([])
-      setInsumosFull([])
-      setInsumosTotal(null)
-    } finally {
-      setInsumosLoading(false)
-    }
-  }, [canUseApi, isAuthed, unidade])
-
   const loadInsumosPaged = React.useCallback(
-    async (opts?: { pagina?: number; limite?: number; q?: string }): Promise<number | null> => {
+    async (opts?: { pagina?: number; limite?: number; q?: string; append?: boolean }): Promise<number | null> => {
       if (!canUseApi || !isAuthed) return null
       const pagina = Math.max(1, opts?.pagina ?? insumosPagina)
       const limite = Math.max(1, Math.min(1000, opts?.limite ?? insumosLimite))
       const q = String(opts?.q ?? insumosQuery).trim()
+      const append = opts?.append === true
 
       setInsumosLoading(true)
       try {
@@ -1805,9 +2034,24 @@ export function InsumosModule() {
         const items = Array.isArray(out?.data) ? out.data : []
         const total = Number(out?.resumo?.total)
         const totalOut = Number.isFinite(total) ? total : null
-        setInsumos(items)
+          const merged = (() => {
+          if (!append) return items
+          const byRegistro = new Map<string, Insumo>()
+          for (const it of insumosRef.current || []) {
+            const key = String((it as any)?.registro || '').trim()
+            if (key) byRegistro.set(key, it)
+          }
+          for (const it of items) {
+            const key = String((it as any)?.registro || '').trim()
+            if (!key) continue
+            if (!byRegistro.has(key)) byRegistro.set(key, it)
+          }
+          return Array.from(byRegistro.values())
+        })()
+        setInsumos(merged)
+        const mergedCount = merged.length
         setInsumosTotal(totalOut)
-        setInsumosMode('paged')
+        setInsumosHasMore(totalOut != null ? mergedCount < totalOut : items.length >= limite)
         setInsumosPagina(pagina)
         setInsumosLimite(limite)
         return totalOut
@@ -1815,6 +2059,7 @@ export function InsumosModule() {
         toast.error(e instanceof Error ? e.message : String(e))
         setInsumos([])
         setInsumosTotal(null)
+        setInsumosHasMore(false)
         return null
       } finally {
         setInsumosLoading(false)
@@ -1823,25 +2068,54 @@ export function InsumosModule() {
     [canUseApi, insumosLimite, insumosPagina, insumosQuery, isAuthed, unidade]
   )
 
+  const insumosListContainerRef = React.useRef<HTMLDivElement | null>(null)
+
   const refreshInsumos = React.useCallback(
     async (opts?: { pagina?: number }) => {
       if (!canUseApi || !isAuthed) return
-      if (insumosMode === 'paged') {
-        const pagina = Math.max(1, opts?.pagina ?? insumosPagina)
-        const q = insumosQuery.trim()
-        await loadInsumosPaged({ pagina, limite: insumosLimite, q })
-        return
+      const pagina = Math.max(1, opts?.pagina ?? 1)
+      const q = insumosQuery.trim()
+      await loadInsumosPaged({ pagina, limite: insumosLimite, q, append: false })
+      if (pagina === 1) {
+        try {
+          insumosListContainerRef.current?.scrollTo?.({ top: 0 })
+        } catch {
+          // ignore
+        }
       }
-      await loadInsumosFull()
     },
-    [canUseApi, insumosLimite, insumosMode, insumosPagina, insumosQuery, isAuthed, loadInsumosFull, loadInsumosPaged]
+    [canUseApi, insumosLimite, insumosQuery, isAuthed, loadInsumosPaged]
   )
 
-  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number }) => {
+  const loadMoreInsumos = React.useCallback(() => {
+    if (!canUseApi || !isAuthed) return
+    if (insumosLoading) return
+    if (!insumosHasMore) return
+    void loadInsumosPaged({ pagina: insumosPagina + 1, limite: insumosLimite, q: insumosQuery.trim(), append: true })
+  }, [canUseApi, insumosHasMore, insumosLimite, insumosLoading, insumosPagina, insumosQuery, isAuthed, loadInsumosPaged])
+
+  const onInsumosScroll = React.useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+      if (remaining < 220) loadMoreInsumos()
+    },
+    [loadMoreInsumos]
+  )
+
+  React.useEffect(() => {
+    const el = insumosListContainerRef.current
+    if (!el) return
+    if (!insumosHasMore || insumosLoading) return
+    if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
+  }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos])
+
+  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number; append?: boolean }) => {
     if (!canUseApi || !isAuthed) return
     setMovLoading(true)
     try {
-      const pagina = Math.max(1, opts?.pagina ?? movPagina)
+      const append = opts?.append === true
+      const pagina = Math.max(1, opts?.pagina ?? (append ? movPagina + 1 : 1))
       const limite = Math.max(1, Math.min(200, opts?.limite ?? movLimite))
       const params = new URLSearchParams()
       params.set('unidade', unidade)
@@ -1856,25 +2130,51 @@ export function InsumosModule() {
         `/movimentacoes?${params.toString()}`
       )
       const list = (out as any)?.movimentos ?? out?.data
-      setMovimentacoes(Array.isArray(list) ? list : [])
+      const items = Array.isArray(list) ? list : []
+      const merged = append ? [...(movRef.current || []), ...items] : items
+      setMovimentacoes(merged)
       const total = Number((out as any)?.resumo?.totalMovimentacoes)
-      setMovTotal(Number.isFinite(total) ? total : null)
+      const totalOut = Number.isFinite(total) ? total : null
+      setMovTotal(totalOut)
       setMovPagina(pagina)
       setMovLimite(limite)
+      setMovHasMore(totalOut != null ? merged.length < totalOut : items.length >= limite)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
       setMovimentacoes([])
       setMovTotal(null)
+      setMovHasMore(false)
     } finally {
       setMovLoading(false)
     }
   }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, unidade])
 
+  const loadMoreMovimentacoes = React.useCallback(() => {
+    if (!canUseApi || !isAuthed) return
+    if (movLoading) return
+    if (!movHasMore) return
+    void loadMovimentacoes({ append: true, limite: movLimite })
+  }, [canUseApi, isAuthed, loadMovimentacoes, movHasMore, movLimite, movLoading])
+
+  const onMovScroll = React.useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+      if (remaining < 220) loadMoreMovimentacoes()
+    },
+    [loadMoreMovimentacoes]
+  )
+
+  React.useEffect(() => {
+    const el = movListContainerRef.current
+    if (!el) return
+    if (!movHasMore || movLoading) return
+    if (el.scrollHeight <= el.clientHeight + 80) loadMoreMovimentacoes()
+  }, [loadMoreMovimentacoes, movHasMore, movLoading, movimentacoes.length])
+
   React.useEffect(() => {
     setMovPagina(1)
   }, [unidade, movAte, movDe, movLimite, movTipo])
-
-  const INSUMOS_PAGED_THRESHOLD = 800
 
   const loadOverview = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -2341,68 +2641,46 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
-    let cancelled = false
-    void (async () => {
-      skipInsumosQueryEffectRef.current = true
-      // Fast path: load first page and decide if we should load full data set.
-      const total = await loadInsumosPaged({ pagina: 1, limite: insumosLimite, q: '' })
-      if (cancelled) return
-      if (total != null && total <= INSUMOS_PAGED_THRESHOLD) {
-        await loadInsumosFull()
-      }
-      skipInsumosQueryEffectRef.current = false
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [INSUMOS_PAGED_THRESHOLD, canUseApi, insumosLimite, isAuthed, loadInsumosFull, loadInsumosPaged, unidade])
+    void loadInsumosPaged({ pagina: 1, limite: insumosLimite, q: '', append: false })
+  }, [canUseApi, insumosLimite, isAuthed, loadInsumosPaged, unidade])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
-    if (insumosMode !== 'paged') return
-    if (skipInsumosQueryEffectRef.current) return
     const q = insumosQuery.trim()
     const t = window.setTimeout(() => {
-      void loadInsumosPaged({ pagina: 1, limite: insumosLimite, q })
+      void loadInsumosPaged({ pagina: 1, limite: insumosLimite, q, append: false })
     }, 350)
     return () => window.clearTimeout(t)
-  }, [canUseApi, insumosLimite, insumosMode, insumosQuery, isAuthed, loadInsumosPaged, unidade])
+  }, [canUseApi, insumosLimite, insumosQuery, isAuthed, loadInsumosPaged, unidade])
 
-  const filteredInsumos = React.useMemo(() => {
-    const q = insumosQuery.trim().toLowerCase()
-    if (!q) return insumos
-    if (insumosMode === 'paged') return insumos
-    return insumos.filter((i) => {
-      const hay = [i.codigoBarras, i.produto, i.categoria, i.marca, i.lote]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-      return hay.includes(q)
-    })
-  }, [insumos, insumosMode, insumosQuery])
+  const filteredInsumos = insumos
+
+  React.useEffect(() => {
+    insumosRef.current = insumos
+  }, [insumos])
 
   const lotCategorias = React.useMemo(() => {
-    const base = (insumosFull?.length ? insumosFull : insumos) || []
+    const base = insumos || []
     return Array.from(new Set(base.map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
-  }, [insumos, insumosFull])
+  }, [insumos])
 
   const insumosMarcas = React.useMemo(() => {
-    const base = (insumosFull?.length ? insumosFull : insumos) || []
+    const base = insumos || []
     return Array.from(new Set(base.map((i) => String(i.marca || '').trim()).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
-  }, [insumos, insumosFull])
+  }, [insumos])
 
   const insumosTiposUnidade = React.useMemo(() => {
-    const base = (insumosFull?.length ? insumosFull : insumos) || []
+    const base = insumos || []
     const fromData = Array.from(
       new Set(base.map((i) => String(i.tipoUnidade || '').trim()).filter(Boolean))
     ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
     const fixed = ['Frasco', 'Seringa', 'Unidade', 'Caixa', 'ml']
     return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
-  }, [insumos, insumosFull])
+  }, [insumos])
 
   type ChartPresetId =
     | 'stock_category'
@@ -2894,8 +3172,12 @@ export function InsumosModule() {
     return out
   }, [movGroupTransfers, movTipo, movimentacoes])
 
+  React.useEffect(() => {
+    movRef.current = movimentacoes
+  }, [movimentacoes])
+
   return (
-    <div className="p-6 space-y-6">
+    <div ref={rootRef} className="p-6 space-y-6">
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -2997,6 +3279,18 @@ export function InsumosModule() {
           )}
         </DialogContent>
       </Dialog>
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={() => setAllDetailsOpen(true)}>
+          Expandir tudo
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setAllDetailsOpen(false)}>
+          Contrair tudo
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => void resetUserLayoutPrefs()} disabled={!isAuthed}>
+          Resetar layout
+        </Button>
+      </div>
 
       <Dialog
         open={quickOp != null}
@@ -3398,6 +3692,9 @@ export function InsumosModule() {
                 <SelectItem value="1y">1 ano</SelectItem>
               </SelectContent>
             </Select>
+            <Button variant="outline" onClick={() => setOverviewLayoutOpen(true)} disabled={!isAuthed}>
+              Organizar
+            </Button>
             <Button
               variant="secondary"
               onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])}
@@ -3407,6 +3704,69 @@ export function InsumosModule() {
             </Button>
           </div>
         </div>
+
+        <Dialog open={overviewLayoutOpen} onOpenChange={setOverviewLayoutOpen}>
+          <DialogContent className="max-w-md dark bg-corporate-900 border-white/10 text-white">
+            <DialogHeader>
+              <DialogTitle className="text-white">Organizar caixas</DialogTitle>
+              <DialogDescription className="text-blue-100/70">
+                Arraste para reordenar as caixas da Visão geral.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="rounded-xl border border-white/10 bg-black/10 p-2">
+              <DragDropContext onDragEnd={onDragEndOverview}>
+                <Droppable droppableId="overview-layout">
+                  {(dropProvided) => (
+                    <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="space-y-2">
+                      {visibleOverviewPanels.map((id, idx) => {
+                        const label =
+                          id === 'policies'
+                            ? 'Políticas por categoria'
+                            : id === 'alerts'
+                              ? 'Alertas e gestão'
+                              : id === 'charts'
+                                ? 'Gráficos'
+                                : 'ROI'
+                        return (
+                          <Draggable key={id} draggableId={id} index={idx}>
+                            {(dragProvided) => (
+                              <div
+                                ref={dragProvided.innerRef}
+                                {...dragProvided.draggableProps}
+                                className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
+                              >
+                                <div className="text-sm text-blue-50">{label}</div>
+                                <div
+                                  {...dragProvided.dragHandleProps}
+                                  className="text-xs text-blue-200/70 cursor-grab select-none rounded-md border border-white/10 bg-black/20 px-2 py-1"
+                                  title="Arrastar"
+                                  aria-label="Arrastar"
+                                >
+                                  ↕
+                                </div>
+                              </div>
+                            )}
+                          </Draggable>
+                        )
+                      })}
+                      {dropProvided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </DragDropContext>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => resetOverviewLayout()}>
+                Resetar
+              </Button>
+              <Button variant="secondary" onClick={() => setOverviewLayoutOpen(false)}>
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
@@ -3496,7 +3856,9 @@ export function InsumosModule() {
           </Card>
         </div>
 
+        <div className="flex flex-col gap-3">
         {isManagerRole ? (
+          <div style={{ order: overviewOrderIndex.get('policies') ?? 0 }}>
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex flex-row items-center justify-between gap-2">
               <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
@@ -3699,8 +4061,10 @@ export function InsumosModule() {
               </div>
             </CardContent>
           </Card>
+          </div>
         ) : null}
 
+        <div style={{ order: overviewOrderIndex.get('alerts') ?? 0 }}>
         <Card className="bg-black/20 border border-white/10">
           <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-white text-base">Alertas</CardTitle>
@@ -3721,7 +4085,12 @@ export function InsumosModule() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+            <details
+              data-pref-key="insumos.details.alerts.lowStock"
+              open={detailsOpen['insumos.details.alerts.lowStock'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.lowStock', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Estoque abaixo do mínimo
               </summary>
@@ -3816,7 +4185,12 @@ export function InsumosModule() {
               </div>
             </details>
 
-            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+            <details
+              data-pref-key="insumos.details.alerts.validity"
+              open={detailsOpen['insumos.details.alerts.validity'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.validity', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
               <div className="mt-3 space-y-3">
                 <div className="text-xs text-blue-200/60">
@@ -3931,7 +4305,12 @@ export function InsumosModule() {
               </div>
             </details>
 
-            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+            <details
+              data-pref-key="insumos.details.alerts.actionables"
+              open={detailsOpen['insumos.details.alerts.actionables'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.actionables', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Ações recomendadas
               </summary>
@@ -4003,7 +4382,12 @@ export function InsumosModule() {
               </div>
             </details>
 
-            <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+            <details
+              data-pref-key="insumos.details.alerts.quality"
+              open={detailsOpen['insumos.details.alerts.quality'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Qualidade do cadastro{' '}
                 <span className="text-xs text-blue-200/60">
@@ -4065,39 +4449,41 @@ export function InsumosModule() {
             </details>
           </CardContent>
         </Card>
-
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-white text-base font-semibold">Gráficos</div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (chartSlots.length >= MAX_CHARTS) return
-                setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
-              }}
-              disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
-            >
-              + Adicionar
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
-              disabled={overviewLoading || insightsLoading}
-            >
-              Reset
-            </Button>
-          </div>
         </div>
-        <div
-          className={`grid gap-3 ${chartSlots.length === 1
-            ? 'grid-cols-1'
-            : chartSlots.length === 2
-              ? 'grid-cols-1 lg:grid-cols-2'
-              : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
-            }`}
-        >
+
+        <div style={{ order: overviewOrderIndex.get('charts') ?? 0 }}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-white text-base font-semibold">Gráficos</div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (chartSlots.length >= MAX_CHARTS) return
+                  setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+                }}
+                disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+              >
+                + Adicionar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+                disabled={overviewLoading || insightsLoading}
+              >
+                Reset
+              </Button>
+            </div>
+          </div>
+          <div
+            className={`grid gap-3 ${chartSlots.length === 1
+              ? 'grid-cols-1'
+              : chartSlots.length === 2
+                ? 'grid-cols-1 lg:grid-cols-2'
+                : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
+              }`}
+          >
           {chartSlots.map((slot, idx) => {
             const preset = presetSupports(slot.presetId)
             const viewOptions = presetViewOptions(slot.presetId)
@@ -4204,32 +4590,36 @@ export function InsumosModule() {
               </Card>
             )
           })}
-        </div>
-        <div className="text-xs text-blue-200/60">
-          Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
+          </div>
+          <div className="text-xs text-blue-200/60">
+            Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.
+          </div>
         </div>
 
-        <Card className="bg-black/20 border border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1">
-            <div className="text-sm text-blue-100/80">
-              Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-              {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
-            </div>
-            <div className="text-sm text-blue-100/80">
-              Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-              {overviewRoi?.perdas?.valorRiscoVencendo != null
-                ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
-                : '-'}
-            </div>
-            <div className="text-sm text-blue-100/80">
-              Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
-            </div>
-            <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-          </CardContent>
-        </Card>
+        <div style={{ order: overviewOrderIndex.get('roi') ?? 0 }}>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <div className="text-sm text-blue-100/80">
+                Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
+                {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
+              </div>
+              <div className="text-sm text-blue-100/80">
+                Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
+                {overviewRoi?.perdas?.valorRiscoVencendo != null
+                  ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
+                  : '-'}
+              </div>
+              <div className="text-sm text-blue-100/80">
+                Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
+              </div>
+              <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
       </div>
 
       <Dialog
@@ -4302,7 +4692,12 @@ export function InsumosModule() {
             </div>
           </div>
 
-          <details className="mt-2 rounded-lg border border-white/10 bg-black/10 p-3">
+          <details
+            data-pref-key="insumos.details.edit.optional"
+            open={detailsOpen['insumos.details.edit.optional'] ?? true}
+            onToggle={(e) => setDetailsKeyOpen('insumos.details.edit.optional', (e.currentTarget as HTMLDetailsElement).open)}
+            className="mt-2 rounded-lg border border-white/10 bg-black/10 p-3"
+          >
             <summary className="cursor-pointer select-none text-sm text-blue-100/80">Detalhes (opcional)</summary>
             <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
               <div className="md:col-span-2">
@@ -4566,68 +4961,43 @@ export function InsumosModule() {
             )}
           </div>
         </div>
-        {insumosMode === 'paged' ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs text-blue-200/60">
-              Página <span className="font-mono">{insumosPagina}</span>
-              {insumosTotal != null ? (
-                <>
-                  {' '}
-                  de <span className="font-mono">{Math.max(1, Math.ceil(insumosTotal / insumosLimite))}</span>
-                </>
-              ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-40">
+              <Select
+                value={String(insumosLimite)}
+                onValueChange={(v) => {
+                  const lim = Math.max(1, Math.min(1000, parseInt(String(v), 10) || 200))
+                  setInsumosLimite(lim)
+                  void refreshInsumos({ pagina: 1 })
+                }}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                  <SelectItem value="200">200</SelectItem>
+                  <SelectItem value="400">400</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="w-40">
-                <Select
-                  value={String(insumosLimite)}
-                  onValueChange={(v) => {
-                    const lim = Math.max(1, Math.min(1000, parseInt(String(v), 10) || 200))
-                    setInsumosLimite(lim)
-                    void refreshInsumos({ pagina: 1 })
-                  }}
-                >
-                  <SelectTrigger className="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="50">50</SelectItem>
-                    <SelectItem value="100">100</SelectItem>
-                    <SelectItem value="200">200</SelectItem>
-                    <SelectItem value="400">400</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => void refreshInsumos({ pagina: Math.max(1, insumosPagina - 1) })}
-                disabled={insumosLoading || !isAuthed || insumosPagina <= 1}
-              >
-                Anterior
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void refreshInsumos({ pagina: insumosPagina + 1 })}
-                disabled={
-                  insumosLoading ||
-                  !isAuthed ||
-                  (insumosTotal != null ? insumosPagina >= Math.max(1, Math.ceil(insumosTotal / insumosLimite)) : filteredInsumos.length < insumosLimite)
-                }
-              >
-                Próxima
-              </Button>
-              {insumosTotal != null && insumosTotal <= INSUMOS_PAGED_THRESHOLD && !insumosFull.length ? (
-                <Button
-                  variant="outline"
-                  onClick={() => void loadInsumosFull()}
-                  disabled={insumosLoading || !isAuthed}
-                >
-                  Carregar tudo
-                </Button>
-              ) : null}
+            <div className="text-xs text-blue-200/60">
+              {insumosHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}
             </div>
           </div>
-        ) : null}
+          {insumosHasMore ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadInsumosPaged({ pagina: insumosPagina + 1, limite: insumosLimite, q: insumosQuery.trim(), append: true })}
+              disabled={insumosLoading || !isAuthed}
+            >
+              Carregar mais
+            </Button>
+          ) : null}
+        </div>
 
         {createOpen ? (
           <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
@@ -4742,7 +5112,12 @@ export function InsumosModule() {
               </div>
             </div>
 
-            <details className="rounded-lg border border-white/10 bg-black/10 p-3">
+            <details
+              data-pref-key="insumos.details.create.optional"
+              open={detailsOpen['insumos.details.create.optional'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.create.optional', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-lg border border-white/10 bg-black/10 p-3"
+            >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Detalhes (opcional)
               </summary>
@@ -4891,7 +5266,7 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-        <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="min-w-full text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
@@ -5069,7 +5444,12 @@ export function InsumosModule() {
           </Button>
         </div>
 
-        <details className="rounded-xl border border-white/10 bg-black/10 p-3">
+        <details
+          data-pref-key="insumos.details.mov.turnover"
+          open={detailsOpen['insumos.details.mov.turnover'] ?? true}
+          onToggle={(e) => setDetailsKeyOpen('insumos.details.mov.turnover', (e.currentTarget as HTMLDetailsElement).open)}
+          className="rounded-xl border border-white/10 bg-black/10 p-3"
+        >
           <summary className="cursor-pointer select-none text-sm text-blue-100/80">
             Giro por categoria (saídas){' '}
             <span className="text-xs text-blue-200/60">
@@ -5130,38 +5510,25 @@ export function InsumosModule() {
 
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
           <div>
-            Página <span className="font-mono">{movPagina}</span>
+            <span className="font-mono">{movimentacoesView.length}</span>
             {movTotal != null ? (
               <>
                 {' '}
-                de <span className="font-mono">{Math.max(1, Math.ceil(movTotal / movLimite))}</span> • total{' '}
-                <span className="font-mono">{movTotal}</span>
+                de <span className="font-mono">{movTotal}</span>
               </>
             ) : null}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => void loadMovimentacoes({ pagina: Math.max(1, movPagina - 1) })}
-              disabled={movLoading || !isAuthed || movPagina <= 1}
-            >
-              Anterior
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void loadMovimentacoes({ pagina: movPagina + 1 })}
-              disabled={
-                movLoading ||
-                !isAuthed ||
-                (movTotal != null ? movPagina >= Math.max(1, Math.ceil(movTotal / movLimite)) : movimentacoes.length < movLimite)
-              }
-            >
-              Próxima
-            </Button>
+            <div className="text-xs text-blue-200/60">{movHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}</div>
+            {movHasMore ? (
+              <Button variant="outline" size="sm" onClick={() => loadMoreMovimentacoes()} disabled={movLoading || !isAuthed}>
+                Carregar mais
+              </Button>
+            ) : null}
           </div>
         </div>
 
-        <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="min-w-full text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>

@@ -43,6 +43,12 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Políticas (read-only para usuários autenticados): `GET /insumos/categorias/policies`
 - Admin (CRUD): `GET/POST /insumos/admin/categories`, `DELETE /insumos/admin/categories/:slug`
 
+### Preferências do usuário (UI)
+
+- Carregar: `GET /insumos/prefs`
+- Salvar: `PUT /insumos/prefs`
+- Resetar: `DELETE /insumos/prefs`
+
 ### Insights e alertas
 
 - Alertas estoque/validade: `GET /insumos/alertas/estoque?unidade=<slug>`

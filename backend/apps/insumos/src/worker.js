@@ -14,6 +14,7 @@ import { handleInsumosRoutes } from './routes/insumos.js';
 import { handleInsightsRoutes } from './routes/insights.js';
 import { handleShareRoutes } from './routes/share.js';
 import { handleCategoriasRoutes } from './routes/categorias.js';
+import { handlePrefsRoutes } from './routes/prefs.js';
 import {
     shouldUseD1,
     d1ListInsumos,
@@ -1848,6 +1849,16 @@ export default {
             requireRoles,
         });
         if (categoriasResp) return categoriasResp;
+
+        const prefsResp = await handlePrefsRoutes({
+            request,
+            url,
+            env,
+            appOrigin,
+            withCORS,
+            requireRoles,
+        });
+        if (prefsResp) return prefsResp;
 
         const shareResp = await handleShareRoutes({
             request,
