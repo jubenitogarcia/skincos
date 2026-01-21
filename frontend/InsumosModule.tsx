@@ -698,6 +698,7 @@ export function InsumosModule() {
   const [insumosTotal, setInsumosTotal] = React.useState<number | null>(null)
   const [insumosHasMore, setInsumosHasMore] = React.useState(false)
   const insumosRef = React.useRef<Insumo[]>([])
+  const [selectedCodigoBarras, setSelectedCodigoBarras] = React.useState('')
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createScanOpen, setCreateScanOpen] = React.useState(false)
   const [createCodigo, setCreateCodigo] = React.useState('')
@@ -2122,6 +2123,8 @@ export function InsumosModule() {
       params.set('limite', String(limite))
       params.set('pagina', String(pagina))
       if (movTipo !== 'TODOS') params.set('tipo', movTipo)
+      const codigo = selectedCodigoBarras.trim()
+      if (codigo) params.set('codigoBarras', codigo)
       const deIso = dateInputToIso(movDe)
       const ateIso = dateInputToIso(movAte)
       if (deIso) params.set('de', deIso)
@@ -2147,7 +2150,7 @@ export function InsumosModule() {
     } finally {
       setMovLoading(false)
     }
-  }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, unidade])
+  }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, selectedCodigoBarras, unidade])
 
   const loadMoreMovimentacoes = React.useCallback(() => {
     if (!canUseApi || !isAuthed) return
@@ -2174,7 +2177,12 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     setMovPagina(1)
-  }, [unidade, movAte, movDe, movLimite, movTipo])
+    try {
+      movListContainerRef.current?.scrollTo?.({ top: 0 })
+    } catch {
+      // ignore
+    }
+  }, [unidade, movAte, movDe, movLimite, movTipo, selectedCodigoBarras])
 
   const loadOverview = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -2647,9 +2655,13 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
-    void loadMovimentacoes()
     void loadShareHistory()
-  }, [canUseApi, isAuthed, loadMovimentacoes, loadShareHistory])
+  }, [canUseApi, isAuthed, loadShareHistory])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    void loadMovimentacoes()
+  }, [canUseApi, isAuthed, loadMovimentacoes])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -2666,6 +2678,12 @@ export function InsumosModule() {
   }, [canUseApi, insumosLimite, insumosQuery, isAuthed, loadInsumosPaged, unidade])
 
   const filteredInsumos = insumos
+
+  const selectedInsumo = React.useMemo(() => {
+    const code = selectedCodigoBarras.trim()
+    if (!code) return null
+    return (insumos || []).find((i) => String(i.codigoBarras || '').trim() === code) || null
+  }, [insumos, selectedCodigoBarras])
 
   React.useEffect(() => {
     insumosRef.current = insumos
@@ -4876,22 +4894,23 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <div ref={insumosSectionRef} className="max-w-6xl mx-auto space-y-3">
-        <Card className="bg-black/20 border border-white/10">
-          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="text-white text-lg font-semibold">Insumos</div>
-              <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {offlineQueueCount > 0 ? (
-                <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                  Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-                </Button>
-              ) : null}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
+      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div ref={insumosSectionRef} className="space-y-3">
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-white text-lg font-semibold">Insumos</div>
+                <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {offlineQueueCount > 0 ? (
+                  <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                    Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+                  </Button>
+                ) : null}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
 
         {sharePayload && !shareHidden ? (
           <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
@@ -5321,6 +5340,8 @@ export function InsumosModule() {
             </thead>
             <tbody className="divide-y divide-white/5">
               {filteredInsumos.map((i) => {
+                const codigoBarras = String(i.codigoBarras || '').trim()
+                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
                 const estoque = Number(i.estoqueAtual) || 0
                 const min = Number(i.estoqueMinimo) || 0
                 const stockStatus = min > 0 ? calcularStatusEstoque(estoque, min) : 'OK'
@@ -5343,18 +5364,40 @@ export function InsumosModule() {
                   : ''
 
                 return (
-                  <tr key={`${i.registro || ''}-${i.codigoBarras || ''}`} className="hover:bg-white/5">
+                  <tr
+                    key={`${i.registro || ''}-${i.codigoBarras || ''}`}
+                    className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}
+                  >
                     <td className="p-3">
-                      <div className="text-blue-50">{i.produto || '-'}</div>
-                      <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
-                      {isCritico || isLowStock || isVencendo || isExpirado ? (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {isCritico ? <Badge variant="destructive">Críticos</Badge> : null}
-                          {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
-                          {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
-                          {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
+                      <button
+                        type="button"
+                        className="w-full text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 cursor-pointer group"
+                        onClick={() => {
+                          if (!codigoBarras) return
+                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
+                          try {
+                            movSectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+                          } catch {
+                            // ignore
+                          }
+                        }}
+                        title={codigoBarras ? 'Ver movimentações deste insumo' : undefined}
+                        aria-pressed={isSelected}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-blue-50 group-hover:underline">{i.produto || '-'}</div>
+                          {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
                         </div>
-                      ) : null}
+                        <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
+                        {isCritico || isLowStock || isVencendo || isExpirado ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {isCritico ? <Badge variant="destructive">Críticos</Badge> : null}
+                            {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
+                            {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
+                            {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
+                          </div>
+                        ) : null}
+                      </button>
                     </td>
                     <td className="p-3 text-blue-100/80">
                       <div className="flex items-center gap-2">
@@ -5417,13 +5460,26 @@ export function InsumosModule() {
         </Card>
       </div>
 
-      <div ref={movSectionRef} className="max-w-6xl mx-auto space-y-3">
+      <div ref={movSectionRef} className="space-y-3">
         <Card className="bg-black/20 border border-white/10">
           <CardHeader>
             <CardTitle className="text-white text-lg">Movimentações</CardTitle>
             <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
           </CardHeader>
           <CardContent className="space-y-3">
+
+        {selectedCodigoBarras.trim() ? (
+          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <span className="text-blue-200/70">Filtrando por:</span>{' '}
+              {selectedInsumo?.produto ? <span className="text-blue-50 font-semibold">{selectedInsumo.produto}</span> : <span>Insumo</span>}{' '}
+              • <span className="font-mono">{selectedCodigoBarras.trim()}</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setSelectedCodigoBarras('')}>
+              Limpar
+            </Button>
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap items-end gap-2">
           <div className="w-48">
@@ -5476,6 +5532,7 @@ export function InsumosModule() {
               const ateIso = dateInputToIso(movAte)
               const params = new URLSearchParams({
                 unidade,
+                ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
                 ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
                 ...(deIso ? { de: deIso } : {}),
                 ...(ateIso ? { ate: ateIso } : {})
@@ -5518,45 +5575,67 @@ export function InsumosModule() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {movimentacoesView.map((m, idx) => (
-                <tr key={`${m.dataHora || ''}-${idx}`} className="hover:bg-white/5">
-                  <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
-                  <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
-                  <td className="p-3 text-blue-50">{m.produto || '-'}</td>
-                  <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
-                  <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
-                  <td className="p-3 text-blue-100/70">
-                    {m.transferId
-                      ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
-                      : (m.unidade ? unidadeLabel(m.unidade) : '-')}
-                  </td>
-                  <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
-                  <td className="p-3 text-blue-100/60">
-                    <div className="space-y-1">
-                      {m.transferId ? (
-                        <div>
+              {movimentacoesView.map((m, idx) => {
+                const codigoBarras = String(m.codigoBarras || '').trim()
+                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
+                return (
+                  <tr key={`${m.dataHora || ''}-${idx}`} className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}>
+                    <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
+                    <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
+                    <td className="p-3">
+                      <button
+                        type="button"
+                        className="text-left w-full text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                        onClick={() => {
+                          if (!codigoBarras) return
+                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
+                          try {
+                            insumosSectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+                          } catch {
+                            // ignore
+                          }
+                        }}
+                        title={codigoBarras ? 'Filtrar por este insumo' : undefined}
+                        aria-pressed={isSelected}
+                      >
+                        {m.produto || '-'}
+                      </button>
+                    </td>
+                    <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
+                    <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
+                    <td className="p-3 text-blue-100/70">
+                      {m.transferId
+                        ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
+                        : (m.unidade ? unidadeLabel(m.unidade) : '-')}
+                    </td>
+                    <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
+                    <td className="p-3 text-blue-100/60">
+                      <div className="space-y-1">
+                        {m.transferId ? (
                           <div>
-                            Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
-                            {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
+                            <div>
+                              Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
+                              {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
+                            </div>
+                            <div className="font-mono text-xs">{m.transferId}</div>
                           </div>
-                          <div className="font-mono text-xs">{m.transferId}</div>
-                        </div>
-                      ) : m.motivo ? (
-                        <span>Motivo: {m.motivo}</span>
-                      ) : (
-                        <span>{m.observacoes || '-'}</span>
-                      )}
-                      {m.registroInsumo || m.lote || m.dataValidade ? (
-                        <div className="text-xs text-blue-200/60">
-                          {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
-                          {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
-                          {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        ) : m.motivo ? (
+                          <span>Motivo: {m.motivo}</span>
+                        ) : (
+                          <span>{m.observacoes || '-'}</span>
+                        )}
+                        {m.registroInsumo || m.lote || m.dataValidade ? (
+                          <div className="text-xs text-blue-200/60">
+                            {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
+                            {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
+                            {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
               {!movimentacoesView.length ? (
                 <tr>
                   <td className="p-3 text-blue-100/70" colSpan={8}>
@@ -5569,6 +5648,7 @@ export function InsumosModule() {
         </div>
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   )
