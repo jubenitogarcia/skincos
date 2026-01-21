@@ -1,5 +1,6 @@
 import React from 'react'
 import { toast } from 'sonner'
+import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
@@ -829,6 +830,11 @@ export function InsumosModule() {
     insumos: 'insumos.panel.insumos',
     mov: 'insumos.panel.movimentacoes'
   }
+  const OVERVIEW_PANEL_OPEN_KEYS: Record<OverviewPanelId, string> = {
+    policies: 'insumos.panel.policies',
+    alerts: 'insumos.panel.alerts',
+    charts: 'insumos.panel.charts'
+  }
   const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts']
   const [mainPanelOrder, setMainPanelOrder] = React.useState<MainPanelId[]>(() => {
     try {
@@ -1034,7 +1040,9 @@ export function InsumosModule() {
       const keys = Array.from(root.querySelectorAll('details[data-pref-key]'))
         .map((el) => el.getAttribute('data-pref-key') || '')
         .filter(Boolean)
-      const allKeys = Array.from(new Set([...keys, ...Object.values(MAIN_PANEL_OPEN_KEYS)]))
+      const allKeys = Array.from(
+        new Set([...keys, ...Object.values(MAIN_PANEL_OPEN_KEYS), ...Object.values(OVERVIEW_PANEL_OPEN_KEYS)])
+      )
       if (!allKeys.length) return
       setDetailsOpen((prev) => {
         const next = { ...prev }
@@ -1048,7 +1056,16 @@ export function InsumosModule() {
         return next
       })
     },
-    [MAIN_PANEL_OPEN_KEYS.insumos, MAIN_PANEL_OPEN_KEYS.mov, mainPanelOrder.join('|'), overviewPanelOrder.join('|'), scheduleSaveUserPrefs]
+    [
+      MAIN_PANEL_OPEN_KEYS.insumos,
+      MAIN_PANEL_OPEN_KEYS.mov,
+      OVERVIEW_PANEL_OPEN_KEYS.alerts,
+      OVERVIEW_PANEL_OPEN_KEYS.charts,
+      OVERVIEW_PANEL_OPEN_KEYS.policies,
+      mainPanelOrder.join('|'),
+      overviewPanelOrder.join('|'),
+      scheduleSaveUserPrefs
+    ]
   )
 
   const setDetailsKeyOpen = React.useCallback(
@@ -1093,73 +1110,24 @@ export function InsumosModule() {
     return next
   }, [])
 
-  const commitOverviewOrder = React.useCallback(
-    (next: OverviewPanelId[]) => {
+  const onDragEndOverview = React.useCallback(
+    (result: DropResult) => {
+      if (!result.destination) return
+      const next = moveIdInList(visibleOverviewPanels, result.source.index, result.destination.index)
       persistOverviewPanels(next)
       scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
     },
-    [detailsOpen, mainPanelOrder.join('|'), persistOverviewPanels, scheduleSaveUserPrefs]
+    [detailsOpen, mainPanelOrder.join('|'), moveIdInList, persistOverviewPanels, scheduleSaveUserPrefs, visibleOverviewPanels.join('|')]
   )
 
-  const commitMainOrder = React.useCallback(
-    (next: MainPanelId[]) => {
+  const onDragEndMainPanels = React.useCallback(
+    (result: DropResult) => {
+      if (!result.destination) return
+      const next = moveIdInList(visibleMainPanels, result.source.index, result.destination.index)
       persistMainPanels(next)
       scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
     },
-    [detailsOpen, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs]
-  )
-
-  const onDragStartPanel = React.useCallback((e: React.DragEvent, kind: 'overview' | 'main', id: string) => {
-    try {
-      e.dataTransfer.setData('text/plain', `${kind}:${id}`)
-      e.dataTransfer.effectAllowed = 'move'
-    } catch {
-      // ignore
-    }
-  }, [])
-
-  const onDropOverviewPanel = React.useCallback(
-    (e: React.DragEvent, targetId: OverviewPanelId) => {
-      e.preventDefault()
-      const raw = (() => {
-        try {
-          return e.dataTransfer.getData('text/plain') || ''
-        } catch {
-          return ''
-        }
-      })()
-      if (!raw.startsWith('overview:')) return
-      const fromId = raw.slice('overview:'.length) as OverviewPanelId
-      if (!fromId || fromId === targetId) return
-      const fromIdx = visibleOverviewPanels.indexOf(fromId)
-      const toIdx = visibleOverviewPanels.indexOf(targetId)
-      if (fromIdx < 0 || toIdx < 0) return
-      const next = moveIdInList(visibleOverviewPanels, fromIdx, toIdx)
-      commitOverviewOrder(next)
-    },
-    [commitOverviewOrder, moveIdInList, visibleOverviewPanels.join('|')]
-  )
-
-  const onDropMainPanel = React.useCallback(
-    (e: React.DragEvent, targetId: MainPanelId) => {
-      e.preventDefault()
-      const raw = (() => {
-        try {
-          return e.dataTransfer.getData('text/plain') || ''
-        } catch {
-          return ''
-        }
-      })()
-      if (!raw.startsWith('main:')) return
-      const fromId = raw.slice('main:'.length) as MainPanelId
-      if (!fromId || fromId === targetId) return
-      const fromIdx = visibleMainPanels.indexOf(fromId)
-      const toIdx = visibleMainPanels.indexOf(targetId)
-      if (fromIdx < 0 || toIdx < 0) return
-      const next = moveIdInList(visibleMainPanels, fromIdx, toIdx)
-      commitMainOrder(next)
-    },
-    [commitMainOrder, moveIdInList, visibleMainPanels.join('|')]
+    [detailsOpen, moveIdInList, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs, visibleMainPanels.join('|')]
   )
 
   const overviewOrderIndex = React.useMemo(() => {
@@ -4033,35 +4001,67 @@ export function InsumosModule() {
                 saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
               </div>
             </CardContent>
-          </Card>
+	        </Card>
         </div>
 
         <div className="flex flex-col gap-3">
-        {isManagerRole ? (
-          <div
-            style={{ order: overviewOrderIndex.get('policies') ?? 0 }}
-            className="relative"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => onDropOverviewPanel(e, 'policies')}
-          >
-          <Card className="bg-black/20 border border-white/10">
-	              <CardHeader className="flex flex-row items-center justify-between gap-2">
-	              <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
-                <div
-                  draggable
-                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                  onDragStart={(e) => onDragStartPanel(e, 'overview', 'policies')}
-                  title="Arraste para mover"
-                  aria-label="Mover"
-                  role="button"
-                  tabIndex={0}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                </div>
-	            </CardHeader>
-            <CardContent className="space-y-3">
+        <DragDropContext onDragEnd={onDragEndOverview}>
+          <Droppable droppableId="overview-panels">
+            {(dropProvided) => (
+              <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="flex flex-col gap-3">
+                {visibleOverviewPanels.map((panelId, idx) => (
+                  <Draggable key={panelId} draggableId={`overview-${panelId}`} index={idx}>
+                    {(dragProvided) => {
+                      const handleProps = dragProvided.dragHandleProps
+                      const panelOpen = detailsOpen[OVERVIEW_PANEL_OPEN_KEYS[panelId]] ?? true
+
+                      if (panelId === 'policies') {
+                        if (!isManagerRole) return <div key={panelId} />
+                        return (
+                          <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
+                            <Card className="bg-black/20 border border-white/10">
+                              <CardHeader className="flex flex-row items-center justify-between gap-2">
+                                <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    {...handleProps}
+                                    className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                    title="Arraste para mover"
+                                    aria-label="Mover"
+                                    role="button"
+                                    tabIndex={0}
+                                  >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path
+                                        d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
+                                        stroke="currentColor"
+                                        strokeWidth="3"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  </div>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.policies, !panelOpen)}
+                                    title={panelOpen ? 'Contrair' : 'Expandir'}
+                                    aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                                  >
+                                    {panelOpen ? (
+                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    ) : (
+                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    )}
+                                  </Button>
+                                </div>
+                              </CardHeader>
+                              {panelOpen ? (
+                                <CardContent className="space-y-3">
               <div className="text-xs text-blue-200/60">
                 Configure quais categorias exigem <span className="font-medium text-blue-100/80">lote</span> e/ou <span className="font-medium text-blue-100/80">validade</span>, e habilite <span className="font-medium text-blue-100/80">FEFO</span> quando aplicável.
               </div>
@@ -4248,52 +4248,76 @@ export function InsumosModule() {
                   </tbody>
                 </table>
               </div>
-            </CardContent>
-          </Card>
-          </div>
-        ) : null}
+                                </CardContent>
+                              ) : null}
+                            </Card>
+                          </div>
+                        )
+                      }
 
-        <div
-          style={{ order: overviewOrderIndex.get('alerts') ?? 0 }}
-          className="relative"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => onDropOverviewPanel(e, 'alerts')}
-        >
-        <Card className="bg-black/20 border border-white/10">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-white text-base">Alertas</CardTitle>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 text-xs text-blue-200/60">
-              <span>
-                estoque:{' '}
-                <span className="font-mono">
-                  {Number.isFinite(Number(overviewNotifications?.counts?.lowStock)) ? Number(overviewNotifications?.counts?.lowStock) : insightsAlertasFiltrados.length}
-                </span>
-              </span>
-              <span>•</span>
-              <span>
-                validade:{' '}
-                <span className="font-mono">
-                  {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
-                </span>
-              </span>
-              </div>
-              <div
-                draggable
-                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                onDragStart={(e) => onDragStartPanel(e, 'overview', 'alerts')}
-                title="Arraste para mover"
-                aria-label="Mover"
-                role="button"
-                tabIndex={0}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
+                      if (panelId === 'alerts') {
+                        return (
+                          <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
+                            <Card className="bg-black/20 border border-white/10">
+                              <CardHeader className="flex flex-row items-center justify-between gap-2">
+                                <CardTitle className="text-white text-base">Alertas</CardTitle>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 text-xs text-blue-200/60">
+                                    <span>
+                                      estoque:{' '}
+                                      <span className="font-mono">
+                                        {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
+                                          ? Number(overviewNotifications?.counts?.lowStock)
+                                          : insightsAlertasFiltrados.length}
+                                      </span>
+                                    </span>
+                                    <span>•</span>
+                                    <span>
+                                      validade:{' '}
+                                      <span className="font-mono">
+                                        {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
+                                      </span>
+                                    </span>
+                                  </div>
+                                  <div
+                                    {...handleProps}
+                                    className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                    title="Arraste para mover"
+                                    aria-label="Mover"
+                                    role="button"
+                                    tabIndex={0}
+                                  >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path
+                                        d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
+                                        stroke="currentColor"
+                                        strokeWidth="3"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  </div>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
+                                    title={panelOpen ? 'Contrair' : 'Expandir'}
+                                    aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                                  >
+                                    {panelOpen ? (
+                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    ) : (
+                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    )}
+                                  </Button>
+                                </div>
+                              </CardHeader>
+                              {panelOpen ? (
+                                <CardContent className="space-y-3">
             <details
               data-pref-key="insumos.details.alerts.lowStock"
               open={detailsOpen['insumos.details.alerts.lowStock'] ?? true}
@@ -4656,50 +4680,72 @@ export function InsumosModule() {
                 ) : null}
               </div>
             </details>
-          </CardContent>
-        </Card>
-        </div>
+                                </CardContent>
+                              ) : null}
+                            </Card>
+                          </div>
+                        )
+                      }
 
-        <div
-          style={{ order: overviewOrderIndex.get('charts') ?? 0 }}
-          className="relative"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => onDropOverviewPanel(e, 'charts')}
-        >
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-white text-base">Gráficos</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (chartSlots.length >= MAX_CHARTS) return
-                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
-                  }}
-                  disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
-                >
-                  + Adicionar
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
-                  Reset
-                </Button>
-                <div
-                  draggable
-                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                  onDragStart={(e) => onDragStartPanel(e, 'overview', 'charts')}
-                  title="Arraste para mover"
-                  aria-label="Mover"
-                  role="button"
-                  tabIndex={0}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
+                      return (
+                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
+                          <Card className="bg-black/20 border border-white/10">
+                            <CardHeader className="flex flex-row items-center justify-between gap-2">
+                              <CardTitle className="text-white text-base">Gráficos</CardTitle>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (chartSlots.length >= MAX_CHARTS) return
+                                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+                                  }}
+                                  disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+                                >
+                                  + Adicionar
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
+                                  Reset
+                                </Button>
+                                <div
+                                  {...handleProps}
+                                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                  title="Arraste para mover"
+                                  aria-label="Mover"
+                                  role="button"
+                                  tabIndex={0}
+                                >
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path
+                                      d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
+                                      stroke="currentColor"
+                                      strokeWidth="3"
+                                      strokeLinecap="round"
+                                    />
+                                  </svg>
+                                </div>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                  onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
+                                  title={panelOpen ? 'Contrair' : 'Expandir'}
+                                  aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                                >
+                                  {panelOpen ? (
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  ) : (
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </Button>
+                              </div>
+                            </CardHeader>
+                            {panelOpen ? (
+                              <CardContent className="space-y-3">
               <div
                 className={`grid gap-3 ${chartSlots.length === 1
                   ? 'grid-cols-1'
@@ -4807,12 +4853,22 @@ export function InsumosModule() {
                 })}
               </div>
 
-              <div className="text-xs text-blue-200/60">Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.</div>
-            </CardContent>
-          </Card>
+                                <div className="text-xs text-blue-200/60">Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.</div>
+                              </CardContent>
+                            ) : null}
+                          </Card>
+                        </div>
+                      )
+                    }}
+                  </Draggable>
+                ))}
+                {dropProvided.placeholder}
+              </div>
+            )}
+          </Droppable>
+        </DragDropContext>
         </div>
-	      </div>
-	      </div>
+      </div>
 
       <Dialog
         open={editOpen}
@@ -4999,14 +5055,25 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div
-          ref={insumosSectionRef}
-          style={{ order: mainOrderIndex.get('insumos') ?? 0 }}
-          className="space-y-3"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => onDropMainPanel(e, 'insumos')}
-        >
+      <DragDropContext onDragEnd={onDragEndMainPanels}>
+        <Droppable droppableId="main-panels" direction="horizontal">
+          {(dropProvided) => (
+            <div
+              ref={dropProvided.innerRef}
+              {...dropProvided.droppableProps}
+              className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3"
+            >
+              <Draggable draggableId="main-insumos" index={mainOrderIndex.get('insumos') ?? 0}>
+                {(dragProvided) => (
+                  <div
+                    ref={(el) => {
+                      dragProvided.innerRef(el)
+                      insumosSectionRef.current = el
+                    }}
+                    {...dragProvided.draggableProps}
+                    style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('insumos') ?? 0 }}
+                    className="space-y-3"
+                  >
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -5014,15 +5081,14 @@ export function InsumosModule() {
                 <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div
-                  draggable
-                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                  onDragStart={(e) => onDragStartPanel(e, 'main', 'insumos')}
-                  title="Arraste para mover"
-                  aria-label="Mover"
-                  role="button"
-                  tabIndex={0}
-                >
+	                <div
+	                  {...dragProvided.dragHandleProps}
+	                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+	                  title="Arraste para mover"
+	                  aria-label="Mover"
+	                  role="button"
+	                  tabIndex={0}
+	                >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                   </svg>
@@ -5601,16 +5667,23 @@ export function InsumosModule() {
         </div>
               </CardContent>
             ) : null}
-        </Card>
-      </div>
+	        </Card>
+	      </div>
 
-      <div
-        ref={movSectionRef}
-        style={{ order: mainOrderIndex.get('mov') ?? 0 }}
-        className="space-y-3"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => onDropMainPanel(e, 'mov')}
-      >
+	    )}
+	  </Draggable>
+
+		  <Draggable draggableId="main-mov" index={mainOrderIndex.get('mov') ?? 0}>
+		    {(dragProvided) => (
+		      <div
+	        ref={(el) => {
+	          dragProvided.innerRef(el)
+	          movSectionRef.current = el
+	        }}
+	        {...dragProvided.draggableProps}
+	        style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('mov') ?? 0 }}
+	        className="space-y-3"
+	      >
         <Card className="bg-black/20 border border-white/10">
           <CardHeader className="flex flex-row items-start justify-between gap-2">
             <div>
@@ -5618,15 +5691,14 @@ export function InsumosModule() {
               <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
             </div>
             <div className="flex items-center gap-1">
-              <div
-                draggable
-                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                onDragStart={(e) => onDragStartPanel(e, 'main', 'mov')}
-                title="Arraste para mover"
-                aria-label="Mover"
-                role="button"
-                tabIndex={0}
-              >
+	              <div
+	                {...dragProvided.dragHandleProps}
+	                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+	                title="Arraste para mover"
+	                aria-label="Mover"
+	                role="button"
+	                tabIndex={0}
+	              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                   <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                 </svg>
@@ -5834,9 +5906,15 @@ export function InsumosModule() {
         </div>
             </CardContent>
           ) : null}
-        </Card>
-      </div>
-      </div>
-    </div>
+	        </Card>
+	      </div>
+	    )}
+	  </Draggable>
+	              {dropProvided.placeholder}
+	            </div>
+	          )}
+	        </Droppable>
+	      </DragDropContext>
+	    </div>
   )
 }
