@@ -600,13 +600,39 @@ export default function AppFunctionalNeatlab() {
                             </div>
                         </div>
 
-                        {/* Navigation */}
-                        <div className={`flex-1 overflow-y-auto ${sidebarExpanded ? 'p-4' : 'p-2'} space-y-2`}>
-                            {filteredModules.map((m, index) => (
-                                (() => {
-                                    const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
-                                    const isActive = active === m.key
-                                    return (
+	                        {/* Navigation */}
+	                        <div className={`flex-1 overflow-y-auto ${sidebarExpanded ? 'p-4' : 'p-2'} space-y-2`}>
+	                            {sidebarExpanded ? (
+	                                <div className="relative mb-2">
+	                                    <Input
+	                                        placeholder="Buscar módulos..."
+	                                        value={search}
+	                                        onChange={e => setSearch(e.target.value)}
+	                                        className="pl-10 w-full bg-white/[0.08] border-white/20 text-white placeholder:text-blue-300/60"
+	                                    />
+	                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-300/60" aria-hidden>
+	                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+	                                            <path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z" stroke="currentColor" strokeWidth="2" />
+	                                            <path d="M21 21l-4.3-4.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+	                                        </svg>
+	                                    </span>
+	                                    {search ? (
+	                                        <button
+	                                            onClick={() => setSearch('')}
+	                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-300/60 hover:text-white transition-colors"
+	                                            title="Limpar busca"
+	                                            aria-label="Limpar busca"
+	                                        >
+	                                            ✕
+	                                        </button>
+	                                    ) : null}
+	                                </div>
+	                            ) : null}
+	                            {filteredModules.map((m, index) => (
+	                                (() => {
+	                                    const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
+	                                    const isActive = active === m.key
+	                                    return (
                                         <button
                                             key={m.key}
                                             onClick={() => {
@@ -838,30 +864,11 @@ export default function AppFunctionalNeatlab() {
 		                                    </div>
 	                                </div>
 
-                                <div className="flex items-center gap-4">
-                                    {/* Premium Search */}
-                                    <div className="relative">
-                                        <Input
-                                            placeholder="Buscar módulos..."
-                                            value={search}
-                                            onChange={e => setSearch(e.target.value)}
-                                            className="pl-12 w-80 bg-white/[0.08] border-white/20 text-white placeholder:text-blue-300/60"
-                                        />
-                                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-300/60 text-lg">🔍</span>
-                                        {search && (
-                                            <button
-                                                onClick={() => setSearch('')}
-                                                className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-300/60 hover:text-white transition-colors"
-                                            >
-                                                ✕
-                                            </button>
-                                        )}
-                                    </div>
-
-	                                    {UNLOCKED_MODULE_KEYS.has('notifications') ? (
-	                                        <HeaderNotificationsButton
-	                                            onOpen={() => {
-	                                                setSearch('')
+	                                <div className="flex items-center gap-4">
+		                                    {UNLOCKED_MODULE_KEYS.has('notifications') ? (
+		                                        <HeaderNotificationsButton
+		                                            onOpen={() => {
+		                                                setSearch('')
 	                                                setActive('notifications')
 	                                            }}
 	                                        />

@@ -2694,13 +2694,15 @@ export function InsumosModule() {
     return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
   }, [insumos])
 
-  type ChartPresetId =
-    | 'stock_category'
-    | 'stock_brand'
-    | 'stock_top'
-    | 'mov_inout'
-    | 'mov_saldo'
-    | 'trends_inout'
+	  type ChartPresetId =
+	    | 'stock_category'
+	    | 'stock_brand'
+	    | 'stock_top'
+	    | 'mov_inout'
+	    | 'mov_saldo'
+	    | 'trends_inout'
+	    | 'roi_risk'
+	    | 'turnover_category'
 
   type ChartMetric = 'qtd' | 'valor'
   type ChartView = 'bar' | 'line' | 'pie'
@@ -2711,23 +2713,25 @@ export function InsumosModule() {
   const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [{ presetId: 'stock_category', metric: 'valor', view: 'pie', topN: 8 }]
   const MAX_CHARTS = 9
 
-  const CHART_PRESETS: Array<{
-    id: ChartPresetId
-    label: string
-    supportsMetric?: boolean
-    supportsView?: boolean
-    supportsTopN?: boolean
-    defaultMetric?: ChartMetric
-    defaultView?: ChartView
-    layout?: ChartLayout
-  }> = [
-      { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-      { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-      { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
-      { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
-      { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
-      { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' }
-    ]
+	  const CHART_PRESETS: Array<{
+	    id: ChartPresetId
+	    label: string
+	    supportsMetric?: boolean
+	    supportsView?: boolean
+	    supportsTopN?: boolean
+	    defaultMetric?: ChartMetric
+	    defaultView?: ChartView
+	    layout?: ChartLayout
+	  }> = [
+	      { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+	      { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+	      { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
+	      { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
+	      { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
+	      { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
+	      { id: 'roi_risk', label: 'ROI (perdas & risco)', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'square' },
+	      { id: 'turnover_category', label: 'Giro por categoria (saídas)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'wide' }
+	    ]
 
   const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
     try {
@@ -2901,11 +2905,13 @@ export function InsumosModule() {
     []
   )
 
-  const presetViewOptions = React.useCallback((id: ChartPresetId): ChartView[] => {
-    if (id === 'stock_category' || id === 'stock_brand') return ['pie', 'bar']
-    if (id === 'mov_saldo') return ['line', 'bar']
-    return ['bar', 'line']
-  }, [])
+	  const presetViewOptions = React.useCallback((id: ChartPresetId): ChartView[] => {
+	    if (id === 'stock_category' || id === 'stock_brand') return ['pie', 'bar']
+	    if (id === 'turnover_category') return ['bar', 'pie']
+	    if (id === 'roi_risk') return ['bar', 'pie']
+	    if (id === 'mov_saldo') return ['line', 'bar']
+	    return ['bar', 'line']
+	  }, [])
 
   const renderChart = React.useCallback(
     (slot: ChartSlotConfig, opts?: { height?: number }) => {
@@ -3042,11 +3048,11 @@ export function InsumosModule() {
         )
       }
 
-      if (presetId === 'trends_inout') {
-        if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-        const series = trendsSeries.map((b) => ({
-          bucket: b.bucket,
-          entrada: metric === 'valor' ? b.entradaValor : b.entradaQtd,
+	      if (presetId === 'trends_inout') {
+	        if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+	        const series = trendsSeries.map((b) => ({
+	          bucket: b.bucket,
+	          entrada: metric === 'valor' ? b.entradaValor : b.entradaQtd,
           saida: metric === 'valor' ? b.saidaValor : b.saidaQtd,
           saldo: metric === 'valor' ? b.saldoValor : b.saldoQtd
         }))
@@ -3095,13 +3101,122 @@ export function InsumosModule() {
               Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
             </div>
           </div>
-        )
-      }
+	        )
+	      }
 
-      return <div className="text-sm text-blue-100/70">Preset indisponível.</div>
-    },
-    [fmtBucketLabel, fmtChartValue, fmtDayShort, insightsLoading, movSeriesForCharts, overviewLoading, stockAgg, trendsSeries]
-  )
+	      if (presetId === 'turnover_category') {
+	        const raw = Array.isArray(insightsTurnover?.categories) ? insightsTurnover.categories : []
+	        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+
+	        const sorted = [...raw].sort((a: any, b: any) => {
+	          const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
+	          const bv = metric === 'valor' ? Number(b?.valor || 0) : Number(b?.qtd || 0)
+	          return bv - av
+	        })
+
+	        const top = sorted.slice(0, topN).map((c: any) => ({
+	          name: String(c?.categoria || 'Outros'),
+	          value: metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0),
+	          color: getCategoriaBgColor(String(c?.categoria || ''))
+	        }))
+	        const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
+	        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
+
+	        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
+
+	        return view === 'pie' ? (
+	          <div className="w-full" style={{ height }}>
+	            <ResponsiveContainer width="100%" height="100%">
+	              <PieChart>
+	                <Pie data={top} dataKey="value" nameKey="name" outerRadius="80%">
+	                  {top.map((entry, i) => (
+	                    <Cell key={`cell-${i}`} fill={(entry as any).color || '#60a5fa'} />
+	                  ))}
+	                </Pie>
+	                <Tooltip formatter={tooltipFormatter} />
+	                <Legend />
+	              </PieChart>
+	            </ResponsiveContainer>
+	          </div>
+	        ) : (
+	          <div className="w-full" style={{ height }}>
+	            <ResponsiveContainer width="100%" height="100%">
+	              <BarChart data={top} layout="vertical" margin={{ left: 12 }}>
+	                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+	                <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+	                <YAxis
+	                  type="category"
+	                  dataKey="name"
+	                  width={130}
+	                  tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }}
+	                  tickFormatter={(v) => String(v).slice(0, 22)}
+	                />
+	                <Tooltip formatter={tooltipFormatter} />
+	                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill="#60a5fa" radius={[0, 4, 4, 0]} />
+	              </BarChart>
+	            </ResponsiveContainer>
+	          </div>
+	        )
+	      }
+
+	      if (presetId === 'roi_risk') {
+	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+
+	        const perdas = (overviewRoi as any)?.perdas || {}
+	        const ruptura = (overviewRoi as any)?.ruptura || {}
+
+	        const isValor = metric === 'valor'
+	        const data = isValor
+	          ? [
+	              { name: 'Expirados', value: Number(perdas?.valorExpirado || 0), color: '#ef4444' },
+	              { name: 'Vencendo', value: Number(perdas?.valorRiscoVencendo || 0), color: '#f59e0b' }
+	            ]
+	          : [
+	              { name: 'Expirados', value: Number(perdas?.itensExpirados || 0), color: '#ef4444' },
+	              { name: 'Vencendo', value: Number(perdas?.itensVencendo || 0), color: '#f59e0b' },
+	              { name: 'Rupturas', value: Number(ruptura?.itensRuptura || 0), color: '#60a5fa' }
+	            ]
+
+	        const hasAny = data.some((d) => (Number(d.value) || 0) > 0)
+	        if (!hasAny) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+
+	        return view === 'pie' ? (
+	          <div className="w-full" style={{ height }}>
+	            <ResponsiveContainer width="100%" height="100%">
+	              <PieChart>
+	                <Pie data={data} dataKey="value" nameKey="name" outerRadius="80%">
+	                  {data.map((entry, i) => (
+	                    <Cell key={`cell-${i}`} fill={(entry as any).color || '#60a5fa'} />
+	                  ))}
+	                </Pie>
+	                <Tooltip formatter={tooltipFormatter} />
+	                <Legend />
+	              </PieChart>
+	            </ResponsiveContainer>
+	          </div>
+	        ) : (
+	          <div className="w-full" style={{ height }}>
+	            <ResponsiveContainer width="100%" height="100%">
+	              <BarChart data={data}>
+	                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+	                <XAxis dataKey="name" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+	                <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+	                <Tooltip formatter={tooltipFormatter} />
+	                <Bar dataKey="value" name={isValor ? 'Valor' : 'Qtd'} radius={[4, 4, 0, 0]}>
+	                  {data.map((entry: any, i: number) => (
+	                    <Cell key={`cell-${i}`} fill={entry.color || '#60a5fa'} />
+	                  ))}
+	                </Bar>
+	              </BarChart>
+	            </ResponsiveContainer>
+	          </div>
+	        )
+	      }
+
+	      return <div className="text-sm text-blue-100/70">Preset indisponível.</div>
+	    },
+	    [fmtBucketLabel, fmtChartValue, fmtDayShort, insightsLoading, insightsTurnover, movSeriesForCharts, overviewLoading, overviewRoi, stockAgg, trendsSeries]
+	  )
 
   const alertasCategorias = React.useMemo(() => {
     return Array.from(new Set((insightsAlertas || []).map((a) => String(a.categoria || '').trim()).filter(Boolean))).sort(
@@ -4569,68 +4684,6 @@ export function InsumosModule() {
                 })}
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader>
-                    <CardTitle className="text-white text-base">ROI (perdas & risco)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-1">
-                    <div className="text-sm text-blue-100/80">
-                      Expirados: <span className="font-mono">{overviewRoi?.perdas?.itensExpirados ?? '-'}</span> •{' '}
-                      {overviewRoi?.perdas?.valorExpirado != null ? fmtMoneyBRL(Number(overviewRoi.perdas.valorExpirado) || 0) : '-'}
-                    </div>
-                    <div className="text-sm text-blue-100/80">
-                      Vencendo: <span className="font-mono">{overviewRoi?.perdas?.itensVencendo ?? '-'}</span> •{' '}
-                      {overviewRoi?.perdas?.valorRiscoVencendo != null
-                        ? fmtMoneyBRL(Number(overviewRoi.perdas.valorRiscoVencendo) || 0)
-                        : '-'}
-                    </div>
-                    <div className="text-sm text-blue-100/80">
-                      Rupturas (estoque 0): <span className="font-mono">{overviewRoi?.ruptura?.itensRuptura ?? '-'}</span>
-                    </div>
-                    <div className="text-xs text-blue-200/60 mt-2">Use “Movimentações” para filtrar por data.</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-black/20 border border-white/10">
-                  <CardHeader className="flex flex-row items-center justify-between gap-2">
-                    <CardTitle className="text-white text-base">Giro por categoria (saídas)</CardTitle>
-                    <div className="text-xs text-blue-200/60">
-                      {Array.isArray(insightsTurnover?.categories) ? `${insightsTurnover.categories.length} categorias` : insightsLoading ? 'Carregando…' : '—'}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {Array.isArray(insightsTurnover?.categories) && insightsTurnover.categories.length ? (
-                      <div className="overflow-auto max-h-[50vh] rounded-xl border border-white/10">
-                        <table className="min-w-full text-sm">
-                          <thead className="bg-black/30 text-blue-100/80">
-                            <tr>
-                              <th className="text-left p-3">Categoria</th>
-                              <th className="text-right p-3">Qtd</th>
-                              <th className="text-right p-3">Valor</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5">
-                            {(insightsTurnover.categories || []).slice(0, 12).map((c: any, idxx: number) => (
-                              <tr key={`${c.categoria || ''}-${idxx}`} className="hover:bg-white/5">
-                                <td className="p-3 text-blue-50">{c.categoria || 'Outros'}</td>
-                                <td className="p-3 text-right text-blue-100/80">{Number(c.qtd || 0).toFixed(0)}</td>
-                                <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(Number(c.valor || 0))}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-                    )}
-                    <div className="text-xs text-blue-200/60">
-                      Usa os filtros de data em Movimentações (De/Até) e o período da Visão geral ({overviewPeriod}).
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
               <div className="text-xs text-blue-200/60">Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.</div>
             </CardContent>
           </Card>
@@ -4824,19 +4877,21 @@ export function InsumosModule() {
       </Dialog>
 
       <div ref={insumosSectionRef} className="max-w-6xl mx-auto space-y-3">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-white text-lg font-semibold">Insumos</div>
-            <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {offlineQueueCount > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-              </Button>
-            ) : null}
-          </div>
-        </div>
+        <Card className="bg-black/20 border border-white/10">
+          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-white text-lg font-semibold">Insumos</div>
+              <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {offlineQueueCount > 0 ? (
+                <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+                  Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+                </Button>
+              ) : null}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
 
         {sharePayload && !shareHidden ? (
           <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
@@ -5358,13 +5413,17 @@ export function InsumosModule() {
             </tbody>
           </table>
         </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div ref={movSectionRef} className="max-w-6xl mx-auto space-y-3">
-        <div>
-          <div className="text-white text-lg font-semibold">Movimentações</div>
-          <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
-        </div>
+        <Card className="bg-black/20 border border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white text-lg">Movimentações</CardTitle>
+            <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+          </CardHeader>
+          <CardContent className="space-y-3">
 
         <div className="flex flex-wrap items-end gap-2">
           <div className="w-48">
@@ -5533,6 +5592,8 @@ export function InsumosModule() {
             </tbody>
           </table>
         </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
