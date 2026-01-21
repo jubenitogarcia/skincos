@@ -5448,26 +5448,6 @@ export function InsumosModule() {
             <div className="text-xs text-blue-200/70 mb-1">Até</div>
             <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="DD/MM/AAAA" />
           </div>
-          <div className="w-40">
-            <div className="text-xs text-blue-200/70 mb-1">Por página</div>
-            <Select
-              value={String(movLimite)}
-              onValueChange={(v) => {
-                const lim = Math.max(1, Math.min(200, parseInt(String(v), 10) || 50))
-                void loadMovimentacoes({ pagina: 1, limite: lim })
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="25">25</SelectItem>
-                <SelectItem value="50">50</SelectItem>
-                <SelectItem value="100">100</SelectItem>
-                <SelectItem value="200">200</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           <div className="flex items-center gap-2">
             <Button
               variant={movGroupTransfers ? 'secondary' : 'outline'}
@@ -5520,11 +5500,6 @@ export function InsumosModule() {
           </div>
           <div className="flex items-center gap-2">
             <div className="text-xs text-blue-200/60">{movHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}</div>
-            {movHasMore ? (
-              <Button variant="outline" size="sm" onClick={() => loadMoreMovimentacoes()} disabled={movLoading || !isAuthed}>
-                Carregar mais
-              </Button>
-            ) : null}
           </div>
         </div>
 
