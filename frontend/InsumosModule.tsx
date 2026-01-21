@@ -1,6 +1,5 @@
 import React from 'react'
 import { toast } from 'sonner'
-import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
@@ -831,8 +830,6 @@ export function InsumosModule() {
     mov: 'insumos.panel.movimentacoes'
   }
   const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts']
-  const [overviewLayoutEdit, setOverviewLayoutEdit] = React.useState(false)
-  const [overviewLayoutOpen, setOverviewLayoutOpen] = React.useState(false)
   const [mainPanelOrder, setMainPanelOrder] = React.useState<MainPanelId[]>(() => {
     try {
       const raw = window.localStorage.getItem(MAIN_PANELS_KEY)
@@ -1089,40 +1086,80 @@ export function InsumosModule() {
     }
   }, [DEFAULT_MAIN_PANELS.join('|'), DEFAULT_OVERVIEW_PANELS.join('|'), persistDetailsOpen, persistMainPanels, persistOverviewPanels, saveUserPrefs])
 
-  const resetOverviewLayout = React.useCallback(() => {
-    const next = DEFAULT_OVERVIEW_PANELS
-    persistOverviewPanels(next)
-    scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
-  }, [DEFAULT_OVERVIEW_PANELS.join('|'), detailsOpen, mainPanelOrder.join('|'), persistOverviewPanels, scheduleSaveUserPrefs])
+  const moveIdInList = React.useCallback(<T,>(list: T[], fromIdx: number, toIdx: number) => {
+    const next = Array.from(list)
+    const [moved] = next.splice(fromIdx, 1)
+    next.splice(toIdx, 0, moved)
+    return next
+  }, [])
 
-  const resetMainPanelsLayout = React.useCallback(() => {
-    const next = DEFAULT_MAIN_PANELS
-    persistMainPanels(next)
-    scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
-  }, [DEFAULT_MAIN_PANELS.join('|'), detailsOpen, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs])
-
-  const onDragEndMainPanels = React.useCallback(
-    (result: DropResult) => {
-      if (!result.destination) return
-      const next = Array.from(visibleMainPanels)
-      const [moved] = next.splice(result.source.index, 1)
-      next.splice(result.destination.index, 0, moved)
-      persistMainPanels(next)
-      scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
-    },
-    [detailsOpen, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs, visibleMainPanels.join('|')]
-  )
-
-  const onDragEndOverview = React.useCallback(
-    (result: DropResult) => {
-      if (!result.destination) return
-      const next = Array.from(visibleOverviewPanels)
-      const [moved] = next.splice(result.source.index, 1)
-      next.splice(result.destination.index, 0, moved)
+  const commitOverviewOrder = React.useCallback(
+    (next: OverviewPanelId[]) => {
       persistOverviewPanels(next)
       scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
     },
-    [detailsOpen, mainPanelOrder.join('|'), persistOverviewPanels, scheduleSaveUserPrefs, visibleOverviewPanels.join('|')]
+    [detailsOpen, mainPanelOrder.join('|'), persistOverviewPanels, scheduleSaveUserPrefs]
+  )
+
+  const commitMainOrder = React.useCallback(
+    (next: MainPanelId[]) => {
+      persistMainPanels(next)
+      scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
+    },
+    [detailsOpen, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs]
+  )
+
+  const onDragStartPanel = React.useCallback((e: React.DragEvent, kind: 'overview' | 'main', id: string) => {
+    try {
+      e.dataTransfer.setData('text/plain', `${kind}:${id}`)
+      e.dataTransfer.effectAllowed = 'move'
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const onDropOverviewPanel = React.useCallback(
+    (e: React.DragEvent, targetId: OverviewPanelId) => {
+      e.preventDefault()
+      const raw = (() => {
+        try {
+          return e.dataTransfer.getData('text/plain') || ''
+        } catch {
+          return ''
+        }
+      })()
+      if (!raw.startsWith('overview:')) return
+      const fromId = raw.slice('overview:'.length) as OverviewPanelId
+      if (!fromId || fromId === targetId) return
+      const fromIdx = visibleOverviewPanels.indexOf(fromId)
+      const toIdx = visibleOverviewPanels.indexOf(targetId)
+      if (fromIdx < 0 || toIdx < 0) return
+      const next = moveIdInList(visibleOverviewPanels, fromIdx, toIdx)
+      commitOverviewOrder(next)
+    },
+    [commitOverviewOrder, moveIdInList, visibleOverviewPanels.join('|')]
+  )
+
+  const onDropMainPanel = React.useCallback(
+    (e: React.DragEvent, targetId: MainPanelId) => {
+      e.preventDefault()
+      const raw = (() => {
+        try {
+          return e.dataTransfer.getData('text/plain') || ''
+        } catch {
+          return ''
+        }
+      })()
+      if (!raw.startsWith('main:')) return
+      const fromId = raw.slice('main:'.length) as MainPanelId
+      if (!fromId || fromId === targetId) return
+      const fromIdx = visibleMainPanels.indexOf(fromId)
+      const toIdx = visibleMainPanels.indexOf(targetId)
+      if (fromIdx < 0 || toIdx < 0) return
+      const next = moveIdInList(visibleMainPanels, fromIdx, toIdx)
+      commitMainOrder(next)
+    },
+    [commitMainOrder, moveIdInList, visibleMainPanels.join('|')]
   )
 
   const overviewOrderIndex = React.useMemo(() => {
@@ -3901,9 +3938,6 @@ export function InsumosModule() {
                 <SelectItem value="1y">1 ano</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" onClick={() => setOverviewLayoutOpen(true)} disabled={!isAuthed}>
-              Organizar
-            </Button>
             <Button
               variant="secondary"
               onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])}
@@ -3913,108 +3947,6 @@ export function InsumosModule() {
             </Button>
           </div>
         </div>
-
-        <Dialog open={overviewLayoutOpen} onOpenChange={setOverviewLayoutOpen}>
-          <DialogContent className="max-w-md dark bg-corporate-900 border-white/10 text-white">
-            <DialogHeader>
-              <DialogTitle className="text-white">Organizar caixas</DialogTitle>
-              <DialogDescription className="text-blue-100/70">
-                Arraste para reordenar as caixas da Visão geral e da Operação.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="rounded-xl border border-white/10 bg-black/10 p-2">
-              <div className="px-1 pb-2 text-xs text-blue-200/60">Visão geral</div>
-              <DragDropContext onDragEnd={onDragEndOverview}>
-                <Droppable droppableId="overview-layout">
-                  {(dropProvided) => (
-                    <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="space-y-2">
-                      {visibleOverviewPanels.map((id, idx) => {
-                        const label =
-                          id === 'policies'
-                            ? 'Políticas por categoria'
-                            : id === 'alerts'
-                              ? 'Alertas e gestão'
-                              : 'Gráficos'
-                        return (
-                          <Draggable key={id} draggableId={id} index={idx}>
-                            {(dragProvided) => (
-                              <div
-                                ref={dragProvided.innerRef}
-                                {...dragProvided.draggableProps}
-                                className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
-                              >
-                                <div className="text-sm text-blue-50">{label}</div>
-                                <div
-                                  {...dragProvided.dragHandleProps}
-                                  className="text-xs text-blue-200/70 cursor-grab select-none rounded-md border border-white/10 bg-black/20 px-2 py-1"
-                                  title="Arrastar"
-                                  aria-label="Arrastar"
-                                >
-                                  ↕
-                                </div>
-                              </div>
-                            )}
-                          </Draggable>
-                        )
-                      })}
-                      {dropProvided.placeholder}
-                    </div>
-                  )}
-                </Droppable>
-              </DragDropContext>
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-black/10 p-2">
-              <div className="px-1 pb-2 text-xs text-blue-200/60">Operação</div>
-              <DragDropContext onDragEnd={onDragEndMainPanels}>
-                <Droppable droppableId="main-layout">
-                  {(dropProvided) => (
-                    <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="space-y-2">
-                      {visibleMainPanels.map((id, idx) => {
-                        const label = id === 'mov' ? 'Movimentações' : 'Insumos'
-                        return (
-                          <Draggable key={id} draggableId={`main-${id}`} index={idx}>
-                            {(dragProvided) => (
-                              <div
-                                ref={dragProvided.innerRef}
-                                {...dragProvided.draggableProps}
-                                className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
-                              >
-                                <div className="text-sm text-blue-50">{label}</div>
-                                <div
-                                  {...dragProvided.dragHandleProps}
-                                  className="text-xs text-blue-200/70 cursor-grab select-none rounded-md border border-white/10 bg-black/20 px-2 py-1"
-                                  title="Arrastar"
-                                  aria-label="Arrastar"
-                                >
-                                  ↕
-                                </div>
-                              </div>
-                            )}
-                          </Draggable>
-                        )
-                      })}
-                      {dropProvided.placeholder}
-                    </div>
-                  )}
-                </Droppable>
-              </DragDropContext>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => resetOverviewLayout()}>
-                Resetar visão geral
-              </Button>
-              <Button variant="outline" onClick={() => resetMainPanelsLayout()}>
-                Resetar operação
-              </Button>
-              <Button variant="secondary" onClick={() => setOverviewLayoutOpen(false)}>
-                Fechar
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
@@ -4106,10 +4038,28 @@ export function InsumosModule() {
 
         <div className="flex flex-col gap-3">
         {isManagerRole ? (
-          <div style={{ order: overviewOrderIndex.get('policies') ?? 0 }}>
+          <div
+            style={{ order: overviewOrderIndex.get('policies') ?? 0 }}
+            className="relative"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => onDropOverviewPanel(e, 'policies')}
+          >
           <Card className="bg-black/20 border border-white/10">
 	              <CardHeader className="flex flex-row items-center justify-between gap-2">
 	              <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
+                <div
+                  draggable
+                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                  onDragStart={(e) => onDragStartPanel(e, 'overview', 'policies')}
+                  title="Arraste para mover"
+                  aria-label="Mover"
+                  role="button"
+                  tabIndex={0}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
 	            </CardHeader>
             <CardContent className="space-y-3">
               <div className="text-xs text-blue-200/60">
@@ -4303,11 +4253,17 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-        <div style={{ order: overviewOrderIndex.get('alerts') ?? 0 }}>
+        <div
+          style={{ order: overviewOrderIndex.get('alerts') ?? 0 }}
+          className="relative"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => onDropOverviewPanel(e, 'alerts')}
+        >
         <Card className="bg-black/20 border border-white/10">
           <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-white text-base">Alertas</CardTitle>
-            <div className="flex items-center gap-2 text-xs text-blue-200/60">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 text-xs text-blue-200/60">
               <span>
                 estoque:{' '}
                 <span className="font-mono">
@@ -4321,6 +4277,20 @@ export function InsumosModule() {
                   {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
                 </span>
               </span>
+              </div>
+              <div
+                draggable
+                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                onDragStart={(e) => onDragStartPanel(e, 'overview', 'alerts')}
+                title="Arraste para mover"
+                aria-label="Mover"
+                role="button"
+                tabIndex={0}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -4690,7 +4660,12 @@ export function InsumosModule() {
         </Card>
         </div>
 
-        <div style={{ order: overviewOrderIndex.get('charts') ?? 0 }}>
+        <div
+          style={{ order: overviewOrderIndex.get('charts') ?? 0 }}
+          className="relative"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => onDropOverviewPanel(e, 'charts')}
+        >
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex flex-row items-center justify-between gap-2">
               <CardTitle className="text-white text-base">Gráficos</CardTitle>
@@ -4709,6 +4684,19 @@ export function InsumosModule() {
                 <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
                   Reset
                 </Button>
+                <div
+                  draggable
+                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                  onDragStart={(e) => onDragStartPanel(e, 'overview', 'charts')}
+                  title="Arraste para mover"
+                  aria-label="Mover"
+                  role="button"
+                  tabIndex={0}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -5012,7 +5000,13 @@ export function InsumosModule() {
       </Dialog>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div ref={insumosSectionRef} style={{ order: mainOrderIndex.get('insumos') ?? 0 }} className="space-y-3">
+        <div
+          ref={insumosSectionRef}
+          style={{ order: mainOrderIndex.get('insumos') ?? 0 }}
+          className="space-y-3"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => onDropMainPanel(e, 'insumos')}
+        >
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -5020,6 +5014,19 @@ export function InsumosModule() {
                 <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <div
+                  draggable
+                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                  onDragStart={(e) => onDragStartPanel(e, 'main', 'insumos')}
+                  title="Arraste para mover"
+                  aria-label="Mover"
+                  role="button"
+                  tabIndex={0}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
                 {offlineQueueCount > 0 ? (
                   <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
                     Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
@@ -5597,31 +5604,52 @@ export function InsumosModule() {
         </Card>
       </div>
 
-      <div ref={movSectionRef} style={{ order: mainOrderIndex.get('mov') ?? 0 }} className="space-y-3">
+      <div
+        ref={movSectionRef}
+        style={{ order: mainOrderIndex.get('mov') ?? 0 }}
+        className="space-y-3"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => onDropMainPanel(e, 'mov')}
+      >
         <Card className="bg-black/20 border border-white/10">
           <CardHeader className="flex flex-row items-start justify-between gap-2">
             <div>
               <CardTitle className="text-white text-lg">Movimentações</CardTitle>
               <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-              onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
-              title={movPanelOpen ? 'Contrair' : 'Expandir'}
-              aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
-            >
-              {movPanelOpen ? (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+            <div className="flex items-center gap-1">
+              <div
+                draggable
+                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                onDragStart={(e) => onDragStartPanel(e, 'main', 'mov')}
+                title="Arraste para mover"
+                aria-label="Mover"
+                role="button"
+                tabIndex={0}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                 </svg>
-              ) : (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </Button>
+              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
+                title={movPanelOpen ? 'Contrair' : 'Expandir'}
+                aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
+              >
+                {movPanelOpen ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </Button>
+            </div>
           </CardHeader>
           {movPanelOpen ? (
             <CardContent className="space-y-3">
