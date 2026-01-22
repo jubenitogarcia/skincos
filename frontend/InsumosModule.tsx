@@ -266,6 +266,15 @@ function slugifyCategoria(value?: string | null) {
     .replace(/^-+|-+$/g, '')
 }
 
+function normalizeText(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
 type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
 
 function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): EstoqueStatus {
@@ -3616,9 +3625,9 @@ export function InsumosModule() {
   const movimentacoesView = React.useMemo(() => {
     const list = Array.isArray(movimentacoes) ? movimentacoes : []
     const selectedCode = selectedCodigoBarras.trim()
-    const filterProduto = movFilterProduto.trim().toLowerCase()
-    const filterCategoria = movFilterCategoria.trim().toLowerCase()
-    const filterMarca = movFilterMarca.trim().toLowerCase()
+    const filterProduto = normalizeText(movFilterProduto)
+    const filterCategoria = normalizeText(movFilterCategoria)
+    const filterMarca = normalizeText(movFilterMarca)
 
     const applyFiltersAndSort = (base: Movimentacao[]) => {
       const filtered = base.filter((m) => {
@@ -3626,19 +3635,19 @@ export function InsumosModule() {
           if (String(m?.codigoBarras || '').trim() !== selectedCode) return false
         } else if (filterProduto) {
           const insumo = pickInsumoForMov(m)
-          const produtoNome = String(insumo?.produto || m?.produto || '').trim().toLowerCase()
-          if (!produtoNome || !produtoNome.includes(filterProduto)) return false
+          const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
+          if (!produtoNome || produtoNome !== filterProduto) return false
         }
 
         if (filterCategoria) {
           const insumo = pickInsumoForMov(m)
-          const categoriaNome = String(insumo?.categoria || '').trim().toLowerCase()
+          const categoriaNome = normalizeText(insumo?.categoria || '')
           if (!categoriaNome || categoriaNome !== filterCategoria) return false
         }
 
         if (filterMarca) {
           const insumo = pickInsumoForMov(m)
-          const marcaNome = String(insumo?.marca || '').trim().toLowerCase()
+          const marcaNome = normalizeText(insumo?.marca || '')
           if (!marcaNome || marcaNome !== filterMarca) return false
         }
         return true
@@ -6498,36 +6507,30 @@ export function InsumosModule() {
                         <div className="flex items-center justify-center gap-2">
                           <span>{col.label}</span>
                           {col.key ? (
-                            <span className="inline-flex items-center rounded-md border border-white/10 bg-black/20 overflow-hidden">
-                              <button
-                                type="button"
-                                className={`h-7 w-7 flex items-center justify-center ${isActive && movSortDir === 'asc' ? 'bg-white/10 text-white' : 'text-blue-100/70'} hover:bg-white/10 cursor-pointer`}
-                                onClick={() => {
-                                  setMovSortKey(col.key!)
-                                  setMovSortDir('asc')
-                                }}
-                                aria-label={`Ordenar ${col.label} crescente`}
-                                title={`Ordenar ${col.label} crescente`}
-                              >
+                            <button
+                              type="button"
+                              className={`h-7 w-7 flex items-center justify-center rounded-md border border-white/10 bg-black/20 hover:bg-white/10 cursor-pointer ${isActive ? 'text-white' : 'text-blue-100/70'}`}
+                              onClick={() => {
+                                if (movSortKey === col.key) {
+                                  setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                  return
+                                }
+                                setMovSortKey(col.key!)
+                                setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
+                              }}
+                              aria-label={`Ordenar ${col.label}`}
+                              title={`Ordenar ${col.label}`}
+                            >
+                              {isActive && movSortDir === 'asc' ? (
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
                                   <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
-                              </button>
-                              <button
-                                type="button"
-                                className={`h-7 w-7 flex items-center justify-center ${isActive && movSortDir === 'desc' ? 'bg-white/10 text-white' : 'text-blue-100/70'} hover:bg-white/10 cursor-pointer`}
-                                onClick={() => {
-                                  setMovSortKey(col.key!)
-                                  setMovSortDir('desc')
-                                }}
-                                aria-label={`Ordenar ${col.label} decrescente`}
-                                title={`Ordenar ${col.label} decrescente`}
-                              >
+                              ) : (
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
                                   <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
-                              </button>
-                            </span>
+                              )}
+                            </button>
                           ) : null}
                         </div>
                       </th>
@@ -6579,22 +6582,15 @@ export function InsumosModule() {
 	                        type="button"
 	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
 	                        onClick={() => {
-	                          if (codigoBarras) {
-                              setMovFilterProduto('')
-                              setMovFilterCategoria('')
-                              setMovFilterMarca('')
-	                            setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
-	                            return
-	                          }
                             const p = String(produtoNome || '').trim()
                             if (!p || p === '-') return
                             setSelectedCodigoBarras('')
                             setMovFilterCategoria('')
                             setMovFilterMarca('')
-                            setMovFilterProduto((prev) => (prev.trim().toLowerCase() === p.toLowerCase() ? '' : p))
+                            setMovFilterProduto((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
 	                        }}
-	                        title={codigoBarras ? 'Filtrar por este insumo' : 'Filtrar por produto'}
-	                        aria-pressed={isSelected}
+	                        title="Filtrar por produto"
+	                        aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
 	                      >
 	                        {produtoNome}
 	                      </button>
@@ -6609,10 +6605,10 @@ export function InsumosModule() {
                               if (!c || c === '-') return
                               setSelectedCodigoBarras('')
                               setMovFilterProduto('')
-                              setMovFilterCategoria((prev) => (prev.trim().toLowerCase() === c.toLowerCase() ? '' : c))
+                              setMovFilterCategoria((prev) => (normalizeText(prev) === normalizeText(c) ? '' : c))
                             }}
                             title="Filtrar por categoria"
-                            aria-pressed={movFilterCategoria.trim().toLowerCase() === String(categoriaNome || '').trim().toLowerCase()}
+                            aria-pressed={normalizeText(movFilterCategoria) === normalizeText(categoriaNome)}
                           >
                             {categoriaNome}
                           </button>
@@ -6630,10 +6626,10 @@ export function InsumosModule() {
                               if (!b || b === '-') return
                               setSelectedCodigoBarras('')
                               setMovFilterProduto('')
-                              setMovFilterMarca((prev) => (prev.trim().toLowerCase() === b.toLowerCase() ? '' : b))
+                              setMovFilterMarca((prev) => (normalizeText(prev) === normalizeText(b) ? '' : b))
                             }}
                             title="Filtrar por marca"
-                            aria-pressed={movFilterMarca.trim().toLowerCase() === String(marcaNome || '').trim().toLowerCase()}
+                            aria-pressed={normalizeText(movFilterMarca) === normalizeText(marcaNome)}
                           >
                             {marcaNome}
                           </button>
