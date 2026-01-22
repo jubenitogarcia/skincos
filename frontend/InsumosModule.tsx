@@ -2217,12 +2217,39 @@ export function InsumosModule() {
     [loadMoreInsumos]
   )
 
+  const [insumosListModalOpen, setInsumosListModalOpen] = React.useState(false)
+  const insumosModalListContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const onInsumosModalScroll = React.useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+      if (remaining < 220) loadMoreInsumos()
+    },
+    [loadMoreInsumos]
+  )
+
+  const openInsumosListModal = React.useCallback(
+    (opts?: { codigoBarras?: string }) => {
+      const code = String(opts?.codigoBarras || '').trim()
+      if (code) setInsumosQuery(code)
+      setInsumosListModalOpen(true)
+    },
+    []
+  )
+
   React.useEffect(() => {
     const el = insumosListContainerRef.current
     if (!el) return
     if (!insumosHasMore || insumosLoading) return
     if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
   }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos])
+
+  React.useEffect(() => {
+    const el = insumosModalListContainerRef.current
+    if (!el) return
+    if (!insumosHasMore || insumosLoading) return
+    if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
+  }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos, insumosListModalOpen])
 
   const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number; append?: boolean }) => {
     if (!canUseApi || !isAuthed) return
@@ -2842,6 +2869,49 @@ export function InsumosModule() {
     if (!code) return null
     return (insumos || []).find((i) => String(i.codigoBarras || '').trim() === code) || null
   }, [insumos, selectedCodigoBarras])
+
+  const insumosByCodigo = React.useMemo(() => {
+    const map = new Map<string, Insumo[]>()
+    for (const it of insumos || []) {
+      const code = String(it.codigoBarras || '').trim()
+      if (!code) continue
+      const list = map.get(code) || []
+      list.push(it)
+      map.set(code, list)
+    }
+    return map
+  }, [insumos])
+
+  const pickInsumoForMov = React.useCallback(
+    (m: Movimentacao) => {
+      const codigo = String(m.codigoBarras || '').trim()
+      if (!codigo) return null
+      const list = insumosByCodigo.get(codigo) || []
+      if (!list.length) return null
+
+      const wantedRegistro = String(m.registroInsumo || '').trim()
+      if (wantedRegistro) {
+        const exact = list.find((i) => String(i.registro || '').trim() === wantedRegistro)
+        if (exact) return exact
+      }
+
+      const ctxUnit = String(m.unidade || unidade || '').trim()
+      const getStock = (i: Insumo) => {
+        const v = ctxUnit && i?.estoques ? Number(i.estoques?.[ctxUnit] ?? 0) : Number(i.estoqueAtual ?? 0)
+        return Number.isFinite(v) ? v : 0
+      }
+
+      return [...list].sort((a, b) => {
+        const sa = getStock(b) - getStock(a)
+        if (sa !== 0) return sa
+        const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY
+        const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY
+        if (da !== db) return da - db
+        return String(a.registro || '').localeCompare(String(b.registro || ''))
+      })[0]
+    },
+    [insumosByCodigo, unidade]
+  )
 
   const insumosPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.insumos] ?? true
   const movPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.mov] ?? true
@@ -3485,6 +3555,248 @@ export function InsumosModule() {
   return (
     <div ref={rootRef} className="p-6 space-y-6">
       <DragDropContext onDragEnd={onDragEndLayout}>
+      <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
+        <DialogContent className="max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Insumos</DialogTitle>
+            <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={insumosQuery}
+                  onChange={(e) => setInsumosQuery(e.target.value)}
+                  placeholder="Buscar por código, produto, categoria…"
+                  className="w-80"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+                  disabled={!isAuthed}
+                  title="Exportar CSV"
+                >
+                  Exportar
+                </Button>
+                <Button variant="outline" onClick={() => setCreateOpen((v) => !v)} disabled={!isAuthed}>
+                  {createOpen ? 'Fechar' : 'Adicionar'}
+                </Button>
+              </div>
+              <div className="text-xs text-blue-200/60">
+                {insumosTotal != null ? (
+                  <>
+                    {filteredInsumos.length} de <span className="font-mono">{insumosTotal}</span> itens
+                  </>
+                ) : (
+                  `${filteredInsumos.length} itens`
+                )}
+              </div>
+            </div>
+
+            {createOpen ? (
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
+                <div className="text-sm text-blue-100/70">
+                  Cadastro rápido (campos mínimos) + detalhes opcionais.
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
+                    <div className="flex items-center gap-2">
+                      <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
+                      <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
+                        {createScanOpen ? 'Fechar' : 'Scan'}
+                      </Button>
+                    </div>
+                    <div className="mt-2">
+                      {createLookupLoading ? (
+                        <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
+                      ) : createLookupError ? (
+                        <div className="text-xs text-red-200">{createLookupError}</div>
+                      ) : createLookupItems?.length ? (
+                        <div className="text-xs text-blue-200/70">
+                          Encontrado no histórico: <span className="font-mono">{createLookupItems.length}</span> variação(ões)
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="md:col-span-2">
+                    <div className="text-xs text-blue-200/70 mb-1">Produto</div>
+                    <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="ex: Toxina botulínica" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+                    <Input value={createCategoria} onChange={(e) => setCreateCategoria(e.target.value)} placeholder="ex: toxina" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Marca</div>
+                    <Input value={createMarca} onChange={(e) => setCreateMarca(e.target.value)} placeholder="ex: Allergan" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Tipo (unidade)</div>
+                    <Input value={createTipoUnidade} onChange={(e) => setCreateTipoUnidade(e.target.value)} placeholder="ex: frasco" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Preço (custo)</div>
+                    <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="ex: 1200" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
+                    <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/70 mb-1">Estoque inicial</div>
+                    <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} placeholder="ex: 0" />
+                  </div>
+                </div>
+
+                {createScanOpen ? (
+                  <BarcodeScannerInline
+                    onDetected={(code) => {
+                      setCreateCodigo(code)
+                      setCreateScanOpen(false)
+                      toast.success('Código detectado')
+                    }}
+                    onClose={() => setCreateScanOpen(false)}
+                  />
+                ) : null}
+
+                <div className="flex items-center justify-end gap-2">
+                  <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      const codigoBarras = createCodigo.trim()
+                      if (!codigoBarras) return toast.error('Informe o código de barras')
+                      const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                      const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
+                      const policy = getPolicyForCategoria(categoria)
+                      const validadeIso = dateInputToIso(createDataValidade)
+
+                      const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
+                      if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
+
+                      if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
+                        return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pela categoria)' : 'Informe o lote (Novo lote: on)')
+                      }
+                      if (policy.requiresExpiry && !validadeIso) {
+                        return toast.error('Informe a data de validade (obrigatória pela categoria)')
+                      }
+
+                      const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
+                      if (!produto) return toast.error('Informe o produto')
+
+                      setCreateLoading(true)
+                      try {
+                        await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
+                          method: 'POST',
+                          queueLabel: 'Cadastro de insumo',
+                          body: {
+                            codigoBarras,
+                            produto,
+                            allowDuplicateLot,
+                            categoria,
+                            marca: createMarca.trim(),
+                            tipoUnidade: createTipoUnidade.trim(),
+                            especificacao: createEspecificacao.trim(),
+                            concentracao: createConcentracao.trim(),
+                            volume: createVolume.trim(),
+                            fonte: createFonte.trim(),
+                            calibre: createCalibre.trim(),
+                            precoCusto: createPrecoCusto ? Number(createPrecoCusto) : undefined,
+                            estoqueInicial: createEstoqueInicial ? Number(createEstoqueInicial) : undefined,
+                            estoqueMinimo: createEstoqueMinimo ? Number(createEstoqueMinimo) : undefined,
+                            lote: createLote.trim(),
+                            dataValidade: validadeIso || undefined
+                          }
+                        })
+                        toast.success('Insumo cadastrado.')
+                        setCreateOpen(false)
+                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
+                      } catch (e) {
+                        if (policyErrorToast(e)) return
+                        toast.error(e instanceof Error ? e.message : String(e))
+                      } finally {
+                        setCreateLoading(false)
+                      }
+                    }}
+                    disabled={!isAuthed || createLoading}
+                  >
+                    {createLoading ? 'Salvando…' : 'Salvar'}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            <div
+              ref={insumosModalListContainerRef}
+              onScroll={onInsumosModalScroll}
+              className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
+            >
+              <table className="min-w-full text-sm">
+                <thead className="bg-black/30 text-blue-100/80">
+                  <tr>
+                    <th className="text-left p-3">Produto</th>
+                    <th className="text-left p-3">Categoria</th>
+                    <th className="text-left p-3">Código</th>
+                    <th className="text-right p-3">Estoque</th>
+                    <th className="text-right p-3">Mín</th>
+                    <th className="text-left p-3">Validade</th>
+                    <th className="text-right p-3">Valor</th>
+                    <th className="text-right p-3">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredInsumos.map((i, idx) => {
+                    const codigoBarras = String(i.codigoBarras || '').trim()
+                    const estoque = unidade && i?.estoques ? Number(i.estoques?.[unidade] ?? 0) : Number(i.estoqueAtual ?? 0)
+                    const min = Number(i.estoqueMinimo) || 0
+                    const valor = (Number(i.precoCusto) || 0) * (Number.isFinite(estoque) ? estoque : 0)
+                    return (
+                      <tr key={`${i.registro || ''}-${idx}`} className="hover:bg-white/5">
+                        <td className="p-3 text-blue-50">{i.produto || '-'}</td>
+                        <td className="p-3 text-blue-100/80">{i.categoria || '-'}</td>
+                        <td className="p-3 font-mono text-blue-100/70">{i.codigoBarras || '-'}</td>
+                        <td className="p-3 text-right text-blue-100/80 font-mono">{Number.isFinite(estoque) ? estoque : '-'}</td>
+                        <td className="p-3 text-right text-blue-100/70 font-mono">{min || '-'}</td>
+                        <td className="p-3 text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</td>
+                        <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
+                        <td className="p-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                if (codigoBarras) setSelectedCodigoBarras(codigoBarras)
+                                setInsumosListModalOpen(false)
+                              }}
+                              disabled={!codigoBarras}
+                            >
+                              Mov
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
+                              Editar
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {!filteredInsumos.length ? (
+                    <tr>
+                      <td className="p-3 text-blue-100/70" colSpan={8}>
+                        {insumosLoading ? 'Carregando…' : isAuthed ? 'Sem itens.' : 'Faça login para carregar.'}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-xs text-blue-200/60">{insumosHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}</div>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -5743,24 +6055,34 @@ export function InsumosModule() {
 	              <CardTitle className="text-white text-lg">Movimentações</CardTitle>
 	              <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
 	            </div>
-	            <div className="absolute top-2 right-2 flex items-center gap-1">
-	              <div
-	                {...dragProvided.dragHandleProps}
-	                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-	                title="Arraste para mover"
-	                aria-label="Mover"
-	                role="button"
-	                tabIndex={0}
-	              >
-	                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-	                </svg>
-	              </div>
-	              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
+		            <div className="absolute top-2 right-2 flex items-center gap-1">
+		              <div
+		                {...dragProvided.dragHandleProps}
+		                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+		                title="Arraste para mover"
+		                aria-label="Mover"
+		                role="button"
+		                tabIndex={0}
+		              >
+		                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+		                </svg>
+		              </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                    onClick={() => openInsumosListModal()}
+                    title="Abrir lista de insumos"
+                    aria-label="Abrir lista de insumos"
+                  >
+                    <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-6 w-6" />
+                  </Button>
+		              <Button
+	                size="icon"
+	                variant="ghost"
+	                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
                 title={movPanelOpen ? 'Contrair' : 'Expandir'}
                 aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
               >
@@ -5871,28 +6193,41 @@ export function InsumosModule() {
           </div>
         </div>
 
-        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-          <table className="min-w-full text-sm">
-            <thead className="bg-black/30 text-blue-100/80">
-              <tr>
-                <th className="text-left p-3">Data</th>
-                <th className="text-left p-3">Tipo</th>
-                <th className="text-left p-3">Produto</th>
-                <th className="text-left p-3">Código</th>
-                <th className="text-right p-3">Qtd</th>
-                <th className="text-left p-3">Unidade</th>
-                <th className="text-left p-3">Usuário</th>
-                <th className="text-left p-3">Detalhe</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {movimentacoesView.map((m, idx) => {
-                const codigoBarras = String(m.codigoBarras || '').trim()
-                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
-                return (
-                  <tr key={`${m.dataHora || ''}-${idx}`} className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}>
-                    <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
-                    <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
+	        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+	          <table className="min-w-full text-sm">
+	            <thead className="bg-black/30 text-blue-100/80">
+	              <tr>
+	                <th className="text-left p-3">Data</th>
+	                <th className="text-left p-3">Tipo</th>
+	                <th className="text-left p-3">Produto</th>
+	                <th className="text-left p-3">Código</th>
+	                <th className="text-right p-3">Qtd</th>
+	                <th className="text-right p-3">Estoque</th>
+	                <th className="text-right p-3">Mín</th>
+	                <th className="text-left p-3">Validade</th>
+	                <th className="text-right p-3">Valor</th>
+	                <th className="text-left p-3">Unidade</th>
+	                <th className="text-left p-3">Usuário</th>
+	                <th className="text-left p-3">Detalhe</th>
+	                <th className="text-right p-3">Ações</th>
+	              </tr>
+	            </thead>
+	            <tbody className="divide-y divide-white/5">
+	              {movimentacoesView.map((m, idx) => {
+	                const codigoBarras = String(m.codigoBarras || '').trim()
+                  const insumo = pickInsumoForMov(m)
+                  const ctxUnit = String(m.unidade || unidade || '').trim()
+                  const estoque = insumo ? (ctxUnit && insumo?.estoques ? Number(insumo.estoques?.[ctxUnit] ?? 0) : Number(insumo.estoqueAtual ?? 0)) : null
+                  const minimo = insumo?.estoqueMinimo != null ? Number(insumo.estoqueMinimo) : null
+                  const validade = fmtDateOnlyBR(String(m.dataValidade || insumo?.dataValidade || '').trim())
+                  const preco = Number(m.preco) || Number(insumo?.precoCusto) || 0
+                  const qtd = Number(m.quantidade) || 0
+                  const valor = preco * qtd
+	                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
+	                return (
+	                  <tr key={`${m.dataHora || ''}-${idx}`} className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}>
+	                    <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
+	                    <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
                     <td className="p-3">
                       <button
                         type="button"
@@ -5911,13 +6246,17 @@ export function InsumosModule() {
                       >
                         {m.produto || '-'}
                       </button>
-                    </td>
-                    <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
-                    <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
-                    <td className="p-3 text-blue-100/70">
-                      {m.transferId
-                        ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
-                        : (m.unidade ? unidadeLabel(m.unidade) : '-')}
+	                    </td>
+	                    <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
+	                    <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
+                      <td className="p-3 text-right text-blue-100/80 font-mono">{estoque != null && Number.isFinite(estoque) ? estoque : '-'}</td>
+                      <td className="p-3 text-right text-blue-100/70 font-mono">{minimo != null && Number.isFinite(minimo) ? minimo : '-'}</td>
+                      <td className="p-3 text-blue-100/70">{validade || '-'}</td>
+                      <td className="p-3 text-right text-blue-100/80">{preco ? fmtMoneyBRL(valor) : '-'}</td>
+	                    <td className="p-3 text-blue-100/70">
+	                      {m.transferId
+	                        ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
+	                        : (m.unidade ? unidadeLabel(m.unidade) : '-')}
                     </td>
                     <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
                     <td className="p-3 text-blue-100/60">
@@ -5941,19 +6280,43 @@ export function InsumosModule() {
                             {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
                             {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
                           </div>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!movimentacoesView.length ? (
-                <tr>
-                  <td className="p-3 text-blue-100/70" colSpan={8}>
-                    {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
-                  </td>
-                </tr>
-              ) : null}
+	                        ) : null}
+	                      </div>
+	                    </td>
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => openInsumosListModal({ codigoBarras })}
+                            disabled={!codigoBarras}
+                            title="Abrir lista de insumos filtrada"
+                          >
+                            Insumo
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (insumo) openEditDialog(insumo)
+                              else if (codigoBarras) openInsumosListModal({ codigoBarras })
+                            }}
+                            disabled={!isAuthed || (!insumo && !codigoBarras)}
+                          >
+                            Editar
+                          </Button>
+                        </div>
+                      </td>
+	                  </tr>
+	                )
+	              })}
+	              {!movimentacoesView.length ? (
+	                <tr>
+	                  <td className="p-3 text-blue-100/70" colSpan={13}>
+	                    {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
+	                  </td>
+	                </tr>
+	              ) : null}
             </tbody>
           </table>
         </div>
