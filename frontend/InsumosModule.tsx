@@ -780,6 +780,13 @@ export function InsumosModule() {
   const [movGroupTransfers, setMovGroupTransfers] = React.useState(true)
   const [movDe, setMovDe] = React.useState('')
   const [movAte, setMovAte] = React.useState('')
+  const [movFilterProduto, setMovFilterProduto] = React.useState('')
+  const [movFilterCategoria, setMovFilterCategoria] = React.useState('')
+  const [movFilterMarca, setMovFilterMarca] = React.useState('')
+  const [movSortKey, setMovSortKey] = React.useState<
+    'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
+  >('dataHora')
+  const [movSortDir, setMovSortDir] = React.useState<'asc' | 'desc'>('desc')
   const [movPagina, setMovPagina] = React.useState(1)
   const [movLimite, setMovLimite] = React.useState(50)
   const [movTotal, setMovTotal] = React.useState<number | null>(null)
@@ -2342,7 +2349,7 @@ export function InsumosModule() {
     } catch {
       // ignore
     }
-  }, [unidade, movAte, movDe, movLimite, movTipo, selectedCodigoBarras])
+  }, [unidade, movAte, movDe, movLimite, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
 
   const loadOverview = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
@@ -3608,7 +3615,75 @@ export function InsumosModule() {
 
   const movimentacoesView = React.useMemo(() => {
     const list = Array.isArray(movimentacoes) ? movimentacoes : []
-    if (!movGroupTransfers || movTipo !== 'TODOS') return list
+    const selectedCode = selectedCodigoBarras.trim()
+    const filterProduto = movFilterProduto.trim().toLowerCase()
+    const filterCategoria = movFilterCategoria.trim().toLowerCase()
+    const filterMarca = movFilterMarca.trim().toLowerCase()
+
+    const applyFiltersAndSort = (base: Movimentacao[]) => {
+      const filtered = base.filter((m) => {
+        if (selectedCode) {
+          if (String(m?.codigoBarras || '').trim() !== selectedCode) return false
+        } else if (filterProduto) {
+          const insumo = pickInsumoForMov(m)
+          const produtoNome = String(insumo?.produto || m?.produto || '').trim().toLowerCase()
+          if (!produtoNome || !produtoNome.includes(filterProduto)) return false
+        }
+
+        if (filterCategoria) {
+          const insumo = pickInsumoForMov(m)
+          const categoriaNome = String(insumo?.categoria || '').trim().toLowerCase()
+          if (!categoriaNome || categoriaNome !== filterCategoria) return false
+        }
+
+        if (filterMarca) {
+          const insumo = pickInsumoForMov(m)
+          const marcaNome = String(insumo?.marca || '').trim().toLowerCase()
+          if (!marcaNome || marcaNome !== filterMarca) return false
+        }
+        return true
+      })
+
+      const dir = movSortDir === 'asc' ? 1 : -1
+      const getSortValue = (m: Movimentacao) => {
+        if (movSortKey === 'dataHora') return new Date(m?.dataHora || 0).getTime() || 0
+        if (movSortKey === 'usuario') return String(m?.usuario || '').trim().toLowerCase()
+        if (movSortKey === 'observacao') {
+          const v = m?.transferId
+            ? `transferencia ${String(m?.unidadeOrigem || '')}->${String(m?.unidadeDestino || '')}`
+            : String(m?.motivo || m?.observacoes || '').trim()
+          return v.toLowerCase()
+        }
+
+        const insumo = pickInsumoForMov(m)
+        if (movSortKey === 'produto') return String(insumo?.produto || m?.produto || '').trim().toLowerCase()
+        if (movSortKey === 'categoria') return String(insumo?.categoria || '').trim().toLowerCase()
+        if (movSortKey === 'marca') return String(insumo?.marca || '').trim().toLowerCase()
+        if (movSortKey === 'estoque') return Number(m?.estoqueNovo ?? m?.estoqueAnterior ?? 0) || 0
+        if (movSortKey === 'valor') {
+          const preco = Number(m?.preco) || Number(insumo?.precoCusto) || 0
+          const qtd = Number(m?.quantidade) || 0
+          return preco * qtd
+        }
+        return 0
+      }
+
+      filtered.sort((a, b) => {
+        const av = getSortValue(a) as any
+        const bv = getSortValue(b) as any
+        if (typeof av === 'number' && typeof bv === 'number') {
+          if (av !== bv) return (av - bv) * dir
+          return (new Date(a?.dataHora || 0).getTime() - new Date(b?.dataHora || 0).getTime()) * dir
+        }
+        const cmp = String(av).localeCompare(String(bv), 'pt-BR', { sensitivity: 'base' })
+        if (cmp !== 0) return cmp * dir
+        return (new Date(a?.dataHora || 0).getTime() - new Date(b?.dataHora || 0).getTime()) * dir
+      })
+
+      return filtered
+    }
+
+    if (!movGroupTransfers || movTipo !== 'TODOS') return applyFiltersAndSort(list)
 
     const byTransfer = new Map<string, Movimentacao[]>()
     for (const m of list) {
@@ -3655,8 +3730,19 @@ export function InsumosModule() {
         transferId: id
       } as any)
     }
-    return out
-  }, [movGroupTransfers, movTipo, movimentacoes])
+    return applyFiltersAndSort(out)
+  }, [
+    movGroupTransfers,
+    movSortDir,
+    movSortKey,
+    movTipo,
+    movFilterCategoria,
+    movFilterMarca,
+    movFilterProduto,
+    movimentacoes,
+    pickInsumoForMov,
+    selectedCodigoBarras
+  ])
 
   React.useEffect(() => {
     movRef.current = movimentacoes
@@ -6265,14 +6351,43 @@ export function InsumosModule() {
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 
-        {selectedCodigoBarras.trim() ? (
+        {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? (
           <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <span className="text-blue-200/70">Filtrando por:</span>{' '}
-              {selectedInsumo?.produto ? <span className="text-blue-50 font-semibold">{selectedInsumo.produto}</span> : <span>Insumo</span>}{' '}
-              • <span className="font-mono">{selectedCodigoBarras.trim()}</span>
+              {selectedCodigoBarras.trim() ? (
+                <>
+                  {selectedInsumo?.produto ? <span className="text-blue-50 font-semibold">{selectedInsumo.produto}</span> : <span className="text-blue-50 font-semibold">Insumo</span>}{' '}
+                  • <span className="font-mono">{selectedCodigoBarras.trim()}</span>
+                </>
+              ) : movFilterProduto.trim() ? (
+                <>
+                  <span className="text-blue-50 font-semibold">{movFilterProduto.trim()}</span>
+                </>
+              ) : null}
+              {movFilterCategoria.trim() ? (
+                <>
+                  {(selectedCodigoBarras.trim() || movFilterProduto.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  <span className="text-blue-50 font-semibold">{movFilterCategoria.trim()}</span>
+                </>
+              ) : null}
+              {movFilterMarca.trim() ? (
+                <>
+                  {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  <span className="text-blue-50 font-semibold">{movFilterMarca.trim()}</span>
+                </>
+              ) : null}
             </div>
-            <Button variant="outline" size="sm" onClick={() => setSelectedCodigoBarras('')}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setSelectedCodigoBarras('')
+                setMovFilterProduto('')
+                setMovFilterCategoria('')
+                setMovFilterMarca('')
+              }}
+            >
               Limpar
             </Button>
           </div>
@@ -6361,15 +6476,63 @@ export function InsumosModule() {
 	          <table className="min-w-full text-sm">
 	            <thead className="bg-black/30 text-blue-100/80">
 	              <tr>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Data</th>
-	                <th className="p-3 text-center align-middle">Produto</th>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Categoria</th>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Marca</th>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Estoque</th>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Valor</th>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Usuário</th>
-	                <th className="p-3 text-center align-middle">Observação</th>
-	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Ações</th>
+                  {(
+                    [
+                      { key: 'dataHora', label: 'Data', compact: true },
+                      { key: 'produto', label: 'Produto' },
+                      { key: 'categoria', label: 'Categoria', compact: true },
+                      { key: 'marca', label: 'Marca', compact: true },
+                      { key: 'estoque', label: 'Estoque', compact: true },
+                      { key: 'valor', label: 'Valor', compact: true },
+                      { key: 'usuario', label: 'Usuário', compact: true },
+                      { key: 'observacao', label: 'Observação' },
+                      { key: null, label: 'Ações', compact: true }
+                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean }>
+                  ).map((col) => {
+                    const isActive = !!col.key && movSortKey === col.key
+                    return (
+                      <th
+                        key={col.label}
+                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
+                      >
+                        <div className="flex items-center justify-center gap-2">
+                          <span>{col.label}</span>
+                          {col.key ? (
+                            <span className="inline-flex items-center rounded-md border border-white/10 bg-black/20 overflow-hidden">
+                              <button
+                                type="button"
+                                className={`h-7 w-7 flex items-center justify-center ${isActive && movSortDir === 'asc' ? 'bg-white/10 text-white' : 'text-blue-100/70'} hover:bg-white/10 cursor-pointer`}
+                                onClick={() => {
+                                  setMovSortKey(col.key!)
+                                  setMovSortDir('asc')
+                                }}
+                                aria-label={`Ordenar ${col.label} crescente`}
+                                title={`Ordenar ${col.label} crescente`}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                  <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className={`h-7 w-7 flex items-center justify-center ${isActive && movSortDir === 'desc' ? 'bg-white/10 text-white' : 'text-blue-100/70'} hover:bg-white/10 cursor-pointer`}
+                                onClick={() => {
+                                  setMovSortKey(col.key!)
+                                  setMovSortDir('desc')
+                                }}
+                                aria-label={`Ordenar ${col.label} decrescente`}
+                                title={`Ordenar ${col.label} decrescente`}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </button>
+                            </span>
+                          ) : null}
+                        </div>
+                      </th>
+                    )
+                  })}
 	              </tr>
 	            </thead>
 	            <tbody className="divide-y divide-white/5">
@@ -6416,17 +6579,68 @@ export function InsumosModule() {
 	                        type="button"
 	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
 	                        onClick={() => {
-	                          if (!codigoBarras) return
-	                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
+	                          if (codigoBarras) {
+                              setMovFilterProduto('')
+                              setMovFilterCategoria('')
+                              setMovFilterMarca('')
+	                            setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
+	                            return
+	                          }
+                            const p = String(produtoNome || '').trim()
+                            if (!p || p === '-') return
+                            setSelectedCodigoBarras('')
+                            setMovFilterCategoria('')
+                            setMovFilterMarca('')
+                            setMovFilterProduto((prev) => (prev.trim().toLowerCase() === p.toLowerCase() ? '' : p))
 	                        }}
-	                        title={codigoBarras ? 'Filtrar por este insumo' : undefined}
+	                        title={codigoBarras ? 'Filtrar por este insumo' : 'Filtrar por produto'}
 	                        aria-pressed={isSelected}
 	                      >
 	                        {produtoNome}
 	                      </button>
 		                    </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">{categoriaNome}</td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">{marcaNome}</td>
+                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                        {categoriaNome && categoriaNome !== '-' ? (
+                          <button
+                            type="button"
+                            className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                            onClick={() => {
+                              const c = String(categoriaNome || '').trim()
+                              if (!c || c === '-') return
+                              setSelectedCodigoBarras('')
+                              setMovFilterProduto('')
+                              setMovFilterCategoria((prev) => (prev.trim().toLowerCase() === c.toLowerCase() ? '' : c))
+                            }}
+                            title="Filtrar por categoria"
+                            aria-pressed={movFilterCategoria.trim().toLowerCase() === String(categoriaNome || '').trim().toLowerCase()}
+                          >
+                            {categoriaNome}
+                          </button>
+                        ) : (
+                          <span className="text-blue-100/70">-</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                        {marcaNome && marcaNome !== '-' ? (
+                          <button
+                            type="button"
+                            className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                            onClick={() => {
+                              const b = String(marcaNome || '').trim()
+                              if (!b || b === '-') return
+                              setSelectedCodigoBarras('')
+                              setMovFilterProduto('')
+                              setMovFilterMarca((prev) => (prev.trim().toLowerCase() === b.toLowerCase() ? '' : b))
+                            }}
+                            title="Filtrar por marca"
+                            aria-pressed={movFilterMarca.trim().toLowerCase() === String(marcaNome || '').trim().toLowerCase()}
+                          >
+                            {marcaNome}
+                          </button>
+                        ) : (
+                          <span className="text-blue-100/70">-</span>
+                        )}
+                      </td>
                       <td className="p-3 text-center align-middle whitespace-nowrap">
                         {estoqueAntes != null && estoqueDepois != null && Number.isFinite(estoqueAntes) && Number.isFinite(estoqueDepois) ? (
                           <span className="font-mono text-blue-50">{estoqueAntes} → {estoqueDepois}</span>
