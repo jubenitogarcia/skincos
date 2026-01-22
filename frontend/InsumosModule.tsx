@@ -768,7 +768,16 @@ export function InsumosModule() {
   const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
   const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
   const [purchaseDialogOpen, setPurchaseDialogOpen] = React.useState(false)
-  const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '90d' | '1y'>('30d')
+  const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '1y' | 'custom'>('30d')
+  const [overviewCustomFrom, setOverviewCustomFrom] = React.useState<string>('')
+  const [overviewCustomTo, setOverviewCustomTo] = React.useState<string>('')
+
+  const overviewPeriodLabel = React.useMemo(() => {
+    if (overviewPeriod === '7d') return 'Última semana'
+    if (overviewPeriod === '30d') return 'Último mês'
+    if (overviewPeriod === '1y') return 'Último ano'
+    return 'Personalizado'
+  }, [overviewPeriod])
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
   const [overviewMovResumo, setOverviewMovResumo] = React.useState<{ entradaQtd: number; saidaQtd: number; entradaValor: number; saidaValor: number; saldoLiquido: number } | null>(null)
@@ -2267,14 +2276,26 @@ export function InsumosModule() {
     setOverviewLoading(true)
     try {
       const now = new Date()
-      const start = new Date(now)
-      if (overviewPeriod === '7d') start.setDate(start.getDate() - 7)
-      else if (overviewPeriod === '30d') start.setDate(start.getDate() - 30)
-      else if (overviewPeriod === '90d') start.setDate(start.getDate() - 90)
-      else start.setFullYear(start.getFullYear() - 1)
       const yyyyMmDd = (d: Date) => d.toISOString().slice(0, 10)
-      const de = yyyyMmDd(start)
-      const ate = yyyyMmDd(now)
+      let de = ''
+      let ate = yyyyMmDd(now)
+
+      if (overviewPeriod === 'custom') {
+        const deIso = dateInputToIso(overviewCustomFrom)
+        const ateIso = dateInputToIso(overviewCustomTo)
+        if (deIso && ateIso) {
+          de = deIso
+          ate = ateIso
+        }
+      }
+
+      if (!de) {
+        const start = new Date(now)
+        if (overviewPeriod === '7d') start.setDate(start.getDate() - 7)
+        else if (overviewPeriod === '30d') start.setDate(start.getDate() - 30)
+        else start.setFullYear(start.getFullYear() - 1)
+        de = yyyyMmDd(start)
+      }
 
       const params = `unidade=${encodeURIComponent(unidade)}`
       const [estoque, notif, act, roi, quality, movs] = await Promise.all([
@@ -2353,7 +2374,7 @@ export function InsumosModule() {
     } finally {
       setOverviewLoading(false)
     }
-  }, [canUseApi, isAuthed, unidade, overviewPeriod])
+  }, [canUseApi, isAuthed, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
 
   const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
@@ -2477,18 +2498,36 @@ export function InsumosModule() {
 
       const trendsParams = new URLSearchParams(base.toString())
       trendsParams.set('groupBy', 'day')
-      const days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
+      const customFromIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomFrom) : ''
+      const customToIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomTo) : ''
+      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+        const fromMs = new Date(customFromIso).getTime()
+        const toMs = new Date(customToIso).getTime()
+        const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
+        days = Math.max(1, Math.min(365, diffDays))
+      }
       trendsParams.set('days', String(days))
       const deIso = dateInputToIso(movDe)
       const ateIso = dateInputToIso(movAte)
-      if (deIso) trendsParams.set('from', deIso)
-      if (ateIso) trendsParams.set('to', ateIso)
+      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+        trendsParams.set('from', customFromIso)
+        trendsParams.set('to', customToIso)
+      } else {
+        if (deIso) trendsParams.set('from', deIso)
+        if (ateIso) trendsParams.set('to', ateIso)
+      }
 
       const turnoverParams = new URLSearchParams(base.toString())
       turnoverParams.set('days', String(days))
       turnoverParams.set('mode', 'saida')
-      if (deIso) turnoverParams.set('from', deIso)
-      if (ateIso) turnoverParams.set('to', ateIso)
+      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+        turnoverParams.set('from', customFromIso)
+        turnoverParams.set('to', customToIso)
+      } else {
+        if (deIso) turnoverParams.set('from', deIso)
+        if (ateIso) turnoverParams.set('to', ateIso)
+      }
 
       const [alertas, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
@@ -2507,7 +2546,7 @@ export function InsumosModule() {
     } finally {
       setInsightsLoading(false)
     }
-  }, [canUseApi, isAuthed, movAte, movDe, movTipo, overviewPeriod, unidade])
+  }, [canUseApi, isAuthed, movAte, movDe, movTipo, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
@@ -2732,6 +2771,21 @@ export function InsumosModule() {
   }, [resetUserLayoutPrefs, setAllDetailsOpen])
 
   React.useEffect(() => {
+    const onOverview = (event: Event) => {
+      const e = event as CustomEvent<{ action?: 'reload'; period?: '7d' | '30d' | '1y' | 'custom'; from?: string; to?: string }>
+      const nextPeriod = e.detail?.period
+      if (nextPeriod) setOverviewPeriod(nextPeriod)
+      if (typeof e.detail?.from === 'string') setOverviewCustomFrom(e.detail.from)
+      if (typeof e.detail?.to === 'string') setOverviewCustomTo(e.detail.to)
+      if (e.detail?.action === 'reload') {
+        void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])
+      }
+    }
+    window.addEventListener('skincos:insumos:overview', onOverview as EventListener)
+    return () => window.removeEventListener('skincos:insumos:overview', onOverview as EventListener)
+  }, [loadInsights, loadOverview, refreshInsumos])
+
+  React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
     void loadShareHistory()
   }, [canUseApi, isAuthed, loadShareHistory])
@@ -2827,7 +2881,7 @@ export function InsumosModule() {
 	      { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
 	      { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
 	      { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
-	      { id: 'trends_inout', label: `Tendências (${overviewPeriod})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
+	      { id: 'trends_inout', label: `Tendências (${overviewPeriodLabel})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
 	      { id: 'roi_risk', label: 'ROI (perdas & risco)', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'square' },
 	      { id: 'turnover_category', label: 'Giro por categoria (saídas)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'wide' }
 	    ]
@@ -3889,32 +3943,10 @@ export function InsumosModule() {
       </Dialog>
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-          <div>
-            <div className="text-white text-lg font-semibold">Visão geral</div>
-            <div className="text-sm text-blue-100/70">KPIs, gráficos e alertas para a unidade atual.</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Select value={overviewPeriod} onValueChange={(v) => setOverviewPeriod(v as any)}>
-              <SelectTrigger className="w-24">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7d">7d</SelectItem>
-                <SelectItem value="30d">30d</SelectItem>
-                <SelectItem value="90d">90d</SelectItem>
-                <SelectItem value="1y">1 ano</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="secondary"
-              onClick={() => void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])}
-              disabled={(!isAuthed) || overviewLoading || insightsLoading}
-            >
-              {(overviewLoading || insightsLoading) ? 'Carregando…' : 'Recarregar'}
-            </Button>
-          </div>
-        </div>
+	        <div className="flex flex-col gap-2">
+	          <div className="text-white text-lg font-semibold">Visão geral</div>
+	          <div className="text-sm text-blue-100/70">KPIs, gráficos e alertas para a unidade atual.</div>
+	        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
@@ -3992,7 +4024,7 @@ export function InsumosModule() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xs text-blue-200/60">{overviewPeriod}</div>
+	              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
               <div className="text-sm text-blue-100/80">
                 <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
                 <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
@@ -4019,10 +4051,10 @@ export function InsumosModule() {
                         if (!isManagerRole) return <div key={panelId} />
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-                            <Card className="bg-black/20 border border-white/10">
-                              <CardHeader className="flex flex-row items-center justify-between gap-2">
-                                <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
-                                <div className="flex items-center gap-1">
+	                            <Card className="bg-black/20 border border-white/10">
+	                              <CardHeader className="relative pr-24">
+	                                <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
+	                                <div className="absolute top-2 right-2 flex items-center gap-1">
                                   <div
                                     {...handleProps}
                                     className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
@@ -4058,8 +4090,8 @@ export function InsumosModule() {
                                       </svg>
                                     )}
                                   </Button>
-                                </div>
-                              </CardHeader>
+	                                </div>
+	                              </CardHeader>
                               {panelOpen ? (
                                 <CardContent className="space-y-3">
               <div className="text-xs text-blue-200/60">
@@ -4258,27 +4290,29 @@ export function InsumosModule() {
                       if (panelId === 'alerts') {
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-                            <Card className="bg-black/20 border border-white/10">
-                              <CardHeader className="flex flex-row items-center justify-between gap-2">
-                                <CardTitle className="text-white text-base">Alertas</CardTitle>
-                                <div className="flex items-center gap-2">
-                                  <div className="flex items-center gap-2 text-xs text-blue-200/60">
-                                    <span>
-                                      estoque:{' '}
-                                      <span className="font-mono">
-                                        {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
-                                          ? Number(overviewNotifications?.counts?.lowStock)
-                                          : insightsAlertasFiltrados.length}
-                                      </span>
-                                    </span>
-                                    <span>•</span>
-                                    <span>
-                                      validade:{' '}
-                                      <span className="font-mono">
-                                        {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
-                                      </span>
-                                    </span>
-                                  </div>
+	                            <Card className="bg-black/20 border border-white/10">
+	                              <CardHeader className="relative pr-24">
+	                                <div className="space-y-1">
+	                                  <CardTitle className="text-white text-base">Alertas</CardTitle>
+	                                  <div className="flex flex-wrap items-center gap-2 text-xs text-blue-200/60">
+	                                    <span>
+	                                      estoque:{' '}
+	                                      <span className="font-mono">
+	                                        {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
+	                                          ? Number(overviewNotifications?.counts?.lowStock)
+	                                          : insightsAlertasFiltrados.length}
+	                                      </span>
+	                                    </span>
+	                                    <span>•</span>
+	                                    <span>
+	                                      validade:{' '}
+	                                      <span className="font-mono">
+	                                        {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
+	                                      </span>
+	                                    </span>
+	                                  </div>
+	                                </div>
+	                                <div className="absolute top-2 right-2 flex items-center gap-1">
                                   <div
                                     {...handleProps}
                                     className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
@@ -4314,8 +4348,8 @@ export function InsumosModule() {
                                       </svg>
                                     )}
                                   </Button>
-                                </div>
-                              </CardHeader>
+	                                </div>
+	                              </CardHeader>
                               {panelOpen ? (
                                 <CardContent className="space-y-3">
             <details
@@ -4689,10 +4723,10 @@ export function InsumosModule() {
 
                       return (
                         <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-                          <Card className="bg-black/20 border border-white/10">
-                            <CardHeader className="flex flex-row items-center justify-between gap-2">
-                              <CardTitle className="text-white text-base">Gráficos</CardTitle>
-                              <div className="flex items-center gap-2">
+	                          <Card className="bg-black/20 border border-white/10">
+	                            <CardHeader className="relative pr-24">
+	                              <CardTitle className="text-white text-base">Gráficos</CardTitle>
+	                              <div className="flex items-center gap-2">
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -4707,43 +4741,40 @@ export function InsumosModule() {
                                 <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
                                   Reset
                                 </Button>
-                                <div
-                                  {...handleProps}
-                                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                                  title="Arraste para mover"
-                                  aria-label="Mover"
-                                  role="button"
-                                  tabIndex={0}
-                                >
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                    <path
-                                      d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
-                                      stroke="currentColor"
-                                      strokeWidth="3"
-                                      strokeLinecap="round"
-                                    />
-                                  </svg>
-                                </div>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                  onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
-                                  title={panelOpen ? 'Contrair' : 'Expandir'}
-                                  aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                                >
-                                  {panelOpen ? (
-                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  ) : (
-                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  )}
-                                </Button>
-                              </div>
-                            </CardHeader>
+	                              </div>
+	                              <div className="absolute top-2 right-2 flex items-center gap-1">
+	                                <div
+	                                  {...handleProps}
+	                                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+	                                  title="Arraste para mover"
+	                                  aria-label="Mover"
+	                                  role="button"
+	                                  tabIndex={0}
+	                                >
+	                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+	                                  </svg>
+	                                </div>
+	                                <Button
+	                                  size="icon"
+	                                  variant="ghost"
+	                                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                                  onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
+	                                  title={panelOpen ? 'Contrair' : 'Expandir'}
+	                                  aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+	                                >
+	                                  {panelOpen ? (
+	                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+	                                    </svg>
+	                                  ) : (
+	                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+	                                    </svg>
+	                                  )}
+	                                </Button>
+	                              </div>
+	                            </CardHeader>
                             {panelOpen ? (
                               <CardContent className="space-y-3">
               <div
@@ -4853,7 +4884,7 @@ export function InsumosModule() {
                 })}
               </div>
 
-                                <div className="text-xs text-blue-200/60">Dica: use o período acima ({overviewPeriod}) e “Recarregar” para atualizar os dados.</div>
+	                                <div className="text-xs text-blue-200/60">Dica: use o período no cabeçalho ({overviewPeriodLabel}) e “Recarregar” para atualizar os dados.</div>
                               </CardContent>
                             ) : null}
                           </Card>
@@ -5074,13 +5105,20 @@ export function InsumosModule() {
                     style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('insumos') ?? 0 }}
                     className="space-y-3"
                   >
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <div className="text-white text-lg font-semibold">Insumos</div>
-                <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="relative pr-24">
+	              <div>
+	                <div className="text-white text-lg font-semibold">Insumos</div>
+	                <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
+	                {offlineQueueCount > 0 ? (
+	                  <div className="mt-2">
+	                    <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+	                      Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+	                    </Button>
+	                  </div>
+	                ) : null}
+	              </div>
+	              <div className="absolute top-2 right-2 flex items-center gap-1">
 	                <div
 	                  {...dragProvided.dragHandleProps}
 	                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
@@ -5089,20 +5127,15 @@ export function InsumosModule() {
 	                  role="button"
 	                  tabIndex={0}
 	                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                </div>
-                {offlineQueueCount > 0 ? (
-                  <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-                    Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-                  </Button>
-                ) : null}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                  onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.insumos, !insumosPanelOpen)}
+	                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+	                  </svg>
+	                </div>
+	                <Button
+	                  size="icon"
+	                  variant="ghost"
+	                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                  onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.insumos, !insumosPanelOpen)}
                   title={insumosPanelOpen ? 'Contrair' : 'Expandir'}
                   aria-label={insumosPanelOpen ? 'Contrair' : 'Expandir'}
                 >
@@ -5114,10 +5147,10 @@ export function InsumosModule() {
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
                       <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                  )}
-                </Button>
-              </div>
-            </CardHeader>
+	                  )}
+	                </Button>
+	              </div>
+	            </CardHeader>
             {insumosPanelOpen ? (
               <CardContent className="space-y-3">
 
@@ -5684,13 +5717,13 @@ export function InsumosModule() {
 	        style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('mov') ?? 0 }}
 	        className="space-y-3"
 	      >
-        <Card className="bg-black/20 border border-white/10">
-          <CardHeader className="flex flex-row items-start justify-between gap-2">
-            <div>
-              <CardTitle className="text-white text-lg">Movimentações</CardTitle>
-              <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
-            </div>
-            <div className="flex items-center gap-1">
+	        <Card className="bg-black/20 border border-white/10">
+	          <CardHeader className="relative pr-24">
+	            <div>
+	              <CardTitle className="text-white text-lg">Movimentações</CardTitle>
+	              <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+	            </div>
+	            <div className="absolute top-2 right-2 flex items-center gap-1">
 	              <div
 	                {...dragProvided.dragHandleProps}
 	                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
@@ -5699,11 +5732,11 @@ export function InsumosModule() {
 	                role="button"
 	                tabIndex={0}
 	              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-              </div>
-              <Button
+	                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+	                </svg>
+	              </div>
+	              <Button
                 size="icon"
                 variant="ghost"
                 className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
@@ -5719,10 +5752,10 @@ export function InsumosModule() {
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                )}
-              </Button>
-            </div>
-          </CardHeader>
+	                )}
+	              </Button>
+	            </div>
+	          </CardHeader>
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 

@@ -15,6 +15,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useKV } from '@/spark-mock'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
+const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
+const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
+const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
+
+type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
 const UNIT_MONITOR_UNITS: Array<{ value: string; label: string }> = [
     { value: 'unit-a', label: 'A' },
     { value: 'unit-b', label: 'B' },
@@ -288,19 +293,42 @@ export default function AppFunctionalNeatlab() {
 	        setActive(DEFAULT_MODULE_KEY)
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
 	    const [search, setSearch] = useState('')
-	    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
+		    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
 	        online: boolean | null
 	        authed: boolean | null
 	        integrated: boolean | null
 	        unidades: string[]
 	        allowedUnits: string[]
 	    } | null>(null)
-	    const [insumosUnit, setInsumosUnit] = useState<string>(() => {
+		    const [insumosUnit, setInsumosUnit] = useState<string>(() => {
 	        try {
 	            return localStorage.getItem(INSUMOS_UNIT_KEY) || 'novo-hamburgo'
 	        } catch {
 	            return 'novo-hamburgo'
 	        }
+			    })
+		    const [insumosOverviewPeriod, setInsumosOverviewPeriod] = useState<InsumosOverviewPeriod>(() => {
+		        try {
+		            const raw = localStorage.getItem(INSUMOS_OVERVIEW_PERIOD_KEY)
+		            const v = raw === '7d' || raw === '30d' || raw === '1y' || raw === 'custom' ? raw : '30d'
+		            return v
+		        } catch {
+		            return '30d'
+		        }
+		    })
+		    const [insumosOverviewFrom, setInsumosOverviewFrom] = useState<string>(() => {
+		        try {
+		            return localStorage.getItem(INSUMOS_OVERVIEW_FROM_KEY) || ''
+		        } catch {
+		            return ''
+		        }
+		    })
+		    const [insumosOverviewTo, setInsumosOverviewTo] = useState<string>(() => {
+		        try {
+		            return localStorage.getItem(INSUMOS_OVERVIEW_TO_KEY) || ''
+		        } catch {
+		            return ''
+		        }
 		    })
 		    const [unitMonitorSelectedUnit, setUnitMonitorSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
 		    const [unitMonitorCustomUnit, setUnitMonitorCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
@@ -341,11 +369,11 @@ export default function AppFunctionalNeatlab() {
 	        try { localStorage.setItem('app.activeModule', active) } catch { /* ignore */ }
 	    }, [active])
 
-	    React.useEffect(() => {
-	        if (active !== 'insumos') {
-	            setInsumosHeaderStatus(null)
-	            return
-	        }
+			    React.useEffect(() => {
+			        if (active !== 'insumos') {
+			            setInsumosHeaderStatus(null)
+			            return
+			        }
 
 	        const ac = new AbortController()
 
@@ -402,8 +430,19 @@ export default function AppFunctionalNeatlab() {
 	            }
 	        })()
 
-		        return () => ac.abort()
-		    }, [active, insumosUnit])
+			        return () => ac.abort()
+			    }, [active, insumosUnit])
+
+		    React.useEffect(() => {
+		        if (active !== 'insumos') return
+		        try {
+		            window.dispatchEvent(
+		                new CustomEvent('skincos:insumos:overview', {
+		                    detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo }
+		                })
+		            )
+		        } catch { /* ignore */ }
+		    }, [active, insumosOverviewFrom, insumosOverviewPeriod, insumosOverviewTo])
 
     const modulesSorted = useMemo(() => {
         const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
@@ -710,11 +749,11 @@ export default function AppFunctionalNeatlab() {
 		                                    </div>
 			                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
 			                                    <div className="hidden lg:flex items-center gap-2">
-			                                        {active === 'insumos' ? (
-			                                            <>
-		                                                <span className="text-xs text-blue-200/70">Unidade</span>
-		                                                <Select
-		                                                    value={insumosUnit}
+				                                        {active === 'insumos' ? (
+				                                            <>
+			                                                <span className="text-xs text-blue-200/70">Unidade</span>
+			                                                <Select
+			                                                    value={insumosUnit}
 		                                                    onValueChange={(v) => {
 		                                                        setInsumosUnit(v)
 		                                                        try { localStorage.setItem(INSUMOS_UNIT_KEY, v) } catch { /* ignore */ }
@@ -738,13 +777,88 @@ export default function AppFunctionalNeatlab() {
 		                                                            </SelectItem>
 		                                                        ))}
 		                                                    </SelectContent>
-		                                                </Select>
-			                                                <div className="flex items-center gap-1 ml-2">
-			                                                    <Button
-			                                                    size="icon"
-			                                                        variant="ghost"
-			                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
-		                                                        onClick={() => {
+			                                                </Select>
+				                                                <div className="flex items-center gap-1 ml-2">
+				                                                    <Select
+				                                                        value={insumosOverviewPeriod}
+				                                                        onValueChange={(v) => {
+				                                                            const next = (v as any) as InsumosOverviewPeriod
+				                                                            setInsumosOverviewPeriod(next)
+				                                                            try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
+				                                                            try {
+				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } }))
+				                                                            } catch { /* ignore */ }
+				                                                        }}
+				                                                    >
+				                                                        <SelectTrigger className="h-9 w-40 bg-white/[0.06] border-white/20 text-white">
+				                                                            <SelectValue placeholder="Período" />
+				                                                        </SelectTrigger>
+				                                                        <SelectContent>
+				                                                            <SelectItem value="7d">Última semana</SelectItem>
+				                                                            <SelectItem value="30d">Último mês</SelectItem>
+				                                                            <SelectItem value="1y">Último ano</SelectItem>
+				                                                            <SelectItem value="custom">Personalizado</SelectItem>
+				                                                        </SelectContent>
+				                                                    </Select>
+
+				                                                    {insumosOverviewPeriod === 'custom' ? (
+				                                                        <>
+				                                                            <Input
+				                                                                value={insumosOverviewFrom}
+				                                                                onChange={(e) => {
+				                                                                    const next = e.target.value
+				                                                                    setInsumosOverviewFrom(next)
+				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
+				                                                                    try {
+				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } }))
+				                                                                    } catch { /* ignore */ }
+				                                                                }}
+				                                                                placeholder="De (DD/MM/AAAA)"
+				                                                                className="h-9 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+				                                                            />
+				                                                            <Input
+				                                                                value={insumosOverviewTo}
+				                                                                onChange={(e) => {
+				                                                                    const next = e.target.value
+				                                                                    setInsumosOverviewTo(next)
+				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
+				                                                                    try {
+				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } }))
+				                                                                    } catch { /* ignore */ }
+				                                                                }}
+				                                                                placeholder="Até (DD/MM/AAAA)"
+				                                                                className="h-9 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+				                                                            />
+				                                                        </>
+				                                                    ) : null}
+
+				                                                    <Button
+				                                                        size="icon"
+				                                                        variant="ghost"
+				                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
+				                                                        onClick={() => {
+				                                                            try {
+				                                                                window.dispatchEvent(
+				                                                                    new CustomEvent('skincos:insumos:overview', {
+				                                                                        detail: { action: 'reload', period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo }
+				                                                                    })
+				                                                                )
+				                                                            } catch { /* ignore */ }
+				                                                        }}
+				                                                        title="Recarregar visão geral"
+				                                                        aria-label="Recarregar visão geral"
+				                                                    >
+				                                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+				                                                            <path d="M20 12a8 8 0 10-2.343 5.657" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+				                                                            <path d="M20 8v4h-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+				                                                        </svg>
+				                                                    </Button>
+
+				                                                    <Button
+				                                                    size="icon"
+				                                                        variant="ghost"
+				                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
+			                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
 		                                                            } catch { /* ignore */ }
@@ -891,12 +1005,88 @@ export default function AppFunctionalNeatlab() {
 	                                </div>
                             </div>
 
-                            {active === 'insumos' ? (
-                                <div className="mt-4 flex flex-col gap-2 lg:hidden">
-                                    <div className="flex items-center gap-2">
-                                        <Select
-                                            value={insumosUnit}
-                                            onValueChange={(v) => {
+	                            {active === 'insumos' ? (
+	                                <div className="mt-4 flex flex-col gap-2 lg:hidden">
+	                                    <div className="flex items-center gap-2">
+	                                        <Select
+	                                            value={insumosOverviewPeriod}
+	                                            onValueChange={(v) => {
+	                                                const next = (v as any) as InsumosOverviewPeriod
+	                                                setInsumosOverviewPeriod(next)
+	                                                try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
+	                                                try {
+	                                                    window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } }))
+	                                                } catch { /* ignore */ }
+	                                            }}
+	                                        >
+	                                            <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
+	                                                <SelectValue placeholder="Período" />
+	                                            </SelectTrigger>
+	                                            <SelectContent>
+	                                                <SelectItem value="7d">Última semana</SelectItem>
+	                                                <SelectItem value="30d">Último mês</SelectItem>
+	                                                <SelectItem value="1y">Último ano</SelectItem>
+	                                                <SelectItem value="custom">Personalizado</SelectItem>
+	                                            </SelectContent>
+	                                        </Select>
+	                                        <Button
+	                                            size="icon"
+	                                            variant="ghost"
+	                                            className="bg-transparent text-white hover:bg-white/[0.10]"
+	                                            onClick={() => {
+	                                                try {
+	                                                    window.dispatchEvent(
+	                                                        new CustomEvent('skincos:insumos:overview', {
+	                                                            detail: { action: 'reload', period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo }
+	                                                        })
+	                                                    )
+	                                                } catch { /* ignore */ }
+	                                            }}
+	                                            title="Recarregar visão geral"
+	                                            aria-label="Recarregar visão geral"
+	                                        >
+	                                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                                                <path d="M20 12a8 8 0 10-2.343 5.657" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+	                                                <path d="M20 8v4h-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+	                                            </svg>
+	                                        </Button>
+	                                    </div>
+
+	                                    {insumosOverviewPeriod === 'custom' ? (
+	                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+	                                            <Input
+	                                                value={insumosOverviewFrom}
+	                                                onChange={(e) => {
+	                                                    const next = e.target.value
+	                                                    setInsumosOverviewFrom(next)
+	                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
+	                                                    try {
+	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } }))
+	                                                    } catch { /* ignore */ }
+	                                                }}
+	                                                placeholder="De (DD/MM/AAAA)"
+	                                                className="h-10 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+	                                            />
+	                                            <Input
+	                                                value={insumosOverviewTo}
+	                                                onChange={(e) => {
+	                                                    const next = e.target.value
+	                                                    setInsumosOverviewTo(next)
+	                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
+	                                                    try {
+	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } }))
+	                                                    } catch { /* ignore */ }
+	                                                }}
+	                                                placeholder="Até (DD/MM/AAAA)"
+	                                                className="h-10 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+	                                            />
+	                                        </div>
+	                                    ) : null}
+
+	                                    <div className="flex items-center gap-2">
+	                                        <Select
+	                                            value={insumosUnit}
+	                                            onValueChange={(v) => {
                                                 setInsumosUnit(v)
                                                 try { localStorage.setItem(INSUMOS_UNIT_KEY, v) } catch { /* ignore */ }
                                                 try {
