@@ -2884,23 +2884,61 @@ export function InsumosModule() {
 
   const filteredInsumos = insumos
 
+  const insumosCacheRef = React.useRef<Map<string, Map<string, Insumo>>>(new Map())
+  const [insumosCacheVersion, setInsumosCacheVersion] = React.useState(0)
+
+  const upsertInsumosCache = React.useCallback((items: Insumo[]) => {
+    if (!Array.isArray(items) || !items.length) return
+    let changed = false
+    for (const it of items) {
+      const codigo = String(it?.codigoBarras || '').trim()
+      if (!codigo) continue
+      const registro = String(it?.registro || '').trim() || `__no_registro__:${codigo}`
+      let byRegistro = insumosCacheRef.current.get(codigo)
+      if (!byRegistro) {
+        byRegistro = new Map<string, Insumo>()
+        insumosCacheRef.current.set(codigo, byRegistro)
+      }
+      const prev = byRegistro.get(registro)
+      if (!prev) {
+        byRegistro.set(registro, it)
+        changed = true
+        continue
+      }
+      const merged: Insumo = {
+        ...prev,
+        ...it,
+        estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
+        statusValidade: it.statusValidade || prev.statusValidade
+      }
+      byRegistro.set(registro, merged)
+      changed = true
+    }
+    if (changed) setInsumosCacheVersion((v) => v + 1)
+  }, [])
+
+  React.useEffect(() => {
+    upsertInsumosCache(insumos || [])
+  }, [insumos, upsertInsumosCache])
+
   const selectedInsumo = React.useMemo(() => {
     const code = selectedCodigoBarras.trim()
     if (!code) return null
-    return (insumos || []).find((i) => String(i.codigoBarras || '').trim() === code) || null
-  }, [insumos, selectedCodigoBarras])
+    const byRegistro = insumosCacheRef.current.get(code)
+    if (!byRegistro || !byRegistro.size) return null
+    return Array.from(byRegistro.values())[0] || null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insumosCacheVersion, selectedCodigoBarras])
 
   const insumosByCodigo = React.useMemo(() => {
     const map = new Map<string, Insumo[]>()
-    for (const it of insumos || []) {
-      const code = String(it.codigoBarras || '').trim()
-      if (!code) continue
-      const list = map.get(code) || []
-      list.push(it)
-      map.set(code, list)
+    for (const [code, byRegistro] of insumosCacheRef.current.entries()) {
+      const list = Array.from(byRegistro.values())
+      if (list.length) map.set(code, list)
     }
     return map
-  }, [insumos])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insumosCacheVersion])
 
   const pickInsumoForMov = React.useCallback(
     (m: Movimentacao) => {
@@ -2932,6 +2970,56 @@ export function InsumosModule() {
     },
     [insumosByCodigo, unidade]
   )
+
+  const movInsumosLookupTokenRef = React.useRef(0)
+  const movInsumosLookupDoneRef = React.useRef<Set<string>>(new Set())
+  const movInsumosLookupInflightRef = React.useRef<Set<string>>(new Set())
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    const uniqueCodes = new Set<string>()
+    for (const m of movimentacoesView || []) {
+      const code = String(m?.codigoBarras || '').trim()
+      if (code) uniqueCodes.add(code)
+    }
+
+    const missing: string[] = []
+    for (const code of uniqueCodes) {
+      if (movInsumosLookupDoneRef.current.has(code)) continue
+      if (movInsumosLookupInflightRef.current.has(code)) continue
+      const cached = insumosCacheRef.current.get(code)
+      if (cached && cached.size) continue
+      missing.push(code)
+    }
+    if (!missing.length) return
+
+    const token = ++movInsumosLookupTokenRef.current
+    const queue = missing
+    const concurrency = 4
+    let cursor = 0
+
+    const worker = async () => {
+      while (cursor < queue.length && token === movInsumosLookupTokenRef.current) {
+        const code = queue[cursor++]
+        if (!code) continue
+        if (movInsumosLookupDoneRef.current.has(code)) continue
+        if (movInsumosLookupInflightRef.current.has(code)) continue
+        movInsumosLookupInflightRef.current.add(code)
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: code, ctxUnidade: unidade })
+          if (token !== movInsumosLookupTokenRef.current) return
+          upsertInsumosCache(items)
+        } catch {
+          // ignore
+        } finally {
+          movInsumosLookupInflightRef.current.delete(code)
+          movInsumosLookupDoneRef.current.add(code)
+        }
+      }
+    }
+
+    void Promise.allSettled(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()))
+  }, [canUseApi, isAuthed, lookupInsumosByCodigo, movimentacoesView, unidade, upsertInsumosCache])
 
   const movPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.mov] ?? true
 
