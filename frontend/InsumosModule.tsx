@@ -3,10 +3,12 @@ import { toast } from 'sonner'
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
+import { Calendar } from '@/calendar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Checkbox } from '@/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
+import { Popover, PopoverAnchor, PopoverContent } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -275,6 +277,68 @@ function normalizeText(value?: string | null) {
     .replace(/\s+/g, ' ')
 }
 
+function BrDatePickerInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel
+}: {
+  value: string
+  onChange: (next: string) => void
+  placeholder?: string
+  ariaLabel?: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const selected = React.useMemo(() => parseBrInputToDate(value), [value])
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <div className="relative">
+          <Input
+            value={value}
+            onChange={(e) => onChange(digitsToBrDateInput(e.target.value))}
+            placeholder={placeholder || 'DD/MM/AA'}
+            inputMode="numeric"
+            onFocus={() => setOpen(true)}
+            onClick={() => setOpen(true)}
+            aria-label={ariaLabel}
+          />
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md border border-white/10 bg-black/20 hover:bg-white/10 text-blue-100/80 cursor-pointer flex items-center justify-center"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Selecionar data"
+            title="Selecionar data"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M8 2v3M16 2v3M4 8h16M6 4h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </PopoverAnchor>
+      <PopoverContent align="start" className="w-auto p-2">
+        <Calendar
+          mode="single"
+          selected={selected}
+          onSelect={(d) => {
+            if (!d) return
+            onChange(fmtBrDateInput(d))
+            setOpen(false)
+          }}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
 
 function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): EstoqueStatus {
@@ -350,11 +414,15 @@ function brToIsoDate(value?: string | null) {
   if (!v) return ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v
 
-  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/)
   if (!m) return ''
   const day = parseInt(m[1], 10)
   const month = parseInt(m[2], 10)
-  const year = parseInt(m[3], 10)
+  const yearRaw = m[3]
+  const year =
+    yearRaw.length === 2
+      ? 2000 + parseInt(yearRaw, 10)
+      : parseInt(yearRaw, 10)
   const d = new Date(Date.UTC(year, month - 1, day))
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return ''
   const yyyy = String(year).padStart(4, '0')
@@ -369,6 +437,32 @@ function dateInputToIso(value?: string | null) {
   if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
   const iso = brToIsoDate(v)
   return iso || ''
+}
+
+function digitsToBrDateInput(raw: string) {
+  const digits = String(raw || '').replace(/\D/g, '').slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
+  if (digits.length <= 6) return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`
+}
+
+function parseBrInputToDate(value?: string | null) {
+  const iso = dateInputToIso(value)
+  if (!iso) return undefined
+  const d = new Date(`${iso}T00:00:00.000Z`)
+  return Number.isNaN(d.getTime()) ? undefined : d
+}
+
+function fmtBrDateInput(d: Date) {
+  try {
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  } catch {
+    const iso = d.toISOString().slice(0, 10)
+    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (!m) return iso
+    return `${m[3]}/${m[2]}/${m[1].slice(2)}`
+  }
 }
 
 function fmtDateOnlyBR(value?: string | null) {
@@ -786,7 +880,7 @@ export function InsumosModule() {
   const [movimentacoes, setMovimentacoes] = React.useState<Movimentacao[]>([])
   const [movLoading, setMovLoading] = React.useState(false)
   const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'>('TODOS')
-  const [movGroupTransfers, setMovGroupTransfers] = React.useState(true)
+  const movGroupTransfers = true
   const [movDe, setMovDe] = React.useState('')
   const [movAte, setMovAte] = React.useState('')
   const [movFilterProduto, setMovFilterProduto] = React.useState('')
@@ -2360,6 +2454,18 @@ export function InsumosModule() {
     }
   }, [unidade, movAte, movDe, movLimite, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
 
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    const deIso = movDe.trim() ? dateInputToIso(movDe) : ''
+    const ateIso = movAte.trim() ? dateInputToIso(movAte) : ''
+    if (movDe.trim() && !deIso) return
+    if (movAte.trim() && !ateIso) return
+    const t = window.setTimeout(() => {
+      void loadMovimentacoes()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
+
   const loadOverview = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setOverviewLoading(true)
@@ -2878,11 +2984,6 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
     void loadShareHistory()
   }, [canUseApi, isAuthed, loadShareHistory])
-
-  React.useEffect(() => {
-    if (!canUseApi || !isAuthed) return
-    void loadMovimentacoes()
-  }, [canUseApi, isAuthed, loadMovimentacoes])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -4055,7 +4156,7 @@ export function InsumosModule() {
                 </tbody>
               </table>
             </div>
-            <div className="text-xs text-blue-200/60">{insumosHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}</div>
+            {insumosHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -5883,11 +5984,11 @@ export function InsumosModule() {
             )}
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs text-blue-200/60">
-            {insumosHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}
+        {insumosHasMore ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div>
           </div>
-        </div>
+        ) : null}
 
         {createOpen ? (
           <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
@@ -6419,29 +6520,12 @@ export function InsumosModule() {
           </div>
           <div className="w-48">
             <div className="text-xs text-blue-200/70 mb-1">De</div>
-            <Input value={movDe} onChange={(e) => setMovDe(e.target.value)} placeholder="DD/MM/AAAA" />
+            <BrDatePickerInput value={movDe} onChange={setMovDe} placeholder="DD/MM/AA" ariaLabel="De" />
           </div>
           <div className="w-48">
             <div className="text-xs text-blue-200/70 mb-1">Até</div>
-            <Input value={movAte} onChange={(e) => setMovAte(e.target.value)} placeholder="DD/MM/AAAA" />
+            <BrDatePickerInput value={movAte} onChange={setMovAte} placeholder="DD/MM/AA" ariaLabel="Até" />
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={movGroupTransfers ? 'secondary' : 'outline'}
-              onClick={() => setMovGroupTransfers((v) => !v)}
-              disabled={movTipo !== 'TODOS'}
-              title={movTipo !== 'TODOS' ? 'Disponível apenas quando Tipo = Todos' : 'Agrupa entrada/saída de transferências em uma linha'}
-            >
-              Agrupar transferências
-            </Button>
-          </div>
-          <Button
-            variant="secondary"
-            onClick={() => void Promise.allSettled([loadMovimentacoes(), loadInsights()])}
-            disabled={movLoading || !isAuthed}
-          >
-            {movLoading ? 'Carregando…' : 'Filtrar'}
-          </Button>
         </div>
 
         <div className="flex items-center justify-end">
@@ -6466,7 +6550,7 @@ export function InsumosModule() {
           </Button>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
           <div>
             <span className="font-mono">{movimentacoesView.length}</span>
             {movTotal != null ? (
@@ -6477,7 +6561,7 @@ export function InsumosModule() {
             ) : null}
           </div>
           <div className="flex items-center gap-2">
-            <div className="text-xs text-blue-200/60">{movHasMore ? 'Role até o fim para carregar mais…' : 'Tudo carregado.'}</div>
+            {movHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
           </div>
         </div>
 
