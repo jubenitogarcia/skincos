@@ -739,13 +739,13 @@ export default function AppFunctionalNeatlab() {
                     {/* Premium Main Area */}
                     <div className="flex-1 flex flex-col overflow-hidden">
 	                        {/* Premium Header */}
-	                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-6">
-	                            <div className="flex items-center justify-between">
-		                                <div className="flex items-center gap-4">
-		                                    <div className="animate-fade-in">
-		                                        <h1 className="text-2xl font-bold text-white leading-tight">
-		                                            {modules.find(m => m.key === active)?.label || 'Dashboard'}
-		                                        </h1>
+		                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-6">
+		                            <div className="flex items-center justify-between">
+			                                <div className="flex items-center gap-4">
+				                                    <div className="animate-fade-in">
+				                                        <h1 className="text-2xl font-bold text-white leading-tight">
+				                                            {modules.find(m => m.key === active)?.label || 'Dashboard'}
+				                                        </h1>
 		                                    </div>
 			                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
 			                                    <div className="hidden lg:flex items-center gap-2">
@@ -833,31 +833,9 @@ export default function AppFunctionalNeatlab() {
 				                                                    ) : null}
 
 				                                                    <Button
-				                                                        size="icon"
-				                                                        variant="ghost"
-				                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
-				                                                        onClick={() => {
-				                                                            try {
-				                                                                window.dispatchEvent(
-				                                                                    new CustomEvent('skincos:insumos:overview', {
-				                                                                        detail: { action: 'reload', period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo }
-				                                                                    })
-				                                                                )
-				                                                            } catch { /* ignore */ }
-				                                                        }}
-				                                                        title="Recarregar visão geral"
-				                                                        aria-label="Recarregar visão geral"
-				                                                    >
-				                                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-				                                                            <path d="M20 12a8 8 0 10-2.343 5.657" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-				                                                            <path d="M20 8v4h-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-				                                                        </svg>
-				                                                    </Button>
-
-				                                                    <Button
 				                                                    size="icon"
 				                                                        variant="ghost"
-				                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
+				                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
 			                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
@@ -866,12 +844,12 @@ export default function AppFunctionalNeatlab() {
 		                                                        title="Entrada"
 		                                                        aria-label="Entrada"
 		                                                    >
-		                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-9 w-9" />
+		                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-11 w-11" />
 		                                                    </Button>
 		                                                    <Button
 		                                                    size="icon"
 		                                                        variant="ghost"
-		                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
+		                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
 		                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
@@ -880,12 +858,12 @@ export default function AppFunctionalNeatlab() {
 		                                                        title="Saída"
 		                                                        aria-label="Saída"
 		                                                    >
-		                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-9 w-9" />
+		                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-11 w-11" />
 		                                                    </Button>
 		                                                    <Button
 		                                                    size="icon"
 		                                                        variant="ghost"
-		                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
+		                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
 		                                                        onClick={() => {
 		                                                            try {
 		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
@@ -894,59 +872,9 @@ export default function AppFunctionalNeatlab() {
 		                                                        title="Transferência"
 		                                                        aria-label="Transferência"
 			                                                    >
-			                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
+			                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-11 w-11" />
 			                                                    </Button>
-			                                                    <Button
-			                                                        size="icon"
-			                                                        variant="ghost"
-			                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
-			                                                        onClick={() => {
-			                                                            try {
-			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
-			                                                            } catch { /* ignore */ }
-			                                                        }}
-			                                                        title="Expandir seções"
-			                                                        aria-label="Expandir seções"
-			                                                    >
-			                                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-			                                                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-			                                                            <path d="M6 5l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
-			                                                        </svg>
-			                                                    </Button>
-			                                                    <Button
-			                                                        size="icon"
-			                                                        variant="ghost"
-			                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
-			                                                        onClick={() => {
-			                                                            try {
-			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
-			                                                            } catch { /* ignore */ }
-			                                                        }}
-			                                                        title="Contrair seções"
-			                                                        aria-label="Contrair seções"
-			                                                    >
-			                                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-			                                                            <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-			                                                            <path d="M6 19l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
-			                                                        </svg>
-			                                                    </Button>
-			                                                    <Button
-			                                                        size="icon"
-			                                                        variant="ghost"
-			                                                        className="bg-transparent text-white hover:bg-white/[0.10]"
-			                                                        onClick={() => {
-			                                                            try {
-			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
-			                                                            } catch { /* ignore */ }
-			                                                        }}
-			                                                        title="Resetar layout"
-			                                                        aria-label="Resetar layout"
-			                                                    >
-			                                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-			                                                            <path d="M20 12a8 8 0 10-2.343 5.657" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-			                                                            <path d="M20 8v4h-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-			                                                        </svg>
-			                                                    </Button>
+				
 		                                                </div>
 			                                            </>
 				                                        ) : null}
@@ -979,6 +907,52 @@ export default function AppFunctionalNeatlab() {
 	                                </div>
 
 	                                <div className="flex items-center gap-4">
+	                                    {active === 'insumos' ? (
+	                                        <div className="flex items-center gap-1">
+	                                            <Button
+	                                                size="icon"
+	                                                variant="ghost"
+	                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+	                                                onClick={() => {
+	                                                    try {
+	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
+	                                                    } catch { /* ignore */ }
+	                                                }}
+	                                                title="Expandir tudo"
+	                                                aria-label="Expandir tudo"
+	                                            >
+	                                                <img src="/icons/layout-expand.svg" alt="" aria-hidden className="h-11 w-11" />
+	                                            </Button>
+	                                            <Button
+	                                                size="icon"
+	                                                variant="ghost"
+	                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+	                                                onClick={() => {
+	                                                    try {
+	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
+	                                                    } catch { /* ignore */ }
+	                                                }}
+	                                                title="Contrair tudo"
+	                                                aria-label="Contrair tudo"
+	                                            >
+	                                                <img src="/icons/layout-expand.svg" alt="" aria-hidden className="h-11 w-11 rotate-180" />
+	                                            </Button>
+	                                            <Button
+	                                                size="icon"
+	                                                variant="ghost"
+	                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+	                                                onClick={() => {
+	                                                    try {
+	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
+	                                                    } catch { /* ignore */ }
+	                                                }}
+	                                                title="Resetar layout"
+	                                                aria-label="Resetar layout"
+	                                            >
+	                                                <img src="/icons/layout-reset.svg" alt="" aria-hidden className="h-11 w-11" />
+	                                            </Button>
+	                                        </div>
+	                                    ) : null}
 		                                    {UNLOCKED_MODULE_KEYS.has('notifications') ? (
 		                                        <HeaderNotificationsButton
 		                                            onOpen={() => {
@@ -1029,28 +1003,7 @@ export default function AppFunctionalNeatlab() {
 	                                                <SelectItem value="custom">Personalizado</SelectItem>
 	                                            </SelectContent>
 	                                        </Select>
-	                                        <Button
-	                                            size="icon"
-	                                            variant="ghost"
-	                                            className="bg-transparent text-white hover:bg-white/[0.10]"
-	                                            onClick={() => {
-	                                                try {
-	                                                    window.dispatchEvent(
-	                                                        new CustomEvent('skincos:insumos:overview', {
-	                                                            detail: { action: 'reload', period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo }
-	                                                        })
-	                                                    )
-	                                                } catch { /* ignore */ }
-	                                            }}
-	                                            title="Recarregar visão geral"
-	                                            aria-label="Recarregar visão geral"
-	                                        >
-	                                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                                <path d="M20 12a8 8 0 10-2.343 5.657" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                                <path d="M20 8v4h-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                            </svg>
-	                                        </Button>
-	                                    </div>
+		                                    </div>
 
 	                                    {insumosOverviewPeriod === 'custom' ? (
 	                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1111,99 +1064,49 @@ export default function AppFunctionalNeatlab() {
                                             </SelectContent>
                                         </Select>
 	                                        <div className="flex items-center gap-1">
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10]"
-                                                onClick={() => {
-                                                    try {
-                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
-                                                    } catch { /* ignore */ }
-                                                }}
-                                                title="Entrada"
-                                                aria-label="Entrada"
-                                            >
-                                                <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-9 w-9" />
-                                            </Button>
-                                            <Button
-                                                size="icon"
-                                                variant="ghost"
-                                                className="bg-transparent text-white hover:bg-white/[0.10]"
-                                                onClick={() => {
-                                                    try {
-                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
-                                                    } catch { /* ignore */ }
-                                                }}
-                                                title="Saída"
-                                                aria-label="Saída"
-                                            >
-                                                <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-9 w-9" />
-                                            </Button>
-                                            <Button
-                                                size="icon"
-                                                variant="ghost"
-                                                className="bg-transparent text-white hover:bg-white/[0.10]"
-                                                onClick={() => {
-                                                    try {
-                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
-                                                    } catch { /* ignore */ }
-                                                }}
-                                                title="Transferência"
-                                                aria-label="Transferência"
-	                                            >
-	                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
-	                                            </Button>
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10]"
-	                                                onClick={() => {
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
-	                                                    } catch { /* ignore */ }
-	                                                }}
-	                                                title="Expandir seções"
-	                                                aria-label="Expandir seções"
-	                                            >
-	                                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                                    <path d="M6 5l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
-	                                                </svg>
-	                                            </Button>
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10]"
-	                                                onClick={() => {
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
-	                                                    } catch { /* ignore */ }
-	                                                }}
-	                                                title="Contrair seções"
-	                                                aria-label="Contrair seções"
-	                                            >
-	                                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                                    <path d="M6 19l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
-	                                                </svg>
-	                                            </Button>
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10]"
-	                                                onClick={() => {
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
-	                                                    } catch { /* ignore */ }
-	                                                }}
-	                                                title="Resetar layout"
-	                                                aria-label="Resetar layout"
-	                                            >
-	                                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                                    <path d="M20 12a8 8 0 10-2.343 5.657" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                                    <path d="M20 8v4h-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                                </svg>
-	                                            </Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+                                                    onClick={() => {
+                                                        try {
+                                                            window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
+                                                        } catch { /* ignore */ }
+                                                    }}
+                                                    title="Entrada"
+                                                    aria-label="Entrada"
+                                                >
+                                                    <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-11 w-11" />
+                                                </Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+                                                    onClick={() => {
+                                                        try {
+                                                            window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
+                                                        } catch { /* ignore */ }
+                                                    }}
+                                                    title="Saída"
+                                                    aria-label="Saída"
+                                                >
+                                                    <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-11 w-11" />
+                                                </Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+                                                    onClick={() => {
+                                                        try {
+                                                            window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
+                                                        } catch { /* ignore */ }
+                                                    }}
+                                                    title="Transferência"
+                                                    aria-label="Transferência"
+                                                >
+	                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-11 w-11" />
+                                                </Button>
+		
 	                                        </div>
 	                                    </div>
 	                                </div>

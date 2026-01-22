@@ -1119,31 +1119,57 @@ export function InsumosModule() {
     return next
   }, [])
 
-  const onDragEndOverview = React.useCallback(
+  const [mainPanelsDirection, setMainPanelsDirection] = React.useState<'horizontal' | 'vertical'>(() => {
+    if (typeof window === 'undefined' || !(window as any).matchMedia) return 'horizontal'
+    return window.matchMedia('(min-width: 1024px)').matches ? 'horizontal' : 'vertical'
+  })
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !(window as any).matchMedia) return
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const apply = () => setMainPanelsDirection(mq.matches ? 'horizontal' : 'vertical')
+    apply()
+    const onChange = () => apply()
+    try {
+      mq.addEventListener('change', onChange)
+      return () => mq.removeEventListener('change', onChange)
+    } catch {
+      // Safari fallback
+      mq.addListener(onChange)
+      return () => mq.removeListener(onChange)
+    }
+  }, [])
+
+  const onDragEndLayout = React.useCallback(
     (result: DropResult) => {
       if (!result.destination) return
-      const next = moveIdInList(visibleOverviewPanels, result.source.index, result.destination.index)
-      persistOverviewPanels(next)
-      scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
-    },
-    [detailsOpen, mainPanelOrder.join('|'), moveIdInList, persistOverviewPanels, scheduleSaveUserPrefs, visibleOverviewPanels.join('|')]
-  )
+      if (result.source.droppableId !== result.destination.droppableId) return
 
-  const onDragEndMainPanels = React.useCallback(
-    (result: DropResult) => {
-      if (!result.destination) return
-      const next = moveIdInList(visibleMainPanels, result.source.index, result.destination.index)
-      persistMainPanels(next)
-      scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
-    },
-    [detailsOpen, moveIdInList, overviewPanelOrder.join('|'), persistMainPanels, scheduleSaveUserPrefs, visibleMainPanels.join('|')]
-  )
+      if (result.source.droppableId === 'overview-panels') {
+        const next = moveIdInList(visibleOverviewPanels, result.source.index, result.destination.index)
+        persistOverviewPanels(next)
+        scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
+        return
+      }
 
-  const overviewOrderIndex = React.useMemo(() => {
-    const map = new Map<OverviewPanelId, number>()
-    visibleOverviewPanels.forEach((id, idx) => map.set(id, idx))
-    return map
-  }, [visibleOverviewPanels.join('|')])
+      if (result.source.droppableId === 'main-panels') {
+        const next = moveIdInList(visibleMainPanels, result.source.index, result.destination.index)
+        persistMainPanels(next)
+        scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
+      }
+    },
+    [
+      detailsOpen,
+      mainPanelOrder.join('|'),
+      moveIdInList,
+      overviewPanelOrder.join('|'),
+      persistMainPanels,
+      persistOverviewPanels,
+      scheduleSaveUserPrefs,
+      visibleMainPanels.join('|'),
+      visibleOverviewPanels.join('|')
+    ]
+  )
 
   const mainOrderIndex = React.useMemo(() => {
     const map = new Map<MainPanelId, number>()
@@ -3945,7 +3971,7 @@ export function InsumosModule() {
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
 	        <div className="flex flex-col gap-2">
 	          <div className="text-white text-lg font-semibold">Visão geral</div>
-	          <div className="text-sm text-blue-100/70">KPIs, gráficos e alertas para a unidade atual.</div>
+
 	        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
@@ -4037,7 +4063,6 @@ export function InsumosModule() {
         </div>
 
         <div className="flex flex-col gap-3">
-        <DragDropContext onDragEnd={onDragEndOverview}>
           <Droppable droppableId="overview-panels">
             {(dropProvided) => (
               <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="flex flex-col gap-3">
@@ -4884,11 +4909,10 @@ export function InsumosModule() {
                 })}
               </div>
 
-	                                <div className="text-xs text-blue-200/60">Dica: use o período no cabeçalho ({overviewPeriodLabel}) e “Recarregar” para atualizar os dados.</div>
-                              </CardContent>
-                            ) : null}
-                          </Card>
-                        </div>
+	                              </CardContent>
+	                            ) : null}
+	                          </Card>
+	                        </div>
                       )
                     }}
                   </Draggable>
@@ -4897,7 +4921,6 @@ export function InsumosModule() {
               </div>
             )}
           </Droppable>
-        </DragDropContext>
         </div>
       </div>
 
@@ -5086,13 +5109,13 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <DragDropContext onDragEnd={onDragEndMainPanels}>
-        <Droppable droppableId="main-panels" direction="horizontal">
+      <DragDropContext onDragEnd={onDragEndLayout}>
+        <Droppable droppableId="main-panels" direction={mainPanelsDirection}>
           {(dropProvided) => (
             <div
               ref={dropProvided.innerRef}
               {...dropProvided.droppableProps}
-              className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3"
+              className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-3"
             >
               <Draggable draggableId="main-insumos" index={mainOrderIndex.get('insumos') ?? 0}>
                 {(dragProvided) => (
@@ -5103,7 +5126,7 @@ export function InsumosModule() {
                     }}
                     {...dragProvided.draggableProps}
                     style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('insumos') ?? 0 }}
-                    className="space-y-3"
+                    className="space-y-3 flex-1 min-w-0"
                   >
 	          <Card className="bg-black/20 border border-white/10">
 	            <CardHeader className="relative pr-24">
@@ -5264,9 +5287,6 @@ export function InsumosModule() {
               placeholder="Buscar por código, produto, categoria…"
               className="w-80"
             />
-            <Button variant="secondary" onClick={() => void refreshInsumos({ pagina: 1 })} disabled={insumosLoading || !isAuthed}>
-              {insumosLoading ? 'Carregando…' : 'Recarregar'}
-            </Button>
             <Button
               variant="outline"
               onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
@@ -5715,7 +5735,7 @@ export function InsumosModule() {
 	        }}
 	        {...dragProvided.draggableProps}
 	        style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('mov') ?? 0 }}
-	        className="space-y-3"
+	        className="space-y-3 flex-1 min-w-0"
 	      >
 	        <Card className="bg-black/20 border border-white/10">
 	          <CardHeader className="relative pr-24">
