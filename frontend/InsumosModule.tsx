@@ -5064,7 +5064,7 @@ export function InsumosModule() {
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                            <Card className="bg-black/20 border border-white/10">
-		                              <CardHeader className="flex flex-row items-start justify-between gap-3">
+		                              <CardHeader className="relative pr-24">
                                 <div className="flex items-start gap-3 min-w-0">
                                   <button
                                     type="button"
@@ -5103,7 +5103,7 @@ export function InsumosModule() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
+                                <div className="absolute top-2 right-2 flex items-center gap-1">
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -5535,7 +5535,7 @@ export function InsumosModule() {
 	                      return (
 	                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                          <Card className="bg-black/20 border border-white/10">
-		                            <CardHeader className="flex flex-row items-start justify-between gap-3">
+		                            <CardHeader className="relative pr-24">
                                 <div className="flex items-start gap-3 min-w-0">
                                   <button
                                     type="button"
@@ -5568,7 +5568,7 @@ export function InsumosModule() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
+                                <div className="absolute top-2 right-2 flex items-center gap-1">
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -6650,14 +6650,14 @@ export function InsumosModule() {
 	        className="space-y-3 flex-1 min-w-0"
 		      >
 		        <Card className="bg-black/20 border border-white/10">
-		          <CardHeader className="flex flex-row items-start justify-between gap-3">
-		            <div className="flex items-start gap-3 min-w-0">
-		              <button
-		                type="button"
-		                {...dragProvided.dragHandleProps}
-		                className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-		                title="Arraste para mover"
-		                aria-label="Mover"
+			          <CardHeader className="relative pr-24">
+			            <div className="flex items-start gap-3 min-w-0">
+			              <button
+			                type="button"
+			                {...dragProvided.dragHandleProps}
+			                className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+			                title="Arraste para mover"
+			                aria-label="Mover"
 		              >
 		                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
 		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
@@ -6665,15 +6665,15 @@ export function InsumosModule() {
 		              </button>
 		              <div className="min-w-0">
 		                <CardTitle className="text-white text-lg">Movimentações</CardTitle>
-		                <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
-		              </div>
-		            </div>
-	              <div className="flex items-center gap-1 shrink-0">
-	                <Button
-	                  size="icon"
-	                  variant="ghost"
-	                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                  onClick={() => openInsumosListModal()}
+			                <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+			              </div>
+			            </div>
+		              <div className="absolute top-2 right-2 flex items-center gap-1">
+		                <Button
+		                  size="icon"
+		                  variant="ghost"
+		                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+		                  onClick={() => openInsumosListModal()}
                   title="Abrir lista de insumos"
                   aria-label="Abrir lista de insumos"
                 >
