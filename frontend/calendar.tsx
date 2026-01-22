@@ -19,6 +19,7 @@ function Calendar({
   const nowYear = new Date().getFullYear()
   const safeFromYear = fromYear ?? nowYear - 10
   const safeToYear = toYear ?? nowYear + 15
+  const hideCaptionLabel = captionLayout === 'dropdown'
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
@@ -33,7 +34,7 @@ function Calendar({
         months: cn("flex flex-col sm:flex-row gap-2", classNames?.months),
         month: cn("space-y-4", classNames?.month),
         month_caption: cn("flex justify-center pt-1 relative items-center w-full", classNames?.month_caption),
-        caption_label: cn("text-sm font-medium", classNames?.caption_label),
+        caption_label: cn(hideCaptionLabel ? "sr-only" : "text-sm font-medium", classNames?.caption_label),
         dropdowns: cn("flex items-center gap-2", classNames?.dropdowns),
         dropdown_root: cn("relative", classNames?.dropdown_root),
         dropdown: cn(

@@ -2085,7 +2085,7 @@ export function InsumosModule() {
       if (canUseApi && isAuthed) {
         void mutateJson(`/share/history/${encodeURIComponent(id)}`, {
           method: 'DELETE',
-          queueLabel: 'Share history delete'
+          queueLabel: 'Importações recentes (remover)'
         })
       }
     },
@@ -2098,7 +2098,7 @@ export function InsumosModule() {
       for (const item of shareHistory) {
         void mutateJson(`/share/history/${encodeURIComponent(item.id)}`, {
           method: 'DELETE',
-          queueLabel: 'Share history delete'
+          queueLabel: 'Importações recentes (remover)'
         })
       }
     }
@@ -2135,7 +2135,7 @@ export function InsumosModule() {
     const sourceId = shareSourceId && !shareSourceId.startsWith('local-') ? shareSourceId : undefined
     void mutateJson('/share/history', {
       method: 'POST',
-      queueLabel: 'Share history',
+      queueLabel: 'Importações recentes',
       body: {
         id: baseId,
         createdAt: new Date().toISOString(),
@@ -5063,36 +5063,15 @@ export function InsumosModule() {
                       if (panelId === 'alerts') {
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-	                            <Card className="bg-black/20 border border-white/10">
-	                              <CardHeader className="relative pr-24">
-	                                <div className="space-y-1">
-	                                  <CardTitle className="text-white text-base">Alertas</CardTitle>
-	                                  <div className="flex flex-wrap items-center gap-2 text-xs text-blue-200/60">
-	                                    <span>
-	                                      estoque:{' '}
-	                                      <span className="font-mono">
-	                                        {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
-	                                          ? Number(overviewNotifications?.counts?.lowStock)
-	                                          : insightsAlertasFiltrados.length}
-	                                      </span>
-	                                    </span>
-	                                    <span>•</span>
-	                                    <span>
-	                                      validade:{' '}
-	                                      <span className="font-mono">
-	                                        {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
-	                                      </span>
-	                                    </span>
-	                                  </div>
-	                                </div>
-	                                <div className="absolute top-2 right-2 flex items-center gap-1">
-                                  <div
+		                            <Card className="bg-black/20 border border-white/10">
+		                              <CardHeader className="flex flex-row items-start justify-between gap-3">
+                                <div className="flex items-start gap-3 min-w-0">
+                                  <button
+                                    type="button"
                                     {...handleProps}
-                                    className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                    className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
                                     title="Arraste para mover"
                                     aria-label="Mover"
-                                    role="button"
-                                    tabIndex={0}
                                   >
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                                       <path
@@ -5102,7 +5081,29 @@ export function InsumosModule() {
                                         strokeLinecap="round"
                                       />
                                     </svg>
+                                  </button>
+                                  <div className="space-y-1 min-w-0">
+                                    <CardTitle className="text-white text-base">Alertas</CardTitle>
+                                    <div className="flex flex-wrap items-center gap-2 text-xs text-blue-200/60">
+                                      <span>
+                                        estoque:{' '}
+                                        <span className="font-mono">
+                                          {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
+                                            ? Number(overviewNotifications?.counts?.lowStock)
+                                            : insightsAlertasFiltrados.length}
+                                        </span>
+                                      </span>
+                                      <span>•</span>
+                                      <span>
+                                        validade:{' '}
+                                        <span className="font-mono">
+                                          {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
+                                        </span>
+                                      </span>
+                                    </div>
                                   </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -5121,8 +5122,8 @@ export function InsumosModule() {
                                       </svg>
                                     )}
                                   </Button>
-	                                </div>
-	                              </CardHeader>
+                                </div>
+                              </CardHeader>
                               {panelOpen ? (
                                 <CardContent className="space-y-3">
             <details
@@ -5531,60 +5532,63 @@ export function InsumosModule() {
                         )
                       }
 
-                      return (
-                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-	                          <Card className="bg-black/20 border border-white/10">
-	                            <CardHeader className="relative pr-24">
-	                              <CardTitle className="text-white text-base">Gráficos</CardTitle>
-	                              <div className="flex items-center gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (chartSlots.length >= MAX_CHARTS) return
-                                    setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
-                                  }}
-                                  disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
-                                >
-                                  + Adicionar
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
-                                  Reset
-                                </Button>
-	                              </div>
-	                              <div className="absolute top-2 right-2 flex items-center gap-1">
-	                                <div
-	                                  {...handleProps}
-	                                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-	                                  title="Arraste para mover"
-	                                  aria-label="Mover"
-	                                  role="button"
-	                                  tabIndex={0}
-	                                >
-	                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-	                                  </svg>
-	                                </div>
-	                                <Button
-	                                  size="icon"
-	                                  variant="ghost"
-	                                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                                  onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
-	                                  title={panelOpen ? 'Contrair' : 'Expandir'}
-	                                  aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-	                                >
-	                                  {panelOpen ? (
-	                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                    </svg>
-	                                  ) : (
-	                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                                    </svg>
-	                                  )}
-	                                </Button>
-	                              </div>
-	                            </CardHeader>
+	                      return (
+	                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
+		                          <Card className="bg-black/20 border border-white/10">
+		                            <CardHeader className="flex flex-row items-start justify-between gap-3">
+                                <div className="flex items-start gap-3 min-w-0">
+                                  <button
+                                    type="button"
+                                    {...handleProps}
+                                    className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                    title="Arraste para mover"
+                                    aria-label="Mover"
+                                  >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                                    </svg>
+                                  </button>
+                                  <div className="min-w-0">
+                                    <CardTitle className="text-white text-base">Gráficos</CardTitle>
+                                    <div className="flex items-center gap-2 mt-2">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          if (chartSlots.length >= MAX_CHARTS) return
+                                          setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+                                        }}
+                                        disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+                                      >
+                                        + Adicionar
+                                      </Button>
+                                      <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
+                                        Resetar
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
+                                    title={panelOpen ? 'Contrair' : 'Expandir'}
+                                    aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                                  >
+                                    {panelOpen ? (
+                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    ) : (
+                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    )}
+                                  </Button>
+                                </div>
+                              </CardHeader>
                             {panelOpen ? (
                               <CardContent className="space-y-3">
               <div
@@ -6644,31 +6648,32 @@ export function InsumosModule() {
 	        {...dragProvided.draggableProps}
 	        style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('mov') ?? 0 }}
 	        className="space-y-3 flex-1 min-w-0"
-	      >
-	        <Card className="bg-black/20 border border-white/10">
-	          <CardHeader className="relative pr-24">
-	            <div>
-	              <CardTitle className="text-white text-lg">Movimentações</CardTitle>
-	              <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
-	            </div>
-              <div className="absolute top-2 right-2 flex items-center gap-1">
-                <div
-                  {...dragProvided.dragHandleProps}
-                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                  title="Arraste para mover"
-                  aria-label="Mover"
-                  role="button"
-                  tabIndex={0}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                  onClick={() => openInsumosListModal()}
+		      >
+		        <Card className="bg-black/20 border border-white/10">
+		          <CardHeader className="flex flex-row items-start justify-between gap-3">
+		            <div className="flex items-start gap-3 min-w-0">
+		              <button
+		                type="button"
+		                {...dragProvided.dragHandleProps}
+		                className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+		                title="Arraste para mover"
+		                aria-label="Mover"
+		              >
+		                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+		                </svg>
+		              </button>
+		              <div className="min-w-0">
+		                <CardTitle className="text-white text-lg">Movimentações</CardTitle>
+		                <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
+		              </div>
+		            </div>
+	              <div className="flex items-center gap-1 shrink-0">
+	                <Button
+	                  size="icon"
+	                  variant="ghost"
+	                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                  onClick={() => openInsumosListModal()}
                   title="Abrir lista de insumos"
                   aria-label="Abrir lista de insumos"
                 >
@@ -6720,10 +6725,10 @@ export function InsumosModule() {
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-	                )}
-	              </Button>
-	            </div>
-	          </CardHeader>
+		                )}
+		              </Button>
+		            </div>
+		          </CardHeader>
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 
@@ -6830,40 +6835,46 @@ export function InsumosModule() {
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
                     return (
-                      <th
-                        key={col.label}
-                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
-                      >
-                        <div className="flex items-center justify-center gap-2">
-                          <span>{col.label}</span>
-                          {col.key ? (
-                            <button
-                              type="button"
-                              className={`h-7 w-7 flex items-center justify-center rounded-md border border-white/10 bg-black/20 hover:bg-white/10 cursor-pointer ${isActive ? 'text-white' : 'text-blue-100/70'}`}
-                              onClick={() => {
-                                if (movSortKey === col.key) {
-                                  setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                  return
-                                }
-                                setMovSortKey(col.key!)
-                                setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
-                              }}
-                              aria-label={`Ordenar ${col.label}`}
-                              title={`Ordenar ${col.label}`}
-                            >
-                              {isActive && movSortDir === 'asc' ? (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                  <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              ) : (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              )}
-                            </button>
-                          ) : null}
-                        </div>
-                      </th>
+	                      <th
+	                        key={col.label}
+	                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
+	                      >
+	                        <div className="flex items-center justify-center gap-2">
+                            {col.key ? (
+                              <button
+                                type="button"
+                                className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
+                                onClick={() => {
+                                  if (movSortKey === col.key) {
+                                    setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                    return
+                                  }
+                                  setMovSortKey(col.key!)
+                                  setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
+                                }}
+                                aria-label={`Ordenar ${col.label}`}
+                                title={`Ordenar ${col.label}`}
+                              >
+                                {col.label}
+                              </button>
+                            ) : (
+                              <span>{col.label}</span>
+                            )}
+                            {col.key ? (
+                              <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
+                                {isActive && movSortDir === 'asc' ? (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                ) : (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </span>
+                            ) : null}
+	                        </div>
+	                      </th>
                     )
                   })}
 	              </tr>

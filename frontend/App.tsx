@@ -729,27 +729,27 @@ export default function AppFunctionalNeatlab() {
                         </div>
 
                         {/* Footer */}
-                        <div className={`${sidebarExpanded ? 'p-4' : 'p-2'} border-t border-white/10`}>
-                            <div className={`flex items-center gap-2 text-xs text-blue-300/60 ${sidebarExpanded ? '' : 'justify-center'}`}>
-                                <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
-                                {sidebarExpanded ? <span>v1.0.0 Enterprise Edition</span> : null}
-                            </div>
-                        </div>
+	                            <div className={`${sidebarExpanded ? 'p-4' : 'p-2'} border-t border-white/10`}>
+	                            <div className={`flex items-center gap-2 text-xs text-blue-300/60 ${sidebarExpanded ? '' : 'justify-center'}`}>
+	                                <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
+	                                {sidebarExpanded ? <span>v1.0.0 Edição Empresarial</span> : null}
+	                            </div>
+	                        </div>
                     </div>
 
                     {/* Premium Main Area */}
                     <div className="flex-1 flex flex-col overflow-hidden">
 	                        {/* Premium Header */}
-		                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-6">
-		                            <div className="flex items-center justify-between">
-			                                <div className="flex items-center gap-4">
-				                                    <div className="animate-fade-in">
-				                                        <h1 className="text-2xl font-bold text-white leading-tight">
-				                                            {modules.find(m => m.key === active)?.label || 'Dashboard'}
-				                                        </h1>
-		                                    </div>
-			                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-			                                    <div className="hidden lg:flex items-center gap-2">
+			                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-5">
+			                            <div className="flex items-center justify-between">
+				                                <div className="flex items-center gap-4">
+					                                    <div className="animate-fade-in">
+					                                        <h1 className={`font-bold text-white leading-tight ${active === 'insumos' ? 'text-xl' : 'text-2xl'}`}>
+					                                            {modules.find(m => m.key === active)?.label || 'Painel'}
+					                                        </h1>
+			                                    </div>
+				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
+				                                    <div className="hidden lg:flex items-center gap-2">
 				                                        {active === 'insumos' ? (
 				                                            <>
 			                                                <span className="text-xs text-blue-200/70">Unidade</span>
@@ -791,9 +791,9 @@ export default function AppFunctionalNeatlab() {
 				                                                            } catch { /* ignore */ }
 				                                                        }}
 				                                                    >
-				                                                        <SelectTrigger className="h-9 w-40 bg-white/[0.06] border-white/20 text-white">
-				                                                            <SelectValue placeholder="Período" />
-				                                                        </SelectTrigger>
+					                                                    <SelectTrigger className="h-8 w-40 bg-white/[0.06] border-white/20 text-white">
+					                                                            <SelectValue placeholder="Período" />
+					                                                        </SelectTrigger>
 				                                                        <SelectContent>
 				                                                            <SelectItem value="7d">Última semana</SelectItem>
 				                                                            <SelectItem value="30d">Último mês</SelectItem>
@@ -802,79 +802,79 @@ export default function AppFunctionalNeatlab() {
 				                                                        </SelectContent>
 				                                                    </Select>
 
-				                                                    {insumosOverviewPeriod === 'custom' ? (
-				                                                        <>
-				                                                            <BrDatePickerInput
-				                                                                value={insumosOverviewFrom}
+					                                                    {insumosOverviewPeriod === 'custom' ? (
+					                                                        <>
+					                                                            <BrDatePickerInput
+					                                                                value={insumosOverviewFrom}
 				                                                                onChange={(next) => {
 				                                                                    setInsumosOverviewFrom(next)
 				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
 				                                                                    try {
 				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } }))
 				                                                                    } catch { /* ignore */ }
-				                                                                }}
-				                                                                placeholder="De (DD/MM/AA)"
-				                                                                className="h-9 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-				                                                                ariaLabel="De"
-				                                                            />
-				                                                            <BrDatePickerInput
-				                                                                value={insumosOverviewTo}
+					                                                                }}
+					                                                                placeholder="De (DD/MM/AA)"
+					                                                                className="h-8 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+					                                                                ariaLabel="De"
+					                                                            />
+					                                                            <BrDatePickerInput
+					                                                                value={insumosOverviewTo}
 				                                                                onChange={(next) => {
 				                                                                    setInsumosOverviewTo(next)
 				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
 				                                                                    try {
 				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } }))
 				                                                                    } catch { /* ignore */ }
-				                                                                }}
-				                                                                placeholder="Até (DD/MM/AA)"
-				                                                                className="h-9 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-				                                                                ariaLabel="Até"
-				                                                            />
-				                                                        </>
-				                                                    ) : null}
+					                                                                }}
+					                                                                placeholder="Até (DD/MM/AA)"
+					                                                                className="h-8 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+					                                                                ariaLabel="Até"
+					                                                            />
+					                                                        </>
+					                                                    ) : null}
 
-				                                                    <Button
-				                                                    size="icon"
-				                                                        variant="ghost"
-				                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-			                                                        onClick={() => {
-		                                                            try {
-		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
-		                                                            } catch { /* ignore */ }
+					                                                    <Button
+					                                                    size="icon"
+					                                                        variant="ghost"
+					                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+				                                                        onClick={() => {
+			                                                            try {
+			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
+			                                                            } catch { /* ignore */ }
 	                                                        }}
-		                                                        title="Entrada"
-		                                                        aria-label="Entrada"
-		                                                    >
-		                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-11 w-11" />
-		                                                    </Button>
-		                                                    <Button
-		                                                    size="icon"
-		                                                        variant="ghost"
-		                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-		                                                        onClick={() => {
-		                                                            try {
-		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
-		                                                            } catch { /* ignore */ }
-	                                                        }}
-		                                                        title="Saída"
-		                                                        aria-label="Saída"
-		                                                    >
-		                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-11 w-11" />
-		                                                    </Button>
-		                                                    <Button
-		                                                    size="icon"
-		                                                        variant="ghost"
-		                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-		                                                        onClick={() => {
-		                                                            try {
-		                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
-		                                                            } catch { /* ignore */ }
-	                                                        }}
-		                                                        title="Transferência"
-		                                                        aria-label="Transferência"
+			                                                        title="Entrada"
+			                                                        aria-label="Entrada"
 			                                                    >
-			                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-11 w-11" />
+			                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-9 w-9" />
 			                                                    </Button>
+			                                                    <Button
+			                                                    size="icon"
+			                                                        variant="ghost"
+			                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+			                                                        onClick={() => {
+			                                                            try {
+			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
+			                                                            } catch { /* ignore */ }
+	                                                        }}
+			                                                        title="Saída"
+			                                                        aria-label="Saída"
+			                                                    >
+			                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-9 w-9" />
+			                                                    </Button>
+			                                                    <Button
+			                                                    size="icon"
+			                                                        variant="ghost"
+			                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+			                                                        onClick={() => {
+			                                                            try {
+			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
+			                                                            } catch { /* ignore */ }
+	                                                        }}
+			                                                        title="Transferência"
+			                                                        aria-label="Transferência"
+				                                                    >
+				                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
+				                                                    </Button>
 				
 		                                                </div>
 			                                            </>
@@ -907,53 +907,62 @@ export default function AppFunctionalNeatlab() {
 		                                    </div>
 	                                </div>
 
-	                                <div className="flex items-center gap-4">
-	                                    {active === 'insumos' ? (
-	                                        <div className="flex items-center gap-1">
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-	                                                onClick={() => {
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
-	                                                    } catch { /* ignore */ }
+		                                <div className="flex items-center gap-4">
+		                                    {active === 'insumos' ? (
+		                                        <div className="flex items-center gap-1">
+		                                            <Button
+		                                                size="icon"
+		                                                variant="ghost"
+		                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+		                                                onClick={() => {
+		                                                    try {
+		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
+		                                                    } catch { /* ignore */ }
 	                                                }}
-	                                                title="Expandir tudo"
-	                                                aria-label="Expandir tudo"
-	                                            >
-	                                                <img src="/icons/layout-expand.svg" alt="" aria-hidden className="h-11 w-11" />
-	                                            </Button>
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-	                                                onClick={() => {
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
-	                                                    } catch { /* ignore */ }
+		                                                title="Expandir tudo"
+		                                                aria-label="Expandir tudo"
+		                                            >
+		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+		                                                    <path d="M7 9l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+		                                                    <path d="M7 14l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+		                                                </svg>
+		                                            </Button>
+		                                            <Button
+		                                                size="icon"
+		                                                variant="ghost"
+		                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+		                                                onClick={() => {
+		                                                    try {
+		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
+		                                                    } catch { /* ignore */ }
 	                                                }}
-	                                                title="Contrair tudo"
-	                                                aria-label="Contrair tudo"
-	                                            >
-	                                                <img src="/icons/layout-expand.svg" alt="" aria-hidden className="h-11 w-11 rotate-180" />
-	                                            </Button>
-	                                            <Button
-	                                                size="icon"
-	                                                variant="ghost"
-	                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-	                                                onClick={() => {
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
-	                                                    } catch { /* ignore */ }
+		                                                title="Contrair tudo"
+		                                                aria-label="Contrair tudo"
+		                                            >
+		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+		                                                    <path d="M7 15l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+		                                                    <path d="M7 10l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+		                                                </svg>
+		                                            </Button>
+		                                            <Button
+		                                                size="icon"
+		                                                variant="ghost"
+		                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+		                                                onClick={() => {
+		                                                    try {
+		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
+		                                                    } catch { /* ignore */ }
 	                                                }}
-	                                                title="Resetar layout"
-	                                                aria-label="Resetar layout"
-	                                            >
-	                                                <img src="/icons/layout-reset.svg" alt="" aria-hidden className="h-11 w-11" />
-	                                            </Button>
-	                                        </div>
-	                                    ) : null}
+		                                                title="Resetar layout"
+		                                                aria-label="Resetar layout"
+		                                            >
+		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+		                                                    <path d="M21 12a9 9 0 1 1-3.1-6.7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+		                                                    <path d="M21 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+		                                                </svg>
+		                                            </Button>
+		                                        </div>
+		                                    ) : null}
 		                                    {UNLOCKED_MODULE_KEYS.has('notifications') ? (
 		                                        <HeaderNotificationsButton
 		                                            onOpen={() => {
