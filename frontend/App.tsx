@@ -10,6 +10,7 @@ import { Badge } from '@/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
+import { BrDatePickerInput } from '@/br-date-picker'
 import { isNoAuthMode } from '@/noAuthMode'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useKV } from '@/spark-mock'
@@ -803,31 +804,31 @@ export default function AppFunctionalNeatlab() {
 
 				                                                    {insumosOverviewPeriod === 'custom' ? (
 				                                                        <>
-				                                                            <Input
+				                                                            <BrDatePickerInput
 				                                                                value={insumosOverviewFrom}
-				                                                                onChange={(e) => {
-				                                                                    const next = e.target.value
+				                                                                onChange={(next) => {
 				                                                                    setInsumosOverviewFrom(next)
 				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
 				                                                                    try {
 				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } }))
 				                                                                    } catch { /* ignore */ }
 				                                                                }}
-				                                                                placeholder="De (DD/MM/AAAA)"
+				                                                                placeholder="De (DD/MM/AA)"
 				                                                                className="h-9 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+				                                                                ariaLabel="De"
 				                                                            />
-				                                                            <Input
+				                                                            <BrDatePickerInput
 				                                                                value={insumosOverviewTo}
-				                                                                onChange={(e) => {
-				                                                                    const next = e.target.value
+				                                                                onChange={(next) => {
 				                                                                    setInsumosOverviewTo(next)
 				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
 				                                                                    try {
 				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } }))
 				                                                                    } catch { /* ignore */ }
 				                                                                }}
-				                                                                placeholder="Até (DD/MM/AAAA)"
+				                                                                placeholder="Até (DD/MM/AA)"
 				                                                                className="h-9 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+				                                                                ariaLabel="Até"
 				                                                            />
 				                                                        </>
 				                                                    ) : null}

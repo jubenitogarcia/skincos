@@ -3,12 +3,11 @@ import { toast } from 'sonner'
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
-import { Calendar } from '@/calendar'
+import { BrDatePickerInput } from '@/br-date-picker'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Checkbox } from '@/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
-import { Popover, PopoverAnchor, PopoverContent } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -277,68 +276,6 @@ function normalizeText(value?: string | null) {
     .replace(/\s+/g, ' ')
 }
 
-function BrDatePickerInput({
-  value,
-  onChange,
-  placeholder,
-  ariaLabel
-}: {
-  value: string
-  onChange: (next: string) => void
-  placeholder?: string
-  ariaLabel?: string
-}) {
-  const [open, setOpen] = React.useState(false)
-  const selected = React.useMemo(() => parseBrInputToDate(value), [value])
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverAnchor asChild>
-        <div className="relative">
-          <Input
-            value={value}
-            onChange={(e) => onChange(digitsToBrDateInput(e.target.value))}
-            placeholder={placeholder || 'DD/MM/AA'}
-            inputMode="numeric"
-            onFocus={() => setOpen(true)}
-            onClick={() => setOpen(true)}
-            aria-label={ariaLabel}
-          />
-          <button
-            type="button"
-            className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md border border-white/10 bg-black/20 hover:bg-white/10 text-blue-100/80 cursor-pointer flex items-center justify-center"
-            onClick={() => setOpen((v) => !v)}
-            aria-label="Selecionar data"
-            title="Selecionar data"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path
-                d="M8 2v3M16 2v3M4 8h16M6 4h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-      </PopoverAnchor>
-      <PopoverContent align="start" className="w-auto p-2">
-        <Calendar
-          mode="single"
-          selected={selected}
-          onSelect={(d) => {
-            if (!d) return
-            onChange(fmtBrDateInput(d))
-            setOpen(false)
-          }}
-          initialFocus
-        />
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
 
 function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): EstoqueStatus {
@@ -437,32 +374,6 @@ function dateInputToIso(value?: string | null) {
   if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
   const iso = brToIsoDate(v)
   return iso || ''
-}
-
-function digitsToBrDateInput(raw: string) {
-  const digits = String(raw || '').replace(/\D/g, '').slice(0, 8)
-  if (digits.length <= 2) return digits
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
-  if (digits.length <= 6) return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`
-}
-
-function parseBrInputToDate(value?: string | null) {
-  const iso = dateInputToIso(value)
-  if (!iso) return undefined
-  const d = new Date(`${iso}T00:00:00.000Z`)
-  return Number.isNaN(d.getTime()) ? undefined : d
-}
-
-function fmtBrDateInput(d: Date) {
-  try {
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
-  } catch {
-    const iso = d.toISOString().slice(0, 10)
-    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-    if (!m) return iso
-    return `${m[3]}/${m[2]}/${m[1].slice(2)}`
-  }
 }
 
 function fmtDateOnlyBR(value?: string | null) {
@@ -834,6 +745,10 @@ export function InsumosModule() {
   const [createCodigo, setCreateCodigo] = React.useState('')
   const [createProduto, setCreateProduto] = React.useState('')
   const [createCategoria, setCreateCategoria] = React.useState('')
+  const [createCategoriaPolicyKey, setCreateCategoriaPolicyKey] = React.useState('')
+  const [createCategoriaRequiresLot, setCreateCategoriaRequiresLot] = React.useState(false)
+  const [createCategoriaRequiresExpiry, setCreateCategoriaRequiresExpiry] = React.useState(false)
+  const [createCategoriaFefo, setCreateCategoriaFefo] = React.useState(false)
   const [createMarca, setCreateMarca] = React.useState('')
   const [createTipoUnidade, setCreateTipoUnidade] = React.useState('')
   const [createEspecificacao, setCreateEspecificacao] = React.useState('')
@@ -858,6 +773,10 @@ export function InsumosModule() {
   const [editCodigo, setEditCodigo] = React.useState('')
   const [editProduto, setEditProduto] = React.useState('')
   const [editCategoria, setEditCategoria] = React.useState('')
+  const [editCategoriaPolicyKey, setEditCategoriaPolicyKey] = React.useState('')
+  const [editCategoriaRequiresLot, setEditCategoriaRequiresLot] = React.useState(false)
+  const [editCategoriaRequiresExpiry, setEditCategoriaRequiresExpiry] = React.useState(false)
+  const [editCategoriaFefo, setEditCategoriaFefo] = React.useState(false)
   const [editMarca, setEditMarca] = React.useState('')
   const [editTipoUnidade, setEditTipoUnidade] = React.useState('')
   const [editEspecificacao, setEditEspecificacao] = React.useState('')
@@ -916,6 +835,7 @@ export function InsumosModule() {
   }, [overviewPeriod])
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
+  const [overviewQualitySeverity, setOverviewQualitySeverity] = React.useState<'ALL' | 'CRITICAL' | 'WARN' | 'INFO'>('ALL')
   const [overviewMovResumo, setOverviewMovResumo] = React.useState<{ entradaQtd: number; saidaQtd: number; entradaValor: number; saidaValor: number; saldoLiquido: number } | null>(null)
   const [overviewMovSeries, setOverviewMovSeries] = React.useState<
     Array<{ day: string; entrada: number; saida: number; entradaValor?: number; saidaValor?: number }>
@@ -979,7 +899,7 @@ export function InsumosModule() {
     alerts: 'insumos.panel.alerts',
     charts: 'insumos.panel.charts'
   }
-  const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['policies', 'alerts', 'charts']
+  const DEFAULT_OVERVIEW_PANELS: OverviewPanelId[] = ['alerts', 'charts']
   const [mainPanelOrder, setMainPanelOrder] = React.useState<MainPanelId[]>(() => {
     try {
       const raw = window.localStorage.getItem(MAIN_PANELS_KEY)
@@ -1038,7 +958,7 @@ export function InsumosModule() {
   }, [DEFAULT_MAIN_PANELS.join('|'), mainPanelOrder.join('|')])
 
   const visibleOverviewPanels = React.useMemo(() => {
-    const allowed = new Set<OverviewPanelId>(['alerts', 'charts', ...(isManagerRole ? (['policies'] as any) : [])])
+    const allowed = new Set<OverviewPanelId>(['alerts', 'charts'])
     const ordered = (overviewPanelOrder || []).filter((p) => allowed.has(p))
     for (const p of DEFAULT_OVERVIEW_PANELS) {
       if (allowed.has(p) && !ordered.includes(p)) ordered.push(p)
@@ -1330,6 +1250,40 @@ export function InsumosModule() {
     },
     [categoryPolicyBySlug]
   )
+
+  React.useEffect(() => {
+    const slug = slugifyCategoria(createCategoria)
+    if (!createOpen || !slug) {
+      setCreateCategoriaPolicyKey('')
+      setCreateCategoriaRequiresLot(false)
+      setCreateCategoriaRequiresExpiry(false)
+      setCreateCategoriaFefo(false)
+      return
+    }
+    if (slug === createCategoriaPolicyKey) return
+    const p = getPolicyForCategoria(createCategoria)
+    setCreateCategoriaPolicyKey(slug)
+    setCreateCategoriaRequiresLot(!!p.requiresLot)
+    setCreateCategoriaRequiresExpiry(!!p.requiresExpiry)
+    setCreateCategoriaFefo(!!p.fefo)
+  }, [createCategoria, createCategoriaPolicyKey, createOpen, getPolicyForCategoria])
+
+  React.useEffect(() => {
+    const slug = slugifyCategoria(editCategoria)
+    if (!editOpen || !slug) {
+      setEditCategoriaPolicyKey('')
+      setEditCategoriaRequiresLot(false)
+      setEditCategoriaRequiresExpiry(false)
+      setEditCategoriaFefo(false)
+      return
+    }
+    if (slug === editCategoriaPolicyKey) return
+    const p = getPolicyForCategoria(editCategoria)
+    setEditCategoriaPolicyKey(slug)
+    setEditCategoriaRequiresLot(!!p.requiresLot)
+    setEditCategoriaRequiresExpiry(!!p.requiresExpiry)
+    setEditCategoriaFefo(!!p.fefo)
+  }, [editCategoria, editCategoriaPolicyKey, editOpen, getPolicyForCategoria])
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -2610,13 +2564,52 @@ export function InsumosModule() {
 
     setEditSaving(true)
     try {
+      const categoria = editCategoria.trim()
+      const slug = slugifyCategoria(categoria)
+      const currentPolicy = getPolicyForCategoria(categoria)
+      const policy =
+        editCategoriaPolicyKey && slug && editCategoriaPolicyKey === slug
+          ? { slug, requiresLot: editCategoriaRequiresLot, requiresExpiry: editCategoriaRequiresExpiry, fefo: editCategoriaFefo }
+          : currentPolicy
+
+      if (isManagerRole && slug && editCategoriaPolicyKey && editCategoriaPolicyKey === slug) {
+        if (policy.fefo && !policy.requiresExpiry) {
+          toast.error('FEFO exige validade obrigatória')
+          return
+        }
+        const changed =
+          !!currentPolicy.requiresLot !== !!policy.requiresLot ||
+          !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
+          !!currentPolicy.fefo !== !!policy.fefo
+        if (changed) {
+          const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
+            '/admin/categories',
+            {
+              method: 'POST',
+              queueLabel: 'Política por categoria',
+              body: {
+                slug,
+                label: categoria,
+                requiresLot: !!policy.requiresLot,
+                requiresExpiry: !!policy.requiresExpiry,
+                fefo: !!policy.fefo
+              }
+            },
+            { needsCsrf: true }
+          )
+          if (!(out as any)?.queued) {
+            await Promise.allSettled([loadCategoryPolicies()])
+          }
+        }
+      }
+
       await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
         method: 'PUT',
         queueLabel: 'Edição de insumo',
         body: {
           codigoBarras,
           produto,
-          categoria: editCategoria.trim(),
+          categoria,
           marca: editMarca.trim(),
           tipoUnidade: editTipoUnidade.trim(),
           especificacao: editEspecificacao.trim(),
@@ -2643,6 +2636,10 @@ export function InsumosModule() {
     canUseApi,
     editCalibre,
     editCategoria,
+    editCategoriaFefo,
+    editCategoriaPolicyKey,
+    editCategoriaRequiresExpiry,
+    editCategoriaRequiresLot,
     editCodigo,
     editConcentracao,
     editDataValidade,
@@ -2656,7 +2653,10 @@ export function InsumosModule() {
     editTarget?.registro,
     editTipoUnidade,
     editVolume,
+    getPolicyForCategoria,
     isAuthed,
+    isManagerRole,
+    loadCategoryPolicies,
     loadOverview,
     mutateJson,
     refreshInsumos,
@@ -3911,7 +3911,7 @@ export function InsumosModule() {
                     <div className="flex items-center gap-2">
                       <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
                       <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
-                        {createScanOpen ? 'Fechar' : 'Scan'}
+                        {createScanOpen ? 'Fechar' : 'Escanear'}
                       </Button>
                     </div>
                     <div className="mt-2">
@@ -3944,6 +3944,51 @@ export function InsumosModule() {
 	                      ))}
 	                    </datalist>
 	                  </div>
+                  <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-blue-200/70">Política da categoria</div>
+                      {createCategoriaPolicyKey ? (
+                        <div className="text-xs text-blue-200/60 font-mono">{createCategoriaPolicyKey}</div>
+                      ) : (
+                        <div className="text-xs text-blue-200/60">Defina a categoria para ver as regras.</div>
+                      )}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
+                      <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                        <Checkbox
+                          checked={createCategoriaRequiresLot}
+                          onCheckedChange={(v) => setCreateCategoriaRequiresLot(!!v)}
+                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                        />
+                        Lote obrigatório
+                      </label>
+                      <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                        <Checkbox
+                          checked={createCategoriaRequiresExpiry}
+                          onCheckedChange={(v) => {
+                            const next = !!v
+                            setCreateCategoriaRequiresExpiry(next)
+                            if (!next) setCreateCategoriaFefo(false)
+                          }}
+                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                        />
+                        Validade obrigatória
+                      </label>
+                      <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                        <Checkbox
+                          checked={createCategoriaFefo}
+                          onCheckedChange={(v) => {
+                            const next = !!v
+                            setCreateCategoriaFefo(next)
+                            if (next) setCreateCategoriaRequiresExpiry(true)
+                          }}
+                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                        />
+                        FEFO
+                      </label>
+                      {!isManagerRole ? <span className="text-xs text-blue-200/60">Somente gestores alteram.</span> : null}
+                    </div>
+                  </div>
 	                  <div>
 	                    <div className="text-xs text-blue-200/70 mb-1">Marca</div>
 	                    <Input
@@ -4004,12 +4049,8 @@ export function InsumosModule() {
 	                    />
 	                  </div>
 	                  <div>
-	                    <div className="text-xs text-blue-200/70 mb-1">Validade (DD/MM/AAAA)</div>
-	                    <Input
-	                      value={createDataValidade}
-	                      onChange={(e) => setCreateDataValidade(e.target.value)}
-	                      placeholder={createNovoLote ? 'recomendado (DD/MM/AAAA)' : 'DD/MM/AAAA'}
-	                    />
+	                    <div className="text-xs text-blue-200/70 mb-1">Validade</div>
+                      <BrDatePickerInput value={createDataValidade} onChange={setCreateDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
 	                  </div>
 	                </div>
 
@@ -4034,7 +4075,12 @@ export function InsumosModule() {
                       if (!codigoBarras) return toast.error('Informe o código de barras')
                       const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
                       const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                      const policy = getPolicyForCategoria(categoria)
+                      const slug = slugifyCategoria(categoria)
+                      const currentPolicy = getPolicyForCategoria(categoria)
+                      const policy =
+                        createCategoriaPolicyKey && slug && createCategoriaPolicyKey === slug
+                          ? { slug, requiresLot: createCategoriaRequiresLot, requiresExpiry: createCategoriaRequiresExpiry, fefo: createCategoriaFefo }
+                          : currentPolicy
                       const validadeIso = dateInputToIso(createDataValidade)
 
                       const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
@@ -4052,6 +4098,37 @@ export function InsumosModule() {
 
                       setCreateLoading(true)
                       try {
+                        if (isManagerRole && slug && createCategoriaPolicyKey && createCategoriaPolicyKey === slug) {
+                          if (policy.fefo && !policy.requiresExpiry) {
+                            toast.error('FEFO exige validade obrigatória')
+                            return
+                          }
+                          const policyChanged =
+                            !!currentPolicy.requiresLot !== !!policy.requiresLot ||
+                            !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
+                            !!currentPolicy.fefo !== !!policy.fefo
+                          if (policyChanged) {
+                            const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
+                              '/admin/categories',
+                              {
+                                method: 'POST',
+                                queueLabel: 'Política por categoria',
+                                body: {
+                                  slug,
+                                  label: categoria,
+                                  requiresLot: !!policy.requiresLot,
+                                  requiresExpiry: !!policy.requiresExpiry,
+                                  fefo: !!policy.fefo
+                                }
+                              },
+                              { needsCsrf: true }
+                            )
+                            if (!(out as any)?.queued) {
+                              await Promise.allSettled([loadCategoryPolicies()])
+                            }
+                          }
+                        }
+
                         await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                           method: 'POST',
                           queueLabel: 'Cadastro de insumo',
@@ -4299,7 +4376,7 @@ export function InsumosModule() {
               <div className="flex items-center gap-2">
                 <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
                 <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
-                  {quickScanOpen ? 'Fechar' : 'Scan'}
+                  {quickScanOpen ? 'Fechar' : 'Escanear'}
                 </Button>
               </div>
               <div className="mt-2">
@@ -5354,20 +5431,50 @@ export function InsumosModule() {
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Qualidade do cadastro{' '}
                 <span className="text-xs text-blue-200/60">
-                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} issues` : overviewLoading ? 'Carregando…' : '—'}
+                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : overviewLoading ? 'Carregando…' : '—'}
                 </span>
               </summary>
               <div className="mt-3 space-y-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
                   {overviewQuality?.summary?.bySeverity ? (
                     <>
-                      <Badge variant="destructive">CRIT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}</Badge>
-                      <Badge variant="secondary">WARN {overviewQuality.summary.bySeverity.WARN ?? 0}</Badge>
-                      <Badge variant="default">INFO {overviewQuality.summary.bySeverity.INFO ?? 0}</Badge>
+                      <button
+                        type="button"
+                        className="cursor-pointer"
+                        onClick={() => setOverviewQualitySeverity((cur) => (cur === 'CRITICAL' ? 'ALL' : 'CRITICAL'))}
+                        aria-pressed={overviewQualitySeverity === 'CRITICAL'}
+                        title="Filtrar CRÍTICOS"
+                      >
+                        <Badge variant="destructive" className={overviewQualitySeverity === 'CRITICAL' ? 'ring-2 ring-white/20' : ''}>
+                          CRÍT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}
+                        </Badge>
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-pointer"
+                        onClick={() => setOverviewQualitySeverity((cur) => (cur === 'WARN' ? 'ALL' : 'WARN'))}
+                        aria-pressed={overviewQualitySeverity === 'WARN'}
+                        title="Filtrar ALERTAS"
+                      >
+                        <Badge variant="secondary" className={overviewQualitySeverity === 'WARN' ? 'ring-2 ring-white/20' : ''}>
+                          WARN {overviewQuality.summary.bySeverity.WARN ?? 0}
+                        </Badge>
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-pointer"
+                        onClick={() => setOverviewQualitySeverity((cur) => (cur === 'INFO' ? 'ALL' : 'INFO'))}
+                        aria-pressed={overviewQualitySeverity === 'INFO'}
+                        title="Filtrar INFO"
+                      >
+                        <Badge variant="default" className={overviewQualitySeverity === 'INFO' ? 'ring-2 ring-white/20' : ''}>
+                          INFO {overviewQuality.summary.bySeverity.INFO ?? 0}
+                        </Badge>
+                      </button>
                     </>
                   ) : null}
                   {!overviewQuality?.summary?.total ? (
-                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem issues.'}</span>
+                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem ocorrências.'}</span>
                   ) : null}
                 </div>
 
@@ -5376,13 +5483,20 @@ export function InsumosModule() {
                     <table className="min-w-full text-sm">
                       <thead className="bg-black/30 text-blue-100/80">
                         <tr>
-                          <th className="text-left p-3">Sev</th>
+                          <th className="text-left p-3">Nível</th>
                           <th className="text-left p-3">Código</th>
                           <th className="text-left p-3">Mensagem</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
-                        {(overviewQuality.issues || []).slice(0, 30).map((it, idx) => {
+                        {(overviewQuality.issues || [])
+                          .filter((it) => {
+                            if (overviewQualitySeverity === 'ALL') return true
+                            const sev = String(it?.severity || '').toUpperCase()
+                            return sev === overviewQualitySeverity
+                          })
+                          .slice(0, 30)
+                          .map((it, idx) => {
                           const sev = String(it.severity || '').toUpperCase()
                           const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
                           return (
@@ -5629,6 +5743,51 @@ export function InsumosModule() {
                 ))}
               </datalist>
             </div>
+            <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">Política da categoria</div>
+                {editCategoriaPolicyKey ? (
+                  <div className="text-xs text-muted-foreground font-mono">{editCategoriaPolicyKey}</div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">Defina a categoria para ver as regras.</div>
+                )}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
+                <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                  <Checkbox
+                    checked={editCategoriaRequiresLot}
+                    onCheckedChange={(v) => setEditCategoriaRequiresLot(!!v)}
+                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                  />
+                  Lote obrigatório
+                </label>
+                <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                  <Checkbox
+                    checked={editCategoriaRequiresExpiry}
+                    onCheckedChange={(v) => {
+                      const next = !!v
+                      setEditCategoriaRequiresExpiry(next)
+                      if (!next) setEditCategoriaFefo(false)
+                    }}
+                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                  />
+                  Validade obrigatória
+                </label>
+                <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                  <Checkbox
+                    checked={editCategoriaFefo}
+                    onCheckedChange={(v) => {
+                      const next = !!v
+                      setEditCategoriaFefo(next)
+                      if (next) setEditCategoriaRequiresExpiry(true)
+                    }}
+                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                  />
+                  FEFO
+                </label>
+                {!isManagerRole ? <span className="text-xs text-muted-foreground">Somente gestores alteram.</span> : null}
+              </div>
+            </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Marca</div>
               <Input value={editMarca} onChange={(e) => setEditMarca(e.target.value)} placeholder="ex: Galderma" list="edit-insumos-marcas" />
@@ -5660,8 +5819,8 @@ export function InsumosModule() {
               <Input value={editLote} onChange={(e) => setEditLote(e.target.value)} placeholder="ex: L2026-01" />
             </div>
             <div>
-              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
-              <Input value={editDataValidade} onChange={(e) => setEditDataValidade(e.target.value)} placeholder="ex: 31/12/2026" />
+              <div className="text-xs text-muted-foreground mb-1">Validade</div>
+              <BrDatePickerInput value={editDataValidade} onChange={setEditDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
             </div>
           </div>
 
@@ -5764,8 +5923,8 @@ export function InsumosModule() {
               <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
             </div>
             <div>
-              <div className="text-xs text-muted-foreground mb-1">Validade (DD/MM/AAAA)</div>
-              <Input value={lotEditValidade} onChange={(e) => setLotEditValidade(e.target.value)} placeholder="ex: 31/12/2026" />
+              <div className="text-xs text-muted-foreground mb-1">Validade</div>
+              <BrDatePickerInput value={lotEditValidade} onChange={setLotEditValidade} placeholder="DD/MM/AA" ariaLabel="Validade do lote" />
             </div>
           </div>
 
@@ -6001,7 +6160,7 @@ export function InsumosModule() {
                 <div className="flex items-center gap-2">
                   <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
                   <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
-                    {createScanOpen ? 'Fechar' : 'Scan'}
+                    {createScanOpen ? 'Fechar' : 'Escanear'}
                   </Button>
                 </div>
                 <div className="mt-2">
@@ -6033,6 +6192,51 @@ export function InsumosModule() {
                     <option key={c} value={c} />
                   ))}
                 </datalist>
+              </div>
+              <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-blue-200/70">Política da categoria</div>
+                  {createCategoriaPolicyKey ? (
+                    <div className="text-xs text-blue-200/60 font-mono">{createCategoriaPolicyKey}</div>
+                  ) : (
+                    <div className="text-xs text-blue-200/60">Defina a categoria para ver as regras.</div>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
+                  <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                    <Checkbox
+                      checked={createCategoriaRequiresLot}
+                      onCheckedChange={(v) => setCreateCategoriaRequiresLot(!!v)}
+                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                    />
+                    Lote obrigatório
+                  </label>
+                  <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                    <Checkbox
+                      checked={createCategoriaRequiresExpiry}
+                      onCheckedChange={(v) => {
+                        const next = !!v
+                        setCreateCategoriaRequiresExpiry(next)
+                        if (!next) setCreateCategoriaFefo(false)
+                      }}
+                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                    />
+                    Validade obrigatória
+                  </label>
+                  <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
+                    <Checkbox
+                      checked={createCategoriaFefo}
+                      onCheckedChange={(v) => {
+                        const next = !!v
+                        setCreateCategoriaFefo(next)
+                        if (next) setCreateCategoriaRequiresExpiry(true)
+                      }}
+                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                    />
+                    FEFO
+                  </label>
+                  {!isManagerRole ? <span className="text-xs text-blue-200/60">Somente gestores alteram.</span> : null}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Marca</div>
@@ -6094,12 +6298,8 @@ export function InsumosModule() {
                 />
               </div>
               <div>
-                <div className="text-xs text-blue-200/70 mb-1">Data validade</div>
-                <Input
-                  value={createDataValidade}
-                  onChange={(e) => setCreateDataValidade(e.target.value)}
-                  placeholder={createNovoLote ? 'recomendado (DD/MM/AAAA)' : 'DD/MM/AAAA'}
-                />
+                <div className="text-xs text-blue-200/70 mb-1">Validade</div>
+                <BrDatePickerInput value={createDataValidade} onChange={setCreateDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
               </div>
             </div>
 
@@ -6176,7 +6376,12 @@ export function InsumosModule() {
                   if (!codigoBarras) return toast.error('Informe o código de barras')
                   const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
                   const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                  const policy = getPolicyForCategoria(categoria)
+                  const slug = slugifyCategoria(categoria)
+                  const currentPolicy = getPolicyForCategoria(categoria)
+                  const policy =
+                    createCategoriaPolicyKey && slug && createCategoriaPolicyKey === slug
+                      ? { slug, requiresLot: createCategoriaRequiresLot, requiresExpiry: createCategoriaRequiresExpiry, fefo: createCategoriaFefo }
+                      : currentPolicy
                   const validadeIso = dateInputToIso(createDataValidade)
 
                   const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
@@ -6194,6 +6399,37 @@ export function InsumosModule() {
 
                   setCreateLoading(true)
                   try {
+                    if (isManagerRole && slug && createCategoriaPolicyKey && createCategoriaPolicyKey === slug) {
+                      if (policy.fefo && !policy.requiresExpiry) {
+                        toast.error('FEFO exige validade obrigatória')
+                        return
+                      }
+                      const policyChanged =
+                        !!currentPolicy.requiresLot !== !!policy.requiresLot ||
+                        !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
+                        !!currentPolicy.fefo !== !!policy.fefo
+                      if (policyChanged) {
+                        const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
+                          '/admin/categories',
+                          {
+                            method: 'POST',
+                            queueLabel: 'Política por categoria',
+                            body: {
+                              slug,
+                              label: categoria,
+                              requiresLot: !!policy.requiresLot,
+                              requiresExpiry: !!policy.requiresExpiry,
+                              fefo: !!policy.fefo
+                            }
+                          },
+                          { needsCsrf: true }
+                        )
+                        if (!(out as any)?.queued) {
+                          await Promise.allSettled([loadCategoryPolicies()])
+                        }
+                      }
+                    }
+
                     await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                       method: 'POST',
                       queueLabel: 'Cadastro de insumo',
@@ -6415,34 +6651,64 @@ export function InsumosModule() {
 	              <CardTitle className="text-white text-lg">Movimentações</CardTitle>
 	              <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
 	            </div>
-		            <div className="absolute top-2 right-2 flex items-center gap-1">
-		              <div
-		                {...dragProvided.dragHandleProps}
-		                className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-		                title="Arraste para mover"
-		                aria-label="Mover"
-		                role="button"
-		                tabIndex={0}
-		              >
-		                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-		                </svg>
-		              </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                    onClick={() => openInsumosListModal()}
-                    title="Abrir lista de insumos"
-                    aria-label="Abrir lista de insumos"
-                  >
-                    <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-6 w-6" />
-                  </Button>
-		              <Button
-	                size="icon"
-	                variant="ghost"
-	                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
+              <div className="absolute top-2 right-2 flex items-center gap-1">
+                <div
+                  {...dragProvided.dragHandleProps}
+                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                  title="Arraste para mover"
+                  aria-label="Mover"
+                  role="button"
+                  tabIndex={0}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={() => openInsumosListModal()}
+                  title="Abrir lista de insumos"
+                  aria-label="Abrir lista de insumos"
+                >
+                  <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-6 w-6" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={() => {
+                    const deIso = dateInputToIso(movDe)
+                    const ateIso = dateInputToIso(movAte)
+                    const params = new URLSearchParams({
+                      unidade,
+                      ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
+                      ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+                      ...(deIso ? { de: deIso } : {}),
+                      ...(ateIso ? { ate: ateIso } : {})
+                    })
+                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+                  }}
+                  disabled={!isAuthed}
+                  title="Exportar CSV"
+                  aria-label="Exportar CSV"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
                 title={movPanelOpen ? 'Contrair' : 'Expandir'}
                 aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
               >
@@ -6528,27 +6794,7 @@ export function InsumosModule() {
           </div>
         </div>
 
-        <div className="flex items-center justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const deIso = dateInputToIso(movDe)
-              const ateIso = dateInputToIso(movAte)
-              const params = new URLSearchParams({
-                unidade,
-                ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
-                ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-                ...(deIso ? { de: deIso } : {}),
-                ...(ateIso ? { ate: ateIso } : {})
-              })
-              window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
-            }}
-            disabled={!isAuthed}
-          >
-            Exportar CSV
-          </Button>
-        </div>
+        <div className="flex items-center justify-end" />
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
           <div>
