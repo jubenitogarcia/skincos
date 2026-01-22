@@ -818,11 +818,12 @@ export function InsumosModule() {
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
 
-  const [overviewLoading, setOverviewLoading] = React.useState(false)
-  const [overviewResumo, setOverviewResumo] = React.useState<EstoqueResumo | null>(null)
-  const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
-  const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
-  const [purchaseDialogOpen, setPurchaseDialogOpen] = React.useState(false)
+	  const [overviewLoading, setOverviewLoading] = React.useState(false)
+	  const [overviewResumo, setOverviewResumo] = React.useState<EstoqueResumo | null>(null)
+	  const [overviewInsumos, setOverviewInsumos] = React.useState<Insumo[] | null>(null)
+	  const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
+	  const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
+	  const [purchaseDialogOpen, setPurchaseDialogOpen] = React.useState(false)
   const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '1y' | 'custom'>('30d')
   const [overviewCustomFrom, setOverviewCustomFrom] = React.useState<string>('')
   const [overviewCustomTo, setOverviewCustomTo] = React.useState<string>('')
@@ -2446,14 +2447,14 @@ export function InsumosModule() {
         de = yyyyMmDd(start)
       }
 
-      const params = `unidade=${encodeURIComponent(unidade)}`
-      const [estoque, notif, act, roi, quality, movs] = await Promise.all([
-        apiJson<{ success?: boolean; data?: { resumo?: EstoqueResumo } }>(`/relatorios/estoque?${params}`),
-        apiJson<{ success?: boolean; data?: NotificationsSummary }>(`/notifications/summary?${params}`),
-        apiJson<{ success?: boolean; data?: Actionables }>(`/analytics/actionables?${params}`),
-        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${params}`),
-        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '120' }).toString()}`),
-        apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(
+	      const params = `unidade=${encodeURIComponent(unidade)}`
+	      const [estoque, notif, act, roi, quality, movs] = await Promise.all([
+	        apiJson<{ success?: boolean; data?: { resumo?: EstoqueResumo; itens?: Insumo[] } }>(`/relatorios/estoque?${params}`),
+	        apiJson<{ success?: boolean; data?: NotificationsSummary }>(`/notifications/summary?${params}`),
+	        apiJson<{ success?: boolean; data?: Actionables }>(`/analytics/actionables?${params}`),
+	        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${params}`),
+	        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '120' }).toString()}`),
+	        apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(
           `/movimentacoes?${new URLSearchParams({
             unidade,
             limite: '400',
@@ -2462,9 +2463,10 @@ export function InsumosModule() {
           }).toString()}`
         )
       ])
-      setOverviewResumo(estoque?.data?.resumo || null)
-      setOverviewNotifications(notif?.data || null)
-      setOverviewActionables(act?.data || null)
+	      setOverviewResumo(estoque?.data?.resumo || null)
+	      setOverviewInsumos(Array.isArray(estoque?.data?.itens) ? (estoque!.data!.itens as any) : null)
+	      setOverviewNotifications(notif?.data || null)
+	      setOverviewActionables(act?.data || null)
 
       setOverviewRoi(roi?.data || null)
       setOverviewQuality(quality?.data || null)
@@ -2684,45 +2686,37 @@ export function InsumosModule() {
     }
   }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
 
-  const loadInsights = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setInsightsLoading(true)
-    try {
-      const base = new URLSearchParams()
-      base.set('unidade', unidade)
+	  const loadInsights = React.useCallback(async () => {
+	    if (!canUseApi || !isAuthed) return
+	    setInsightsLoading(true)
+	    try {
+	      const base = new URLSearchParams()
+	      base.set('unidade', unidade)
 
-      const trendsParams = new URLSearchParams(base.toString())
-      trendsParams.set('groupBy', 'day')
-      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
-      const customFromIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomFrom) : ''
-      const customToIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomTo) : ''
-      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-        const fromMs = new Date(customFromIso).getTime()
-        const toMs = new Date(customToIso).getTime()
-        const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
-        days = Math.max(1, Math.min(365, diffDays))
-      }
-      trendsParams.set('days', String(days))
-      const deIso = dateInputToIso(movDe)
-      const ateIso = dateInputToIso(movAte)
-      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-        trendsParams.set('from', customFromIso)
-        trendsParams.set('to', customToIso)
-      } else {
-        if (deIso) trendsParams.set('from', deIso)
-        if (ateIso) trendsParams.set('to', ateIso)
-      }
+	      const trendsParams = new URLSearchParams(base.toString())
+	      trendsParams.set('groupBy', 'day')
+	      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
+	      const customFromIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomFrom) : ''
+	      const customToIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomTo) : ''
+	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+	        const fromMs = new Date(customFromIso).getTime()
+	        const toMs = new Date(customToIso).getTime()
+	        const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
+	        days = Math.max(1, Math.min(365, diffDays))
+	      }
+	      trendsParams.set('days', String(days))
+	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+	        trendsParams.set('from', customFromIso)
+	        trendsParams.set('to', customToIso)
+	      }
 
-      const turnoverParams = new URLSearchParams(base.toString())
-      turnoverParams.set('days', String(days))
-      turnoverParams.set('mode', 'saida')
-      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-        turnoverParams.set('from', customFromIso)
-        turnoverParams.set('to', customToIso)
-      } else {
-        if (deIso) turnoverParams.set('from', deIso)
-        if (ateIso) turnoverParams.set('to', ateIso)
-      }
+	      const turnoverParams = new URLSearchParams(base.toString())
+	      turnoverParams.set('days', String(days))
+	      turnoverParams.set('mode', 'saida')
+	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+	        turnoverParams.set('from', customFromIso)
+	        turnoverParams.set('to', customToIso)
+	      }
 
       const [alertas, trends, turnover] = await Promise.all([
         apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
@@ -2738,10 +2732,10 @@ export function InsumosModule() {
       setInsightsAlertas([])
       setInsightsTrends(null)
       setInsightsTurnover(null)
-    } finally {
-      setInsightsLoading(false)
-    }
-  }, [canUseApi, isAuthed, movAte, movDe, movTipo, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
+	    } finally {
+	      setInsightsLoading(false)
+	    }
+	  }, [canUseApi, isAuthed, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
@@ -3265,16 +3259,20 @@ export function InsumosModule() {
     []
   )
 
-  const stockAgg = React.useMemo(() => {
-    const byCategoria = new Map<string, { name: string; qtd: number; valor: number }>()
-    const byMarca = new Map<string, { name: string; qtd: number; valor: number }>()
-    const byProduto = new Map<string, { name: string; qtd: number; valor: number }>()
+	  const stockAgg = React.useMemo(() => {
+	    const byCategoria = new Map<string, { name: string; qtd: number; valor: number }>()
+	    const byMarca = new Map<string, { name: string; qtd: number; valor: number }>()
+	    const byProduto = new Map<string, { name: string; qtd: number; valor: number }>()
 
-    for (const i of insumos || []) {
-      const estoque = Number(i.estoqueAtual) || 0
-      if (!estoque) continue
-      const preco = Number(i.precoCusto) || 0
-      const valor = estoque * preco
+	    const baseItems = (Array.isArray(overviewInsumos) && overviewInsumos.length ? overviewInsumos : insumos) || []
+	    for (const i of baseItems) {
+	      const estoque =
+	        unidade && i.estoques
+	          ? Number(i.estoques?.[unidade] ?? 0)
+	          : Number(i.estoqueAtual ?? 0) || 0
+	      if (!estoque) continue
+	      const preco = Number(i.precoCusto) || 0
+	      const valor = estoque * preco
 
       const cat = String(i.categoria || 'Outros').trim() || 'Outros'
       const brand = String(i.marca || 'Sem marca').trim() || 'Sem marca'
@@ -3299,12 +3297,12 @@ export function InsumosModule() {
     const toSorted = (m: Map<string, { name: string; qtd: number; valor: number }>) =>
       Array.from(m.values()).sort((a, b) => b.valor - a.valor)
 
-    return {
-      byCategoria: toSorted(byCategoria),
-      byMarca: toSorted(byMarca),
-      byProduto: toSorted(byProduto)
-    }
-  }, [insumos])
+	    return {
+	      byCategoria: toSorted(byCategoria),
+	      byMarca: toSorted(byMarca),
+	      byProduto: toSorted(byProduto)
+	    }
+	  }, [insumos, overviewInsumos, unidade])
 
   const fmtBucketLabel = React.useCallback((bucket: string) => {
     const b = String(bucket || '')
@@ -3383,6 +3381,7 @@ export function InsumosModule() {
 
 	  const presetViewOptions = React.useCallback((id: ChartPresetId): ChartView[] => {
 	    if (id === 'stock_category' || id === 'stock_brand') return ['pie', 'bar']
+	    if (id === 'stock_top') return ['bar']
 	    if (id === 'turnover_category') return ['bar', 'pie']
 	    if (id === 'roi_risk') return ['bar', 'pie']
 	    if (id === 'mov_saldo') return ['line', 'bar']
@@ -3398,23 +3397,33 @@ export function InsumosModule() {
       const height = Math.max(220, Math.min(560, Number(opts?.height) || 260))
       const tooltipFormatter = (v: any) => fmtChartValue(metric, v)
 
-      if (presetId === 'stock_category' || presetId === 'stock_brand') {
-        const base = presetId === 'stock_category' ? stockAgg.byCategoria : stockAgg.byMarca
-        const sorted = [...base].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd))
-        const top = sorted.slice(0, topN).map((x) => ({
-          name: x.name,
-          value: metric === 'valor' ? x.valor : x.qtd,
-          color: getCategoriaBgColor(x.name)
-        }))
-        const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
-        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
+	      if (presetId === 'stock_category' || presetId === 'stock_brand') {
+	        const base = presetId === 'stock_category' ? stockAgg.byCategoria : stockAgg.byMarca
+	        const sorted = [...base].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd))
+	        const top = sorted.slice(0, topN).map((x) => ({
+	          name: x.name,
+	          value: metric === 'valor' ? x.valor : x.qtd,
+	          color: getCategoriaBgColor(x.name)
+	        }))
+	        const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
+	        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+	        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+          const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
+          if (!hasAny) {
+            return (
+              <div className="text-sm text-blue-100/70">
+                {metric === 'valor'
+                  ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
+                  : 'Sem dados.'}
+              </div>
+            )
+          }
 
-        return view === 'pie' ? (
-          <div className="w-full" style={{ height }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
+	        return view === 'pie' ? (
+	          <div className="w-full" style={{ height }}>
+	            <ResponsiveContainer width="100%" height="100%">
+	              <PieChart>
                 <Pie data={top} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
                   {top.map((entry, idx) => (
                     <Cell key={idx} fill={(entry as any).color} />
@@ -3445,14 +3454,24 @@ export function InsumosModule() {
         )
       }
 
-      if (presetId === 'stock_top') {
-        const sorted = [...stockAgg.byProduto].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd)).slice(0, topN)
-        const data = sorted.map((x) => ({ name: x.name, value: metric === 'valor' ? x.valor : x.qtd }))
-        if (!data.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-        return (
-          <div className="w-full" style={{ height }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data} layout="vertical" margin={{ left: 12, right: 12 }}>
+	      if (presetId === 'stock_top') {
+	        const sorted = [...stockAgg.byProduto].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd)).slice(0, topN)
+	        const data = sorted.map((x) => ({ name: x.name, value: metric === 'valor' ? x.valor : x.qtd }))
+	        if (!data.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+          const hasAny = data.some((d) => (Number((d as any).value) || 0) > 0)
+          if (!hasAny) {
+            return (
+              <div className="text-sm text-blue-100/70">
+                {metric === 'valor'
+                  ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
+                  : 'Sem dados.'}
+              </div>
+            )
+          }
+	        return (
+	          <div className="w-full" style={{ height }}>
+	            <ResponsiveContainer width="100%" height="100%">
+	              <BarChart data={data} layout="vertical" margin={{ left: 12, right: 12 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                 <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
                 <YAxis type="category" dataKey="name" width={140} tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
@@ -3580,9 +3599,9 @@ export function InsumosModule() {
 	        )
 	      }
 
-	      if (presetId === 'turnover_category') {
-	        const raw = Array.isArray(insightsTurnover?.categories) ? insightsTurnover.categories : []
-	        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+		      if (presetId === 'turnover_category') {
+		        const raw = Array.isArray(insightsTurnover?.categories) ? insightsTurnover.categories : []
+		        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
 
 	        const sorted = [...raw].sort((a: any, b: any) => {
 	          const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
@@ -3595,12 +3614,22 @@ export function InsumosModule() {
 	          value: metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0),
 	          color: getCategoriaBgColor(String(c?.categoria || ''))
 	        }))
-	        const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
-	        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
+		        const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
+		        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
 
-	        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
+		        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
+            const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
+            if (!hasAny) {
+              return (
+                <div className="text-sm text-blue-100/70">
+                  {metric === 'valor'
+                    ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
+                    : 'Sem dados.'}
+                </div>
+              )
+            }
 
-	        return view === 'pie' ? (
+		        return view === 'pie' ? (
 	          <div className="w-full" style={{ height }}>
 	            <ResponsiveContainer width="100%" height="100%">
 	              <PieChart>
