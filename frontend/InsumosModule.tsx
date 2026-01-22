@@ -213,6 +213,19 @@ function fmtMoneyBRL(value: number) {
   }
 }
 
+function fmtMoneyBRL0(value: number) {
+  try {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(value)
+  } catch {
+    return `R$ ${Math.round(value)}`
+  }
+}
+
 const CATEGORIA_CORES: Record<string, string> = {
   toxina: '#1e3a8a',
   'toxina botulínica': '#1e3a8a',
@@ -6257,13 +6270,15 @@ export function InsumosModule() {
 	          <table className="min-w-full text-sm">
 	            <thead className="bg-black/30 text-blue-100/80">
 	              <tr>
-	                <th className="text-left p-3">Data</th>
-	                <th className="text-left p-3">Produto</th>
-	                <th className="text-right p-3">Estoque</th>
-	                <th className="text-right p-3">Valor</th>
-	                <th className="text-left p-3">Usuário</th>
-	                <th className="text-left p-3">Detalhe</th>
-	                <th className="text-right p-3">Ações</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Data</th>
+	                <th className="p-3 text-center align-middle">Produto</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Categoria</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Marca</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Estoque</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Valor</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Usuário</th>
+	                <th className="p-3 text-center align-middle">Observação</th>
+	                <th className="p-3 text-center align-middle whitespace-nowrap w-[1%]">Ações</th>
 	              </tr>
 	            </thead>
 	            <tbody className="divide-y divide-white/5">
@@ -6287,6 +6302,9 @@ export function InsumosModule() {
                       ? (isEntrada ? Number(estoqueDepois) - qtd : Number(estoqueDepois) + qtd)
                       : null)
                   const valorEstoqueTotal = preco && estoqueDepois != null && Number.isFinite(Number(estoqueDepois)) ? preco * Number(estoqueDepois) : null
+                  const produtoNome = String(insumo?.produto || m.produto || '').trim() || '-'
+                  const categoriaNome = String(insumo?.categoria || '').trim() || '-'
+                  const marcaNome = String(insumo?.marca || '').trim() || '-'
 		                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
 
                   const rowTone = isEntrada
@@ -6298,43 +6316,45 @@ export function InsumosModule() {
 
 		                return (
 		                  <tr key={`${m.dataHora || ''}-${idx}`} className={rowClass}>
-		                    <td className="p-3 text-blue-100/70 whitespace-nowrap">
+		                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap">
                           <div className="text-blue-50">{fmtMovDateShort(m.dataHora) || '-'}</div>
                           <div className="text-xs text-blue-200/60">{fmtMovTimeShort(m.dataHora) || ''}</div>
                         </td>
-	                    <td className="p-3">
+	                    <td className="p-3 text-center align-middle">
 	                      <button
 	                        type="button"
-	                        className="text-left w-full text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
 	                        onClick={() => {
 	                          if (!codigoBarras) return
 	                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
 	                        }}
-                        title={codigoBarras ? 'Filtrar por este insumo' : undefined}
-                        aria-pressed={isSelected}
+	                        title={codigoBarras ? 'Filtrar por este insumo' : undefined}
+	                        aria-pressed={isSelected}
 	                      >
-	                        {m.produto || '-'}
+	                        {produtoNome}
 	                      </button>
 		                    </td>
-                      <td className="p-3 text-right">
+                      <td className="p-3 text-center align-middle whitespace-nowrap">{categoriaNome}</td>
+                      <td className="p-3 text-center align-middle whitespace-nowrap">{marcaNome}</td>
+                      <td className="p-3 text-center align-middle whitespace-nowrap">
                         {estoqueAntes != null && estoqueDepois != null && Number.isFinite(estoqueAntes) && Number.isFinite(estoqueDepois) ? (
                           <span className="font-mono text-blue-50">{estoqueAntes} → {estoqueDepois}</span>
                         ) : (
                           <span className="font-mono text-blue-100/70">-</span>
                         )}
                       </td>
-                      <td className="p-3 text-right">
+                      <td className="p-3 text-center align-middle whitespace-nowrap w-[1%]">
                         <div className="text-blue-50">{preco ? fmtMoneyBRL(valorMov) : '-'}</div>
                         <div className="text-xs text-blue-200/60">
-                          {valorEstoqueTotal != null ? fmtMoneyBRL(valorEstoqueTotal) : ''}
+                          {valorEstoqueTotal != null ? fmtMoneyBRL0(valorEstoqueTotal) : ''}
                         </div>
                       </td>
-	                    <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
-	                    <td className="p-3 text-blue-100/60">
+	                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap">{m.usuario || '-'}</td>
+	                    <td className="p-3 text-center align-middle text-blue-100/60">
 	                      <div className="space-y-1">
-                        {m.transferId ? (
-                          <div>
-                            <div>
+	                        {m.transferId ? (
+	                          <div>
+	                            <div>
                               Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
                               {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
                             </div>
@@ -6354,26 +6374,27 @@ export function InsumosModule() {
 	                        ) : null}
 	                      </div>
 	                    </td>
-                      <td className="p-3 text-right">
-                        <div className="flex justify-end gap-2">
+                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                        <div className="flex justify-center gap-2">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => {
                               if (insumo) openEditDialog(insumo)
+                              else if (codigoBarras) openInsumosListModal({ codigoBarras })
                             }}
-                            disabled={!isAuthed || !insumo}
+                            disabled={!isAuthed || !codigoBarras}
                           >
                             Editar
                           </Button>
                         </div>
                       </td>
-	                  </tr>
-	                )
+		                  </tr>
+		                )
 	              })}
 	              {!movimentacoesView.length ? (
 	                <tr>
-	                  <td className="p-3 text-blue-100/70" colSpan={7}>
+	                  <td className="p-3 text-blue-100/70 text-center" colSpan={9}>
 	                    {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
 	                  </td>
 	                </tr>
