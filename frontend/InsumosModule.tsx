@@ -282,6 +282,20 @@ function fmtDate(value?: string | null) {
   return d.toLocaleString('pt-BR')
 }
 
+function fmtMovDateShort(value?: string | null) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value)
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
+function fmtMovTimeShort(value?: string | null) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+}
+
 function fmtDayShort(isoDay?: string) {
   if (!isoDay) return ''
   const d = new Date(`${isoDay}T00:00:00.000Z`)
@@ -4331,11 +4345,6 @@ export function InsumosModule() {
       </Dialog>
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-	        <div className="flex flex-col gap-2">
-	          <div className="text-white text-lg font-semibold">Visão geral</div>
-
-	        </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
             <CardHeader>
@@ -6249,15 +6258,9 @@ export function InsumosModule() {
 	            <thead className="bg-black/30 text-blue-100/80">
 	              <tr>
 	                <th className="text-left p-3">Data</th>
-	                <th className="text-left p-3">Tipo</th>
 	                <th className="text-left p-3">Produto</th>
-	                <th className="text-left p-3">Código</th>
-	                <th className="text-right p-3">Qtd</th>
 	                <th className="text-right p-3">Estoque</th>
-	                <th className="text-right p-3">Mín</th>
-	                <th className="text-left p-3">Validade</th>
 	                <th className="text-right p-3">Valor</th>
-	                <th className="text-left p-3">Unidade</th>
 	                <th className="text-left p-3">Usuário</th>
 	                <th className="text-left p-3">Detalhe</th>
 	                <th className="text-right p-3">Ações</th>
@@ -6268,45 +6271,67 @@ export function InsumosModule() {
 	                const codigoBarras = String(m.codigoBarras || '').trim()
                   const insumo = pickInsumoForMov(m)
                   const ctxUnit = String(m.unidade || unidade || '').trim()
-                  const estoque = insumo ? (ctxUnit && insumo?.estoques ? Number(insumo.estoques?.[ctxUnit] ?? 0) : Number(insumo.estoqueAtual ?? 0)) : null
-                  const minimo = insumo?.estoqueMinimo != null ? Number(insumo.estoqueMinimo) : null
-                  const validade = fmtDateOnlyBR(String(m.dataValidade || insumo?.dataValidade || '').trim())
+                  const estoqueAtual = insumo
+                    ? (ctxUnit && insumo?.estoques ? Number(insumo.estoques?.[ctxUnit] ?? 0) : Number(insumo.estoqueAtual ?? 0))
+                    : null
+                  const tipoNorm = String(m.tipo || '').toUpperCase().replace('Í', 'I')
+                  const isEntrada = tipoNorm.includes('ENTRADA')
+                  const isSaida = tipoNorm.includes('SAIDA')
                   const preco = Number(m.preco) || Number(insumo?.precoCusto) || 0
                   const qtd = Number(m.quantidade) || 0
-                  const valor = preco * qtd
-	                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
-	                return (
-	                  <tr key={`${m.dataHora || ''}-${idx}`} className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}>
-	                    <td className="p-3 text-blue-100/70">{fmtDate(m.dataHora)}</td>
-	                    <td className="p-3 text-blue-100/80">{m.tipo || '-'}</td>
-                    <td className="p-3">
-                      <button
-                        type="button"
-                        className="text-left w-full text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                  const valorMov = preco * qtd
+                  const estoqueDepois = Number.isFinite(Number(m.estoqueNovo)) ? Number(m.estoqueNovo) : (estoqueAtual != null ? estoqueAtual : null)
+                  const estoqueAntes = Number.isFinite(Number(m.estoqueAnterior))
+                    ? Number(m.estoqueAnterior)
+                    : (Number.isFinite(Number(estoqueDepois)) && Number.isFinite(qtd) && (isEntrada || isSaida)
+                      ? (isEntrada ? Number(estoqueDepois) - qtd : Number(estoqueDepois) + qtd)
+                      : null)
+                  const valorEstoqueTotal = preco && estoqueDepois != null && Number.isFinite(Number(estoqueDepois)) ? preco * Number(estoqueDepois) : null
+		                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
+
+                  const rowTone = isEntrada
+                    ? 'bg-emerald-400/10 hover:bg-emerald-400/15'
+                    : isSaida
+                      ? 'bg-rose-400/10 hover:bg-rose-400/15'
+                      : 'hover:bg-white/5'
+                  const rowClass = `${rowTone} ${isSelected ? 'ring-1 ring-white/10' : ''}`
+
+		                return (
+		                  <tr key={`${m.dataHora || ''}-${idx}`} className={rowClass}>
+		                    <td className="p-3 text-blue-100/70 whitespace-nowrap">
+                          <div className="text-blue-50">{fmtMovDateShort(m.dataHora) || '-'}</div>
+                          <div className="text-xs text-blue-200/60">{fmtMovTimeShort(m.dataHora) || ''}</div>
+                        </td>
+	                    <td className="p-3">
+	                      <button
+	                        type="button"
+	                        className="text-left w-full text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
 	                        onClick={() => {
 	                          if (!codigoBarras) return
 	                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
 	                        }}
                         title={codigoBarras ? 'Filtrar por este insumo' : undefined}
                         aria-pressed={isSelected}
-                      >
-                        {m.produto || '-'}
-                      </button>
-	                    </td>
-	                    <td className="p-3 font-mono text-blue-100/70">{m.codigoBarras || '-'}</td>
-	                    <td className="p-3 text-right text-blue-100/80">{m.quantidade ?? '-'}</td>
-                      <td className="p-3 text-right text-blue-100/80 font-mono">{estoque != null && Number.isFinite(estoque) ? estoque : '-'}</td>
-                      <td className="p-3 text-right text-blue-100/70 font-mono">{minimo != null && Number.isFinite(minimo) ? minimo : '-'}</td>
-                      <td className="p-3 text-blue-100/70">{validade || '-'}</td>
-                      <td className="p-3 text-right text-blue-100/80">{preco ? fmtMoneyBRL(valor) : '-'}</td>
-	                    <td className="p-3 text-blue-100/70">
-	                      {m.transferId
-	                        ? `${m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} → ${m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}`
-	                        : (m.unidade ? unidadeLabel(m.unidade) : '-')}
-                    </td>
-                    <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
-                    <td className="p-3 text-blue-100/60">
-                      <div className="space-y-1">
+	                      >
+	                        {m.produto || '-'}
+	                      </button>
+		                    </td>
+                      <td className="p-3 text-right">
+                        {estoqueAntes != null && estoqueDepois != null && Number.isFinite(estoqueAntes) && Number.isFinite(estoqueDepois) ? (
+                          <span className="font-mono text-blue-50">{estoqueAntes} → {estoqueDepois}</span>
+                        ) : (
+                          <span className="font-mono text-blue-100/70">-</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="text-blue-50">{preco ? fmtMoneyBRL(valorMov) : '-'}</div>
+                        <div className="text-xs text-blue-200/60">
+                          {valorEstoqueTotal != null ? fmtMoneyBRL(valorEstoqueTotal) : ''}
+                        </div>
+                      </td>
+	                    <td className="p-3 text-blue-100/70">{m.usuario || '-'}</td>
+	                    <td className="p-3 text-blue-100/60">
+	                      <div className="space-y-1">
                         {m.transferId ? (
                           <div>
                             <div>
@@ -6332,22 +6357,12 @@ export function InsumosModule() {
                       <td className="p-3 text-right">
                         <div className="flex justify-end gap-2">
                           <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => openInsumosListModal({ codigoBarras })}
-                            disabled={!codigoBarras}
-                            title="Abrir lista de insumos filtrada"
-                          >
-                            Insumo
-                          </Button>
-                          <Button
                             variant="outline"
                             size="sm"
                             onClick={() => {
                               if (insumo) openEditDialog(insumo)
-                              else if (codigoBarras) openInsumosListModal({ codigoBarras })
                             }}
-                            disabled={!isAuthed || (!insumo && !codigoBarras)}
+                            disabled={!isAuthed || !insumo}
                           >
                             Editar
                           </Button>
@@ -6358,7 +6373,7 @@ export function InsumosModule() {
 	              })}
 	              {!movimentacoesView.length ? (
 	                <tr>
-	                  <td className="p-3 text-blue-100/70" colSpan={13}>
+	                  <td className="p-3 text-blue-100/70" colSpan={7}>
 	                    {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
 	                  </td>
 	                </tr>
