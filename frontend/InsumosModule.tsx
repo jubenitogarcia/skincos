@@ -3484,6 +3484,7 @@ export function InsumosModule() {
 
   return (
     <div ref={rootRef} className="p-6 space-y-6">
+      <DragDropContext onDragEnd={onDragEndLayout}>
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -5109,7 +5110,6 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
-      <DragDropContext onDragEnd={onDragEndLayout}>
         <Droppable droppableId="main-panels" direction={mainPanelsDirection}>
           {(dropProvided) => (
             <div
@@ -5967,7 +5967,7 @@ export function InsumosModule() {
 	            </div>
 	          )}
 	        </Droppable>
-	      </DragDropContext>
+      </DragDropContext>
 	    </div>
   )
 }
