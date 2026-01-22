@@ -2978,7 +2978,10 @@ export function InsumosModule() {
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
     const uniqueCodes = new Set<string>()
-    for (const m of movimentacoesView || []) {
+    const selected = selectedCodigoBarras.trim()
+    const source = Array.isArray(movimentacoes) ? movimentacoes : []
+    const base = selected ? source.filter((m) => String(m?.codigoBarras || '').trim() === selected) : source
+    for (const m of base) {
       const code = String(m?.codigoBarras || '').trim()
       if (code) uniqueCodes.add(code)
     }
@@ -3019,7 +3022,7 @@ export function InsumosModule() {
     }
 
     void Promise.allSettled(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()))
-  }, [canUseApi, isAuthed, lookupInsumosByCodigo, movimentacoesView, unidade, upsertInsumosCache])
+  }, [canUseApi, isAuthed, lookupInsumosByCodigo, movimentacoes, selectedCodigoBarras, unidade, upsertInsumosCache])
 
   const movPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.mov] ?? true
 
