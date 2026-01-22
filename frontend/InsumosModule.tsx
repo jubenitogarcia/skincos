@@ -664,7 +664,6 @@ export function InsumosModule() {
   const [quickLookupItems, setQuickLookupItems] = React.useState<Insumo[]>([])
   const quickLookupTokenRef = React.useRef(0)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
-  const insumosSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
@@ -828,15 +827,14 @@ export function InsumosModule() {
     })
   }, [])
 
-  type MainPanelId = 'insumos' | 'mov'
+  type MainPanelId = 'mov'
   const MAIN_PANELS_KEY = 'skincos.insumos.layout.mainPanels.v1'
-  const DEFAULT_MAIN_PANELS: MainPanelId[] = ['insumos', 'mov']
+  const DEFAULT_MAIN_PANELS: MainPanelId[] = ['mov']
 
   type OverviewPanelId = 'policies' | 'alerts' | 'charts'
   const OVERVIEW_PANELS_KEY = 'skincos.insumos.layout.overviewPanels.v1'
   const DETAILS_OPEN_KEY = 'skincos.insumos.layout.detailsOpen.v1'
   const MAIN_PANEL_OPEN_KEYS: Record<MainPanelId, string> = {
-    insumos: 'insumos.panel.insumos',
     mov: 'insumos.panel.movimentacoes'
   }
   const OVERVIEW_PANEL_OPEN_KEYS: Record<OverviewPanelId, string> = {
@@ -1066,11 +1064,6 @@ export function InsumosModule() {
       })
     },
     [
-      MAIN_PANEL_OPEN_KEYS.insumos,
-      MAIN_PANEL_OPEN_KEYS.mov,
-      OVERVIEW_PANEL_OPEN_KEYS.alerts,
-      OVERVIEW_PANEL_OPEN_KEYS.charts,
-      OVERVIEW_PANEL_OPEN_KEYS.policies,
       mainPanelOrder.join('|'),
       overviewPanelOrder.join('|'),
       scheduleSaveUserPrefs
@@ -1550,14 +1543,14 @@ export function InsumosModule() {
 
     try {
       const params = new URLSearchParams(window.location.search)
-      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
-      if (requestedTab) {
-        setTimeout(() => {
-          if (requestedTab === 'overview') overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          else if (requestedTab === 'insumos') insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          else if (requestedTab === 'mov') movSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }, 250)
-      }
+	      const requestedTab = mapTab(params.get('insumosTab') || params.get('view') || params.get('page') || params.get('insumos'))
+	      if (requestedTab) {
+	        setTimeout(() => {
+	          if (requestedTab === 'overview') overviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	          else if (requestedTab === 'insumos') setInsumosListModalOpen(true)
+	          else if (requestedTab === 'mov') movSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	        }, 250)
+	      }
 
       const action = String(
         params.get('insumosAction') || params.get('action') || params.get('type') || params.get('tipo') || ''
@@ -1567,10 +1560,10 @@ export function InsumosModule() {
       const wantsScanner = params.get('scanner') === '1' || actionLabel === 'Scanner'
       const wantsQuickAction = ['Entrada', 'Saída', 'Ajuste', 'Transferência'].includes(actionLabel || '')
 
-      if (wantsCadastro) {
-        setCreateOpen(true)
-        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
-      }
+	      if (wantsCadastro) {
+	        setCreateOpen(true)
+	        setInsumosListModalOpen(true)
+	      }
 
       if (wantsScanner) {
         setQuickScanOpen(true)
@@ -1598,20 +1591,20 @@ export function InsumosModule() {
         : []
       const hasShare = Boolean(shareId || shareTitle || shareText || shareUrl || shareFiles.length)
 
-      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
-        setSharePayload(payload)
-        setShareSourceId(sourceId || null)
-        setShareHidden(false)
-        setCreateOpen(true)
-        setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
-        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
-        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
-        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
-        if (payload.files && payload.files.length) {
-          const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
-          setCreateFonte((prev) => (prev ? prev : filesSummary))
-        }
-      }
+	      const applySharePayload = (payload: SharePayload, sourceId?: string) => {
+	        setSharePayload(payload)
+	        setShareSourceId(sourceId || null)
+	        setShareHidden(false)
+	        setCreateOpen(true)
+	        setInsumosListModalOpen(true)
+	        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
+	        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
+	        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
+	        if (payload.files && payload.files.length) {
+	          const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
+	          setCreateFonte((prev) => (prev ? prev : filesSummary))
+	        }
+	      }
 
       if (shareId) {
         setShareLoading(true)
@@ -1674,20 +1667,20 @@ export function InsumosModule() {
       .join(' ')
   }, [])
 
-  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
-    setCreateOpen(true)
-    setSharePayload(payload)
-    setShareSourceId(payload.id || null)
-    setShareHidden(false)
-    setTimeout(() => insumosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
-    if (payload.title) setCreateProduto(payload.title)
-    if (payload.text) setCreateEspecificacao(payload.text)
-    if (payload.url) setCreateFonte(payload.url)
-    if (payload.files && payload.files.length) {
-      const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
-      setCreateFonte((prev) => (prev ? prev : filesSummary))
-    }
-  }, [])
+	  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
+	    setCreateOpen(true)
+	    setSharePayload(payload)
+	    setShareSourceId(payload.id || null)
+	    setShareHidden(false)
+	    setInsumosListModalOpen(true)
+	    if (payload.title) setCreateProduto(payload.title)
+	    if (payload.text) setCreateEspecificacao(payload.text)
+	    if (payload.url) setCreateFonte(payload.url)
+	    if (payload.files && payload.files.length) {
+	      const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
+	      setCreateFonte((prev) => (prev ? prev : filesSummary))
+	    }
+	  }, [])
 
   React.useEffect(() => {
     try {
@@ -2913,7 +2906,6 @@ export function InsumosModule() {
     [insumosByCodigo, unidade]
   )
 
-  const insumosPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.insumos] ?? true
   const movPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.mov] ?? true
 
   React.useEffect(() => {
@@ -3624,18 +3616,48 @@ export function InsumosModule() {
                     <div className="text-xs text-blue-200/70 mb-1">Produto</div>
                     <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="ex: Toxina botulínica" />
                   </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                    <Input value={createCategoria} onChange={(e) => setCreateCategoria(e.target.value)} placeholder="ex: toxina" />
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Marca</div>
-                    <Input value={createMarca} onChange={(e) => setCreateMarca(e.target.value)} placeholder="ex: Allergan" />
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Tipo (unidade)</div>
-                    <Input value={createTipoUnidade} onChange={(e) => setCreateTipoUnidade(e.target.value)} placeholder="ex: frasco" />
-                  </div>
+	                  <div>
+	                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+	                    <Input
+	                      value={createCategoria}
+	                      onChange={(e) => setCreateCategoria(e.target.value)}
+	                      placeholder="ex: toxina"
+	                      list="insumos-categorias"
+	                    />
+	                    <datalist id="insumos-categorias">
+	                      {lotCategorias.map((c) => (
+	                        <option key={c} value={c} />
+	                      ))}
+	                    </datalist>
+	                  </div>
+	                  <div>
+	                    <div className="text-xs text-blue-200/70 mb-1">Marca</div>
+	                    <Input
+	                      value={createMarca}
+	                      onChange={(e) => setCreateMarca(e.target.value)}
+	                      placeholder="ex: Allergan"
+	                      list="insumos-marcas"
+	                    />
+	                    <datalist id="insumos-marcas">
+	                      {insumosMarcas.map((m) => (
+	                        <option key={m} value={m} />
+	                      ))}
+	                    </datalist>
+	                  </div>
+	                  <div>
+	                    <div className="text-xs text-blue-200/70 mb-1">Tipo (unidade)</div>
+	                    <Input
+	                      value={createTipoUnidade}
+	                      onChange={(e) => setCreateTipoUnidade(e.target.value)}
+	                      placeholder="ex: frasco"
+	                      list="insumos-tipos-unidade"
+	                    />
+	                    <datalist id="insumos-tipos-unidade">
+	                      {insumosTiposUnidade.map((u) => (
+	                        <option key={u} value={u} />
+	                      ))}
+	                    </datalist>
+	                  </div>
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Preço (custo)</div>
                     <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="ex: 1200" />
@@ -3644,11 +3666,38 @@ export function InsumosModule() {
                     <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
                     <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
                   </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Estoque inicial</div>
-                    <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} placeholder="ex: 0" />
-                  </div>
-                </div>
+	                  <div>
+	                    <div className="text-xs text-blue-200/70 mb-1">Estoque inicial</div>
+	                    <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} placeholder="ex: 0" />
+	                  </div>
+	                  <div>
+	                    <div className="flex items-center justify-between gap-2 mb-1">
+	                      <div className="text-xs text-blue-200/70">Lote</div>
+	                      <Button
+	                        variant={createNovoLote ? 'secondary' : 'outline'}
+	                        size="sm"
+	                        type="button"
+	                        onClick={() => setCreateNovoLote((v) => !v)}
+	                        title="Ative quando estiver cadastrando um lote adicional para um código já existente."
+	                      >
+	                        {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
+	                      </Button>
+	                    </div>
+	                    <Input
+	                      value={createLote}
+	                      onChange={(e) => setCreateLote(e.target.value)}
+	                      placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'}
+	                    />
+	                  </div>
+	                  <div>
+	                    <div className="text-xs text-blue-200/70 mb-1">Validade (DD/MM/AAAA)</div>
+	                    <Input
+	                      value={createDataValidade}
+	                      onChange={(e) => setCreateDataValidade(e.target.value)}
+	                      placeholder={createNovoLote ? 'recomendado (DD/MM/AAAA)' : 'DD/MM/AAAA'}
+	                    />
+	                  </div>
+	                </div>
 
                 {createScanOpen ? (
                   <BarcodeScannerInline
@@ -5429,6 +5478,7 @@ export function InsumosModule() {
               {...dropProvided.droppableProps}
               className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-3"
             >
+              {/*
               <Draggable draggableId="main-insumos" index={mainOrderIndex.get('insumos') ?? 0}>
                 {(dragProvided) => (
                   <div
@@ -6037,6 +6087,7 @@ export function InsumosModule() {
 
 	    )}
 	  </Draggable>
+              */}
 
 		  <Draggable draggableId="main-mov" index={mainOrderIndex.get('mov') ?? 0}>
 		    {(dragProvided) => (
@@ -6232,15 +6283,10 @@ export function InsumosModule() {
                       <button
                         type="button"
                         className="text-left w-full text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
-                        onClick={() => {
-                          if (!codigoBarras) return
-                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
-                          try {
-                            insumosSectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-                          } catch {
-                            // ignore
-                          }
-                        }}
+	                        onClick={() => {
+	                          if (!codigoBarras) return
+	                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
+	                        }}
                         title={codigoBarras ? 'Filtrar por este insumo' : undefined}
                         aria-pressed={isSelected}
                       >
