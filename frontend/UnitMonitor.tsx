@@ -17,7 +17,7 @@ import { Toaster } from '@/sonner'
 import { RTSPPlayer } from '@/RTSPPlayer'
 import { WebRTCPlayer } from '@/WebRTCPlayer'
 import { SystemLogs } from '@/SystemLogs'
-import { DEFAULT_UNIT_OPTIONS, UNIT_CUSTOM_VALUE, useGlobalUnitSelection } from '@/unitSelection'
+import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 
 type ApiError = { ok?: boolean; error?: string; message?: string; hint?: string }
 
@@ -256,9 +256,8 @@ function kbToBytes(kb?: number | null): number {
 }
 
 export function UnitMonitor() {
-  const { selectedUnit, setSelectedUnit, customUnit, setCustomUnit } = useGlobalUnitSelection(DEFAULT_UNIT_OPTIONS)
-  const unitKey = selectedUnit === UNIT_CUSTOM_VALUE ? (customUnit.trim() || UNIT_CUSTOM_VALUE) : selectedUnit
-  const effectiveUnit = selectedUnit === UNIT_CUSTOM_VALUE ? customUnit.trim() : selectedUnit
+  const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(DEFAULT_UNIT_OPTIONS)
+  const unitKey = effectiveUnit
   const normalizedUnit = useMemo(() => (effectiveUnit || '').toLowerCase(), [effectiveUnit])
   const unitOptionsForSelect = useMemo(() => {
     if (!selectedUnit) return DEFAULT_UNIT_OPTIONS
@@ -303,6 +302,14 @@ export function UnitMonitor() {
   const installerBaseUrl = typeof window !== 'undefined' ? window.location.origin : ''
   const macInstallerUrl = installerBaseUrl ? `${installerBaseUrl}/downloads/unit-monitor-gateway-mac.command` : '/downloads/unit-monitor-gateway-mac.command'
   const winInstallerUrl = installerBaseUrl ? `${installerBaseUrl}/downloads/unit-monitor-gateway-windows.ps1` : '/downloads/unit-monitor-gateway-windows.ps1'
+  const macOneLiner = useMemo(
+    () => `curl -fsSL "${macInstallerUrl}" -o unit-monitor-gateway.command && chmod +x unit-monitor-gateway.command && ./unit-monitor-gateway.command`,
+    [macInstallerUrl]
+  )
+  const winOneLiner = useMemo(
+    () => `powershell -ExecutionPolicy Bypass -Command "iwr -useb '${winInstallerUrl}' | iex"`,
+    [winInstallerUrl]
+  )
 
   const [proxyStatus, setProxyStatus] = useState<UnitMonitorProxyStatus | null>(null)
   const [gatewayInfo, setGatewayInfo] = useState<UnitMonitorGatewayInfo | null>(null)

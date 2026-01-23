@@ -106,6 +106,10 @@ temp/
 *.temp
 *.out
 
+# Face recognition model weights (downloaded via frontend/scripts/fetch-face-models.mjs)
+frontend/public/face-models/*
+!frontend/public/face-models/.gitkeep
+
 backend/apps/automations/scraper/config.json
 backend/apps/automations/scraper/config.*.json
 backend/apps/automations/scraper/config.local.json

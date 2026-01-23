@@ -14,7 +14,7 @@ import { BrDatePickerInput } from '@/br-date-picker'
 import { isNoAuthMode } from '@/noAuthMode'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useKV } from '@/spark-mock'
-import { DEFAULT_UNIT_OPTIONS, UNIT_CUSTOM_VALUE, useGlobalUnitSelection } from '@/unitSelection'
+import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -80,6 +80,7 @@ const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m 
 const WhatsAppUnifiedHub = lazy(() => import('@/WhatsAppUnifiedHub').then(m => ({ default: m.WhatsAppUnifiedHub })))
 const InstagramStudioPro = lazy(() => import('@/InstagramStudioPro').then(m => ({ default: m.InstagramStudioPro })))
 const ThreadsStudio = lazy(() => import('@/ThreadsStudio').then(m => ({ default: m.ThreadsStudio })))
+const SocialNetworksStudio = lazy(() => import('@/SocialNetworksStudio').then(m => ({ default: m.SocialNetworksStudio })))
 const WorkflowEngine = lazy(() => import('@/WorkflowEngine').then(m => ({ default: m.WorkflowEngine })))
 const ProjectManagement = lazy(() => import('@/ProjectManagement').then(m => ({ default: m.ProjectManagement })))
 const KanbanBoard = lazy(() => import('@/KanbanBoard').then(m => ({ default: m.KanbanBoard })))
@@ -148,7 +149,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
     { key: 'meta-sentiment', label: 'Sentimento', icon: '🧠', component: <MetaSentimentMonitor /> },
     { key: 'whatsapp-business', label: 'WhatsApp', icon: '📱', component: <WhatsAppUnifiedHub /> },
-    { key: 'instagram-studio', label: 'Instagram', icon: '📸', component: <InstagramStudioPro /> },
+    { key: 'instagram-studio', label: 'Redes Sociais', icon: '🌐', component: <SocialNetworksStudio /> },
     { key: 'threads-studio', label: 'Threads', icon: '🧵', component: <ThreadsStudio /> },
     { key: 'workflow', label: 'Workflows', icon: '⚙️', component: <WorkflowEngine /> },
     { key: 'projects', label: 'Projetos', icon: '📁', component: <ProjectManagement /> },
@@ -242,7 +243,7 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio']), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
@@ -297,19 +298,17 @@ export default function AppFunctionalNeatlab() {
 		        allowedUnits: string[]
 		    } | null>(null)
 			    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
-			    const { selectedUnit, setSelectedUnit, customUnit, setCustomUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
-			    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value).filter((v) => v !== UNIT_CUSTOM_VALUE), [unitOptions])
+			    const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
+			    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value), [unitOptions])
 			    const insumosUnitsForHeaderSelect = useMemo(() => {
 			        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
 			        const out = [...new Set(fromApi)]
-			        if (selectedUnit && selectedUnit !== UNIT_CUSTOM_VALUE && !out.includes(selectedUnit)) out.unshift(selectedUnit)
-			        if (!out.includes(UNIT_CUSTOM_VALUE)) out.push(UNIT_CUSTOM_VALUE)
+			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
 			        return out
 			    }, [canonicalUnitValues, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
 			    const unitMonitorUnitsForHeaderSelect = useMemo(() => {
 			        const out = [...new Set(canonicalUnitValues)]
-			        if (selectedUnit && selectedUnit !== UNIT_CUSTOM_VALUE && !out.includes(selectedUnit)) out.unshift(selectedUnit)
-			        if (!out.includes(UNIT_CUSTOM_VALUE)) out.push(UNIT_CUSTOM_VALUE)
+			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
 			        return out
 			    }, [canonicalUnitValues, selectedUnit])
 			    const [insumosOverviewPeriod, setInsumosOverviewPeriod] = useState<InsumosOverviewPeriod>(() => {
@@ -772,19 +771,11 @@ export default function AppFunctionalNeatlab() {
 				                                                    <SelectContent>
 				                                                        {insumosUnitsForHeaderSelect.map((u) => (
 				                                                            <SelectItem key={u} value={u}>
-				                                                                {u === UNIT_CUSTOM_VALUE ? 'Outra…' : formatUnitLabel(u)}
+				                                                                {formatUnitLabel(u)}
 				                                                            </SelectItem>
 				                                                        ))}
 				                                                    </SelectContent>
 				                                                </Select>
-				                                                {selectedUnit === UNIT_CUSTOM_VALUE ? (
-				                                                    <Input
-				                                                        value={customUnit}
-				                                                        onChange={(e) => setCustomUnit(e.target.value)}
-				                                                        placeholder="Nome da unidade"
-				                                                        className="h-8 w-48 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-				                                                    />
-				                                                ) : null}
 					                                                <div className="flex items-center gap-1 ml-2">
 					                                                    <Select
 					                                                        value={insumosOverviewPeriod}
@@ -895,19 +886,11 @@ export default function AppFunctionalNeatlab() {
 			                                                    <SelectContent>
 			                                                        {unitMonitorUnitsForHeaderSelect.map((u) => (
 			                                                            <SelectItem key={u} value={u}>
-			                                                                {u === UNIT_CUSTOM_VALUE ? 'Outra…' : formatUnitLabel(u)}
+			                                                                {formatUnitLabel(u)}
 			                                                            </SelectItem>
 			                                                        ))}
 			                                                    </SelectContent>
 			                                                </Select>
-			                                                {selectedUnit === UNIT_CUSTOM_VALUE ? (
-			                                                    <Input
-			                                                        value={customUnit}
-			                                                        onChange={(e) => setCustomUnit(e.target.value)}
-			                                                        placeholder="Nome da unidade"
-			                                                        className="h-8 w-48 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-			                                                    />
-			                                                ) : null}
 			                                            </>
 			                                        ) : null}
 		                                    </div>
@@ -1053,7 +1036,7 @@ export default function AppFunctionalNeatlab() {
 	                                    ) : null}
 
 		                                    <div className="flex items-center gap-2">
-		                                        <div className="flex-1 flex flex-col gap-2">
+		                                        <div className="flex-1">
 		                                            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
 		                                                <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
 		                                                    <SelectValue placeholder="Selecione a unidade" />
@@ -1061,19 +1044,11 @@ export default function AppFunctionalNeatlab() {
 		                                                <SelectContent>
 		                                                    {insumosUnitsForHeaderSelect.map((u) => (
 		                                                        <SelectItem key={u} value={u}>
-		                                                            {u === UNIT_CUSTOM_VALUE ? 'Outra…' : formatUnitLabel(u)}
+		                                                            {formatUnitLabel(u)}
 		                                                        </SelectItem>
 		                                                    ))}
 		                                                </SelectContent>
 		                                            </Select>
-		                                            {selectedUnit === UNIT_CUSTOM_VALUE ? (
-		                                                <Input
-		                                                    value={customUnit}
-		                                                    onChange={(e) => setCustomUnit(e.target.value)}
-		                                                    placeholder="Nome da unidade"
-		                                                    className="h-10 w-full bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-		                                                />
-		                                            ) : null}
 		                                        </div>
 		                                        <div className="flex items-center gap-1">
 	                                                <Button
