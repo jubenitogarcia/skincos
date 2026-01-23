@@ -220,6 +220,65 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // -------------------------------------------------------------
+// Placeholder images (used by UI mock data)
+// GET /api/placeholder/:w/:h?text=...&bg=111827&fg=93c5fd
+// Returns SVG (lightweight, cacheable, no deps)
+// -------------------------------------------------------------
+function sanitizeColor(input, fallback) {
+    const raw = typeof input === 'string' ? input.trim() : ''
+    if (!raw) return fallback
+    const hex = raw.startsWith('#') ? raw.slice(1) : raw
+    if (!/^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(hex)) return fallback
+    return `#${hex.toLowerCase()}`
+}
+function escapeXml(input) {
+    return String(input || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')
+}
+app.get('/api/placeholder/:w/:h', (req, res) => {
+    const wRaw = Number.parseInt(String(req.params.w || ''), 10)
+    const hRaw = Number.parseInt(String(req.params.h || ''), 10)
+    const w = Number.isFinite(wRaw) ? Math.max(1, Math.min(2048, wRaw)) : 400
+    const h = Number.isFinite(hRaw) ? Math.max(1, Math.min(2048, hRaw)) : 400
+
+    const bg = sanitizeColor(req.query.bg, '#111827')
+    const fg = sanitizeColor(req.query.fg, '#93c5fd')
+    const text =
+        typeof req.query.text === 'string' && req.query.text.trim()
+            ? req.query.text.trim().slice(0, 80)
+            : `${w}×${h}`
+
+    res.status(200)
+    res.setHeader('content-type', 'image/svg+xml; charset=utf-8')
+    res.setHeader('cache-control', 'public, max-age=86400, immutable')
+    res.end(
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeXml(text)}">` +
+        `<rect width="100%" height="100%" fill="${bg}"/>` +
+        `<g fill="${fg}" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" font-size="${Math.max(12, Math.min(28, Math.floor(Math.min(w, h) / 10)))}">` +
+        `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle">${escapeXml(text)}</text>` +
+        `</g>` +
+        `</svg>`
+    )
+})
+
+// -------------------------------------------------------------
+// Instagram Module proxy (same-origin for CRM UI)
+// -------------------------------------------------------------
+const INSTAGRAM_MODULE_TARGET = process.env.INSTAGRAM_MODULE_TARGET || 'http://localhost:3103'
+app.use('/api/instagram-module', createProxyMiddleware({
+    target: INSTAGRAM_MODULE_TARGET,
+    changeOrigin: true,
+    ws: false,
+    logLevel: 'silent',
+    pathRewrite: { '^/api/instagram-module': '' }
+}))
+
+// -------------------------------------------------------------
 // Insumos API proxy (same-origin for CRM UI)
 // -------------------------------------------------------------
 // Cloudflare target (default production). Override for local testing.

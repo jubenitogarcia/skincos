@@ -42,6 +42,15 @@ import {
   UserPlus
 } from "@phosphor-icons/react"
 import { fetchRecentCommentLeads, fetchRecentDMConversations, sendDirectMessage, mapInstagramProfileToLead } from '@/instagramIntegration'
+import {
+  instagramModuleAddAccount,
+  instagramModuleDownloadContent,
+  instagramModuleGetAnalytics,
+  instagramModuleHealth,
+  instagramModuleListAccounts,
+  instagramModuleOsintInvestigate,
+  instagramModuleRunAutomation,
+} from '@/instagramModuleClient'
 import { useIntegrations } from '@/contexts'
 import { LeadsManager } from '@/LeadsManager'
 
@@ -145,6 +154,40 @@ export function InstagramStudioPro() {
   const [dmConversations, setDmConversations] = useState<Record<string, any[]>>({})
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [messageDraft, setMessageDraft] = useState('')
+
+  const [moduleLoading, setModuleLoading] = useState(false)
+  const [moduleError, setModuleError] = useState<string | null>(null)
+  const [moduleHealthState, setModuleHealthState] = useState<any | null>(null)
+  const [moduleAccounts, setModuleAccounts] = useState<any[]>([])
+  const [moduleSelectedAccountId, setModuleSelectedAccountId] = useState<string>('')
+  const [moduleAnalytics, setModuleAnalytics] = useState<any | null>(null)
+  const [moduleAuthToken, setModuleAuthToken] = useState<string>(() => {
+    try {
+      return localStorage.getItem('instagram-module-auth-token') || ''
+    } catch {
+      return ''
+    }
+  })
+  const [moduleAddUsername, setModuleAddUsername] = useState('')
+  const [moduleAddPassword, setModuleAddPassword] = useState('')
+  const [moduleAddAccountId, setModuleAddAccountId] = useState('')
+
+  const [osintUsername, setOsintUsername] = useState('')
+  const [osintDeep, setOsintDeep] = useState(true)
+  const [osintLoading, setOsintLoading] = useState(false)
+  const [osintResult, setOsintResult] = useState<any | null>(null)
+
+  const [downloadUsername, setDownloadUsername] = useState('')
+  const [downloadTypes, setDownloadTypes] = useState<string[]>(['posts'])
+  const [downloadMaxItems, setDownloadMaxItems] = useState<number>(50)
+  const [downloadLoading, setDownloadLoading] = useState(false)
+  const [downloadResult, setDownloadResult] = useState<any | null>(null)
+
+  const [automationHashtags, setAutomationHashtags] = useState('photography')
+  const [automationMaxLikes, setAutomationMaxLikes] = useState<number>(10)
+  const [automationMaxFollows, setAutomationMaxFollows] = useState<number>(5)
+  const [automationLoading, setAutomationLoading] = useState(false)
+  const [automationResult, setAutomationResult] = useState<any | null>(null)
 
   // Mock data initialization
   useEffect(() => {
@@ -363,6 +406,155 @@ export function InstagramStudioPro() {
       }).finally(() => setLoadingIntegration(false))
     }
   }, [activeTab, prospectProfiles.length, loadingIntegration, instagram.businessAccountId, instagram.accessToken])
+
+  const refreshInstagramModule = async () => {
+    setModuleLoading(true)
+    setModuleError(null)
+    try {
+      const [health, accounts] = await Promise.all([instagramModuleHealth(), instagramModuleListAccounts()])
+      setModuleHealthState(health)
+      setModuleAccounts(accounts)
+      const selected =
+        moduleSelectedAccountId && accounts.some(a => a.account_id === moduleSelectedAccountId)
+          ? moduleSelectedAccountId
+          : (accounts[0]?.account_id || '')
+      setModuleSelectedAccountId(selected)
+      if (selected) {
+        const analytics = await instagramModuleGetAnalytics(selected)
+        setModuleAnalytics(analytics)
+      } else {
+        setModuleAnalytics(null)
+      }
+    } catch (e: any) {
+      setModuleError(e?.message || 'Falha ao carregar Instagram Module.')
+      setModuleHealthState(null)
+      setModuleAccounts([])
+      setModuleAnalytics(null)
+    } finally {
+      setModuleLoading(false)
+    }
+  }
+
+  const saveInstagramModuleAuthToken = () => {
+    const v = moduleAuthToken.trim()
+    try {
+      if (v) localStorage.setItem('instagram-module-auth-token', v)
+      else localStorage.removeItem('instagram-module-auth-token')
+    } catch { /* ignore */ }
+    toast.success(v ? 'Token salvo' : 'Token removido')
+    void refreshInstagramModule()
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'module') return
+    if (moduleLoading) return
+    if (moduleHealthState || moduleError) return
+    void refreshInstagramModule()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'module') return
+    if (!moduleSelectedAccountId) return
+    if (moduleLoading) return
+    void (async () => {
+      try {
+        const analytics = await instagramModuleGetAnalytics(moduleSelectedAccountId)
+        setModuleAnalytics(analytics)
+      } catch {
+        setModuleAnalytics(null)
+      }
+    })()
+  }, [activeTab, moduleSelectedAccountId])
+
+  const handleAddInstagramModuleAccount = async () => {
+    const username = moduleAddUsername.trim()
+    const password = moduleAddPassword
+    const account_id = moduleAddAccountId.trim() || undefined
+    if (!username || !password) return
+    setModuleLoading(true)
+    try {
+      await instagramModuleAddAccount({ username, password, account_id })
+      setModuleAddUsername('')
+      setModuleAddPassword('')
+      setModuleAddAccountId('')
+      toast.success('Conta adicionada no Instagram Module')
+      await refreshInstagramModule()
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao adicionar conta')
+    } finally {
+      setModuleLoading(false)
+    }
+  }
+
+  const handleOsintInvestigate = async () => {
+    const username = osintUsername.trim().replace(/^@/, '')
+    if (!username) return
+    setOsintLoading(true)
+    setOsintResult(null)
+    try {
+      const out = await instagramModuleOsintInvestigate({ username, deep_analysis: osintDeep })
+      setOsintResult(out)
+      toast.success(osintDeep ? 'OSINT (deep) iniciado' : 'OSINT concluído')
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha no OSINT')
+      setOsintResult({ error: e?.message || 'Falha no OSINT' })
+    } finally {
+      setOsintLoading(false)
+    }
+  }
+
+  const toggleDownloadType = (t: string) => {
+    setDownloadTypes(prev => (prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]))
+  }
+
+  const handleDownloadContent = async () => {
+    const username = downloadUsername.trim().replace(/^@/, '')
+    if (!username) return
+    setDownloadLoading(true)
+    setDownloadResult(null)
+    try {
+      const out = await instagramModuleDownloadContent({
+        username,
+        content_types: downloadTypes.length ? downloadTypes : ['posts'],
+        max_items: Math.max(1, Math.min(500, Number(downloadMaxItems) || 50)),
+      })
+      setDownloadResult(out)
+      toast.success('Download iniciado')
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha no download')
+      setDownloadResult({ error: e?.message || 'Falha no download' })
+    } finally {
+      setDownloadLoading(false)
+    }
+  }
+
+  const handleRunAutomation = async () => {
+    const account_id = moduleSelectedAccountId
+    if (!account_id) return
+    setAutomationLoading(true)
+    setAutomationResult(null)
+    try {
+      const hashtags = automationHashtags
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(s => s.replace(/^#/, ''))
+      const out = await instagramModuleRunAutomation({
+        account_id,
+        target_hashtags: hashtags.length ? hashtags : undefined,
+        max_likes: Math.max(0, Number(automationMaxLikes) || 0),
+        max_follows: Math.max(0, Number(automationMaxFollows) || 0),
+      })
+      setAutomationResult(out)
+      toast.success('Automação executada')
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha na automação')
+      setAutomationResult({ error: e?.message || 'Falha na automação' })
+    } finally {
+      setAutomationLoading(false)
+    }
+  }
 
   const handleSendDM = async () => {
     if (!selectedConversation || !messageDraft.trim()) return
@@ -600,7 +792,7 @@ export function InstagramStudioPro() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
-        <TabsList className="grid grid-cols-6 w-full max-w-6xl glass-morphism p-2 border-white/20 shadow-premium">
+        <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 w-full max-w-6xl glass-morphism p-2 border-white/20 shadow-premium">
           <TabsTrigger 
             value="feed" 
             className="glass-morphism-dark text-blue-100/80 data-[state=active]:text-white data-[state=active]:bg-white/[0.12] data-[state=active]:shadow-premium transition-all duration-300 hover:text-white hover:bg-white/[0.08]"
@@ -637,7 +829,280 @@ export function InstagramStudioPro() {
           >
             Leads & Conversas
           </TabsTrigger>
+          <TabsTrigger
+            value="module"
+            className="glass-morphism-dark text-blue-100/80 data-[state=active]:text-white data-[state=active]:bg-white/[0.12] data-[state=active]:shadow-premium transition-all duration-300 hover:text-white hover:bg-white/[0.08]"
+          >
+            Módulo
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="module" className="space-y-6">
+          <Card className="glass-card">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle>Instagram Module (local)</CardTitle>
+                  <CardDescription>Conecta no serviço em `:3103` via proxy `/api/instagram-module`</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  {moduleLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                  <Button variant="outline" size="sm" onClick={() => refreshInstagramModule()}>
+                    Atualizar
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {moduleError ? (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                  {moduleError}
+                  <div className="text-xs text-red-200/70 mt-1">
+                    Verifique se o serviço está rodando: `./backend/scripts/dev.sh instagram-module start`
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div className="md:col-span-2">
+                  <Label>Bearer token (opcional)</Label>
+                  <Input
+                    value={moduleAuthToken}
+                    onChange={(e) => setModuleAuthToken(e.target.value)}
+                    placeholder="Bearer … (necessário se development_mode=false)"
+                  />
+                </div>
+                <Button variant="outline" onClick={saveInstagramModuleAuthToken} disabled={moduleLoading}>
+                  Salvar token
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Card className="glass-card lg:col-span-1">
+                  <CardHeader>
+                    <CardTitle className="text-base">Status</CardTitle>
+                    <CardDescription>Saúde do serviço</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Status</span>
+                      <Badge variant={moduleHealthState?.status === 'healthy' ? 'secondary' : 'destructive'}>
+                        {moduleHealthState?.status || 'desconhecido'}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Modo</span>
+                      <span className="text-sm">{moduleHealthState?.mode || '-'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Contas</span>
+                      <span className="text-sm">{moduleHealthState?.accounts_configured ?? '-'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Último check</span>
+                      <span className="text-sm">
+                        {moduleHealthState?.timestamp ? new Date(moduleHealthState.timestamp).toLocaleString('pt-BR') : '-'}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-base">Contas</CardTitle>
+                    <CardDescription>Gerencie contas do Instagram Module</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="md:col-span-1">
+                        <Label>Conta ativa</Label>
+                        <Select value={moduleSelectedAccountId} onValueChange={setModuleSelectedAccountId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {moduleAccounts.length ? moduleAccounts.map(a => (
+                              <SelectItem key={a.account_id} value={a.account_id}>
+                                {a.username} ({a.account_id})
+                              </SelectItem>
+                            )) : (
+                              <SelectItem value="__none__" disabled>Nenhuma conta</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <Label>Usuário</Label>
+                          <Input value={moduleAddUsername} onChange={e => setModuleAddUsername(e.target.value)} placeholder="username" />
+                        </div>
+                        <div>
+                          <Label>Senha</Label>
+                          <Input value={moduleAddPassword} onChange={e => setModuleAddPassword(e.target.value)} placeholder="••••••••" type="password" />
+                        </div>
+                        <div>
+                          <Label>Account ID (opcional)</Label>
+                          <Input value={moduleAddAccountId} onChange={e => setModuleAddAccountId(e.target.value)} placeholder="id (default=username)" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={handleAddInstagramModuleAccount}
+                        disabled={moduleLoading || !moduleAddUsername.trim() || !moduleAddPassword}
+                      >
+                        Adicionar conta
+                      </Button>
+                    </div>
+
+                    {moduleAnalytics ? (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <Card className="glass-card">
+                          <CardContent className="pt-4">
+                            <div className="text-xs text-muted-foreground">Seguidores</div>
+                            <div className="text-xl font-bold">{moduleAnalytics.followers_count ?? '-'}</div>
+                          </CardContent>
+                        </Card>
+                        <Card className="glass-card">
+                          <CardContent className="pt-4">
+                            <div className="text-xs text-muted-foreground">Seguindo</div>
+                            <div className="text-xl font-bold">{moduleAnalytics.following_count ?? '-'}</div>
+                          </CardContent>
+                        </Card>
+                        <Card className="glass-card">
+                          <CardContent className="pt-4">
+                            <div className="text-xs text-muted-foreground">Posts</div>
+                            <div className="text-xl font-bold">{moduleAnalytics.posts_count ?? '-'}</div>
+                          </CardContent>
+                        </Card>
+                        <Card className="glass-card">
+                          <CardContent className="pt-4">
+                            <div className="text-xs text-muted-foreground">Engajamento (10 posts)</div>
+                            <div className="text-xs text-muted-foreground">
+                              ❤️ {moduleAnalytics?.recent_posts?.total_likes ?? '-'} • 💬 {moduleAnalytics?.recent_posts?.total_comments ?? '-'}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">Selecione uma conta para ver analytics.</div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="glass-card">
+                  <CardHeader>
+                    <CardTitle className="text-base">OSINT</CardTitle>
+                    <CardDescription>Investigar perfil (simulado quando necessário)</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex gap-2">
+                      <Input value={osintUsername} onChange={e => setOsintUsername(e.target.value)} placeholder="@usuario" />
+                      <Button onClick={handleOsintInvestigate} disabled={osintLoading || !osintUsername.trim()}>
+                        {osintLoading ? 'Rodando…' : 'Investigar'}
+                      </Button>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <input type="checkbox" checked={osintDeep} onChange={(e) => setOsintDeep(e.target.checked)} />
+                      Deep analysis (background)
+                    </label>
+                    {osintResult ? (
+                      <div className="rounded-lg border bg-muted/20 p-3">
+                        <pre className="text-xs overflow-auto max-h-64">{JSON.stringify(osintResult, null, 2)}</pre>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card">
+                  <CardHeader>
+                    <CardTitle className="text-base">Automação</CardTitle>
+                    <CardDescription>Curte/segue por hashtags (simulação)</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="md:col-span-3">
+                        <Label>Hashtags (separadas por vírgula)</Label>
+                        <Input value={automationHashtags} onChange={e => setAutomationHashtags(e.target.value)} placeholder="photography, marketing" />
+                      </div>
+                      <div>
+                        <Label>Max likes</Label>
+                        <Input
+                          type="number"
+                          value={String(automationMaxLikes)}
+                          onChange={e => setAutomationMaxLikes(Number(e.target.value))}
+                        />
+                      </div>
+                      <div>
+                        <Label>Max follows</Label>
+                        <Input
+                          type="number"
+                          value={String(automationMaxFollows)}
+                          onChange={e => setAutomationMaxFollows(Number(e.target.value))}
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <Button onClick={handleRunAutomation} disabled={automationLoading || !moduleSelectedAccountId}>
+                          {automationLoading ? 'Executando…' : 'Executar'}
+                        </Button>
+                      </div>
+                    </div>
+                    {automationResult ? (
+                      <div className="rounded-lg border bg-muted/20 p-3">
+                        <pre className="text-xs overflow-auto max-h-64">{JSON.stringify(automationResult, null, 2)}</pre>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-base">Download</CardTitle>
+                    <CardDescription>Baixar posts/stories/highlights (simulação)</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="md:col-span-2">
+                        <Label>Username</Label>
+                        <Input value={downloadUsername} onChange={e => setDownloadUsername(e.target.value)} placeholder="@usuario" />
+                      </div>
+                      <div>
+                        <Label>Max itens</Label>
+                        <Input type="number" value={String(downloadMaxItems)} onChange={e => setDownloadMaxItems(Number(e.target.value))} />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={downloadTypes.includes('posts')} onChange={() => toggleDownloadType('posts')} />
+                        posts
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={downloadTypes.includes('stories')} onChange={() => toggleDownloadType('stories')} />
+                        stories
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={downloadTypes.includes('highlights')} onChange={() => toggleDownloadType('highlights')} />
+                        highlights
+                      </label>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button onClick={handleDownloadContent} disabled={downloadLoading || !downloadUsername.trim()}>
+                        {downloadLoading ? 'Baixando…' : 'Baixar'}
+                      </Button>
+                    </div>
+                    {downloadResult ? (
+                      <div className="rounded-lg border bg-muted/20 p-3">
+                        <pre className="text-xs overflow-auto max-h-64">{JSON.stringify(downloadResult, null, 2)}</pre>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="leads-conversas" className="space-y-6">
           <Card className="glass-card">
