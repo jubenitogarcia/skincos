@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
-import { useKV } from '@/spark-mock'
+import { DEFAULT_UNIT_OPTIONS, UNIT_CUSTOM_VALUE, useGlobalUnitSelection } from '@/unitSelection'
 
 type StatusKind = 'ok' | 'warn' | 'error' | 'unknown'
 
@@ -125,12 +125,9 @@ async function apiJson<T>(
 }
 
 export function SystemStatusModule() {
-  const [unitMonitorSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
-  const [unitMonitorCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
-  const unitMonitorEffectiveUnit =
-    unitMonitorSelectedUnit === 'custom' ? (unitMonitorCustomUnit.trim() || 'custom') : unitMonitorSelectedUnit
-
-  const [insumosUnit, setInsumosUnit] = React.useState('novo-hamburgo')
+  const { selectedUnit, customUnit, effectiveUnit } = useGlobalUnitSelection(DEFAULT_UNIT_OPTIONS)
+  const unitMonitorUnitKey = selectedUnit === UNIT_CUSTOM_VALUE ? (customUnit.trim() || UNIT_CUSTOM_VALUE) : selectedUnit
+  const insumosUnit = effectiveUnit
   const [insumosMe, setInsumosMe] = React.useState<InsumosMe | null>(null)
 
   const [rows, setRows] = React.useState<ServiceRow[]>([
@@ -224,12 +221,12 @@ export function SystemStatusModule() {
         const running = ok && Boolean(json?.running)
         const lastError = typeof json?.lastError === 'string' ? json.lastError : null
         const streams = Array.isArray(json?.streams) ? json.streams : []
-        const camsForUnit = streams.filter((s) => String(s?.unit || '') === String(unitMonitorEffectiveUnit)).length
+        const camsForUnit = streams.filter((s) => String(s?.unit || '') === String(unitMonitorUnitKey)).length
         const subtitle = ok
           ? (running
-            ? `Online • Gateway ativo • ${unitMonitorEffectiveUnit}${camsForUnit ? ` • ${camsForUnit} cams` : ''}`
-            : `Online • Gateway parado • ${unitMonitorEffectiveUnit}${lastError ? ` • ${lastError}` : ''}`)
-          : `Offline • ${unitMonitorEffectiveUnit}`
+            ? `Online • Gateway ativo • ${unitMonitorUnitKey}${camsForUnit ? ` • ${camsForUnit} cams` : ''}`
+            : `Online • Gateway parado • ${unitMonitorUnitKey}${lastError ? ` • ${lastError}` : ''}`)
+          : `Offline • ${unitMonitorUnitKey}`
         next.push({
           key: 'unit-monitor-api',
           title: 'Unit Monitor',
@@ -241,7 +238,7 @@ export function SystemStatusModule() {
           key: 'unit-monitor-api',
           title: 'Unit Monitor',
           status: 'error',
-          subtitle: `Erro • ${unitMonitorEffectiveUnit}`
+          subtitle: `Erro • ${unitMonitorUnitKey}`
         })
       }
 
@@ -250,29 +247,11 @@ export function SystemStatusModule() {
     } finally {
       setLoading(false)
     }
-  }, [unitMonitorEffectiveUnit])
+  }, [unitMonitorUnitKey])
 
   React.useEffect(() => {
     void refresh()
   }, [refresh])
-
-  React.useEffect(() => {
-    try {
-      if (typeof window === 'undefined') return
-      const value = window.localStorage.getItem('skincos.insumos.unidade.v1')
-      if (value) setInsumosUnit(value)
-    } catch {
-      // ignore
-    }
-
-    const onUnit = (ev: Event) => {
-      const e = ev as CustomEvent<{ unidade?: string }>
-      const next = String(e.detail?.unidade || '').trim()
-      if (next) setInsumosUnit(next)
-    }
-    window.addEventListener('skincos:insumos:unidade', onUnit as EventListener)
-    return () => window.removeEventListener('skincos:insumos:unidade', onUnit as EventListener)
-  }, [])
 
   const loadBackups = React.useCallback(async () => {
     if (!canManageBackups) return
@@ -415,7 +394,7 @@ export function SystemStatusModule() {
             Unidade Insumos: <span className="text-blue-100 font-semibold">{formatUnitLabel(insumosUnit)}</span>
           </div>
           <div>
-            Unidade Unit Monitor: <span className="text-blue-100 font-semibold">{unitMonitorEffectiveUnit}</span>
+            Unidade Unit Monitor: <span className="text-blue-100 font-semibold">{formatUnitLabel(unitMonitorUnitKey)}</span>
           </div>
           <div className="text-xs text-blue-200/60">
             Este módulo centraliza status para não poluir o cabeçalho dos módulos operacionais.

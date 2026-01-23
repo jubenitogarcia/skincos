@@ -14,6 +14,7 @@ import { BrDatePickerInput } from '@/br-date-picker'
 import { isNoAuthMode } from '@/noAuthMode'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useKV } from '@/spark-mock'
+import { DEFAULT_UNIT_OPTIONS, UNIT_CUSTOM_VALUE, useGlobalUnitSelection } from '@/unitSelection'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -21,12 +22,6 @@ const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
 
 type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
-const UNIT_MONITOR_UNITS: Array<{ value: string; label: string }> = [
-    { value: 'unit-a', label: 'A' },
-    { value: 'unit-b', label: 'B' },
-    { value: 'unit-c', label: 'C' },
-    { value: 'custom', label: 'Outra…' }
-]
 
 type ApiError = {
     error?: string
@@ -294,24 +289,33 @@ export default function AppFunctionalNeatlab() {
 	        setActive(DEFAULT_MODULE_KEY)
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
 	    const [search, setSearch] = useState('')
-		    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
-	        online: boolean | null
-	        authed: boolean | null
-	        integrated: boolean | null
-	        unidades: string[]
-	        allowedUnits: string[]
-	    } | null>(null)
-		    const [insumosUnit, setInsumosUnit] = useState<string>(() => {
-	        try {
-	            return localStorage.getItem(INSUMOS_UNIT_KEY) || 'novo-hamburgo'
-	        } catch {
-	            return 'novo-hamburgo'
-	        }
-			    })
-		    const [insumosOverviewPeriod, setInsumosOverviewPeriod] = useState<InsumosOverviewPeriod>(() => {
-		        try {
-		            const raw = localStorage.getItem(INSUMOS_OVERVIEW_PERIOD_KEY)
-		            const v = raw === '7d' || raw === '30d' || raw === '1y' || raw === 'custom' ? raw : '30d'
+			    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
+		        online: boolean | null
+		        authed: boolean | null
+		        integrated: boolean | null
+		        unidades: string[]
+		        allowedUnits: string[]
+		    } | null>(null)
+			    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
+			    const { selectedUnit, setSelectedUnit, customUnit, setCustomUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
+			    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value).filter((v) => v !== UNIT_CUSTOM_VALUE), [unitOptions])
+			    const insumosUnitsForHeaderSelect = useMemo(() => {
+			        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
+			        const out = [...new Set(fromApi)]
+			        if (selectedUnit && selectedUnit !== UNIT_CUSTOM_VALUE && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+			        if (!out.includes(UNIT_CUSTOM_VALUE)) out.push(UNIT_CUSTOM_VALUE)
+			        return out
+			    }, [canonicalUnitValues, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
+			    const unitMonitorUnitsForHeaderSelect = useMemo(() => {
+			        const out = [...new Set(canonicalUnitValues)]
+			        if (selectedUnit && selectedUnit !== UNIT_CUSTOM_VALUE && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+			        if (!out.includes(UNIT_CUSTOM_VALUE)) out.push(UNIT_CUSTOM_VALUE)
+			        return out
+			    }, [canonicalUnitValues, selectedUnit])
+			    const [insumosOverviewPeriod, setInsumosOverviewPeriod] = useState<InsumosOverviewPeriod>(() => {
+			        try {
+			            const raw = localStorage.getItem(INSUMOS_OVERVIEW_PERIOD_KEY)
+			            const v = raw === '7d' || raw === '30d' || raw === '1y' || raw === 'custom' ? raw : '30d'
 		            return v
 		        } catch {
 		            return '30d'
@@ -331,19 +335,24 @@ export default function AppFunctionalNeatlab() {
 		            return ''
 		        }
 		    })
-		    const [unitMonitorSelectedUnit, setUnitMonitorSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
-		    const [unitMonitorCustomUnit, setUnitMonitorCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
 
-		    const formatUnitLabel = (u: string) =>
-		        String(u || '')
-		            .split('-')
-	            .filter(Boolean)
-	            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-	            .join(' ')
+			    const formatUnitLabel = (u: string) =>
+			        String(u || '')
+			            .split('-')
+		            .filter(Boolean)
+		            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+		            .join(' ')
 
-    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
-    React.useEffect(() => {
-        try {
+			    React.useEffect(() => {
+			        if (active !== 'insumos') return
+			        try {
+			            window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: effectiveUnit } }))
+			        } catch { /* ignore */ }
+			    }, [active, effectiveUnit])
+
+	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
+	    React.useEffect(() => {
+	        try {
             const params = new URLSearchParams(window.location.search)
             const requested = params.get('module') || params.get('tab')
             const wantsInsumosShortcut =
@@ -415,13 +424,13 @@ export default function AppFunctionalNeatlab() {
 	                    : candidateUnits
 	                const options = filteredUnits.length ? filteredUnits : candidateUnits
 
-	                let nextUnit = insumosUnit
+	                let nextUnit = effectiveUnit
 	                try {
 	                    const saved = localStorage.getItem(INSUMOS_UNIT_KEY)
 	                    if (saved) nextUnit = saved
 	                } catch { /* ignore */ }
 	                if (!options.includes(nextUnit)) nextUnit = options[0]
-	                setInsumosUnit(nextUnit)
+	                setSelectedUnit(nextUnit)
 	                try { localStorage.setItem(INSUMOS_UNIT_KEY, nextUnit) } catch { /* ignore */ }
 	                try { window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: nextUnit } })) } catch { /* ignore */ }
 
@@ -432,7 +441,7 @@ export default function AppFunctionalNeatlab() {
 	        })()
 
 			        return () => ac.abort()
-			    }, [active, insumosUnit])
+			    }, [active, effectiveUnit, setSelectedUnit])
 
 		    React.useEffect(() => {
 		        if (active !== 'insumos') return
@@ -751,38 +760,35 @@ export default function AppFunctionalNeatlab() {
 				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
 				                                    <div className="hidden lg:flex items-center gap-2">
 				                                        {active === 'insumos' ? (
-				                                            <>
-			                                                <span className="text-xs text-blue-200/70">Unidade</span>
-			                                                <Select
-			                                                    value={insumosUnit}
-		                                                    onValueChange={(v) => {
-		                                                        setInsumosUnit(v)
-		                                                        try { localStorage.setItem(INSUMOS_UNIT_KEY, v) } catch { /* ignore */ }
-		                                                        try {
-		                                                            window.dispatchEvent(
-		                                                                new CustomEvent('skincos:insumos:unidade', { detail: { unidade: v } })
-		                                                            )
-		                                                        } catch { /* ignore */ }
-		                                                    }}
-		                                                >
-		                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
-		                                                        <SelectValue placeholder="Selecione" />
-		                                                    </SelectTrigger>
-		                                                    <SelectContent>
-		                                                        {(insumosHeaderStatus?.unidades?.length
-		                                                            ? insumosHeaderStatus.unidades
-		                                                            : ['novo-hamburgo', 'barra-shopping-sul']
-		                                                        ).map((u) => (
-		                                                            <SelectItem key={u} value={u}>
-		                                                                {formatUnitLabel(u)}
-		                                                            </SelectItem>
-		                                                        ))}
-		                                                    </SelectContent>
-			                                                </Select>
-				                                                <div className="flex items-center gap-1 ml-2">
-				                                                    <Select
-				                                                        value={insumosOverviewPeriod}
-				                                                        onValueChange={(v) => {
+					                                            <>
+				                                                <span className="text-xs text-blue-200/70">Unidade</span>
+				                                                <Select
+				                                                    value={selectedUnit}
+			                                                    onValueChange={(v) => setSelectedUnit(v)}
+			                                                >
+				                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
+				                                                        <SelectValue placeholder="Selecione" />
+				                                                    </SelectTrigger>
+				                                                    <SelectContent>
+				                                                        {insumosUnitsForHeaderSelect.map((u) => (
+				                                                            <SelectItem key={u} value={u}>
+				                                                                {u === UNIT_CUSTOM_VALUE ? 'Outra…' : formatUnitLabel(u)}
+				                                                            </SelectItem>
+				                                                        ))}
+				                                                    </SelectContent>
+				                                                </Select>
+				                                                {selectedUnit === UNIT_CUSTOM_VALUE ? (
+				                                                    <Input
+				                                                        value={customUnit}
+				                                                        onChange={(e) => setCustomUnit(e.target.value)}
+				                                                        placeholder="Nome da unidade"
+				                                                        className="h-8 w-48 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+				                                                    />
+				                                                ) : null}
+					                                                <div className="flex items-center gap-1 ml-2">
+					                                                    <Select
+					                                                        value={insumosOverviewPeriod}
+					                                                        onValueChange={(v) => {
 				                                                            const next = (v as any) as InsumosOverviewPeriod
 				                                                            setInsumosOverviewPeriod(next)
 				                                                            try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
@@ -877,33 +883,33 @@ export default function AppFunctionalNeatlab() {
 				                                                    </Button>
 				
 		                                                </div>
+					                                            </>
+					                                        ) : null}
+			                                        {active === 'unit-monitor' ? (
+			                                            <>
+			                                                <span className="text-xs text-blue-200/70">Unidade</span>
+			                                                <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
+			                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
+			                                                        <SelectValue placeholder="Selecione" />
+			                                                    </SelectTrigger>
+			                                                    <SelectContent>
+			                                                        {unitMonitorUnitsForHeaderSelect.map((u) => (
+			                                                            <SelectItem key={u} value={u}>
+			                                                                {u === UNIT_CUSTOM_VALUE ? 'Outra…' : formatUnitLabel(u)}
+			                                                            </SelectItem>
+			                                                        ))}
+			                                                    </SelectContent>
+			                                                </Select>
+			                                                {selectedUnit === UNIT_CUSTOM_VALUE ? (
+			                                                    <Input
+			                                                        value={customUnit}
+			                                                        onChange={(e) => setCustomUnit(e.target.value)}
+			                                                        placeholder="Nome da unidade"
+			                                                        className="h-8 w-48 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+			                                                    />
+			                                                ) : null}
 			                                            </>
-				                                        ) : null}
-		                                        {active === 'unit-monitor' ? (
-		                                            <>
-		                                                <span className="text-xs text-blue-200/70">Unidade</span>
-		                                                <Select value={unitMonitorSelectedUnit} onValueChange={(v) => setUnitMonitorSelectedUnit(v)}>
-		                                                    <SelectTrigger className="h-8 w-28 bg-white/[0.06] border-white/20 text-white">
-		                                                        <SelectValue placeholder="Selecione" />
-		                                                    </SelectTrigger>
-		                                                    <SelectContent>
-		                                                        {UNIT_MONITOR_UNITS.map((u) => (
-		                                                            <SelectItem key={u.value} value={u.value}>
-		                                                                {u.label}
-		                                                            </SelectItem>
-		                                                        ))}
-		                                                    </SelectContent>
-		                                                </Select>
-		                                                {unitMonitorSelectedUnit === 'custom' ? (
-		                                                    <Input
-		                                                        value={unitMonitorCustomUnit}
-		                                                        onChange={(e) => setUnitMonitorCustomUnit(e.target.value)}
-		                                                        placeholder="Nome da unidade"
-		                                                        className="h-8 w-48 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-		                                                    />
-		                                                ) : null}
-		                                            </>
-		                                        ) : null}
+			                                        ) : null}
 		                                    </div>
 	                                </div>
 
@@ -1046,37 +1052,33 @@ export default function AppFunctionalNeatlab() {
 	                                        </div>
 	                                    ) : null}
 
-	                                    <div className="flex items-center gap-2">
-	                                        <Select
-	                                            value={insumosUnit}
-	                                            onValueChange={(v) => {
-                                                setInsumosUnit(v)
-                                                try { localStorage.setItem(INSUMOS_UNIT_KEY, v) } catch { /* ignore */ }
-                                                try {
-                                                    window.dispatchEvent(
-                                                        new CustomEvent('skincos:insumos:unidade', { detail: { unidade: v } })
-                                                    )
-                                                } catch { /* ignore */ }
-                                            }}
-                                        >
-                                            <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
-                                                <SelectValue placeholder="Selecione a unidade" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {(insumosHeaderStatus?.unidades?.length
-                                                    ? insumosHeaderStatus.unidades
-                                                    : ['novo-hamburgo', 'barra-shopping-sul']
-                                                ).map((u) => (
-                                                    <SelectItem key={u} value={u}>
-                                                        {formatUnitLabel(u)}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-	                                        <div className="flex items-center gap-1">
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
+		                                    <div className="flex items-center gap-2">
+		                                        <div className="flex-1 flex flex-col gap-2">
+		                                            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
+		                                                <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
+		                                                    <SelectValue placeholder="Selecione a unidade" />
+		                                                </SelectTrigger>
+		                                                <SelectContent>
+		                                                    {insumosUnitsForHeaderSelect.map((u) => (
+		                                                        <SelectItem key={u} value={u}>
+		                                                            {u === UNIT_CUSTOM_VALUE ? 'Outra…' : formatUnitLabel(u)}
+		                                                        </SelectItem>
+		                                                    ))}
+		                                                </SelectContent>
+		                                            </Select>
+		                                            {selectedUnit === UNIT_CUSTOM_VALUE ? (
+		                                                <Input
+		                                                    value={customUnit}
+		                                                    onChange={(e) => setCustomUnit(e.target.value)}
+		                                                    placeholder="Nome da unidade"
+		                                                    className="h-10 w-full bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+		                                                />
+		                                            ) : null}
+		                                        </div>
+		                                        <div className="flex items-center gap-1">
+	                                                <Button
+	                                                    size="icon"
+	                                                    variant="ghost"
                                                     className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
                                                     onClick={() => {
                                                         try {

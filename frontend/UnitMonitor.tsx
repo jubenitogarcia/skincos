@@ -17,6 +17,7 @@ import { Toaster } from '@/sonner'
 import { RTSPPlayer } from '@/RTSPPlayer'
 import { WebRTCPlayer } from '@/WebRTCPlayer'
 import { SystemLogs } from '@/SystemLogs'
+import { DEFAULT_UNIT_OPTIONS, UNIT_CUSTOM_VALUE, useGlobalUnitSelection } from '@/unitSelection'
 
 type ApiError = { ok?: boolean; error?: string; message?: string; hint?: string }
 
@@ -148,13 +149,6 @@ type UnitMonitorGatewayInfo = {
   }
 }
 
-const DEFAULT_UNITS = [
-  { value: 'unit-a', label: 'A' },
-  { value: 'unit-b', label: 'B' },
-  { value: 'unit-c', label: 'C' },
-  { value: 'custom', label: 'Outra' }
-]
-
 function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return fetch(path, {
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(init?.headers || {}) },
@@ -262,11 +256,15 @@ function kbToBytes(kb?: number | null): number {
 }
 
 export function UnitMonitor() {
-  const [selectedUnit, setSelectedUnit] = useKV<string>('unit-monitor:selected-unit', 'unit-a')
-  const [customUnit, setCustomUnit] = useKV<string>('unit-monitor:custom-unit', '')
-  const unitKey = selectedUnit === 'custom' ? (customUnit.trim() || 'custom') : selectedUnit
-  const effectiveUnit = selectedUnit === 'custom' ? customUnit.trim() : selectedUnit
+  const { selectedUnit, setSelectedUnit, customUnit, setCustomUnit } = useGlobalUnitSelection(DEFAULT_UNIT_OPTIONS)
+  const unitKey = selectedUnit === UNIT_CUSTOM_VALUE ? (customUnit.trim() || UNIT_CUSTOM_VALUE) : selectedUnit
+  const effectiveUnit = selectedUnit === UNIT_CUSTOM_VALUE ? customUnit.trim() : selectedUnit
   const normalizedUnit = useMemo(() => (effectiveUnit || '').toLowerCase(), [effectiveUnit])
+  const unitOptionsForSelect = useMemo(() => {
+    if (!selectedUnit) return DEFAULT_UNIT_OPTIONS
+    if (DEFAULT_UNIT_OPTIONS.some((o) => o.value === selectedUnit)) return DEFAULT_UNIT_OPTIONS
+    return [{ value: selectedUnit, label: selectedUnit }, ...DEFAULT_UNIT_OPTIONS]
+  }, [selectedUnit])
 
   const [cameras, setCameras] = useKV<RtspCameraConfig[]>(`unit-monitor:cameras:${unitKey}`, [])
   const [rtspRecordingConfig, setRtspRecordingConfig] = useKV<RtspRecordingConfig>(
@@ -688,14 +686,14 @@ export function UnitMonitor() {
                 <SelectValue placeholder="Selecione" />
               </SelectTrigger>
               <SelectContent>
-                {DEFAULT_UNITS.map((unit) => (
+                {unitOptionsForSelect.map((unit) => (
                   <SelectItem key={unit.value} value={unit.value}>
                     {unit.label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {selectedUnit === 'custom' ? (
+            {selectedUnit === UNIT_CUSTOM_VALUE ? (
               <Input
                 value={customUnit}
                 onChange={(e) => setCustomUnit(e.target.value)}
