@@ -7,6 +7,23 @@ export async function onRequest(context: any): Promise<Response> {
   const prefix = '/api/unit-monitor'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
+  if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
+    const targetOrigin = (context.env?.UNIT_MONITOR_API_TARGET as string | undefined) || ''
+    const proxyToken = (context.env?.UNIT_MONITOR_PROXY_TOKEN as string | undefined) || ''
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        targetConfigured: !!targetOrigin,
+        proxyTokenConfigured: !!proxyToken,
+        hint:
+          !targetOrigin
+            ? 'Configure UNIT_MONITOR_API_TARGET no Cloudflare Pages para apontar para o gateway (URL pública do tunnel).'
+            : undefined,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } },
+    )
+  }
+
   const targetOrigin = (context.env?.UNIT_MONITOR_API_TARGET as string | undefined) || ''
   if (!targetOrigin) {
     return new Response(

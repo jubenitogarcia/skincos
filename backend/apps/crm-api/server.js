@@ -5,11 +5,14 @@ import { promises as fs } from 'fs'
 import fsSync from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 
 // WhatsApp Orchestrator (backend-only)
 import { whatsappOrchestrator } from './services/whatsappOrchestrator.js'
+
+// Ponto (reconhecimento facial + batidas)
+import { registerPontoRoutes } from './server/pontoRoutes.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -218,6 +221,17 @@ app.use((req, res, next) => {
 // Enhanced body parser with larger limits and better error handling
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+
+// -------------------------------------------------------------
+// Ponto (registro de ponto com identificação facial)
+// Persistência em arquivo (backend/var/core/ponto_store.v1.json)
+// -------------------------------------------------------------
+try {
+    registerPontoRoutes(app, { coreStateDir: CORE_STATE_DIR })
+    console.log('✅ Ponto routes registered')
+} catch (e) {
+    console.warn('⚠️  Ponto routes failed to register:', e?.message || String(e))
+}
 
 // -------------------------------------------------------------
 // Placeholder images (used by UI mock data)
@@ -1360,6 +1374,39 @@ app.use('/api/unit-monitor', (req, res, next) => {
     const token = String(req.headers['x-unit-monitor-proxy-token'] || '')
     if (token && token === UNIT_MONITOR_PROXY_TOKEN) return next()
     return res.status(401).json({ ok: false, error: 'Unauthorized' })
+})
+
+app.get('/api/unit-monitor/health', async (req, res) => {
+    res.json({ ok: true, ts: new Date().toISOString() })
+})
+
+app.get('/api/unit-monitor/gateway/info', async (req, res) => {
+    const bins = { ffmpeg: FFMPEG_BIN, ffprobe: FFPROBE_BIN, mediamtx: MEDIAMTX_BIN }
+    const getVer = (cmd, args) => {
+        try {
+            const r = spawnSync(cmd, args, { encoding: 'utf-8' })
+            const out = String(r.stdout || r.stderr || '').trim()
+            return out.split('\n')[0]?.slice(0, 200) || null
+        } catch {
+            return null
+        }
+    }
+    res.json({
+        ok: true,
+        ts: new Date().toISOString(),
+        uptimeSec: Math.floor(process.uptime()),
+        node: process.version,
+        platform: { os: process.platform, arch: process.arch },
+        pid: process.pid,
+        ports: { crmApiPort: Number(process.env.CRM_API_PORT || process.env.PORT || 8099) || 8099 },
+        auth: { proxyTokenRequired: !!UNIT_MONITOR_PROXY_TOKEN },
+        bins: {
+            ...bins,
+            ffmpegVersion: getVer(FFMPEG_BIN, ['-version']),
+            ffprobeVersion: getVer(FFPROBE_BIN, ['-version']),
+            mediamtxVersion: getVer(MEDIAMTX_BIN, ['-version']),
+        },
+    })
 })
 
 app.get('/api/unit-monitor/state', async (req, res) => {

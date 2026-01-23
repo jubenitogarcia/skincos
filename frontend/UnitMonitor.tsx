@@ -18,7 +18,7 @@ import { RTSPPlayer } from '@/RTSPPlayer'
 import { WebRTCPlayer } from '@/WebRTCPlayer'
 import { SystemLogs } from '@/SystemLogs'
 
-type ApiError = { ok?: boolean; error?: string; message?: string }
+type ApiError = { ok?: boolean; error?: string; message?: string; hint?: string }
 
 interface LogEntry {
   id: string
@@ -119,6 +119,32 @@ interface UnitMonitorDiagnostics {
   recorders?: RtspRecorderStatus[]
 }
 
+type UnitMonitorProxyStatus = {
+  ok: boolean
+  targetConfigured: boolean
+  proxyTokenConfigured: boolean
+  hint?: string
+}
+
+type UnitMonitorGatewayInfo = {
+  ok: boolean
+  ts?: string
+  uptimeSec?: number
+  node?: string
+  platform?: { os: string; arch: string }
+  pid?: number
+  ports?: { crmApiPort?: number }
+  auth?: { proxyTokenRequired?: boolean }
+  bins?: {
+    ffmpeg?: string
+    ffprobe?: string
+    mediamtx?: string
+    ffmpegVersion?: string | null
+    ffprobeVersion?: string | null
+    mediamtxVersion?: string | null
+  }
+}
+
 const DEFAULT_UNITS = [
   { value: 'unit-a', label: 'A' },
   { value: 'unit-b', label: 'B' },
@@ -141,7 +167,9 @@ function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     }
     if (r.ok) return json as T
     const err = (json || {}) as ApiError
-    throw new Error(err.error || err.message || `HTTP ${r.status}`)
+    const base = err.error || err.message || `HTTP ${r.status}`
+    const hint = err.hint ? ` (${err.hint})` : ''
+    throw new Error(`${base}${hint}`)
   })
 }
 
@@ -275,6 +303,11 @@ export function UnitMonitor() {
   const macInstallerUrl = installerBaseUrl ? `${installerBaseUrl}/downloads/unit-monitor-gateway-mac.command` : '/downloads/unit-monitor-gateway-mac.command'
   const winInstallerUrl = installerBaseUrl ? `${installerBaseUrl}/downloads/unit-monitor-gateway-windows.ps1` : '/downloads/unit-monitor-gateway-windows.ps1'
 
+  const [proxyStatus, setProxyStatus] = useState<UnitMonitorProxyStatus | null>(null)
+  const [gatewayInfo, setGatewayInfo] = useState<UnitMonitorGatewayInfo | null>(null)
+  const [gatewayReachable, setGatewayReachable] = useState<'unknown' | 'ok' | 'fail'>('unknown')
+  const [gatewayCheckBusy, setGatewayCheckBusy] = useState(false)
+
   const copyText = async (text: string) => {
     try {
       if (typeof navigator === 'undefined' || !navigator.clipboard) throw new Error('clipboard unavailable')
@@ -293,6 +326,36 @@ export function UnitMonitor() {
       message
     }
     setLogs((prev) => [...prev.slice(-199), entry])
+  }
+
+  const refreshGatewaySetup = async () => {
+    setGatewayCheckBusy(true)
+    try {
+      const ps = await apiJson<UnitMonitorProxyStatus>('/api/unit-monitor/_proxy-status')
+      setProxyStatus(ps)
+
+      if (!ps?.targetConfigured) {
+        setGatewayReachable('fail')
+        setGatewayInfo(null)
+        return
+      }
+
+      try {
+        await apiJson<{ ok: boolean; ts?: string }>('/api/unit-monitor/health')
+        setGatewayReachable('ok')
+      } catch {
+        setGatewayReachable('fail')
+      }
+
+      try {
+        const info = await apiJson<UnitMonitorGatewayInfo>('/api/unit-monitor/gateway/info')
+        setGatewayInfo(info)
+      } catch {
+        setGatewayInfo(null)
+      }
+    } finally {
+      setGatewayCheckBusy(false)
+    }
   }
 
   const loadServerState = async () => {
@@ -579,6 +642,7 @@ export function UnitMonitor() {
 
   useEffect(() => {
     addLog('INFO', 'Unit Monitor carregado (modo RTSP)')
+    refreshGatewaySetup().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -652,6 +716,27 @@ export function UnitMonitor() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={proxyStatus?.targetConfigured ? 'default' : 'destructive'}>
+                Pages: {proxyStatus?.targetConfigured ? 'target OK' : 'sem UNIT_MONITOR_API_TARGET'}
+              </Badge>
+              <Badge variant={proxyStatus?.proxyTokenConfigured ? 'default' : 'outline'}>
+                Token: {proxyStatus?.proxyTokenConfigured ? 'configurado' : 'não configurado'}
+              </Badge>
+              <Badge variant={gatewayReachable === 'ok' ? 'default' : gatewayReachable === 'fail' ? 'destructive' : 'outline'}>
+                Gateway: {gatewayReachable === 'ok' ? 'online' : gatewayReachable === 'fail' ? 'offline' : '?'}
+              </Badge>
+              <Button size="sm" variant="outline" onClick={() => refreshGatewaySetup()} disabled={gatewayCheckBusy} className="bg-white/[0.06] border-white/20 text-white">
+                {gatewayCheckBusy ? 'Verificando…' : 'Verificar'}
+              </Button>
+            </div>
+            {proxyStatus?.hint ? <div className="text-xs text-blue-200/70">{proxyStatus.hint}</div> : null}
+            {gatewayInfo?.ok ? (
+              <div className="text-xs text-blue-200/70">
+                Gateway info: Node {gatewayInfo.node} · uptime {Math.floor(Number(gatewayInfo.uptimeSec || 0) / 60)}m ·{' '}
+                {gatewayInfo.bins?.mediamtxVersion ? `MediaMTX ${gatewayInfo.bins.mediamtxVersion}` : 'MediaMTX ?'}
+              </div>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <a href={macInstallerUrl} download>
                 <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white">

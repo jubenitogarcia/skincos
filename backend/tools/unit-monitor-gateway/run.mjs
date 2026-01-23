@@ -1,4 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -41,6 +43,10 @@ async function postJson(url, body, headers = {}) {
 }
 
 async function main() {
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = dirname(__filename)
+  const repoRoot = resolve(__dirname, '../../..')
+
   const tunnelToken = requireEnv('CLOUDFLARE_TUNNEL_TOKEN')
   const port = Number(getEnv('CRM_API_PORT', '8099') || 8099) || 8099
   const proxyToken = getEnv('CRM_UNIT_MONITOR_PROXY_TOKEN', '')
@@ -60,8 +66,9 @@ async function main() {
   const headers = proxyToken ? { 'x-unit-monitor-proxy-token': proxyToken } : {}
 
   console.log(`[gateway] Starting crm-api on :${port}`)
-  const apiProc = spawn(process.execPath, ['backend/apps/crm-api/server.js'], {
+  const apiProc = spawn(process.execPath, [resolve(repoRoot, 'backend/apps/crm-api/server.js')], {
     stdio: 'inherit',
+    cwd: repoRoot,
     env: { ...process.env, CRM_API_PORT: String(port), PORT: String(port) },
   })
 
@@ -107,4 +114,3 @@ main().catch((e) => {
   console.error('[gateway] ERROR:', e?.message || e)
   process.exit(2)
 })
-
