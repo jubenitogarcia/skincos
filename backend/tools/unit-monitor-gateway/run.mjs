@@ -20,6 +20,16 @@ function checkBin(bin, args = ['-version']) {
   return r.status === 0 || r.status === 1
 }
 
+function getGitHead(repoRoot) {
+  try {
+    const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repoRoot, encoding: 'utf-8' })
+    const out = String(r.stdout || '').trim()
+    return out || null
+  } catch {
+    return null
+  }
+}
+
 async function waitForHealth(port, tries = 80) {
   for (let i = 0; i < tries; i++) {
     try {
@@ -50,6 +60,8 @@ async function main() {
   const tunnelToken = requireEnv('CLOUDFLARE_TUNNEL_TOKEN')
   const port = Number(getEnv('CRM_API_PORT', '8099') || 8099) || 8099
   const proxyToken = getEnv('CRM_UNIT_MONITOR_PROXY_TOKEN', '')
+  const gatewayVersion = getGitHead(repoRoot)
+  const startedAt = new Date().toISOString()
 
   const required = [
     { bin: 'ffmpeg', args: ['-version'] },
@@ -69,7 +81,14 @@ async function main() {
   const apiProc = spawn(process.execPath, [resolve(repoRoot, 'backend/apps/crm-api/server.js')], {
     stdio: 'inherit',
     cwd: repoRoot,
-    env: { ...process.env, CRM_API_PORT: String(port), PORT: String(port) },
+    env: {
+      ...process.env,
+      CRM_API_PORT: String(port),
+      PORT: String(port),
+      SKINCOS_GATEWAY: '1',
+      SKINCOS_GATEWAY_STARTED_AT: startedAt,
+      ...(gatewayVersion ? { SKINCOS_GATEWAY_VERSION: gatewayVersion } : {}),
+    },
   })
 
   const healthy = await waitForHealth(port)
