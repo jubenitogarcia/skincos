@@ -157,3 +157,116 @@ export async function exchangeForLongLivedToken(shortLivedToken: string, appId: 
     if (!res.ok) throw new Error('Falha ao trocar token')
     return res.json()
 }
+
+// ---------------- CONTENT (MEDIA/STORIES/COMMENTS) ----------------
+
+export interface InstagramGraphMedia {
+    id: string
+    caption?: string
+    media_type: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM' | 'REELS' | string
+    media_url?: string
+    thumbnail_url?: string
+    permalink?: string
+    timestamp?: string
+    like_count?: number
+    comments_count?: number
+    children?: { data: Array<{ id: string; media_type?: string; media_url?: string; thumbnail_url?: string }> }
+}
+
+export interface InstagramGraphComment {
+    id: string
+    text?: string
+    timestamp?: string
+    username?: string
+    like_count?: number
+    from?: { id: string; username?: string }
+    replies?: { data: InstagramGraphComment[] }
+}
+
+export async function fetchInstagramMedia(igBusinessAccountId: string, token: string, limit = 25): Promise<InstagramGraphMedia[]> {
+    const fields = [
+        'id',
+        'caption',
+        'media_type',
+        'media_url',
+        'thumbnail_url',
+        'permalink',
+        'timestamp',
+        'like_count',
+        'comments_count',
+        'children{media_type,media_url,thumbnail_url}',
+    ].join(',')
+    const data = await graphGet<{ data: InstagramGraphMedia[] }>(`${igBusinessAccountId}/media`, { fields, limit }, token)
+    return data.data || []
+}
+
+export async function fetchInstagramStories(igBusinessAccountId: string, token: string, limit = 25): Promise<InstagramGraphMedia[]> {
+    const fields = [
+        'id',
+        'media_type',
+        'media_url',
+        'thumbnail_url',
+        'permalink',
+        'timestamp',
+        'caption',
+    ].join(',')
+    const data = await graphGet<{ data: InstagramGraphMedia[] }>(`${igBusinessAccountId}/stories`, { fields, limit }, token)
+    return data.data || []
+}
+
+export async function fetchInstagramMediaComments(mediaId: string, token: string, limit = 50): Promise<InstagramGraphComment[]> {
+    const fields = [
+        'id',
+        'text',
+        'timestamp',
+        'username',
+        'like_count',
+        'from{id,username}',
+        'replies.limit(20){id,text,timestamp,username,like_count,from{id,username}}',
+    ].join(',')
+    const data = await graphGet<{ data: InstagramGraphComment[] }>(`${mediaId}/comments`, { fields, limit }, token)
+    return data.data || []
+}
+
+export async function replyToInstagramComment(commentId: string, message: string, token: string): Promise<{ id: string }> {
+    return graphPost<{ id: string }>(`${commentId}/replies`, { message }, token)
+}
+
+// ---------------- PUBLISHING ----------------
+
+export async function createInstagramMediaContainer(
+    igBusinessAccountId: string,
+    token: string,
+    input: {
+        image_url?: string
+        video_url?: string
+        caption?: string
+        media_type?: 'STORIES' | string
+        is_carousel_item?: boolean
+    }
+): Promise<{ id: string }> {
+    return graphPost<{ id: string }>(`${igBusinessAccountId}/media`, input, token)
+}
+
+export async function createInstagramCarouselContainer(
+    igBusinessAccountId: string,
+    token: string,
+    input: {
+        children: string[]
+        caption?: string
+    }
+): Promise<{ id: string }> {
+    return graphPost<{ id: string }>(
+        `${igBusinessAccountId}/media`,
+        {
+            media_type: 'CAROUSEL',
+            children: input.children.join(','),
+            caption: input.caption,
+        },
+        token
+    )
+}
+
+export async function publishInstagramMediaContainer(igBusinessAccountId: string, token: string, creationId: string): Promise<{ id: string }> {
+    return graphPost<{ id: string }>(`${igBusinessAccountId}/media_publish`, { creation_id: creationId }, token)
+}

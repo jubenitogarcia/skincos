@@ -41,7 +41,20 @@ import {
   ChatsCircle,
   UserPlus
 } from "@phosphor-icons/react"
-import { fetchRecentCommentLeads, fetchRecentDMConversations, sendDirectMessage, mapInstagramProfileToLead } from '@/instagramIntegration'
+import {
+  createInstagramCarouselContainer,
+  createInstagramMediaContainer,
+  fetchInstagramMedia,
+  fetchInstagramMediaComments,
+  fetchInstagramStories,
+  fetchRecentCommentLeads,
+  fetchRecentDMConversations,
+  mapInstagramProfileToLead,
+  publishInstagramMediaContainer,
+  replyToInstagramComment,
+  sendDirectMessage,
+  type InstagramGraphMedia,
+} from '@/instagramIntegration'
 import {
   instagramModuleAddAccount,
   instagramModuleDownloadContent,
@@ -154,6 +167,23 @@ export function InstagramStudioPro() {
   const [dmConversations, setDmConversations] = useState<Record<string, any[]>>({})
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [messageDraft, setMessageDraft] = useState('')
+
+  const graphEnabled = Boolean(instagram.connected && instagram.accessToken && instagram.businessAccountId)
+  const [graphLoading, setGraphLoading] = useState(false)
+  const [graphError, setGraphError] = useState<string | null>(null)
+  const [selectedMediaForComments, setSelectedMediaForComments] = useState<string>('')
+  const [replyDraftByComment, setReplyDraftByComment] = useState<Record<string, string>>({})
+
+  const [createPostType, setCreatePostType] = useState<'image' | 'video' | 'carousel'>('image')
+  const [createPostCaption, setCreatePostCaption] = useState('')
+  const [createPostHashtags, setCreatePostHashtags] = useState('')
+  const [createPostLocation, setCreatePostLocation] = useState('')
+  const [createPostFiles, setCreatePostFiles] = useState<File[]>([])
+  const [publishing, setPublishing] = useState(false)
+
+  const [createStoryFiles, setCreateStoryFiles] = useState<File[]>([])
+  const [createStoryText, setCreateStoryText] = useState('')
+  const [publishingStory, setPublishingStory] = useState(false)
 
   const [moduleLoading, setModuleLoading] = useState(false)
   const [moduleError, setModuleError] = useState<string | null>(null)
@@ -406,6 +436,242 @@ export function InstagramStudioPro() {
       }).finally(() => setLoadingIntegration(false))
     }
   }, [activeTab, prospectProfiles.length, loadingIntegration, instagram.businessAccountId, instagram.accessToken])
+
+  const uploadShareFiles = async (files: File[]) => {
+    const fd = new FormData()
+    for (const f of files) fd.append('files', f)
+    const res = await fetch('/api/share/upload', { method: 'POST', body: fd })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+    if (!data?.success) throw new Error(data?.error || 'Upload falhou')
+    return (data.files || []) as Array<{ url: string; name: string }>
+  }
+
+  const buildCaption = () => {
+    const caption = createPostCaption.trim()
+    const hashtags = createPostHashtags
+      .split(/[,\s]+/g)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => (s.startsWith('#') ? s : `#${s}`))
+      .join(' ')
+    const loc = createPostLocation.trim()
+    return [caption, loc ? `📍 ${loc}` : '', hashtags].filter(Boolean).join('\n\n').trim()
+  }
+
+  const publishPost = async () => {
+    if (!graphEnabled) {
+      toast.error('Conecte o Instagram (Graph API) para publicar.')
+      return
+    }
+    if (!createPostFiles.length) {
+      toast.error('Selecione pelo menos 1 arquivo.')
+      return
+    }
+    if (createPostType === 'video') {
+      toast.error('Publicação de vídeo ainda não está habilitada neste fluxo.')
+      return
+    }
+
+    setPublishing(true)
+    try {
+      const uploaded = await uploadShareFiles(createPostFiles)
+      const caption = buildCaption()
+
+      if (createPostType === 'image' || uploaded.length === 1) {
+        const container = await createInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, {
+          image_url: uploaded[0].url,
+          caption
+        })
+        await publishInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, container.id)
+      } else {
+        const children: string[] = []
+        for (const item of uploaded) {
+          const child = await createInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, {
+            image_url: item.url,
+            is_carousel_item: true
+          })
+          children.push(child.id)
+        }
+        const container = await createInstagramCarouselContainer(instagram.businessAccountId!, instagram.accessToken!, {
+          children,
+          caption
+        })
+        await publishInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, container.id)
+      }
+
+      toast.success('Post enviado para publicação!')
+      setIsCreatingPost(false)
+      setCreatePostFiles([])
+      setCreatePostCaption('')
+      setCreatePostHashtags('')
+      setCreatePostLocation('')
+      void syncInstagram()
+      if (activeTab === 'feed') void loadGraphFeed()
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao publicar')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  const publishStory = async () => {
+    if (!graphEnabled) {
+      toast.error('Conecte o Instagram (Graph API) para publicar.')
+      return
+    }
+    if (!createStoryFiles.length) {
+      toast.error('Selecione 1 arquivo.')
+      return
+    }
+    setPublishingStory(true)
+    try {
+      const uploaded = await uploadShareFiles([createStoryFiles[0]])
+      const container = await createInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, {
+        image_url: uploaded[0].url,
+        caption: createStoryText.trim() || undefined,
+        media_type: 'STORIES'
+      })
+      await publishInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, container.id)
+      toast.success('Story enviado para publicação!')
+      setIsCreatingStory(false)
+      setCreateStoryFiles([])
+      setCreateStoryText('')
+      if (activeTab === 'stories') void loadGraphStories()
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao publicar story')
+    } finally {
+      setPublishingStory(false)
+    }
+  }
+
+  const mapGraphMediaToPosts = (media: InstagramGraphMedia[]): InstagramPost[] => {
+    return media.map((m) => {
+      const mediaUrls: string[] = []
+      if (m.media_type === 'CAROUSEL_ALBUM' && m.children?.data?.length) {
+        for (const c of m.children.data) {
+          if (c.media_url) mediaUrls.push(c.media_url)
+          else if (c.thumbnail_url) mediaUrls.push(c.thumbnail_url)
+        }
+      } else if (m.media_url) {
+        mediaUrls.push(m.media_url)
+      } else if (m.thumbnail_url) {
+        mediaUrls.push(m.thumbnail_url)
+      }
+
+      const ts = m.timestamp ? new Date(m.timestamp) : new Date()
+      return {
+        id: m.id,
+        type: m.media_type === 'VIDEO' || m.media_type === 'REELS' ? 'video' : (m.media_type === 'CAROUSEL_ALBUM' ? 'carousel' : 'image'),
+        caption: m.caption || '',
+        mediaUrl: mediaUrls.length ? mediaUrls : ['/api/placeholder/400/400'],
+        timestamp: ts,
+        status: 'published',
+        insights: {
+          likes: m.like_count || 0,
+          comments: m.comments_count || 0,
+          shares: 0,
+          saves: 0,
+          reach: 0,
+          impressions: 0,
+          profile_visits: 0
+        },
+        hashtags: (m.caption || '').split(/\s+/g).filter((t) => t.startsWith('#')).slice(0, 12),
+        mentions: (m.caption || '').split(/\s+/g).filter((t) => t.startsWith('@')).slice(0, 12)
+      }
+    })
+  }
+
+  const loadGraphFeed = async () => {
+    if (!graphEnabled) return
+    setGraphLoading(true)
+    setGraphError(null)
+    try {
+      const media = await fetchInstagramMedia(instagram.businessAccountId!, instagram.accessToken!, 25)
+      const mapped = mapGraphMediaToPosts(media)
+      setPosts(mapped)
+      if (!selectedMediaForComments && mapped[0]?.id) setSelectedMediaForComments(mapped[0].id)
+    } catch (e: any) {
+      setGraphError(e?.message || 'Falha ao carregar Feed')
+    } finally {
+      setGraphLoading(false)
+    }
+  }
+
+  const loadGraphStories = async () => {
+    if (!graphEnabled) return
+    setGraphLoading(true)
+    setGraphError(null)
+    try {
+      const items = await fetchInstagramStories(instagram.businessAccountId!, instagram.accessToken!, 25)
+      const mapped: InstagramStory[] = items.map((s: any) => ({
+        id: s.id,
+        type: (s.media_type === 'VIDEO' ? 'video' : 'image'),
+        mediaUrl: s.media_url || s.thumbnail_url || '/api/placeholder/300/500',
+        text: s.caption || undefined,
+        stickers: [],
+        timestamp: s.timestamp ? new Date(s.timestamp) : new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60000),
+        insights: { views: 0, replies: 0, exits: 0, taps_forward: 0, taps_back: 0 }
+      }))
+      setStories(mapped)
+    } catch (e: any) {
+      setGraphError(e?.message || 'Falha ao carregar Stories')
+    } finally {
+      setGraphLoading(false)
+    }
+  }
+
+  const loadGraphComments = async (mediaId: string) => {
+    if (!graphEnabled || !mediaId) return
+    setGraphLoading(true)
+    setGraphError(null)
+    try {
+      const data = await fetchInstagramMediaComments(mediaId, instagram.accessToken!, 50)
+      const mapped: InstagramComment[] = data.map((c: any) => ({
+        id: c.id,
+        postId: mediaId,
+        username: c.username || 'instagram',
+        userAvatar: '/api/placeholder/40/40',
+        text: c.text || '',
+        timestamp: c.timestamp ? new Date(c.timestamp) : new Date(),
+        likes: c.like_count || 0,
+        replies: (c.replies?.data || []).map((r: any) => ({
+          id: r.id,
+          postId: mediaId,
+          username: r.username || 'instagram',
+          userAvatar: '/api/placeholder/40/40',
+          text: r.text || '',
+          timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+          likes: r.like_count || 0,
+          replies: [],
+          isRepliedTo: true
+        })),
+        isRepliedTo: (c.replies?.data || []).length > 0
+      }))
+      setComments(mapped)
+    } catch (e: any) {
+      setGraphError(e?.message || 'Falha ao carregar comentários')
+    } finally {
+      setGraphLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!graphEnabled) return
+    if (activeTab === 'feed') void loadGraphFeed()
+    if (activeTab === 'stories') void loadGraphStories()
+    if (activeTab === 'comments' && selectedMediaForComments) void loadGraphComments(selectedMediaForComments)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, graphEnabled])
+
+  useEffect(() => {
+    if (activeTab !== 'comments') return
+    if (!graphEnabled) return
+    if (!selectedMediaForComments) return
+    void loadGraphComments(selectedMediaForComments)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMediaForComments])
 
   const refreshInstagramModule = async () => {
     setModuleLoading(true)
@@ -694,24 +960,26 @@ export function InstagramStudioPro() {
               <div className="space-y-4">
                 <div>
                   <Label>Mídia</Label>
-                  <div className="border-2 border-dashed border-muted rounded-lg p-8 text-center">
+                  <div className="border-2 border-dashed border-muted rounded-lg p-6 text-center space-y-3">
                     <ImageIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">Clique para fazer upload</p>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setCreateStoryFiles(e.target.files ? Array.from(e.target.files).slice(0, 1) : [])}
+                    />
+                    <p className="text-xs text-muted-foreground">Publicação via Graph API requer URL pública; faremos upload em /share.</p>
                   </div>
                 </div>
                 <div>
                   <Label>Texto (opcional)</Label>
-                  <Input placeholder="Adicione um texto ao story..." />
+                  <Input placeholder="Adicione um texto ao story..." value={createStoryText} onChange={(e) => setCreateStoryText(e.target.value)} />
                 </div>
                 <div className="flex justify-end space-x-2">
                   <Button variant="outline" onClick={() => setIsCreatingStory(false)}>
                     Cancelar
                   </Button>
-                  <Button onClick={() => {
-                    setIsCreatingStory(false)
-                    toast.success("Story publicado!")
-                  }}>
-                    Publicar
+                  <Button onClick={publishStory} disabled={publishingStory}>
+                    {publishingStory ? 'Publicando…' : 'Publicar'}
                   </Button>
                 </div>
               </div>
@@ -733,7 +1001,7 @@ export function InstagramStudioPro() {
               <div className="space-y-4">
                 <div>
                   <Label>Tipo de Post</Label>
-                  <Select>
+                  <Select value={createPostType} onValueChange={(v: any) => setCreatePostType(v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione o tipo" />
                     </SelectTrigger>
@@ -747,9 +1015,19 @@ export function InstagramStudioPro() {
 
                 <div>
                   <Label>Mídia</Label>
-                  <div className="border-2 border-dashed border-muted rounded-lg p-8 text-center">
+                  <div className="border-2 border-dashed border-muted rounded-lg p-6 text-center space-y-3">
                     <ImageIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">Clique para fazer upload</p>
+                    <Input
+                      type="file"
+                      accept={createPostType === 'video' ? 'video/*' : 'image/*'}
+                      multiple={createPostType === 'carousel'}
+                      onChange={(e) =>
+                        setCreatePostFiles(
+                          e.target.files ? Array.from(e.target.files).slice(0, createPostType === 'carousel' ? 10 : 1) : []
+                        )
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">Publicação via Graph API requer URL pública; faremos upload em /share.</p>
                   </div>
                 </div>
 
@@ -758,17 +1036,19 @@ export function InstagramStudioPro() {
                   <Textarea
                     placeholder="Escreva uma legenda envolvente..."
                     rows={4}
+                    value={createPostCaption}
+                    onChange={(e) => setCreatePostCaption(e.target.value)}
                   />
                 </div>
 
                 <div>
                   <Label>Hashtags</Label>
-                  <Input placeholder="#crm #vendas #tecnologia" />
+                  <Input placeholder="#crm #vendas #tecnologia" value={createPostHashtags} onChange={(e) => setCreatePostHashtags(e.target.value)} />
                 </div>
 
                 <div>
                   <Label>Localização (opcional)</Label>
-                  <Input placeholder="São Paulo, Brasil" />
+                  <Input placeholder="São Paulo, Brasil" value={createPostLocation} onChange={(e) => setCreatePostLocation(e.target.value)} />
                 </div>
 
                 <div className="flex justify-end space-x-2">
@@ -778,11 +1058,8 @@ export function InstagramStudioPro() {
                   <Button variant="outline">
                     Agendar
                   </Button>
-                  <Button onClick={() => {
-                    setIsCreatingPost(false)
-                    toast.success("Post publicado!")
-                  }}>
-                    Publicar
+                  <Button onClick={publishPost} disabled={publishing}>
+                    {publishing ? 'Publicando…' : 'Publicar'}
                   </Button>
                 </div>
               </div>
@@ -1351,6 +1628,32 @@ export function InstagramStudioPro() {
               <CardDescription>Responda e gerencie comentários dos seus posts</CardDescription>
             </CardHeader>
             <CardContent>
+              {graphEnabled ? (
+                <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+                  <div>
+                    <Label>Post</Label>
+                    <Select value={selectedMediaForComments} onValueChange={setSelectedMediaForComments}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {posts.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.caption ? p.caption.slice(0, 36) + (p.caption.length > 36 ? '…' : '') : p.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    {graphLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                    {graphError ? <Badge variant="destructive">{graphError}</Badge> : null}
+                    <Button variant="outline" onClick={() => selectedMediaForComments && loadGraphComments(selectedMediaForComments)}>
+                      Atualizar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
               <ScrollArea className="h-[500px]">
                 <div className="space-y-4">
                   {comments.map((comment) => (
@@ -1377,9 +1680,40 @@ export function InstagramStudioPro() {
                               <span className="text-xs">{comment.likes}</span>
                             </div>
 
-                            <Button variant="ghost" size="sm" className="text-xs h-6">
-                              Responder
-                            </Button>
+                            {graphEnabled ? (
+                              <div className="flex-1 flex items-center gap-2">
+                                <Input
+                                  value={replyDraftByComment[comment.id] || ''}
+                                  onChange={(e) => setReplyDraftByComment((prev) => ({ ...prev, [comment.id]: e.target.value }))}
+                                  placeholder="Responder…"
+                                  className="h-8"
+                                />
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8"
+                                  disabled={!replyDraftByComment[comment.id]?.trim()}
+                                  onClick={async () => {
+                                    const message = (replyDraftByComment[comment.id] || '').trim()
+                                    if (!message) return
+                                    try {
+                                      await replyToInstagramComment(comment.id, message, instagram.accessToken!)
+                                      setReplyDraftByComment((prev) => ({ ...prev, [comment.id]: '' }))
+                                      toast.success('Resposta enviada')
+                                      if (selectedMediaForComments) await loadGraphComments(selectedMediaForComments)
+                                    } catch (e: any) {
+                                      toast.error(e?.message || 'Falha ao responder')
+                                    }
+                                  }}
+                                >
+                                  Enviar
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button variant="ghost" size="sm" className="text-xs h-6">
+                                Responder
+                              </Button>
+                            )}
 
                             {!comment.isRepliedTo && (
                               <Badge variant="destructive" className="text-xs">
