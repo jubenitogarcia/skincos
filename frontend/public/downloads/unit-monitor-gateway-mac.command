@@ -45,6 +45,77 @@ confirm() {
   [[ "$out" == "y" || "$out" == "Y" ]]
 }
 
+install_launchagent() {
+  local label="com.skincos.unit-monitor-gateway"
+  local cfg_dir="$HOME/.skincos/unit-monitor-gateway"
+  local plist="$HOME/Library/LaunchAgents/${label}.plist"
+  local env_file="$cfg_dir/gateway.env"
+  local start_sh="$cfg_dir/start.sh"
+  local log_out="$cfg_dir/gateway.out.log"
+  local log_err="$cfg_dir/gateway.err.log"
+
+  mkdir -p "$cfg_dir"
+  chmod 700 "$cfg_dir" || true
+
+  cat >"$env_file" <<EOF
+CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+CRM_UNIT_MONITOR_PROXY_TOKEN=${CRM_UNIT_MONITOR_PROXY_TOKEN}
+CRM_API_PORT=${CRM_API_PORT}
+PORT=${PORT}
+EOF
+  chmod 600 "$env_file" || true
+
+  cat >"$start_sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CFG_DIR="$HOME/.skincos/unit-monitor-gateway"
+ENV_FILE="$CFG_DIR/gateway.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+INSTALL_DIR="${SKINCOS_GATEWAY_DIR:-$HOME/skincos-unit-monitor-gateway}"
+cd "$INSTALL_DIR"
+exec node "backend/tools/unit-monitor-gateway/run.mjs"
+EOF
+  chmod +x "$start_sh"
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${start_sh}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${log_out}</string>
+  <key>StandardErrorPath</key><string>${log_err}</string>
+</dict>
+</plist>
+EOF
+
+  # Best-effort reload. Different macOS versions support different subcommands.
+  launchctl unload "$plist" >/dev/null 2>&1 || true
+  launchctl load "$plist" >/dev/null 2>&1 || true
+  launchctl start "$label" >/dev/null 2>&1 || true
+
+  echo
+  echo "[gateway] Instalado como serviço (LaunchAgent): $label"
+  echo "[gateway] Logs:"
+  echo "  $log_out"
+  echo "  $log_err"
+}
+
 ensure_cmd() {
   local cmd="$1"
   if command -v "$cmd" >/dev/null 2>&1; then
@@ -170,13 +241,20 @@ main() {
   echo "   UNIT_MONITOR_PROXY_TOKEN=$proxy_token"
   echo "==========================================================="
   echo
-  echo "[gateway] Iniciando gateway (Ctrl+C para parar)..."
-
   export CLOUDFLARE_TUNNEL_TOKEN="$tunnel_token"
   export CRM_UNIT_MONITOR_PROXY_TOKEN="$proxy_token"
   export CRM_API_PORT="$api_port"
   export PORT="$api_port"
+  export SKINCOS_GATEWAY_DIR="$install_dir"
 
+  if confirm "Deseja instalar como serviço (iniciar automaticamente ao ligar o Mac)?" "Y"; then
+    install_launchagent
+    echo
+    echo "[gateway] Serviço instalado. Você pode fechar esta janela."
+    exit 0
+  fi
+
+  echo "[gateway] Iniciando gateway (Ctrl+C para parar)..."
   exec node "$install_dir/backend/tools/unit-monitor-gateway/run.mjs"
 }
 
