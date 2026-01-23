@@ -15,14 +15,6 @@ declare global {
       onRecordingFolderSelected?: (callback: (path: string) => void) => void
       removeAllListeners?: (channel: string) => void
     }
-    googleHomeAPI?: {
-      waitForElement?: (selector: string, timeout?: number) => Promise<Element | null>
-      clickElement?: (selector: string) => Promise<boolean>
-      isLoggedIn?: () => boolean
-      findCameras?: () => Array<{ id: string; name: string; element: Element }>
-      isVideoPlayerVisible?: () => boolean
-      getVideoPlayerBounds?: () => DOMRect | null
-    }
   }
 }
 

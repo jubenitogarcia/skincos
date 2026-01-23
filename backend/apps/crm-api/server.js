@@ -1533,7 +1533,11 @@ app.post('/api/unit-monitor/rtsp/test', async (req, res) => {
         const args = [
             '-v', 'error',
             '-rtsp_transport', 'tcp',
-            '-stimeout', timeoutUs,
+            // ffprobe builds vary; prefer widely supported timeout flags.
+            // -rw_timeout: IO timeout (microseconds)
+            // -timeout: socket I/O timeout (microseconds)
+            '-rw_timeout', timeoutUs,
+            '-timeout', timeoutUs,
             '-print_format', 'json',
             '-show_format',
             '-show_streams',
