@@ -26,6 +26,9 @@ export async function onRequest(context: any): Promise<Response> {
   const headers = new Headers(request.headers)
   headers.delete('host')
 
+  const proxyToken = (context.env?.UNIT_MONITOR_PROXY_TOKEN as string | undefined) || ''
+  if (proxyToken) headers.set('x-unit-monitor-proxy-token', proxyToken)
+
   const upstreamRequest = new Request(targetUrl.toString(), {
     method: request.method,
     headers,

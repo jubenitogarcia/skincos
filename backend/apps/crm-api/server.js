@@ -1352,6 +1352,16 @@ function schedulePersistUnitMonitor() {
 
 await loadUnitMonitorState()
 
+// Optional hardening for public "gateway" deployments behind a simple shared secret.
+// If set, every /api/unit-monitor request must include header: x-unit-monitor-proxy-token
+const UNIT_MONITOR_PROXY_TOKEN = String(process.env.CRM_UNIT_MONITOR_PROXY_TOKEN || '').trim()
+app.use('/api/unit-monitor', (req, res, next) => {
+    if (!UNIT_MONITOR_PROXY_TOKEN) return next()
+    const token = String(req.headers['x-unit-monitor-proxy-token'] || '')
+    if (token && token === UNIT_MONITOR_PROXY_TOKEN) return next()
+    return res.status(401).json({ ok: false, error: 'Unauthorized' })
+})
+
 app.get('/api/unit-monitor/state', async (req, res) => {
     const unit = normalizeUnitKey(req.query?.unit || '')
     if (!unit) {

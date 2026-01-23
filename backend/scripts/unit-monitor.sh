@@ -9,7 +9,7 @@ CRM_API_PORT="${CRM_API_PORT:-8099}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <dev|api|fe|diagnostics|start-streaming|tunnel> [options]
+Usage: $(basename "$0") <dev|api|fe|diagnostics|start-streaming|tunnel|gateway|check> [options]
 
 Commands:
   dev             Start CRM frontend (Vite) + CRM API (nodemon) for Unit Monitor
@@ -18,19 +18,23 @@ Commands:
   diagnostics     Curl Unit Monitor diagnostics from CRM API
   start-streaming POST /api/unit-monitor/streaming/start (requires cameras configured)
   tunnel          Run cloudflared tunnel (requires token)
+  gateway         Start API + streaming + tunnel (edge gateway)
+  check           Check gateway prerequisites (binaries)
 
 Options:
   --crm-port N        Frontend port (default: $CRM_PORT)
   --crm-api-port N    API port (default: $CRM_API_PORT)
 
 Tunnel (optional):
-  Set CLOUDLFARE_TUNNEL_TOKEN or pass --token <TOKEN> to:
+  Set CLOUDFLARE_TUNNEL_TOKEN or pass --token <TOKEN> to:
     cloudflared tunnel run --token <TOKEN>
 
 Examples:
   $(basename "$0") dev --crm-port 5173 --crm-api-port 8099
   $(basename "$0") api
   $(basename "$0") diagnostics
+  $(basename "$0") check
+  CLOUDFLARE_TUNNEL_TOKEN=... $(basename "$0") gateway --crm-api-port 8099
 EOF
 }
 
@@ -63,6 +67,28 @@ start_api() {
 start_fe() {
   (cd "$ROOT_DIR/frontend" && npm -s run dev -- --port "$CRM_PORT") &
   echo $!
+}
+
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "[unit-monitor] Missing dependency: $cmd" >&2
+    return 1
+  fi
+  return 0
+}
+
+wait_for_api() {
+  local port="$1"
+  local tries="${2:-40}"
+  local delay_ms="${3:-250}"
+  for ((i=1; i<=tries; i++)); do
+    if curl -fsS "http://localhost:${port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "0.${delay_ms}"
+  done
+  return 1
 }
 
 case "$cmd" in
@@ -103,6 +129,55 @@ case "$cmd" in
       exit 2
     fi
     exec cloudflared tunnel run --token "$tunnel_token"
+    ;;
+  check)
+    missing=0
+    require_cmd node || missing=1
+    require_cmd curl || missing=1
+    require_cmd ffmpeg || missing=1
+    require_cmd ffprobe || missing=1
+    require_cmd mediamtx || missing=1
+    require_cmd cloudflared || missing=1
+    if [[ "$missing" -ne 0 ]]; then
+      echo "[unit-monitor] One or more dependencies are missing." >&2
+      exit 2
+    fi
+    echo "[unit-monitor] OK: node curl ffmpeg ffprobe mediamtx cloudflared"
+    ;;
+  gateway)
+    if [[ -z "${tunnel_token:-}" ]]; then
+      echo "[unit-monitor] Missing token. Set CLOUDFLARE_TUNNEL_TOKEN or pass --token." >&2
+      exit 2
+    fi
+
+    echo "[unit-monitor] Checking dependencies..."
+    "$0" check >/dev/null
+
+    echo "[unit-monitor] Starting CRM API on :$CRM_API_PORT"
+    api_pid="$(start_api)"
+    echo "[unit-monitor] API PID: $api_pid"
+
+    cleanup() {
+      echo "[unit-monitor] Stopping..."
+      curl -fsS -X POST "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/stop" >/dev/null 2>&1 || true
+      kill "$api_pid" >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT INT TERM
+
+    echo "[unit-monitor] Waiting for API health..."
+    if ! wait_for_api "$CRM_API_PORT" 60 250; then
+      echo "[unit-monitor] API did not become healthy on :$CRM_API_PORT" >&2
+      exit 2
+    fi
+
+    echo "[unit-monitor] Starting streaming gateway (MediaMTX)..."
+    curl -fsS -X POST "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/start" >/dev/null 2>&1 || {
+      echo "[unit-monitor] WARN: failed to start streaming. You can retry in the CRM UI." >&2
+    }
+
+    echo "[unit-monitor] Starting Cloudflare Tunnel..."
+    echo "[unit-monitor] Tip: point UNIT_MONITOR_API_TARGET to your tunnel public URL (e.g. https://unit-monitor-gw.seudominio.com)."
+    cloudflared tunnel run --token "$tunnel_token"
     ;;
   -h|--help|help|"")
     usage

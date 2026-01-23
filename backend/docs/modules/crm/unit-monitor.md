@@ -37,13 +37,16 @@ Módulo do CRM para monitorar e gravar evidências de câmeras IP via **RTSP** p
 - Configure no Cloudflare Pages (Environment Variables) a variável:
   - `UNIT_MONITOR_API_TARGET` → URL pública do `crm-api` (ex.: via Cloudflare Tunnel).
 - Se `UNIT_MONITOR_API_TARGET` não estiver configurado (ou apontar para um host inválido), o módulo vai aparecer como **Servidor: offline**.
+- (Recomendado) Configure um segredo compartilhado:
+  - Cloudflare Pages: `UNIT_MONITOR_PROXY_TOKEN`
+  - Gateway (`crm-api`): `CRM_UNIT_MONITOR_PROXY_TOKEN`
 
 ### Exemplo com Cloudflare Tunnel
-1. Na máquina que está na mesma rede das câmeras, rode o backend:
-   - `./backend/scripts/unit-monitor.sh api`
-2. Exponha via tunnel:
-   - `./backend/scripts/unit-monitor.sh tunnel --token <TOKEN>`
-3. No Cloudflare Pages, aponte `UNIT_MONITOR_API_TARGET` para a URL pública do tunnel (ou seu domínio).
+1. Na máquina que está na mesma rede das câmeras (gateway), suba API + streaming + tunnel:
+   - `export CLOUDFLARE_TUNNEL_TOKEN="..."`
+   - `export CRM_UNIT_MONITOR_PROXY_TOKEN="..."`
+   - `./backend/scripts/unit-monitor.sh gateway --crm-api-port 8099`
+2. No Cloudflare Pages, aponte `UNIT_MONITOR_API_TARGET` para a URL pública do tunnel (ou seu domínio).
 
 ## Requisitos tecnicos
 - Binários: `mediamtx`, `ffmpeg`, `ffprobe` no PATH (ou via env vars do CRM).
@@ -82,3 +85,4 @@ Módulo do CRM para monitorar e gravar evidências de câmeras IP via **RTSP** p
 
 ## Docs adicionais
 - `backend/docs/modules/crm/unit-monitor-prd.md`
+- `backend/docs/modules/crm/unit-monitor-gateway.md`
