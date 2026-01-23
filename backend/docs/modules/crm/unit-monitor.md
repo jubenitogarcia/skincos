@@ -46,6 +46,12 @@ Módulo do CRM para monitorar e gravar evidencias de cameras por unidade usando 
 5. Pare a gravacao; o arquivo fica local.
 6. (Opcional) Salve configuracoes no servidor via **Salvar**.
 
+## Como rodar (local)
+- Subir CRM (frontend + API) focado no Unit Monitor:
+  - `./backend/scripts/unit-monitor.sh dev`
+- Diagnostico rapido (API):
+  - `./backend/scripts/unit-monitor.sh diagnostics`
+
 ## Requisitos tecnicos
 - Browsers recomendados: Chrome/Edge (maior compatibilidade).
 - Firefox: suporte parcial.
