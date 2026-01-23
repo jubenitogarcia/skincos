@@ -252,9 +252,22 @@ const CATEGORIA_CORES: Record<string, string> = {
   recepcao: '#c026d3'
 }
 
+const CATEGORIA_PALETA = ['#60a5fa', '#a78bfa', '#34d399', '#f87171', '#fbbf24', '#22d3ee', '#fb7185', '#c084fc', '#4ade80', '#f472b6']
+
+function hashToIndex(value: string, mod: number) {
+  let h = 0
+  for (let i = 0; i < value.length; i++) {
+    h = (h * 31 + value.charCodeAt(i)) >>> 0
+  }
+  return mod > 0 ? h % mod : 0
+}
+
 function getCategoriaBgColor(categoria?: string | null) {
   const key = String(categoria || '').trim().toLowerCase()
-  return CATEGORIA_CORES[key] || '#0ea5e9'
+  const mapped = CATEGORIA_CORES[key]
+  if (mapped) return mapped
+  if (!key) return '#0ea5e9'
+  return CATEGORIA_PALETA[hashToIndex(key, CATEGORIA_PALETA.length)] || '#0ea5e9'
 }
 
 function slugifyCategoria(value?: string | null) {
@@ -842,10 +855,10 @@ export function InsumosModule() {
     Array<{ day: string; entrada: number; saida: number; entradaValor?: number; saidaValor?: number }>
   >([])
 
-  const [insightsLoading, setInsightsLoading] = React.useState(false)
-  const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
-  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
-  const [insightsTurnover, setInsightsTurnover] = React.useState<any | null>(null)
+	  const [insightsLoading, setInsightsLoading] = React.useState(false)
+	  const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
+	  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
+	  const [insightsTurnover, setInsightsTurnover] = React.useState<{ saida?: any; entrada?: any } | null>(null)
   const [alertasStatus, setAlertasStatus] = React.useState<'TODOS' | EstoqueStatus>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
@@ -2710,28 +2723,36 @@ export function InsumosModule() {
 	        trendsParams.set('to', customToIso)
 	      }
 
-	      const turnoverParams = new URLSearchParams(base.toString())
-	      turnoverParams.set('days', String(days))
-	      turnoverParams.set('mode', 'saida')
+	      const turnoverBaseParams = new URLSearchParams(base.toString())
+	      turnoverBaseParams.set('days', String(days))
 	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-	        turnoverParams.set('from', customFromIso)
-	        turnoverParams.set('to', customToIso)
+	        turnoverBaseParams.set('from', customFromIso)
+	        turnoverBaseParams.set('to', customToIso)
 	      }
 
-      const [alertas, trends, turnover] = await Promise.all([
-        apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
-        apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`),
-        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverParams.toString()}`)
-      ])
+	      const turnoverSaidaParams = new URLSearchParams(turnoverBaseParams.toString())
+	      turnoverSaidaParams.set('mode', 'saida')
+	      const turnoverEntradaParams = new URLSearchParams(turnoverBaseParams.toString())
+	      turnoverEntradaParams.set('mode', 'entrada')
 
-      setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
-      setInsightsTrends(trends?.data || null)
-      setInsightsTurnover(turnover?.data || null)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-      setInsightsAlertas([])
-      setInsightsTrends(null)
-      setInsightsTurnover(null)
+	      const [alertas, trends, turnoverSaida, turnoverEntrada] = await Promise.all([
+	        apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
+	        apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`),
+	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverSaidaParams.toString()}`),
+	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverEntradaParams.toString()}`)
+	      ])
+
+	      setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
+	      setInsightsTrends(trends?.data || null)
+	      setInsightsTurnover({
+	        saida: turnoverSaida?.data || null,
+	        entrada: turnoverEntrada?.data || null
+	      })
+	    } catch (e) {
+	      toast.error(e instanceof Error ? e.message : String(e))
+	      setInsightsAlertas([])
+	      setInsightsTrends(null)
+	      setInsightsTurnover(null)
 	    } finally {
 	      setInsightsLoading(false)
 	    }
@@ -3164,24 +3185,27 @@ export function InsumosModule() {
     return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
   }, [insumos])
 
-	  type ChartPresetId =
-	    | 'stock_category'
-	    | 'stock_brand'
-	    | 'stock_top'
-	    | 'mov_inout'
-	    | 'mov_saldo'
-	    | 'trends_inout'
-	    | 'roi_risk'
-	    | 'turnover_category'
+	  type ChartPresetId = 'distribution' | 'movements' | 'roi_risk'
 
-  type ChartMetric = 'qtd' | 'valor'
-  type ChartView = 'bar' | 'line' | 'pie'
-  type ChartLayout = 'square' | 'wide' | 'tall'
-  type ChartSlotConfig = { presetId: ChartPresetId; metric?: ChartMetric; view?: ChartView; topN?: number }
+	  type ChartMetric = 'qtd' | 'valor'
+	  type ChartView = 'bar' | 'line' | 'pie'
+	  type ChartLayout = 'square' | 'wide' | 'tall'
+	  type ChartGroupBy = 'categoria' | 'marca' | 'item' | 'tempo'
+	  type MovementsMode = 'inout' | 'saldo' | 'entrada' | 'saida'
+	  type ChartSlotConfig = {
+	    presetId: ChartPresetId
+	    metric?: ChartMetric
+	    view?: ChartView
+	    topN?: number
+	    groupBy?: ChartGroupBy
+	    mode?: MovementsMode
+	  }
 
-  const CHARTS_SLOTS_KEY = 'skincos.insumos.charts.slots.v1'
-  const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [{ presetId: 'stock_category', metric: 'valor', view: 'pie', topN: 8 }]
-  const MAX_CHARTS = 9
+	  const CHARTS_SLOTS_KEY = 'skincos.insumos.charts.slots.v1'
+	  const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [
+	    { presetId: 'distribution', groupBy: 'categoria', metric: 'qtd', view: 'pie', topN: 8 }
+	  ]
+	  const MAX_CHARTS = 9
 
 	  const CHART_PRESETS: Array<{
 	    id: ChartPresetId
@@ -3193,38 +3217,82 @@ export function InsumosModule() {
 	    defaultView?: ChartView
 	    layout?: ChartLayout
 	  }> = [
-	      { id: 'stock_category', label: 'Distribuição por categoria', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-	      { id: 'stock_brand', label: 'Distribuição por marca', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-	      { id: 'stock_top', label: 'Top insumos (estoque)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'tall' },
-	      { id: 'mov_inout', label: 'Entrada vs Saída', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
-	      { id: 'mov_saldo', label: 'Saldo (entrada − saída)', supportsMetric: true, supportsView: true, defaultView: 'line', layout: 'wide' },
-	      { id: 'trends_inout', label: `Tendências (${overviewPeriodLabel})`, supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'wide' },
-	      { id: 'roi_risk', label: 'ROI (perdas & risco)', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'square' },
-	      { id: 'turnover_category', label: 'Giro por categoria (saídas)', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'wide' }
+	      { id: 'distribution', label: 'Distribuição', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
+	      { id: 'movements', label: 'Movimentações', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'wide' },
+	      { id: 'roi_risk', label: 'ROI (perdas & risco)', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'square' }
 	    ]
 
-  const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(CHARTS_SLOTS_KEY)
-      if (!raw) return DEFAULT_CHART_SLOTS
-      const parsed = JSON.parse(raw)
-      const slots = Array.isArray(parsed) ? parsed : []
-      const validIds = new Set(CHART_PRESETS.map((p) => p.id))
-      const cleaned: ChartSlotConfig[] = slots
-        .slice(0, MAX_CHARTS)
-        .map((s: any, idx: number) => {
-          const fallback = DEFAULT_CHART_SLOTS[0]
-          const presetId: ChartPresetId = validIds.has(String(s?.presetId)) ? (String(s.presetId) as any) : fallback.presetId
-          const preset = CHART_PRESETS.find((p) => p.id === presetId)
-          const metric: ChartMetric | undefined = s?.metric === 'valor' || s?.metric === 'qtd' ? s.metric : preset?.defaultMetric
-          const view: ChartView | undefined = s?.view === 'bar' || s?.view === 'line' || s?.view === 'pie' ? s.view : preset?.defaultView
-          const topN = Math.max(5, Math.min(15, parseInt(String(s?.topN ?? ''), 10) || 0)) || fallback.topN
-          return { presetId, metric, view, topN }
-        })
-      if (!cleaned.length) return DEFAULT_CHART_SLOTS
-      return cleaned
-    } catch {
-      return DEFAULT_CHART_SLOTS
+	  const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
+	    try {
+	      const raw = window.localStorage.getItem(CHARTS_SLOTS_KEY)
+	      if (!raw) return DEFAULT_CHART_SLOTS
+	      const parsed = JSON.parse(raw)
+	      const slots = Array.isArray(parsed) ? parsed : []
+	      const validIds = new Set<ChartPresetId>(CHART_PRESETS.map((p) => p.id))
+	      const cleaned: ChartSlotConfig[] = slots
+	        .slice(0, MAX_CHARTS)
+	        .map((s: any, idx: number) => {
+	          const fallback = DEFAULT_CHART_SLOTS[0]
+	          const presetIdRaw = String(s?.presetId || '')
+	          let presetId: ChartPresetId = fallback.presetId
+	          let groupBy: ChartGroupBy | undefined = undefined
+	          let mode: MovementsMode | undefined = undefined
+
+	          if (presetIdRaw === 'stock_category') {
+	            presetId = 'distribution'
+	            groupBy = 'categoria'
+	          } else if (presetIdRaw === 'stock_brand') {
+	            presetId = 'distribution'
+	            groupBy = 'marca'
+	          } else if (presetIdRaw === 'stock_top') {
+	            presetId = 'distribution'
+	            groupBy = 'item'
+	          } else if (presetIdRaw === 'mov_inout') {
+	            presetId = 'movements'
+	            groupBy = 'tempo'
+	            mode = 'inout'
+	          } else if (presetIdRaw === 'mov_saldo') {
+	            presetId = 'movements'
+	            groupBy = 'tempo'
+	            mode = 'saldo'
+	          } else if (presetIdRaw === 'trends_inout') {
+	            presetId = 'movements'
+	            groupBy = 'tempo'
+	            mode = 'inout'
+	          } else if (presetIdRaw === 'turnover_category') {
+	            presetId = 'movements'
+	            groupBy = 'categoria'
+	            mode = 'saida'
+	          } else if (validIds.has(presetIdRaw as any)) {
+	            presetId = presetIdRaw as ChartPresetId
+	            groupBy = (s?.groupBy as any) || undefined
+	            mode = (s?.mode as any) || undefined
+	          }
+
+	          if (!validIds.has(presetId)) presetId = fallback.presetId
+	          const preset = CHART_PRESETS.find((p) => p.id === presetId)
+	          const metric: ChartMetric | undefined = s?.metric === 'valor' || s?.metric === 'qtd' ? s.metric : preset?.defaultMetric
+	          const view: ChartView | undefined = s?.view === 'bar' || s?.view === 'line' || s?.view === 'pie' ? s.view : preset?.defaultView
+	          const topN = Math.max(5, Math.min(15, parseInt(String(s?.topN ?? ''), 10) || 0)) || fallback.topN
+	          const groupByFixed: ChartGroupBy | undefined = (() => {
+	            const v = String(groupBy || s?.groupBy || '').trim()
+	            if (v === 'categoria' || v === 'marca' || v === 'item' || v === 'tempo') return v
+	            if (presetId === 'distribution') return 'categoria'
+	            if (presetId === 'movements') return 'tempo'
+	            return undefined
+	          })()
+	          const modeFixed: MovementsMode | undefined = (() => {
+	            const v = String(mode || s?.mode || '').trim()
+	            if (v === 'inout' || v === 'saldo' || v === 'entrada' || v === 'saida') return v
+	            if (presetId === 'movements') return groupByFixed === 'categoria' ? 'saida' : 'inout'
+	            return undefined
+	          })()
+	          return { presetId, groupBy: groupByFixed, mode: modeFixed, metric, view, topN }
+	        })
+	      if (!cleaned.length) return DEFAULT_CHART_SLOTS
+	      return cleaned
+	    } catch {
+	      return DEFAULT_CHART_SLOTS
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   })
@@ -3237,19 +3305,32 @@ export function InsumosModule() {
     }
   }, [chartSlots])
 
-  const setChartSlot = React.useCallback((idx: number, next: Partial<ChartSlotConfig>) => {
-    setChartSlots((prev) => {
-      const copy = [...prev]
-      const cur = copy[idx] || DEFAULT_CHART_SLOTS[0]
-      const presetId = (next.presetId ?? cur.presetId) as ChartPresetId
-      const preset = CHART_PRESETS.find((p) => p.id === presetId)
-      const metric = next.metric ?? cur.metric ?? preset?.defaultMetric
-      const view = next.view ?? cur.view ?? preset?.defaultView
-      const topN = next.topN ?? cur.topN
-      copy[idx] = { ...cur, ...next, presetId, metric, view, topN }
-      return copy
-    })
-  }, [])
+	  const setChartSlot = React.useCallback((idx: number, next: Partial<ChartSlotConfig>) => {
+	    setChartSlots((prev) => {
+	      const copy = [...prev]
+	      const cur = copy[idx] || DEFAULT_CHART_SLOTS[0]
+	      const presetId = (next.presetId ?? cur.presetId) as ChartPresetId
+	      const preset = CHART_PRESETS.find((p) => p.id === presetId)
+	      const metric = next.metric ?? cur.metric ?? preset?.defaultMetric
+	      const groupBy: ChartGroupBy | undefined = (() => {
+	        const v = String(next.groupBy ?? cur.groupBy ?? '').trim()
+	        if (v === 'categoria' || v === 'marca' || v === 'item' || v === 'tempo') return v
+	        if (presetId === 'distribution') return 'categoria'
+	        if (presetId === 'movements') return 'tempo'
+	        return undefined
+	      })()
+	      const mode: MovementsMode | undefined = (() => {
+	        const v = String(next.mode ?? cur.mode ?? '').trim()
+	        if (v === 'inout' || v === 'saldo' || v === 'entrada' || v === 'saida') return v
+	        if (presetId === 'movements') return groupBy === 'categoria' ? 'saida' : 'inout'
+	        return undefined
+	      })()
+	      const view = next.view ?? cur.view ?? preset?.defaultView
+	      const topN = next.topN ?? cur.topN
+	      copy[idx] = { ...cur, ...next, presetId, groupBy, mode, metric, view, topN }
+	      return copy
+	    })
+	  }, [])
 
   const fmtChartValue = React.useCallback(
     (metric: ChartMetric, v: any) => {
@@ -3350,25 +3431,10 @@ export function InsumosModule() {
     return Array.from(byWeek.values()).sort((a, b) => String(a.bucket).localeCompare(String(b.bucket))).slice(-60)
   }, [overviewPeriod, trendsSeriesRaw])
 
-  const movSeriesForCharts = React.useMemo(() => {
-    if (overviewPeriod !== '1y') return overviewMovSeries
-    const byWeek = new Map<string, { day: string; entrada: number; saida: number; entradaValor: number; saidaValor: number }>()
-    for (const r of overviewMovSeries) {
-      const week = isoDayWeekStart(r.day) || String(r.day || '')
-      const cur = byWeek.get(week) || { day: week, entrada: 0, saida: 0, entradaValor: 0, saidaValor: 0 }
-      cur.entrada += Number(r.entrada) || 0
-      cur.saida += Number(r.saida) || 0
-      cur.entradaValor += Number(r.entradaValor) || 0
-      cur.saidaValor += Number(r.saidaValor) || 0
-      byWeek.set(week, cur)
-    }
-    return Array.from(byWeek.values()).sort((a, b) => String(a.day).localeCompare(String(b.day))).slice(-60)
-  }, [overviewMovSeries, overviewPeriod])
-
-  const presetSupports = React.useCallback(
-    (id: ChartPresetId) =>
-      CHART_PRESETS.find((p) => p.id === id) || {
-        id,
+	  const presetSupports = React.useCallback(
+	    (id: ChartPresetId) =>
+	      CHART_PRESETS.find((p) => p.id === id) || {
+	        id,
         label: String(id),
         supportsMetric: false,
         supportsView: false,
@@ -3379,12 +3445,16 @@ export function InsumosModule() {
     []
   )
 
-	  const presetViewOptions = React.useCallback((id: ChartPresetId): ChartView[] => {
-	    if (id === 'stock_category' || id === 'stock_brand') return ['pie', 'bar']
-	    if (id === 'stock_top') return ['bar']
-	    if (id === 'turnover_category') return ['bar', 'pie']
-	    if (id === 'roi_risk') return ['bar', 'pie']
-	    if (id === 'mov_saldo') return ['line', 'bar']
+	  const presetViewOptions = React.useCallback((slot: ChartSlotConfig): ChartView[] => {
+	    if (slot.presetId === 'distribution') {
+	      const gb = slot.groupBy === 'item' ? 'item' : slot.groupBy === 'marca' ? 'marca' : 'categoria'
+	      return gb === 'item' ? ['bar'] : ['pie', 'bar']
+	    }
+	    if (slot.presetId === 'movements') {
+	      const gb = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
+	      return gb === 'tempo' ? ['bar', 'line'] : ['bar', 'pie']
+	    }
+	    if (slot.presetId === 'roi_risk') return ['bar', 'pie']
 	    return ['bar', 'line']
 	  }, [])
 
@@ -3397,36 +3467,217 @@ export function InsumosModule() {
       const height = Math.max(220, Math.min(560, Number(opts?.height) || 260))
       const tooltipFormatter = (v: any) => fmtChartValue(metric, v)
 
-	      if (presetId === 'stock_category' || presetId === 'stock_brand') {
-	        const base = presetId === 'stock_category' ? stockAgg.byCategoria : stockAgg.byMarca
-	        const sorted = [...base].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd))
-	        const top = sorted.slice(0, topN).map((x) => ({
-	          name: x.name,
-	          value: metric === 'valor' ? x.valor : x.qtd,
-	          color: getCategoriaBgColor(x.name)
-	        }))
-	        const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
-	        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
+      if (presetId === 'distribution') {
+        const gb: ChartGroupBy = slot.groupBy === 'marca' || slot.groupBy === 'item' || slot.groupBy === 'categoria' ? slot.groupBy : 'categoria'
+        const base = gb === 'marca' ? stockAgg.byMarca : gb === 'item' ? stockAgg.byProduto : stockAgg.byCategoria
+        const sorted = [...base].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd))
+        const top = sorted.slice(0, topN).map((x) => ({
+          name: x.name,
+          value: metric === 'valor' ? x.valor : x.qtd,
+          color: gb === 'item' ? undefined : getCategoriaBgColor(x.name)
+        }))
+        const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
+        if (restValue > 0 && gb !== 'item') top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' } as any)
 
-	        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-          const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
+        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
+        if (!hasAny) {
+          return (
+            <div className="text-sm text-blue-100/70">
+              {metric === 'valor'
+                ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
+                : 'Sem dados.'}
+            </div>
+          )
+        }
+
+        if (view === 'pie' && gb !== 'item') {
+          return (
+            <div className="w-full" style={{ height }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={top} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
+                    {top.map((entry, idx) => (
+                      <Cell key={idx} fill={(entry as any).color || '#60a5fa'} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={tooltipFormatter} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )
+        }
+
+        const barFill = gb === 'item' ? '#a78bfa' : '#60a5fa'
+        const axisWidth = gb === 'item' ? 140 : 110
+        return (
+          <div className="w-full" style={{ height }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={top} layout="vertical" margin={{ left: 12, right: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={axisWidth}
+                  tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }}
+                  tickFormatter={(v) => String(v).slice(0, 24)}
+                />
+                <Tooltip formatter={tooltipFormatter} />
+                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill={barFill} radius={[0, 6, 6, 0]}>
+                  {top.map((entry, idx) => (
+                    <Cell key={`cell-${idx}`} fill={(entry as any).color || barFill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+
+      if (presetId === 'movements') {
+        const gb: ChartGroupBy = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
+
+        if (gb === 'tempo') {
+          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+          const mode: MovementsMode =
+            slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout' ? slot.mode : 'inout'
+
+          const series = trendsSeries.map((b) => ({
+            bucket: b.bucket,
+            entrada: metric === 'valor' ? b.entradaValor : b.entradaQtd,
+            saida: metric === 'valor' ? b.saidaValor : b.saidaQtd,
+            saldo: metric === 'valor' ? b.saldoValor : b.saldoQtd
+          }))
+          const pickKey = mode === 'saldo' ? 'saldo' : mode === 'entrada' ? 'entrada' : mode === 'saida' ? 'saida' : null
+          const hasAny =
+            mode === 'inout'
+              ? series.some((r) => (Number(r.entrada) || 0) > 0 || (Number(r.saida) || 0) > 0)
+              : series.some((r) => (Number((r as any)[pickKey || 'saldo']) || 0) !== 0)
           if (!hasAny) {
             return (
               <div className="text-sm text-blue-100/70">
                 {metric === 'valor'
                   ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
-                  : 'Sem dados.'}
+                  : 'Sem dados para o período.'}
               </div>
             )
           }
 
-	        return view === 'pie' ? (
-	          <div className="w-full" style={{ height }}>
-	            <ResponsiveContainer width="100%" height="100%">
-	              <PieChart>
-                <Pie data={top} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
-                  {top.map((entry, idx) => (
-                    <Cell key={idx} fill={(entry as any).color} />
+          const saldoTotal = series.reduce((acc, r) => acc + (Number(r.saldo) || 0), 0)
+          const xFormatter = (b: any) => fmtBucketLabel(String(b))
+
+          if (view === 'line') {
+            return (
+              <div>
+                <div className="w-full" style={{ height }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={series}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                      <XAxis dataKey="bucket" tickFormatter={xFormatter} />
+                      <YAxis />
+                      <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
+                      <Legend />
+                      {mode === 'inout' ? (
+                        <>
+                          <Line type="monotone" dataKey="entrada" name="Entradas" stroke="#22c55e" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="saida" name="Saídas" stroke="#ef4444" strokeWidth={2} dot={false} />
+                        </>
+                      ) : (
+                        <Line
+                          type="monotone"
+                          dataKey={pickKey || 'saldo'}
+                          name={mode === 'saldo' ? 'Saldo' : mode === 'entrada' ? 'Entradas' : 'Saídas'}
+                          stroke={mode === 'entrada' ? '#22c55e' : mode === 'saida' ? '#ef4444' : '#60a5fa'}
+                          strokeWidth={2}
+                          dot={false}
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                {mode === 'inout' ? (
+                  <div className="text-xs text-blue-200/60 mt-2">
+                    Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
+                  </div>
+                ) : null}
+              </div>
+            )
+          }
+
+          return (
+            <div>
+              <div className="w-full" style={{ height }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={series}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                    <XAxis dataKey="bucket" tickFormatter={xFormatter} tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                    <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
+                    <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
+                    <Legend />
+                    {mode === 'inout' ? (
+                      <>
+                        <Bar dataKey="entrada" name="Entradas" fill="#22c55e" />
+                        <Bar dataKey="saida" name="Saídas" fill="#ef4444" />
+                      </>
+                    ) : (
+                      <Bar
+                        dataKey={pickKey || 'saldo'}
+                        name={mode === 'saldo' ? 'Saldo' : mode === 'entrada' ? 'Entradas' : 'Saídas'}
+                        fill={mode === 'entrada' ? '#22c55e' : mode === 'saida' ? '#ef4444' : '#60a5fa'}
+                        radius={[4, 4, 0, 0]}
+                      />
+                    )}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              {mode === 'inout' ? (
+                <div className="text-xs text-blue-200/60 mt-2">
+                  Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
+                </div>
+              ) : null}
+            </div>
+          )
+        }
+
+        const mode: MovementsMode = slot.mode === 'entrada' ? 'entrada' : 'saida'
+        const turnover = (mode === 'entrada' ? insightsTurnover?.entrada : insightsTurnover?.saida) || null
+        const raw = Array.isArray(turnover?.categories) ? turnover.categories : []
+        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+
+        const sorted = [...raw].sort((a: any, b: any) => {
+          const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
+          const bv = metric === 'valor' ? Number(b?.valor || 0) : Number(b?.qtd || 0)
+          return bv - av
+        })
+        const top = sorted.slice(0, topN).map((c: any) => ({
+          name: String(c?.categoria || 'Outros'),
+          value: metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0),
+          color: getCategoriaBgColor(String(c?.categoria || ''))
+        }))
+        const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
+        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
+
+        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
+        if (!hasAny) {
+          return (
+            <div className="text-sm text-blue-100/70">
+              {metric === 'valor'
+                ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
+                : 'Sem dados.'}
+            </div>
+          )
+        }
+
+        return view === 'pie' ? (
+          <div className="w-full" style={{ height }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={top} dataKey="value" nameKey="name" outerRadius="80%">
+                  {top.map((entry, i) => (
+                    <Cell key={`cell-${i}`} fill={(entry as any).color || '#60a5fa'} />
                   ))}
                 </Pie>
                 <Tooltip formatter={tooltipFormatter} />
@@ -3437,232 +3688,28 @@ export function InsumosModule() {
         ) : (
           <div className="w-full" style={{ height }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={top} layout="vertical" margin={{ left: 12, right: 12 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+              <BarChart data={top} layout="vertical" margin={{ left: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                 <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
                 <YAxis
                   type="category"
                   dataKey="name"
-                  width={110}
+                  width={130}
                   tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }}
+                  tickFormatter={(v) => String(v).slice(0, 22)}
                 />
                 <Tooltip formatter={tooltipFormatter} />
-                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill="#60a5fa" radius={[0, 6, 6, 0]} />
+                <Bar
+                  dataKey="value"
+                  name={metric === 'valor' ? 'Valor' : 'Qtd'}
+                  fill={mode === 'entrada' ? '#22c55e' : '#ef4444'}
+                  radius={[0, 4, 4, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         )
       }
-
-	      if (presetId === 'stock_top') {
-	        const sorted = [...stockAgg.byProduto].sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd)).slice(0, topN)
-	        const data = sorted.map((x) => ({ name: x.name, value: metric === 'valor' ? x.valor : x.qtd }))
-	        if (!data.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-          const hasAny = data.some((d) => (Number((d as any).value) || 0) > 0)
-          if (!hasAny) {
-            return (
-              <div className="text-sm text-blue-100/70">
-                {metric === 'valor'
-                  ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
-                  : 'Sem dados.'}
-              </div>
-            )
-          }
-	        return (
-	          <div className="w-full" style={{ height }}>
-	            <ResponsiveContainer width="100%" height="100%">
-	              <BarChart data={data} layout="vertical" margin={{ left: 12, right: 12 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                <YAxis type="category" dataKey="name" width={140} tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                <Tooltip formatter={tooltipFormatter} />
-                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill="#a78bfa" radius={[0, 6, 6, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )
-      }
-
-      if (presetId === 'mov_inout' || presetId === 'mov_saldo') {
-        if (!movSeriesForCharts.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
-        const series =
-          presetId === 'mov_saldo'
-            ? movSeriesForCharts.map((p) => ({
-              day: p.day,
-              saldoQtd: (Number(p.entrada) || 0) - (Number(p.saida) || 0),
-              saldoValor: (Number(p.entradaValor) || 0) - (Number(p.saidaValor) || 0)
-            }))
-            : movSeriesForCharts
-
-        const xFormatter = (d: any) => fmtDayShort(String(d))
-
-        if (view === 'line') {
-          return (
-            <div className="w-full" style={{ height }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series as any}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="day" tickFormatter={xFormatter} />
-                  <YAxis />
-                  <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
-                  <Legend />
-                  {presetId === 'mov_saldo' ? (
-                    <Line type="monotone" dataKey={metric === 'valor' ? 'saldoValor' : 'saldoQtd'} name="Saldo" stroke="#60a5fa" strokeWidth={2} dot={false} />
-                  ) : (
-                    <>
-                      <Line type="monotone" dataKey={metric === 'valor' ? 'entradaValor' : 'entrada'} name="Entrada" stroke="#22c55e" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey={metric === 'valor' ? 'saidaValor' : 'saida'} name="Saída" stroke="#ef4444" strokeWidth={2} dot={false} />
-                    </>
-                  )}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )
-        }
-
-        return (
-          <div className="w-full" style={{ height }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={series as any}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="day" tickFormatter={xFormatter} />
-                <YAxis />
-                <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
-                <Legend />
-                {presetId === 'mov_saldo' ? (
-                  <Bar dataKey={metric === 'valor' ? 'saldoValor' : 'saldoQtd'} name="Saldo" fill="#60a5fa" radius={[4, 4, 0, 0]} />
-                ) : (
-                  <>
-                    <Bar dataKey={metric === 'valor' ? 'entradaValor' : 'entrada'} name="Entrada" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey={metric === 'valor' ? 'saidaValor' : 'saida'} name="Saída" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                  </>
-                )}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )
-      }
-
-	      if (presetId === 'trends_inout') {
-	        if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-	        const series = trendsSeries.map((b) => ({
-	          bucket: b.bucket,
-	          entrada: metric === 'valor' ? b.entradaValor : b.entradaQtd,
-          saida: metric === 'valor' ? b.saidaValor : b.saidaQtd,
-          saldo: metric === 'valor' ? b.saldoValor : b.saldoQtd
-        }))
-        const saldoTotal = series.reduce((acc, r) => acc + (Number(r.saldo) || 0), 0)
-        const xFormatter = (b: any) => fmtBucketLabel(String(b))
-
-        if (view === 'line') {
-          return (
-            <div>
-              <div className="w-full" style={{ height }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={series}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                    <XAxis dataKey="bucket" tickFormatter={xFormatter} />
-                    <YAxis />
-                    <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
-                    <Legend />
-                    <Line type="monotone" dataKey="entrada" name="Entradas" stroke="#22c55e" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="saida" name="Saídas" stroke="#ef4444" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="text-xs text-blue-200/60 mt-2">
-                Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
-              </div>
-            </div>
-          )
-        }
-
-        return (
-          <div>
-            <div className="w-full" style={{ height }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={series}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                  <XAxis dataKey="bucket" tickFormatter={xFormatter} tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                  <YAxis tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-                  <Tooltip labelFormatter={xFormatter} formatter={tooltipFormatter} />
-                  <Legend />
-                  <Bar dataKey="entrada" name="Entradas" fill="#22c55e" />
-                  <Bar dataKey="saida" name="Saídas" fill="#ef4444" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="text-xs text-blue-200/60 mt-2">
-              Saldo: <span className="font-mono">{fmtChartValue(metric, saldoTotal)}</span>
-            </div>
-          </div>
-	        )
-	      }
-
-		      if (presetId === 'turnover_category') {
-		        const raw = Array.isArray(insightsTurnover?.categories) ? insightsTurnover.categories : []
-		        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
-
-	        const sorted = [...raw].sort((a: any, b: any) => {
-	          const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
-	          const bv = metric === 'valor' ? Number(b?.valor || 0) : Number(b?.qtd || 0)
-	          return bv - av
-	        })
-
-	        const top = sorted.slice(0, topN).map((c: any) => ({
-	          name: String(c?.categoria || 'Outros'),
-	          value: metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0),
-	          color: getCategoriaBgColor(String(c?.categoria || ''))
-	        }))
-		        const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
-		        if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
-
-		        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
-            const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
-            if (!hasAny) {
-              return (
-                <div className="text-sm text-blue-100/70">
-                  {metric === 'valor'
-                    ? 'Sem valores (preço de custo) para calcular. Cadastre o custo ou mude a métrica para quantidade.'
-                    : 'Sem dados.'}
-                </div>
-              )
-            }
-
-		        return view === 'pie' ? (
-	          <div className="w-full" style={{ height }}>
-	            <ResponsiveContainer width="100%" height="100%">
-	              <PieChart>
-	                <Pie data={top} dataKey="value" nameKey="name" outerRadius="80%">
-	                  {top.map((entry, i) => (
-	                    <Cell key={`cell-${i}`} fill={(entry as any).color || '#60a5fa'} />
-	                  ))}
-	                </Pie>
-	                <Tooltip formatter={tooltipFormatter} />
-	                <Legend />
-	              </PieChart>
-	            </ResponsiveContainer>
-	          </div>
-	        ) : (
-	          <div className="w-full" style={{ height }}>
-	            <ResponsiveContainer width="100%" height="100%">
-	              <BarChart data={top} layout="vertical" margin={{ left: 12 }}>
-	                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-	                <XAxis type="number" tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }} />
-	                <YAxis
-	                  type="category"
-	                  dataKey="name"
-	                  width={130}
-	                  tick={{ fill: 'rgba(219,234,254,0.8)', fontSize: 11 }}
-	                  tickFormatter={(v) => String(v).slice(0, 22)}
-	                />
-	                <Tooltip formatter={tooltipFormatter} />
-	                <Bar dataKey="value" name={metric === 'valor' ? 'Valor' : 'Qtd'} fill="#60a5fa" radius={[0, 4, 4, 0]} />
-	              </BarChart>
-	            </ResponsiveContainer>
-	          </div>
-	        )
-	      }
 
 	      if (presetId === 'roi_risk') {
 	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
@@ -3720,7 +3767,7 @@ export function InsumosModule() {
 
 	      return <div className="text-sm text-blue-100/70">Preset indisponível.</div>
 	    },
-	    [fmtBucketLabel, fmtChartValue, fmtDayShort, insightsLoading, insightsTurnover, movSeriesForCharts, overviewLoading, overviewRoi, stockAgg, trendsSeries]
+	    [fmtBucketLabel, fmtChartValue, insightsLoading, insightsTurnover, overviewLoading, overviewRoi, stockAgg, trendsSeries]
 	  )
 
   const alertasCategorias = React.useMemo(() => {
@@ -5585,7 +5632,10 @@ export function InsumosModule() {
                                         size="sm"
                                         onClick={() => {
                                           if (chartSlots.length >= MAX_CHARTS) return
-                                          setChartSlots((prev) => [...prev, { presetId: 'trends_inout', metric: 'qtd', view: 'bar' }])
+                                          setChartSlots((prev) => [
+                                            ...prev,
+                                            { presetId: 'movements', groupBy: 'tempo', mode: 'inout', metric: 'qtd', view: 'bar', topN: 8 }
+                                          ])
                                         }}
                                         disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
                                       >
@@ -5628,13 +5678,33 @@ export function InsumosModule() {
                     : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
                   }`}
               >
-                {chartSlots.map((slot, idx) => {
-                  const preset = presetSupports(slot.presetId)
-                  const viewOptions = presetViewOptions(slot.presetId)
-                  const view = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
-                  const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
-                  const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
-                  const layout = (preset as any).layout as ChartLayout | undefined
+	                {chartSlots.map((slot, idx) => {
+	                  const preset = presetSupports(slot.presetId)
+	                  const groupBy: ChartGroupBy | undefined =
+	                    slot.presetId === 'distribution'
+	                      ? slot.groupBy === 'marca' || slot.groupBy === 'item'
+	                        ? slot.groupBy
+	                        : 'categoria'
+	                      : slot.presetId === 'movements'
+	                        ? slot.groupBy === 'categoria'
+	                          ? 'categoria'
+	                          : 'tempo'
+	                        : undefined
+	                  const mode: MovementsMode | undefined =
+	                    slot.presetId === 'movements'
+	                      ? slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout'
+	                        ? slot.mode
+	                        : groupBy === 'categoria'
+	                          ? 'saida'
+	                          : 'inout'
+	                      : undefined
+	                  const viewOptions = presetViewOptions({ ...slot, groupBy, mode })
+	                  const rawView = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
+	                  const view = viewOptions.includes(rawView) ? rawView : viewOptions[0]
+	                  const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
+	                  const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+	                  const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
+	                  const layout = (preset as any).layout as ChartLayout | undefined
                   const baseH = chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
                   const height = layout === 'tall' ? baseH + (chartSlots.length === 1 ? 180 : 120) : baseH
                   const cardSpan = chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
@@ -5643,15 +5713,23 @@ export function InsumosModule() {
                     <Card key={`${slot.presetId}-${idx}`} className={`bg-black/20 border border-white/10 ${cardSpan}`}>
                       <CardHeader className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <Select
-                            value={slot.presetId}
-                            onValueChange={(v) => {
-                              const nextId = v as any
-                              const nextPreset = presetSupports(nextId)
-                              const nextView = nextPreset?.defaultView || presetViewOptions(nextId)[0]
-                              setChartSlot(idx, { presetId: nextId, view: nextView as any })
-                            }}
-                          >
+	                          <Select
+	                            value={slot.presetId}
+	                            onValueChange={(v) => {
+	                              const nextId = v as any
+	                              const nextPreset = presetSupports(nextId)
+	                              const baseNext: ChartSlotConfig = {
+	                                ...slot,
+	                                presetId: nextId,
+	                                groupBy: nextId === 'distribution' ? 'categoria' : nextId === 'movements' ? 'tempo' : undefined,
+	                                mode: nextId === 'movements' ? 'inout' : undefined
+	                              }
+	                              const nextViewOptions = presetViewOptions(baseNext)
+	                              const presetDefault = (nextPreset as any)?.defaultView as any
+	                              const nextView = nextViewOptions.includes(presetDefault) ? presetDefault : nextViewOptions[0]
+	                              setChartSlot(idx, { presetId: nextId, groupBy: baseNext.groupBy, mode: baseNext.mode, view: nextView as any })
+	                            }}
+	                          >
                             <SelectTrigger className="h-8 w-full">
                               <SelectValue />
                             </SelectTrigger>
@@ -5679,6 +5757,89 @@ export function InsumosModule() {
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
+                          {slot.presetId === 'distribution' ? (
+                            <Select
+                              value={groupBy || 'categoria'}
+                              onValueChange={(v) => {
+                                const nextGroupBy = (v === 'marca' || v === 'item' || v === 'categoria' ? v : 'categoria') as ChartGroupBy
+                                const baseNext: ChartSlotConfig = { ...slot, groupBy: nextGroupBy }
+                                const nextViewOptions = presetViewOptions(baseNext)
+                                const nextView = nextViewOptions.includes(view) ? view : nextViewOptions[0]
+                                setChartSlot(idx, { groupBy: nextGroupBy, view: nextView as any })
+                              }}
+                            >
+                              <SelectTrigger className="h-8 w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="categoria">Categoria</SelectItem>
+                                <SelectItem value="marca">Marca</SelectItem>
+                                <SelectItem value="item">Item</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : null}
+
+                          {slot.presetId === 'movements' ? (
+                            <>
+                              <Select
+                                value={groupBy === 'categoria' ? 'categoria' : 'tempo'}
+                                onValueChange={(v) => {
+                                  const nextGroupBy = v === 'categoria' ? ('categoria' as ChartGroupBy) : ('tempo' as ChartGroupBy)
+                                  const nextMode: MovementsMode = nextGroupBy === 'categoria' ? 'saida' : 'inout'
+                                  const baseNext: ChartSlotConfig = { ...slot, groupBy: nextGroupBy, mode: nextMode }
+                                  const nextViewOptions = presetViewOptions(baseNext)
+                                  const nextView = nextViewOptions.includes(view) ? view : nextViewOptions[0]
+                                  setChartSlot(idx, { groupBy: nextGroupBy, mode: nextMode, view: nextView as any })
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-28">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="tempo">Tempo</SelectItem>
+                                  <SelectItem value="categoria">Categoria</SelectItem>
+                                </SelectContent>
+                              </Select>
+
+                              {groupBy === 'categoria' ? (
+                                <Select
+                                  value={mode === 'entrada' ? 'entrada' : 'saida'}
+                                  onValueChange={(v) => {
+                                    const nextMode = v === 'entrada' ? ('entrada' as MovementsMode) : ('saida' as MovementsMode)
+                                    setChartSlot(idx, { mode: nextMode })
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8 w-28">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="saida">Saídas</SelectItem>
+                                    <SelectItem value="entrada">Entradas</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <Select
+                                  value={mode || 'inout'}
+                                  onValueChange={(v) => {
+                                    const nextMode =
+                                      v === 'saldo' || v === 'entrada' || v === 'saida' || v === 'inout' ? (v as MovementsMode) : ('inout' as MovementsMode)
+                                    setChartSlot(idx, { mode: nextMode })
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8 w-36">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="inout">Entradas vs Saídas</SelectItem>
+                                    <SelectItem value="saldo">Saldo</SelectItem>
+                                    <SelectItem value="entrada">Entradas</SelectItem>
+                                    <SelectItem value="saida">Saídas</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            </>
+                          ) : null}
+
                           {preset.supportsMetric ? (
                             <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
                               <SelectTrigger className="h-8 w-24">
@@ -5706,7 +5867,7 @@ export function InsumosModule() {
                             </Select>
                           ) : null}
 
-                          {preset.supportsTopN ? (
+                          {showTopN ? (
                             <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
                               <SelectTrigger className="h-8 w-20">
                                 <SelectValue />
