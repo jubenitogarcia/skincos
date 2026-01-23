@@ -109,6 +109,10 @@ main() {
 
   local public_url
   public_url="$(prompt "URL pública do gateway (hostname do Tunnel, ex: https://unit-monitor-gw.seudominio.com)" "")"
+  while [[ -z "${public_url// }" ]]; do
+    echo "[gateway] A URL pública é obrigatória (será usada no Cloudflare Pages como UNIT_MONITOR_API_TARGET)." >&2
+    public_url="$(prompt "URL pública do gateway (hostname do Tunnel, ex: https://unit-monitor-gw.seudominio.com)" "")"
+  done
 
   local tunnel_token
   tunnel_token="$(prompt_secret "Cole o CLOUDFLARE_TUNNEL_TOKEN (Cloudflare Zero Trust)")"
@@ -177,4 +181,3 @@ main() {
 }
 
 main "$@"
-
