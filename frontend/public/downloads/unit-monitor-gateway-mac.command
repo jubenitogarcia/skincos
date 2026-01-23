@@ -57,11 +57,25 @@ install_launchagent() {
   mkdir -p "$cfg_dir"
   chmod 700 "$cfg_dir" || true
 
+  local node_bin
+  node_bin="$(command -v node || true)"
+  if [[ -z "$node_bin" ]]; then
+    echo "[gateway] node não encontrado no PATH (necessário para serviço)." >&2
+    exit 2
+  fi
+
+  # LaunchAgents têm PATH mínimo. Forçamos um PATH razoável (brew + system).
+  local gateway_path
+  gateway_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
   cat >"$env_file" <<EOF
 CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
 CRM_UNIT_MONITOR_PROXY_TOKEN=${CRM_UNIT_MONITOR_PROXY_TOKEN}
 CRM_API_PORT=${CRM_API_PORT}
 PORT=${PORT}
+SKINCOS_GATEWAY_DIR=${SKINCOS_GATEWAY_DIR}
+NODE_BIN=${node_bin}
+PATH=${gateway_path}
 EOF
   chmod 600 "$env_file" || true
 
@@ -81,7 +95,8 @@ fi
 
 INSTALL_DIR="${SKINCOS_GATEWAY_DIR:-$HOME/skincos-unit-monitor-gateway}"
 cd "$INSTALL_DIR"
-exec node "backend/tools/unit-monitor-gateway/run.mjs"
+NODE_BIN="${NODE_BIN:-node}"
+exec "$NODE_BIN" "backend/tools/unit-monitor-gateway/run.mjs"
 EOF
   chmod +x "$start_sh"
 
@@ -104,10 +119,18 @@ EOF
 </plist>
 EOF
 
-  # Best-effort reload. Different macOS versions support different subcommands.
+  # Best-effort reload. macOS variants support different launchctl subcommands.
   launchctl unload "$plist" >/dev/null 2>&1 || true
   launchctl load "$plist" >/dev/null 2>&1 || true
   launchctl start "$label" >/dev/null 2>&1 || true
+
+  if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
+    true
+  else
+    launchctl bootout "gui/$UID" "$plist" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$UID" "$plist" >/dev/null 2>&1 || true
+    launchctl kickstart -k "gui/$UID/$label" >/dev/null 2>&1 || true
+  fi
 
   echo
   echo "[gateway] Instalado como serviço (LaunchAgent): $label"

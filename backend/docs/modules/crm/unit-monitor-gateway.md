@@ -50,3 +50,18 @@ Sem isso, qualquer pessoa que descobrir a URL do gateway pode tentar chamar os e
   - `/downloads/unit-monitor-gateway-mac.command`
   - `/downloads/unit-monitor-gateway-windows.ps1`
 - Esses instaladores perguntam os dados mínimos (token do tunnel, URL pública e proxy token), instalam dependências e iniciam o gateway.
+
+### Auto-start (recomendado)
+- macOS: o instalador oferece instalar um **LaunchAgent** para iniciar automaticamente ao logar.
+  - Label: `com.skincos.unit-monitor-gateway`
+  - Config/logs: `~/.skincos/unit-monitor-gateway/*`
+- Windows: o instalador oferece criar um item no **Startup** (inicia automaticamente ao logar).
+  - Arquivo: `%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\skincos-unit-monitor-gateway.cmd`
+  - Config/logs: `%USERPROFILE%\\.skincos\\unit-monitor-gateway\\*`
+
+### Nota de segurança (tokens)
+- O token do tunnel e o proxy token ficam salvos localmente para permitir auto-start.
+- Recomendações:
+  - use uma máquina dedicada (mini-PC) por unidade
+  - restrinja acesso ao usuário do SO
+  - revogue/rotacione tokens se houver suspeita de comprometimento
