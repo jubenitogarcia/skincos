@@ -32,6 +32,19 @@ Módulo do CRM para monitorar e gravar evidências de câmeras IP via **RTSP** p
 - Diagnostico rapido (API):
   - `./backend/scripts/unit-monitor.sh diagnostics`
 
+## Como usar (online / Cloudflare Pages)
+- O CRM (frontend) pode estar online no Cloudflare Pages, mas o **Unit Monitor depende de um backend (crm-api) que consiga acessar as câmeras na LAN** (ex.: `192.168.x.x`).
+- Configure no Cloudflare Pages (Environment Variables) a variável:
+  - `UNIT_MONITOR_API_TARGET` → URL pública do `crm-api` (ex.: via Cloudflare Tunnel).
+- Se `UNIT_MONITOR_API_TARGET` não estiver configurado (ou apontar para um host inválido), o módulo vai aparecer como **Servidor: offline**.
+
+### Exemplo com Cloudflare Tunnel
+1. Na máquina que está na mesma rede das câmeras, rode o backend:
+   - `./backend/scripts/unit-monitor.sh api`
+2. Exponha via tunnel:
+   - `./backend/scripts/unit-monitor.sh tunnel --token <TOKEN>`
+3. No Cloudflare Pages, aponte `UNIT_MONITOR_API_TARGET` para a URL pública do tunnel (ou seu domínio).
+
 ## Requisitos tecnicos
 - Binários: `mediamtx`, `ffmpeg`, `ffprobe` no PATH (ou via env vars do CRM).
 - Browser: Chrome/Edge recomendado (WebRTC/HLS).

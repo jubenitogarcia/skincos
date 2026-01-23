@@ -3,13 +3,24 @@ export async function onRequest(context: any): Promise<Response> {
   const url = new URL(request.url)
 
   // Incoming:  /api/unit-monitor/<rest>
-  // Outgoing:  https://api.skincos.com.br/unit-monitor/<rest>
+  // Outgoing:  <UNIT_MONITOR_API_TARGET>/api/unit-monitor/<rest>
   const prefix = '/api/unit-monitor'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
-  const targetOrigin = (context.env?.UNIT_MONITOR_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
+  const targetOrigin = (context.env?.UNIT_MONITOR_API_TARGET as string | undefined) || ''
+  if (!targetOrigin) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: 'UNIT_MONITOR_API_TARGET não configurado',
+        hint: 'Defina UNIT_MONITOR_API_TARGET (ex: https://crm-api.seudominio.com) no Cloudflare Pages/Functions. O serviço precisa estar acessível publicamente e rodar na mesma rede da câmera (para alcançar IPs 192.168.x.x).'
+      }),
+      { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }
+    )
+  }
   const targetUrl = new URL(targetOrigin)
-  targetUrl.pathname = `/unit-monitor${rest.startsWith('/') ? '' : '/'}${rest}`
+  const basePath = targetUrl.pathname.replace(/\/$/, '')
+  targetUrl.pathname = `${basePath}/api/unit-monitor${rest.startsWith('/') ? '' : '/'}${rest}`
   targetUrl.search = url.search
 
   const headers = new Headers(request.headers)
@@ -44,4 +55,3 @@ export async function onRequest(context: any): Promise<Response> {
     headers: outHeaders
   })
 }
-
