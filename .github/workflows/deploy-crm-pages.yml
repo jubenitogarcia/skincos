@@ -2,8 +2,6 @@ name: Deploy CRM (Cloudflare Pages)
 
 on:
   push:
-    branches:
-      - "**"
     paths:
       - "frontend/**"
       - ".github/workflows/deploy-crm-pages.yml"
@@ -74,4 +72,3 @@ jobs:
           echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
           npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME"
         working-directory: frontend
-
