@@ -18,7 +18,9 @@ Para o CRM conseguir chamar `/api/*` em produção (sem precisar de um Node serv
 - Health: `frontend/functions/api/health.ts`
 - Rotas: `frontend/public/_routes.json` (inclui apenas `/api/health` e `/api/insumos/*`)
 
-Obs: o deploy do Pages (incluindo `functions/`) acontece automaticamente via integração Git↔Cloudflare Pages.
+Obs:
+- O deploy do Pages (incluindo `functions/`) pode acontecer automaticamente via integração Git↔Cloudflare Pages **ou**
+- via GitHub Actions + `wrangler` (se configurado).
 
 ## Backend (Insumos) → `api.skincos.com.br/insumos/*`
 

@@ -1,0 +1,77 @@
+name: Deploy CRM (Cloudflare Pages)
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-crm-pages.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-crm-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Guard Cloudflare Pages deploy
+        id: guard
+        env:
+          ENABLE: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "${ENABLE:-}" != "true" ]]; then
+            echo "ENABLE_CRM_PAGES_DEPLOY!=true; skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "CLOUDFLARE_API_TOKEN not configured; skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: npm run build
+        working-directory: frontend
+
+      - name: Deploy to Cloudflare Pages (wrangler)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PROJECT="${PAGES_PROJECT:-skincos}"
+          echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
+          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME"
+        working-directory: frontend
+
