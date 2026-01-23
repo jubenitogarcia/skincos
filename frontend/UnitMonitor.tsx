@@ -271,6 +271,20 @@ export function UnitMonitor() {
 
   const [liveTransport, setLiveTransport] = useState<'webrtc' | 'hls'>('webrtc')
 
+  const installerBaseUrl = typeof window !== 'undefined' ? window.location.origin : ''
+  const macInstallerUrl = installerBaseUrl ? `${installerBaseUrl}/downloads/unit-monitor-gateway-mac.command` : '/downloads/unit-monitor-gateway-mac.command'
+  const winInstallerUrl = installerBaseUrl ? `${installerBaseUrl}/downloads/unit-monitor-gateway-windows.ps1` : '/downloads/unit-monitor-gateway-windows.ps1'
+
+  const copyText = async (text: string) => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(text)
+      toast.success('Copiado')
+    } catch {
+      toast.error('Não foi possível copiar')
+    }
+  }
+
   const addLog = (level: LogEntry['level'], message: string) => {
     const entry: LogEntry = {
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -629,6 +643,53 @@ export function UnitMonitor() {
             </div>
           </div>
         </div>
+
+        <Card className="glass-morphism border-white/20">
+          <CardHeader>
+            <CardTitle className="text-white">Instalar Gateway na LAN</CardTitle>
+            <CardDescription className="text-blue-200/70">
+              Necessário quando as câmeras estão em <span className="font-mono">192.168.x.x</span>. O instalador faz as perguntas, conecta na LAN e expõe uma URL via Cloudflare Tunnel.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              <a href={macInstallerUrl} download>
+                <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white">
+                  Baixar (macOS)
+                </Button>
+              </a>
+              <a href={winInstallerUrl} download>
+                <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white">
+                  Baixar (Windows)
+                </Button>
+              </a>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="bg-white/[0.06] border-white/20 text-white justify-start"
+                onClick={() =>
+                  copyText(`curl -fsSL "${macInstallerUrl}" -o unit-monitor-gateway.command && chmod +x unit-monitor-gateway.command && ./unit-monitor-gateway.command`)
+                }
+              >
+                Copiar comando (macOS)
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="bg-white/[0.06] border-white/20 text-white justify-start"
+                onClick={() => copyText(`powershell -ExecutionPolicy Bypass -Command "iwr -useb '${winInstallerUrl}' | iex"`)}
+              >
+                Copiar comando (Windows)
+              </Button>
+            </div>
+            <div className="text-xs text-blue-200/70">
+              Após rodar, configure no Cloudflare Pages: <span className="font-mono text-white">UNIT_MONITOR_API_TARGET</span> e{' '}
+              <span className="font-mono text-white">UNIT_MONITOR_PROXY_TOKEN</span>.
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="glass-morphism border-white/20">
           <CardHeader>
@@ -998,4 +1059,3 @@ export function UnitMonitor() {
 }
 
 export default UnitMonitor
-

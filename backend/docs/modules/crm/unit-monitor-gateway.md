@@ -30,7 +30,8 @@ Sem isso, qualquer pessoa que descobrir a URL do gateway pode tentar chamar os e
 3. No gateway, suba API + streaming + tunnel:
    - `export CLOUDFLARE_TUNNEL_TOKEN="..."`
    - `export CRM_UNIT_MONITOR_PROXY_TOKEN="..."`
-   - `./backend/scripts/unit-monitor.sh gateway --crm-api-port 8099`
+   - `node backend/tools/unit-monitor-gateway/run.mjs`
+   - Alternativa (shell): `./backend/scripts/unit-monitor.sh gateway --crm-api-port 8099`
 
 4. No Cloudflare Pages (CRM online), configure:
    - `UNIT_MONITOR_API_TARGET=https://unit-monitor-gw.seudominio.com`
@@ -44,3 +45,8 @@ Sem isso, qualquer pessoa que descobrir a URL do gateway pode tentar chamar os e
 - `curl -fsS http://localhost:8099/health`
 - `curl -fsS http://localhost:8099/api/unit-monitor/diagnostics`
 
+## Instalador (cliente final)
+- No CRM, o módulo **Unit Monitor** expõe downloads em:
+  - `/downloads/unit-monitor-gateway-mac.command`
+  - `/downloads/unit-monitor-gateway-windows.ps1`
+- Esses instaladores perguntam os dados mínimos (token do tunnel, URL pública e proxy token), instalam dependências e iniciam o gateway.
