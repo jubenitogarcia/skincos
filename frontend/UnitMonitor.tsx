@@ -130,10 +130,13 @@ type UnitMonitorGatewayInfo = {
   ok: boolean
   ts?: string
   uptimeSec?: number
+  gateway?: { enabled?: boolean; startedAt?: string | null; version?: string | null }
   node?: string
   platform?: { os: string; arch: string }
   pid?: number
   ports?: { crmApiPort?: number }
+  host?: { hostname?: string; ips?: string[] }
+  resources?: { loadavg?: number[] | null; memTotalBytes?: number; memFreeBytes?: number; memRssBytes?: number }
   auth?: { proxyTokenRequired?: boolean }
   bins?: {
     ffmpeg?: string
@@ -733,7 +736,8 @@ export function UnitMonitor() {
             {proxyStatus?.hint ? <div className="text-xs text-blue-200/70">{proxyStatus.hint}</div> : null}
             {gatewayInfo?.ok ? (
               <div className="text-xs text-blue-200/70">
-                Gateway info: Node {gatewayInfo.node} · uptime {Math.floor(Number(gatewayInfo.uptimeSec || 0) / 60)}m ·{' '}
+                Gateway info: {gatewayInfo.gateway?.version ? `v${gatewayInfo.gateway.version}` : 'v?'} · Node {gatewayInfo.node} · uptime{' '}
+                {Math.floor(Number(gatewayInfo.uptimeSec || 0) / 60)}m · {gatewayInfo.host?.ips?.[0] ? `IP ${gatewayInfo.host.ips[0]}` : 'IP ?'} ·{' '}
                 {gatewayInfo.bins?.mediamtxVersion ? `MediaMTX ${gatewayInfo.bins.mediamtxVersion}` : 'MediaMTX ?'}
               </div>
             ) : null}

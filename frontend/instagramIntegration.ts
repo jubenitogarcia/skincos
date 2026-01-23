@@ -234,6 +234,58 @@ export async function replyToInstagramComment(commentId: string, message: string
 
 // ---------------- PUBLISHING ----------------
 
+function getStoredInstagramAuth(): { igBusinessAccountId: string; token: string } | null {
+    try {
+        if (typeof window === 'undefined') return null
+        const token = String(localStorage.getItem('instagram-access-token') || '').trim()
+        const igBusinessAccountId = String(localStorage.getItem('instagram-business-account-id') || '').trim()
+        if (!token || !igBusinessAccountId) return null
+        return { igBusinessAccountId, token }
+    } catch {
+        return null
+    }
+}
+
+export async function publishInstagramContent(input: { type: 'image' | 'carousel' | 'story'; urls: string[]; caption?: string; igBusinessAccountId?: string; token?: string }) {
+    const stored = getStoredInstagramAuth()
+    const igBusinessAccountId = String(input.igBusinessAccountId || stored?.igBusinessAccountId || '').trim()
+    const token = String(input.token || stored?.token || '').trim()
+    if (!igBusinessAccountId || !token) {
+        throw new Error('Conecte o Instagram (Graph API) para publicar (token/businessAccountId ausentes).')
+    }
+
+    const urls = Array.isArray(input.urls) ? input.urls.map((u) => String(u || '').trim()).filter(Boolean) : []
+    if (!urls.length) throw new Error('Nenhuma URL informada para publicação.')
+
+    const caption = input.caption ? String(input.caption) : undefined
+
+    if (input.type === 'story') {
+        const c = await createInstagramMediaContainer(igBusinessAccountId, token, {
+            image_url: urls[0],
+            caption,
+            media_type: 'STORIES',
+        })
+        const pub = await publishInstagramMediaContainer(igBusinessAccountId, token, c.id)
+        return { ok: true, creationId: c.id, publishedId: pub.id }
+    }
+
+    if (input.type === 'carousel' && urls.length > 1) {
+        const children: string[] = []
+        for (const u of urls.slice(0, 10)) {
+            const child = await createInstagramMediaContainer(igBusinessAccountId, token, { image_url: u, is_carousel_item: true })
+            children.push(child.id)
+        }
+        const carousel = await createInstagramCarouselContainer(igBusinessAccountId, token, { children, caption })
+        const pub = await publishInstagramMediaContainer(igBusinessAccountId, token, carousel.id)
+        return { ok: true, creationId: carousel.id, publishedId: pub.id, children }
+    }
+
+    // Default: single image post
+    const c = await createInstagramMediaContainer(igBusinessAccountId, token, { image_url: urls[0], caption })
+    const pub = await publishInstagramMediaContainer(igBusinessAccountId, token, c.id)
+    return { ok: true, creationId: c.id, publishedId: pub.id }
+}
+
 export async function createInstagramMediaContainer(
     igBusinessAccountId: string,
     token: string,

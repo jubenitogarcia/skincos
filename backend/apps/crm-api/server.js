@@ -1391,14 +1391,44 @@ app.get('/api/unit-monitor/gateway/info', async (req, res) => {
             return null
         }
     }
+    const ips = (() => {
+        try {
+            const nets = os.networkInterfaces()
+            const out = []
+            for (const name of Object.keys(nets || {})) {
+                for (const n of nets[name] || []) {
+                    if (!n || n.internal) continue
+                    if (n.family === 'IPv4' || n.family === 4) out.push(String(n.address))
+                }
+            }
+            return Array.from(new Set(out)).slice(0, 10)
+        } catch {
+            return []
+        }
+    })()
     res.json({
         ok: true,
         ts: new Date().toISOString(),
         uptimeSec: Math.floor(process.uptime()),
+        gateway: {
+            enabled: String(process.env.SKINCOS_GATEWAY || '') === '1',
+            startedAt: process.env.SKINCOS_GATEWAY_STARTED_AT || null,
+            version: process.env.SKINCOS_GATEWAY_VERSION || null
+        },
         node: process.version,
         platform: { os: process.platform, arch: process.arch },
         pid: process.pid,
         ports: { crmApiPort: Number(process.env.CRM_API_PORT || process.env.PORT || 8099) || 8099 },
+        host: {
+            hostname: os.hostname(),
+            ips
+        },
+        resources: {
+            loadavg: os.loadavg ? os.loadavg() : null,
+            memTotalBytes: os.totalmem(),
+            memFreeBytes: os.freemem(),
+            memRssBytes: process.memoryUsage().rss
+        },
         auth: { proxyTokenRequired: !!UNIT_MONITOR_PROXY_TOKEN },
         bins: {
             ...bins,
