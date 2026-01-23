@@ -42,15 +42,13 @@ import {
   UserPlus
 } from "@phosphor-icons/react"
 import {
-  createInstagramCarouselContainer,
-  createInstagramMediaContainer,
   fetchInstagramMedia,
   fetchInstagramMediaComments,
   fetchInstagramStories,
   fetchRecentCommentLeads,
   fetchRecentDMConversations,
   mapInstagramProfileToLead,
-  publishInstagramMediaContainer,
+  publishInstagramContent,
   replyToInstagramComment,
   sendDirectMessage,
   type InstagramGraphMedia,
@@ -153,7 +151,7 @@ interface InstagramInsight {
 }
 
 export function InstagramStudioPro() {
-  const { instagram, connectInstagram, disconnectInstagram, syncInstagram } = useIntegrations()
+  const { instagram, connectInstagram, disconnectInstagram, syncInstagram, refreshInstagram } = useIntegrations()
   const [activeTab, setActiveTab] = useState("feed")
   const [posts, setPosts] = useKV<InstagramPost[]>("instagram-posts", [])
   const [stories, setStories] = useKV<InstagramStory[]>("instagram-stories", [])
@@ -168,7 +166,7 @@ export function InstagramStudioPro() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [messageDraft, setMessageDraft] = useState('')
 
-  const graphEnabled = Boolean(instagram.connected && instagram.accessToken && instagram.businessAccountId)
+  const graphEnabled = Boolean(instagram.connected)
   const [graphLoading, setGraphLoading] = useState(false)
   const [graphError, setGraphError] = useState<string | null>(null)
   const [selectedMediaForComments, setSelectedMediaForComments] = useState<string>('')
@@ -479,25 +477,9 @@ export function InstagramStudioPro() {
       const caption = buildCaption()
 
       if (createPostType === 'image' || uploaded.length === 1) {
-        const container = await createInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, {
-          image_url: uploaded[0].url,
-          caption
-        })
-        await publishInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, container.id)
+        await publishInstagramContent({ type: 'image', urls: [uploaded[0].url], caption })
       } else {
-        const children: string[] = []
-        for (const item of uploaded) {
-          const child = await createInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, {
-            image_url: item.url,
-            is_carousel_item: true
-          })
-          children.push(child.id)
-        }
-        const container = await createInstagramCarouselContainer(instagram.businessAccountId!, instagram.accessToken!, {
-          children,
-          caption
-        })
-        await publishInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, container.id)
+        await publishInstagramContent({ type: 'carousel', urls: uploaded.map((u) => u.url).slice(0, 10), caption })
       }
 
       toast.success('Post enviado para publicação!')
@@ -527,12 +509,11 @@ export function InstagramStudioPro() {
     setPublishingStory(true)
     try {
       const uploaded = await uploadShareFiles([createStoryFiles[0]])
-      const container = await createInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, {
-        image_url: uploaded[0].url,
+      await publishInstagramContent({
+        type: 'story',
+        urls: [uploaded[0].url],
         caption: createStoryText.trim() || undefined,
-        media_type: 'STORIES'
       })
-      await publishInstagramMediaContainer(instagram.businessAccountId!, instagram.accessToken!, container.id)
       toast.success('Story enviado para publicação!')
       setIsCreatingStory(false)
       setCreateStoryFiles([])
@@ -587,7 +568,7 @@ export function InstagramStudioPro() {
     setGraphLoading(true)
     setGraphError(null)
     try {
-      const media = await fetchInstagramMedia(instagram.businessAccountId!, instagram.accessToken!, 25)
+      const media = await fetchInstagramMedia(undefined, undefined, 25)
       const mapped = mapGraphMediaToPosts(media)
       setPosts(mapped)
       if (!selectedMediaForComments && mapped[0]?.id) setSelectedMediaForComments(mapped[0].id)
@@ -603,7 +584,7 @@ export function InstagramStudioPro() {
     setGraphLoading(true)
     setGraphError(null)
     try {
-      const items = await fetchInstagramStories(instagram.businessAccountId!, instagram.accessToken!, 25)
+      const items = await fetchInstagramStories(undefined, undefined, 25)
       const mapped: InstagramStory[] = items.map((s: any) => ({
         id: s.id,
         type: (s.media_type === 'VIDEO' ? 'video' : 'image'),
@@ -627,7 +608,7 @@ export function InstagramStudioPro() {
     setGraphLoading(true)
     setGraphError(null)
     try {
-      const data = await fetchInstagramMediaComments(mediaId, instagram.accessToken!, 50)
+      const data = await fetchInstagramMediaComments(mediaId, undefined, 50)
       const mapped: InstagramComment[] = data.map((c: any) => ({
         id: c.id,
         postId: mediaId,
@@ -912,7 +893,7 @@ export function InstagramStudioPro() {
                   <DialogTitle>Conectar Instagram Business</DialogTitle>
                   <DialogDescription>Informe Access Token e Business Account ID obtidos no Facebook Developers</DialogDescription>
                 </DialogHeader>
-                <ConnectInstagramForm onConnect={connectInstagram} />
+                <ConnectInstagramForm onConnect={connectInstagram} onRefresh={refreshInstagram} />
               </DialogContent>
             </Dialog>
           )}
@@ -1697,7 +1678,7 @@ export function InstagramStudioPro() {
                                     const message = (replyDraftByComment[comment.id] || '').trim()
                                     if (!message) return
                                     try {
-                                      await replyToInstagramComment(comment.id, message, instagram.accessToken!)
+                                      await replyToInstagramComment(comment.id, message)
                                       setReplyDraftByComment((prev) => ({ ...prev, [comment.id]: '' }))
                                       toast.success('Resposta enviada')
                                       if (selectedMediaForComments) await loadGraphComments(selectedMediaForComments)
@@ -1968,10 +1949,39 @@ export function InstagramStudioPro() {
 }
 
 // Form component local para conectar instagram
-function ConnectInstagramForm({ onConnect }: { onConnect: (token: string, bizId: string) => Promise<void> }) {
+function ConnectInstagramForm({ onConnect, onRefresh }: { onConnect: (token: string, bizId: string) => Promise<void>; onRefresh: () => Promise<void> }) {
   const [token, setToken] = useState('')
   const [bizId, setBizId] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const startOAuth = () => {
+    const w = 520
+    const h = 720
+    const left = Math.max(0, Math.floor((window.screen.width - w) / 2))
+    const top = Math.max(0, Math.floor((window.screen.height - h) / 2))
+    const popup = window.open('/api/instagram/oauth/start', 'instagram_oauth', `width=${w},height=${h},left=${left},top=${top}`)
+    if (!popup) {
+      toast.error('Pop-up bloqueado. Permita pop-ups e tente novamente.')
+      return
+    }
+
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return
+      if (ev.data?.type === 'instagram:connected' && ev.data?.ok) {
+        toast.success('Conta conectada!')
+        void onRefresh()
+        window.removeEventListener('message', onMsg)
+      }
+    }
+    window.addEventListener('message', onMsg)
+
+    const timer = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(timer)
+        window.removeEventListener('message', onMsg)
+      }
+    }, 500)
+  }
   const handle = async () => {
     if (!token || !bizId) return
     setLoading(true)
@@ -1986,6 +1996,15 @@ function ConnectInstagramForm({ onConnect }: { onConnect: (token: string, bizId:
   }
   return (
     <div className="space-y-4">
+      <div className="space-y-2">
+        <Button variant="secondary" className="w-full" onClick={startOAuth}>
+          Conectar com Facebook (OAuth)
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Recomendado. Conecta via Meta e salva o token no servidor.
+        </p>
+      </div>
+      <div className="border-t pt-4" />
       <div>
         <Label>Access Token</Label>
         <Textarea rows={3} placeholder="EAABsbCS1iHgBA..." value={token} onChange={e => setToken(e.target.value)} />

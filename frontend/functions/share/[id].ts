@@ -34,6 +34,7 @@ export async function onRequestGet(context: { request: Request; params: { id?: s
 
     const url = new URL(context.request.url)
     const fileName = url.searchParams.get('file')
+    const inline = url.searchParams.get('inline') === '1'
     const payload = await readPayload(bucket, shareId)
     if (!payload) return new Response('Not found', { status: 404 })
 
@@ -44,7 +45,7 @@ export async function onRequestGet(context: { request: Request; params: { id?: s
         if (!obj) return new Response('File not found', { status: 404 })
         const headers = new Headers()
         headers.set('Content-Type', file.contentType || obj.httpMetadata?.contentType || 'application/octet-stream')
-        headers.set('Content-Disposition', `attachment; filename="${file.name}"`)
+        headers.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${file.name}"`)
         headers.set('Cache-Control', 'no-store')
         return new Response(obj.body, { status: 200, headers })
     }

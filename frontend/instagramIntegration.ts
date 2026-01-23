@@ -19,6 +19,31 @@ export interface InstagramDMMessage {
     direction: 'in' | 'out'
 }
 
+type ApiError = { ok?: boolean; error?: string; message?: string; hint?: string }
+
+async function apiGet<T>(path: string): Promise<T> {
+    const res = await fetch(path, { headers: { accept: 'application/json' }, credentials: 'include' as any })
+    const text = await res.text()
+    let json: any = null
+    try { json = text ? JSON.parse(text) : null } catch { json = null }
+    if (!res.ok) throw new Error((json as ApiError)?.message || (json as ApiError)?.error || `HTTP ${res.status}`)
+    return json as T
+}
+
+async function apiPost<T>(path: string, body: any): Promise<T> {
+    const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'include' as any,
+        body: JSON.stringify(body),
+    })
+    const text = await res.text()
+    let json: any = null
+    try { json = text ? JSON.parse(text) : null } catch { json = null }
+    if (!res.ok) throw new Error((json as ApiError)?.message || (json as ApiError)?.error || `HTTP ${res.status}`)
+    return json as T
+}
+
 // ---------------- REAL API HELPERS ----------------
 const GRAPH_BASE = 'https://graph.facebook.com/v20.0'
 
@@ -108,14 +133,13 @@ export async function sendDirectMessage(userId: string, text: string, fromBizUse
     }
 }
 
-export async function fetchInstagramAccountMetrics(igBusinessAccountId: string, token: string) {
-    try {
-        const fields = 'followers_count,media_count'
-        const data = await graphGet(`${igBusinessAccountId}`, { fields }, token)
-        return data
-    } catch (e) {
-        throw e
+export async function fetchInstagramAccountMetrics(igBusinessAccountId?: string, token?: string) {
+    if (!igBusinessAccountId || !token) {
+        const data = await apiGet<{ ok: boolean; connected: boolean; metrics: any }>(`/api/instagram/metrics`)
+        return data.metrics
     }
+    const fields = 'followers_count,media_count'
+    return graphGet(`${igBusinessAccountId}`, { fields }, token)
 }
 
 export function mapInstagramProfileToLead(user: InstagramUserProfile) {
@@ -183,7 +207,11 @@ export interface InstagramGraphComment {
     replies?: { data: InstagramGraphComment[] }
 }
 
-export async function fetchInstagramMedia(igBusinessAccountId: string, token: string, limit = 25): Promise<InstagramGraphMedia[]> {
+export async function fetchInstagramMedia(igBusinessAccountId?: string, token?: string, limit = 25): Promise<InstagramGraphMedia[]> {
+    if (!igBusinessAccountId || !token) {
+        const data = await apiGet<{ ok: boolean; data: InstagramGraphMedia[] }>(`/api/instagram/media?limit=${encodeURIComponent(String(limit))}`)
+        return data.data || []
+    }
     const fields = [
         'id',
         'caption',
@@ -200,7 +228,11 @@ export async function fetchInstagramMedia(igBusinessAccountId: string, token: st
     return data.data || []
 }
 
-export async function fetchInstagramStories(igBusinessAccountId: string, token: string, limit = 25): Promise<InstagramGraphMedia[]> {
+export async function fetchInstagramStories(igBusinessAccountId?: string, token?: string, limit = 25): Promise<InstagramGraphMedia[]> {
+    if (!igBusinessAccountId || !token) {
+        const data = await apiGet<{ ok: boolean; data: InstagramGraphMedia[] }>(`/api/instagram/stories?limit=${encodeURIComponent(String(limit))}`)
+        return data.data || []
+    }
     const fields = [
         'id',
         'media_type',
@@ -214,7 +246,13 @@ export async function fetchInstagramStories(igBusinessAccountId: string, token: 
     return data.data || []
 }
 
-export async function fetchInstagramMediaComments(mediaId: string, token: string, limit = 50): Promise<InstagramGraphComment[]> {
+export async function fetchInstagramMediaComments(mediaId: string, token?: string, limit = 50): Promise<InstagramGraphComment[]> {
+    if (!token) {
+        const data = await apiGet<{ ok: boolean; data: InstagramGraphComment[] }>(
+            `/api/instagram/comments?mediaId=${encodeURIComponent(mediaId)}&limit=${encodeURIComponent(String(limit))}`
+        )
+        return data.data || []
+    }
     const fields = [
         'id',
         'text',
@@ -228,36 +266,30 @@ export async function fetchInstagramMediaComments(mediaId: string, token: string
     return data.data || []
 }
 
-export async function replyToInstagramComment(commentId: string, message: string, token: string): Promise<{ id: string }> {
+export async function replyToInstagramComment(commentId: string, message: string, token?: string): Promise<{ id: string }> {
+    if (!token) {
+        const out = await apiPost<{ ok: boolean; id: string }>(`/api/instagram/comment-reply`, { commentId, message })
+        return { id: out.id }
+    }
     return graphPost<{ id: string }>(`${commentId}/replies`, { message }, token)
 }
 
 // ---------------- PUBLISHING ----------------
-
-function getStoredInstagramAuth(): { igBusinessAccountId: string; token: string } | null {
-    try {
-        if (typeof window === 'undefined') return null
-        const token = String(localStorage.getItem('instagram-access-token') || '').trim()
-        const igBusinessAccountId = String(localStorage.getItem('instagram-business-account-id') || '').trim()
-        if (!token || !igBusinessAccountId) return null
-        return { igBusinessAccountId, token }
-    } catch {
-        return null
-    }
-}
-
 export async function publishInstagramContent(input: { type: 'image' | 'carousel' | 'story'; urls: string[]; caption?: string; igBusinessAccountId?: string; token?: string }) {
-    const stored = getStoredInstagramAuth()
-    const igBusinessAccountId = String(input.igBusinessAccountId || stored?.igBusinessAccountId || '').trim()
-    const token = String(input.token || stored?.token || '').trim()
-    if (!igBusinessAccountId || !token) {
-        throw new Error('Conecte o Instagram (Graph API) para publicar (token/businessAccountId ausentes).')
-    }
-
     const urls = Array.isArray(input.urls) ? input.urls.map((u) => String(u || '').trim()).filter(Boolean) : []
     if (!urls.length) throw new Error('Nenhuma URL informada para publicação.')
 
     const caption = input.caption ? String(input.caption) : undefined
+
+    const igBusinessAccountId = String(input.igBusinessAccountId || '').trim()
+    const token = String(input.token || '').trim()
+    if (!igBusinessAccountId || !token) {
+        return apiPost<{ ok: boolean; creationId: string; publishedId: string; children?: string[] }>(`/api/instagram/publish`, {
+            type: input.type,
+            urls,
+            caption,
+        })
+    }
 
     if (input.type === 'story') {
         const c = await createInstagramMediaContainer(igBusinessAccountId, token, {

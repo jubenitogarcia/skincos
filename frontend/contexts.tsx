@@ -214,6 +214,7 @@ interface IntegrationsContextValue {
   connectInstagram: (token: string, businessAccountId: string) => Promise<void>
   disconnectInstagram: () => void
   syncInstagram: () => Promise<void>
+  refreshInstagram: () => Promise<void>
   connectWhatsApp: (baseUrl: string) => Promise<void>
   disconnectWhatsApp: () => void
   syncWhatsApp: () => Promise<void>
@@ -225,8 +226,6 @@ if (import.meta.hot) {
   import.meta.hot.accept(() => import.meta.hot?.invalidate())
 }
 
-const LS_TOKEN_KEY = 'instagram-access-token'
-const LS_BIZ_ID_KEY = 'instagram-business-account-id'
 const LS_WA_BASE_KEY = 'whatsapp-base-url'
 
 export function IntegrationsProvider({ children }: { children: ReactNode }) {
@@ -243,35 +242,62 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
   const [instagram, setInstagram] = useState<InstagramIntegrationState>({ connected: false })
   const [whatsapp, setWhatsApp] = useState<WhatsAppIntegrationState>({ connected: false })
 
-  useEffect(() => {
-    const storedToken = localStorage.getItem(LS_TOKEN_KEY) || (import.meta as any).env.VITE_INSTAGRAM_ACCESS_TOKEN
-    const storedBiz = localStorage.getItem(LS_BIZ_ID_KEY) || (import.meta as any).env.VITE_INSTAGRAM_BUSINESS_ACCOUNT_ID
-    if (storedToken && storedBiz) {
-      setInstagram(prev => ({ ...prev, connected: true, accessToken: storedToken, businessAccountId: storedBiz }))
-    }
-  }, [])
-
-  const connectInstagram = async (token: string, businessAccountId: string) => {
-    localStorage.setItem(LS_TOKEN_KEY, token)
-    localStorage.setItem(LS_BIZ_ID_KEY, businessAccountId)
-    setInstagram({ connected: true, accessToken: token, businessAccountId })
-    await syncInstagram()
-  }
-
-  const disconnectInstagram = () => {
-    localStorage.removeItem(LS_TOKEN_KEY)
-    localStorage.removeItem(LS_BIZ_ID_KEY)
-    setInstagram({ connected: false })
-  }
-
   const syncInstagram = async () => {
-    if (!instagram.accessToken || !instagram.businessAccountId) return
+    if (!instagram.connected) return
     try {
-      const metrics = await fetchInstagramAccountMetrics(instagram.businessAccountId, instagram.accessToken)
+      const metrics = await fetchInstagramAccountMetrics()
       setInstagram(prev => ({ ...prev, metrics, lastSync: new Date().toISOString(), error: undefined }))
     } catch (e: any) {
       setInstagram(prev => ({ ...prev, error: e.message }))
     }
+  }
+
+  const refreshInstagram = async () => {
+    try {
+      const res = await fetch('/api/instagram/status', { credentials: 'include', headers: { accept: 'application/json' } })
+      const text = await res.text()
+      let data: any = null
+      try { data = text ? JSON.parse(text) : null } catch { data = null }
+      if (!res.ok) {
+        setInstagram({ connected: false, error: data?.error || data?.message || `HTTP ${res.status}` })
+        return
+      }
+      if (!data?.connected) {
+        setInstagram({ connected: false })
+        return
+      }
+      setInstagram(prev => ({ ...prev, connected: true, businessAccountId: data.businessAccountId, error: undefined }))
+      await syncInstagram()
+    } catch (e: any) {
+      setInstagram({ connected: false, error: e?.message || 'Falha ao carregar status do Instagram' })
+    }
+  }
+
+  useEffect(() => {
+    void refreshInstagram()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const connectInstagram = async (token: string, businessAccountId: string) => {
+    const res = await fetch('/api/instagram/connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ accessToken: token, businessAccountId })
+    })
+    const text = await res.text()
+    let json: any = null
+    try { json = text ? JSON.parse(text) : null } catch { json = null }
+    if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`)
+
+    setInstagram(prev => ({ ...prev, connected: true, businessAccountId, error: undefined }))
+    await syncInstagram()
+  }
+
+  const disconnectInstagram = () => {
+    fetch('/api/instagram/disconnect', { method: 'POST', credentials: 'include' })
+      .catch(() => null)
+      .finally(() => setInstagram({ connected: false }))
   }
 
   useEffect(() => {
@@ -322,6 +348,7 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
     connectInstagram,
     disconnectInstagram,
     syncInstagram,
+    refreshInstagram,
     connectWhatsApp,
     disconnectWhatsApp,
     syncWhatsApp
