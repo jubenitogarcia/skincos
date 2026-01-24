@@ -7,15 +7,15 @@
 As seguintes credenciais estão configuradas para autenticação das APIs:
 
 **1. WHATSAPP_API_KEY (Principal)**
-- Valor: `whatsapp-secure-key-2024`
+- Valor: `<definir via variável de ambiente>`
 - Uso: APIs gerais do WhatsApp Multi-Channel
 
 **2. ADMIN_API_KEY (Administração)**
-- Valor: `admin-master-key-2024`  
+- Valor: `<definir via variável de ambiente>`
 - Uso: APIs administrativas e operações críticas
 
 **3. CHANNEL_MANAGER_KEY (Gerenciamento de Canais)**
-- Valor: `channel-mgr-key-2024`
+- Valor: `<definir via variável de ambiente>`
 - Uso: APIs de gerenciamento de canais
 
 ### JWT Secret
@@ -26,23 +26,24 @@ As seguintes credenciais estão configuradas para autenticação das APIs:
 
 **Método 1: Header x-api-key**
 ```bash
-curl -H "x-api-key: whatsapp-secure-key-2024" http://localhost:3001/api/endpoint
+curl -H "x-api-key: $WHATSAPP_API_KEY" http://localhost:3001/api/endpoint
 ```
 
 **Método 2: Authorization Bearer**
 ```bash
-curl -H "Authorization: Bearer whatsapp-secure-key-2024" http://localhost:3001/api/endpoint
+curl -H "Authorization: Bearer $WHATSAPP_API_KEY" http://localhost:3001/api/endpoint
 ```
 
 **Método 3: Authorization ApiKey**
 ```bash
-curl -H "Authorization: ApiKey whatsapp-secure-key-2024" http://localhost:3001/api/endpoint
+curl -H "Authorization: ApiKey $WHATSAPP_API_KEY" http://localhost:3001/api/endpoint
 ```
 
 **Método 4: Query Parameter**
 ```bash
-curl http://localhost:3001/api/endpoint?api_key=whatsapp-secure-key-2024
+curl http://localhost:3001/api/endpoint?api_key=$WHATSAPP_API_KEY
 ```
+> **Atenção:** Nunca utilize valores de exemplo em produção. Sempre defina as chaves via variáveis de ambiente seguras.
 
 ### Endpoints Principais
 

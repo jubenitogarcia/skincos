@@ -17,13 +17,13 @@ const validator = require('validator');
 // ========== CONFIGURAÇÕES DE SEGURANÇA ==========
 const SECURITY_CONFIG = {
     // API Keys permitidas (em produção, carregar de variáveis de ambiente)
-    API_KEYS: new Set([
-        process.env.WHATSAPP_API_KEY || 'whatsapp-secure-key-2024',
-        process.env.ADMIN_API_KEY || 'admin-master-key-2024',
-        process.env.CHANNEL_MANAGER_KEY || 'channel-mgr-key-2024',
-        process.env.UNIFIED_API_KEY || 'unified-dev-key', // 🔧 NOVO: Para comunicação CRM ↔ Unified
-        process.env.CRM_UNIFIED_API_KEY || 'unified-dev-key' // 🔧 NOVO: Alternate name
-    ]),
+        API_KEYS: new Set([
+            process.env.WHATSAPP_API_KEY,
+            process.env.ADMIN_API_KEY,
+            process.env.CHANNEL_MANAGER_KEY,
+            process.env.UNIFIED_API_KEY,
+            process.env.CRM_UNIFIED_API_KEY
+        ]),
     
     // JWT Secret
     JWT_SECRET: process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex'),

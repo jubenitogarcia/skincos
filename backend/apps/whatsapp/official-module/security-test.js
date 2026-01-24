@@ -16,8 +16,8 @@ const crypto = require('crypto');
 
 // Configurações de teste
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3001';
-const TEST_API_KEY = process.env.WHATSAPP_API_KEY || 'whatsapp-secure-key-2024';
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'admin-master-key-2024';
+const TEST_API_KEY = process.env.WHATSAPP_API_KEY;
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 
 console.log('🔒 Iniciando Testes de Segurança do WhatsApp Module');
 console.log('📍 Base URL:', BASE_URL);
