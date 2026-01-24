@@ -52,33 +52,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLoading = replitAuth?.isLoading || false
   const isAuthenticated = replitAuth?.isAuthenticated || false
   const shouldShowLoadingOverlay = isLoading && !isNoAuthMode()
+  const [actionLoading, setActionLoading] = useState(false)
+
+  const readJson = (text: string) => {
+    try {
+      return text ? JSON.parse(text) : null
+    } catch {
+      return null
+    }
+  }
+
+  const friendlyLoginError = (status: number, payload: any) => {
+    const raw = String(payload?.error || payload?.message || '').toLowerCase()
+    if (status === 400) return 'Informe seu email (ou usuário) e senha.'
+    if (status === 401) {
+      if (raw.includes('password not set')) return 'Senha ainda não definida. Solicite ao gestor um reset de senha.'
+      return 'Credenciais inválidas. Verifique email/usuário e senha.'
+    }
+    if (status === 403) {
+      if (raw.includes('inactive')) return 'Usuário desativado. Solicite reativação ao gestor.'
+      return 'Acesso não permitido.'
+    }
+    return payload?.error || payload?.message || `HTTP ${status}`
+  }
+
+  const friendlySignupError = (status: number, payload: any) => {
+    const code = String(payload?.error || payload?.code || '')
+    const friendly =
+      code === 'TOKEN_REQUIRED' ? 'Informe o token de acesso.'
+      : code === 'TOKEN_INVALID' ? 'Token inválido.'
+      : code === 'TOKEN_REVOKED' ? 'Token revogado.'
+      : code === 'TOKEN_EXPIRED' ? 'Token expirado.'
+      : code === 'TOKEN_EXHAUSTED' ? 'Token já foi utilizado.'
+      : code === 'EMAIL_TAKEN' ? 'Este email já está cadastrado.'
+      : code === 'PASSWORD_TOO_SHORT' ? 'Senha muito curta (mín. 6).'
+      : code === 'EMAIL_INVALID' ? 'Email inválido.'
+      : code === 'NAME_REQUIRED' ? 'Informe seu nome.'
+      : code === 'USERNAME_UNAVAILABLE' ? 'Não foi possível gerar um usuário único. Tente novamente.'
+      : code === 'DB_NOT_CONFIGURED' ? 'Cadastro indisponível no momento. Tente novamente mais tarde.'
+      : (payload?.error || payload?.message || `HTTP ${status}`)
+    return friendly
+  }
 
   const signIn = async (email: string, password: string) => {
     if (isNoAuthMode()) {
       logNoAuthMode('AuthContext.signIn', 'Bypassing login redirect - already authenticated in NO_AUTH mode')
       return Promise.resolve()
     }
-    const res = await fetch('/api/insumos/auth/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ email, password })
-    })
-    const text = await res.text()
-    let json: any = null
-    try { json = text ? JSON.parse(text) : null } catch { json = null }
-    if (!res.ok) {
-      throw new Error(json?.error || json?.message || `HTTP ${res.status}`)
-    }
+    setActionLoading(true)
+    try {
+      const res = await fetch('/api/insumos/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: email.trim(), password })
+      })
+      const text = await res.text()
+      const json: any = readJson(text)
+      if (!res.ok) {
+        throw new Error(friendlyLoginError(res.status, json))
+      }
 
-    // Confirm session is actually established (cookie survived the proxy) before reloading.
-    const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
-    if (!meRes || !meRes.ok) {
-      throw new Error('Login OK, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
-    }
+      // Confirm session is actually established (cookie survived the proxy) before reloading.
+      const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
+      if (!meRes || !meRes.ok) {
+        throw new Error('Login OK, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
+      }
 
-    // Refresh app state so useReplitAuth picks up the new session cookie.
-    window.location.href = '/'
+      // Refresh app state so useReplitAuth picks up the new session cookie.
+      window.location.assign('/')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const signUp = async (name: string, email: string, password: string, inviteToken: string) => {
@@ -86,38 +131,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logNoAuthMode('AuthContext.signUp', 'Bypassing signup redirect - already authenticated in NO_AUTH mode')
       return Promise.resolve()
     }
-    const res = await fetch('/api/insumos/auth/register', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ name, email, password, token: inviteToken })
-    })
-    const text = await res.text()
-    let json: any = null
-    try { json = text ? JSON.parse(text) : null } catch { json = null }
-    if (!res.ok) {
-      const code = String(json?.error || json?.code || '')
-      const friendly =
-        code === 'TOKEN_REQUIRED' ? 'Informe o token de acesso.'
-        : code === 'TOKEN_INVALID' ? 'Token inválido.'
-        : code === 'TOKEN_REVOKED' ? 'Token revogado.'
-        : code === 'TOKEN_EXPIRED' ? 'Token expirado.'
-        : code === 'TOKEN_EXHAUSTED' ? 'Token já foi utilizado.'
-        : code === 'EMAIL_TAKEN' ? 'Este email já está cadastrado.'
-        : code === 'PASSWORD_TOO_SHORT' ? 'Senha muito curta (mín. 6).'
-        : code === 'EMAIL_INVALID' ? 'Email inválido.'
-        : code === 'NAME_REQUIRED' ? 'Informe seu nome.'
-        : (json?.error || json?.message || `HTTP ${res.status}`)
-      throw new Error(friendly)
-    }
+    setActionLoading(true)
+    try {
+      const res = await fetch('/api/insumos/auth/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), password, token: inviteToken.trim() })
+      })
+      const text = await res.text()
+      const json: any = readJson(text)
+      if (!res.ok) {
+        throw new Error(friendlySignupError(res.status, json))
+      }
 
-    // Confirm session is actually established (cookie survived the proxy) before reloading.
-    const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
-    if (!meRes || !meRes.ok) {
-      throw new Error('Conta criada, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
-    }
+      // Confirm session is actually established (cookie survived the proxy) before reloading.
+      const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
+      if (!meRes || !meRes.ok) {
+        throw new Error('Conta criada, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
+      }
 
-    window.location.href = '/'
+      window.location.assign('/')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const signOut = () => {
@@ -136,7 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextValue = {
     user,
-    loading: isLoading,
+    loading: isLoading || actionLoading,
     signIn,
     signUp,
     signOut,

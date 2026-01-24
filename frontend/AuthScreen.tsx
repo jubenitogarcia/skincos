@@ -17,12 +17,27 @@ export function AuthScreen() {
     const [form, setForm] = useState<FormState>({ name: '', email: '', password: '', inviteToken: '' })
     const [error, setError] = useState<string | null>(null)
     const [isVisible, setIsVisible] = useState(false)
+    const [showPassword, setShowPassword] = useState(false)
 
     useEffect(() => {
         setIsVisible(true)
     }, [])
 
+    useEffect(() => {
+        setError(null)
+        setShowPassword(false)
+        setForm(f => {
+            const next = { ...f, password: '' }
+            if (mode === 'signin') {
+                next.name = ''
+                next.inviteToken = ''
+            }
+            return next
+        })
+    }, [mode])
+
     const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (error) setError(null)
         setForm(f => ({ ...f, [e.target.name]: e.target.value }))
     }
 
@@ -31,14 +46,20 @@ export function AuthScreen() {
         setError(null)
         try {
             if (mode === 'signin') {
-                await signIn(form.email, form.password)
+                await signIn(form.email.trim(), form.password)
             } else {
-                await signUp(form.name, form.email, form.password, form.inviteToken)
+                await signUp(form.name.trim(), form.email.trim(), form.password, form.inviteToken.trim())
             }
         } catch (err: any) {
             setError(err.message || 'Erro desconhecido')
         }
     }
+
+    const canSubmit =
+        !loading &&
+        (mode === 'signin'
+            ? !!form.email.trim() && !!form.password
+            : !!form.name.trim() && !!form.email.trim() && !!form.inviteToken.trim() && !!form.password)
 
     return (
         <div className="min-h-screen relative overflow-hidden">
@@ -135,17 +156,19 @@ export function AuthScreen() {
                         <form onSubmit={submit} className="space-y-6">
                             {mode === 'signup' && (
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium text-slate-200 block">
+                                    <label htmlFor="auth-name" className="text-sm font-medium text-slate-200 block">
                                         Nome Completo
                                     </label>
                                     <div className="relative">
                                         <Input 
+                                            id="auth-name"
                                             name="name" 
                                             value={form.name} 
                                             onChange={onChange} 
                                             placeholder="Digite seu nome completo"
                                             autoComplete="name" 
                                             required
+                                            autoFocus
                                             className="bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:bg-white/15 focus:border-blue-400/50 h-12 text-base backdrop-blur-sm"
                                         />
                                     </div>
@@ -153,18 +176,21 @@ export function AuthScreen() {
                             )}
                             
                             <div className="space-y-2">
-                                <label className="text-sm font-medium text-slate-200 block">
+                                <label htmlFor="auth-email" className="text-sm font-medium text-slate-200 block">
                                     Email Empresarial
                                 </label>
                                 <div className="relative">
                                     <Input 
+                                        id="auth-email"
                                         name="email" 
                                         type="email" 
                                         value={form.email} 
                                         onChange={onChange} 
                                         placeholder="seu.email@empresa.com"
                                         autoComplete="email" 
+                                        spellCheck={false}
                                         required
+                                        autoFocus={mode === 'signin'}
                                         className="bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:bg-white/15 focus:border-blue-400/50 h-12 text-base backdrop-blur-sm"
                                     />
                                 </div>
@@ -172,11 +198,12 @@ export function AuthScreen() {
 
                             {mode === 'signup' && (
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium text-slate-200 block">
+                                    <label htmlFor="auth-inviteToken" className="text-sm font-medium text-slate-200 block">
                                         Token de acesso
                                     </label>
                                     <div className="relative">
                                         <Input
+                                            id="auth-inviteToken"
                                             name="inviteToken"
                                             value={form.inviteToken}
                                             onChange={onChange}
@@ -193,25 +220,35 @@ export function AuthScreen() {
                             )}
                             
                             <div className="space-y-2">
-                                <label className="text-sm font-medium text-slate-200 block">
+                                <label htmlFor="auth-password" className="text-sm font-medium text-slate-200 block">
                                     Senha {mode === 'signup' && '(mín. 6 caracteres)'}
                                 </label>
                                 <div className="relative">
                                     <Input 
+                                        id="auth-password"
                                         name="password" 
-                                        type="password" 
+                                        type={showPassword ? 'text' : 'password'} 
                                         value={form.password} 
                                         onChange={onChange} 
                                         placeholder="••••••••"
                                         autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} 
                                         required
+                                        minLength={mode === 'signup' ? 6 : undefined}
                                         className="bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:bg-white/15 focus:border-blue-400/50 h-12 text-base backdrop-blur-sm"
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(v => !v)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-blue-200/80 hover:text-blue-100"
+                                        aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                                    >
+                                        {showPassword ? 'Ocultar' : 'Mostrar'}
+                                    </button>
                                 </div>
                             </div>
 
                             {error && (
-                                <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 backdrop-blur-sm">
+                                <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 backdrop-blur-sm">
                                     <div className="flex items-center gap-2">
                                         <div className="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
                                             <span className="text-xs text-white font-bold">!</span>
@@ -222,7 +259,7 @@ export function AuthScreen() {
                             )}
 
                             <Button 
-                                disabled={loading} 
+                                disabled={!canSubmit} 
                                 type="submit" 
                                 className="w-full h-12 bg-gradient-to-r from-blue-600 via-blue-500 to-blue-600 hover:from-blue-500 hover:to-blue-700 text-white font-semibold text-base shadow-lg shadow-blue-500/25 border-0 transition-all duration-200 hover:shadow-xl hover:shadow-blue-500/30 disabled:opacity-50 backdrop-blur-sm"
                             >
