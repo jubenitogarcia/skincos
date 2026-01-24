@@ -49,7 +49,10 @@ jobs:
             labels=$(gh api repos/$REPO/issues/$issue/labels -q '.[].name' | tr '\n' ',' || true)
             if echo "$labels" | grep -qiE '(resolved|done|fixed)'; then
               gh issue close "$issue" -R "$REPO" || true
-              gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: label indica resolvido." || true
+              gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: label indica resolvido." || \
+                curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                  -d '{"body": "Fechado automaticamente: label indica resolvido."}' \
+                  "https://api.github.com/repos/$REPO/issues/$issue/comments" || true
               continue
             fi
             # Find linked PRs via timeline events and closing keywords in PR bodies
@@ -63,14 +66,20 @@ jobs:
             fi
             if [ "$closed_via_pr" = true ]; then
               gh issue close "$issue" -R "$REPO" || true
-              gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: PR relacionado foi mergeado." || true
+              gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: PR relacionado foi mergeado." || \
+                curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                  -d '{"body": "Fechado automaticamente: PR relacionado foi mergeado."}' \
+                  "https://api.github.com/repos/$REPO/issues/$issue/comments" || true
               continue
             fi
             # Check closing keywords in comments and recent merged PRs mentioning the issue
             comments=$(gh api repos/$REPO/issues/$issue/comments --paginate -q '.[].body' | tr '\n' ' ' || true)
             if echo "$comments" | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#$issue\b"; then
               gh issue close "$issue" -R "$REPO" || true
-              gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: comentários indicam fechamento." || true
+              gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: comentários indicam fechamento." || \
+                curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                  -d '{"body": "Fechado automaticamente: comentários indicam fechamento."}' \
+                  "https://api.github.com/repos/$REPO/issues/$issue/comments" || true
               continue
             fi
             # Look back at last 50 merged PRs only
@@ -79,7 +88,10 @@ jobs:
               body=$(gh pr view "$pr" -R "$REPO" --json body -q .body || echo "")
               if echo "$body" | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#$issue\b"; then
                 gh issue close "$issue" -R "$REPO" || true
-                gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: fechado por PR #$pr (keywords)." || true
+                gh issue comment "$issue" -R "$REPO" -b "Fechado automaticamente: fechado por PR #$pr (keywords)." || \
+                  curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                    -d '{"body": "Fechado automaticamente: fechado por PR #$pr (keywords)."}' \
+                    "https://api.github.com/repos/$REPO/issues/$issue/comments" || true
                 break
               fi
             done
