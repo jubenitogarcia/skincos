@@ -45,7 +45,7 @@ jobs:
               echo "::warning::No lockfile next to $p" >&2
             fi
             if jq -e '.engines' "$p" >/dev/null 2>&1; then
-              npx --yes semver@7 node -e "const fs=require('fs'); const semver=require('semver'); const pkg=JSON.parse(fs.readFileSync('$p','utf8')); const e=pkg.engines||{}; const v=e.node; if(v){if(!semver.validRange(v)){process.exit(1)}}" || { echo "::error::Invalid engines.node in $p"; exit 1; }
+              node -e "const fs=require('fs'); const semver=require('semver'); const pkg=JSON.parse(fs.readFileSync('$p','utf8')); const e=pkg.engines||{}; const v=e.node; console.log('engines.node:', v); console.log('semver.validRange:', semver.validRange(v)); if(v){if(!semver.validRange(v)){process.exit(1)}}" || { echo "::error::Invalid engines.node in $p"; exit 1; }
             fi
           done
 
