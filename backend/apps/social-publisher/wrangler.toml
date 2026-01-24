@@ -1,0 +1,25 @@
+name = "skincos-social-publisher"
+main = "src/index.ts"
+compatibility_date = "2026-01-13"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[r2_buckets]]
+binding = "SHARE_BUCKET"
+bucket_name = "skincos-share"
+
+[[durable_objects.bindings]]
+name = "LOCK"
+class_name = "PublisherLock"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["PublisherLock"]
+
+[vars]
+# Base pública para gerar URLs das mídias (Pages).
+PUBLIC_ORIGIN = "https://crm.skincos.com.br"
+# Segurança: só roda quando true.
+SOCIAL_PUBLISHER_ENABLED = "false"
+
