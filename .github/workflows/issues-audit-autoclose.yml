@@ -1,5 +1,7 @@
 name: Issues Audit & Auto-Close
 
+# Trivial comment: Forçar atualização do workflow para garantir uso da versão mais recente
+
 on:
   workflow_dispatch:
   push:
