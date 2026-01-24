@@ -20,6 +20,7 @@ Commands:
   watch             Start CRM + WhatsApp + Actual + Agent + Instagram (foreground)
   crm               Start only CRM (frontend+api)
   insumos            Insumos (Cloudflare Worker) helper
+  cloudflare-workers Cloudflare Workers deploy helper
   gateway           Start WhatsApp gateway watcher
   official          Start WhatsApp official watcher
   agent             Start Agent Zero (webui)
@@ -513,6 +514,8 @@ case "$cmd" in
     exec "$ROOT_DIR/frontend/restart_crm.sh" "$@" ;;
   insumos)
     exec "$ROOT_DIR/backend/scripts/insumos.sh" "$@" ;;
+  cloudflare-workers|workers)
+    exec "$ROOT_DIR/backend/scripts/cloudflare-workers.sh" "$@" ;;
   gateway)
     instance=1
     quiet=0

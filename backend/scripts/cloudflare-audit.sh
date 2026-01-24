@@ -53,7 +53,7 @@ fail=0
 echo "[cloudflare-audit] Checking Workers scripts..."
 scripts="$(cf_get_json "https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts" | jq -r '.result[].id')"
 for s in skincos-api skincos-insumos; do
-  if ! echo "$scripts" | rg -q "^${s}$"; then
+  if ! echo "$scripts" | grep -Eq "^${s}$"; then
     echo "[cloudflare-audit] FAIL: missing worker script: $s" >&2
     fail=1
   else
@@ -69,14 +69,14 @@ if [[ -z "$zone_id" ]]; then
 else
   routes="$(cf_get_json "https://api.cloudflare.com/client/v4/zones/${zone_id}/workers/routes" | jq -r '.result[] | "\(.pattern) -> \(.script)"')"
   echo "$routes"
-  echo "$routes" | rg -q '^api\.skincos\.com\.br/\* -> skincos-api$' || { echo "[cloudflare-audit] FAIL: missing route api.skincos.com.br/* -> skincos-api" >&2; fail=1; }
-  echo "$routes" | rg -q '^api\.skincos\.com\.br/insumos/\* -> skincos-insumos$' || { echo "[cloudflare-audit] FAIL: missing route api.skincos.com.br/insumos/* -> skincos-insumos" >&2; fail=1; }
+  echo "$routes" | grep -Eq '^api\.skincos\.com\.br/\* -> skincos-api$' || { echo "[cloudflare-audit] FAIL: missing route api.skincos.com.br/* -> skincos-api" >&2; fail=1; }
+  echo "$routes" | grep -Eq '^api\.skincos\.com\.br/insumos/\* -> skincos-insumos$' || { echo "[cloudflare-audit] FAIL: missing route api.skincos.com.br/insumos/* -> skincos-insumos" >&2; fail=1; }
 fi
 
 echo "[cloudflare-audit] Checking Pages build filters..."
-pi="$(cf_get_json "https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${pages_project}" | jq -r '.result.source.config.path_includes[]?' || true)"
-if [[ "$pi" != "frontend/**" ]]; then
-  echo "[cloudflare-audit] FAIL: Pages path_includes is not frontend/** (got: ${pi:-<empty>})" >&2
+pi_all="$(cf_get_json "https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${pages_project}" | jq -r '.result.source.config.path_includes[]?' || true)"
+if ! echo "$pi_all" | grep -Eq '^frontend/\*\*$'; then
+  echo "[cloudflare-audit] FAIL: Pages path_includes missing frontend/** (got: ${pi_all:-<empty>})" >&2
   fail=1
 else
   echo "[cloudflare-audit] OK: Pages path_includes=frontend/**"
@@ -87,4 +87,3 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 echo "[cloudflare-audit] Result: OK"
-
