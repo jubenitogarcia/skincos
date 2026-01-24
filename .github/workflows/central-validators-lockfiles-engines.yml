@@ -32,6 +32,8 @@ jobs:
       - name: Node version checks
         run: |
           set -euxo pipefail
+          echo "Installing semver globally for engines.node validation..."
+          npm install -g semver@7
           echo "Checking package.json engines and lockfiles..."
           mapfile -t PKGS < <(git ls-files | grep -E '(^|/)package.json$')
           for p in "${PKGS[@]}"; do
