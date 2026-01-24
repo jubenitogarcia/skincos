@@ -120,6 +120,7 @@ export class RateLimiter {
     constructor(state, env) {
         this.state = state;
         this.env = env;
+        this._cache = new Map();
     }
 
     async fetch(request) {
@@ -131,9 +132,45 @@ export class RateLimiter {
         const bucket = Math.floor(nowSec / windowSec);
         const storageKey = `rl:${key}:${bucket}`;
 
-        const current = (await this.state.storage.get(storageKey)) || 0;
-        const next = current + 1;
-        await this.state.storage.put(storageKey, next, { expirationTtl: windowSec * 2 });
+        const nowMs = Date.now();
+        const bucketExpiresAtMs = (bucket + 2) * windowSec * 1000;
+
+        let entry = this._cache.get(storageKey);
+        if (!entry || entry.expiresAtMs <= nowMs) {
+            const current = (await this.state.storage.get(storageKey)) || 0;
+            entry = {
+                count: Number(current) || 0,
+                lastPersistAtMs: 0,
+                expiresAtMs: bucketExpiresAtMs,
+            };
+            this._cache.set(storageKey, entry);
+        }
+
+        const next = (entry.count += 1);
+
+        // Persist less frequently to reduce `rows_written`.
+        // Heuristic: keep at most ~4 writes/window under steady load.
+        const persistEvery = Math.max(1, Math.floor(limit / 4));
+        const persistIntervalMs = 15_000;
+        const shouldPersist =
+            next === 1 ||
+            next % persistEvery === 0 ||
+            next >= limit ||
+            (entry.lastPersistAtMs && nowMs - entry.lastPersistAtMs >= persistIntervalMs);
+
+        if (shouldPersist) {
+            await this.state.storage.put(storageKey, next, { expirationTtl: windowSec * 2 });
+            entry.lastPersistAtMs = nowMs;
+        }
+
+        // Best-effort cache pruning (avoid unbounded growth).
+        if (this._cache.size > 500) {
+            let scanned = 0;
+            for (const [k, v] of this._cache) {
+                if (v.expiresAtMs <= nowMs) this._cache.delete(k);
+                if (++scanned >= 50) break;
+            }
+        }
 
         const allowed = next <= limit;
         return new Response(JSON.stringify({ allowed, limit, remaining: Math.max(0, limit - next) }), {
@@ -1250,10 +1287,9 @@ export default {
                 read: { limit: 240 },
                 write: { limit: 60 }
             }[kind] || { limit: 120 };
-            const key = `${ip}:${kind}`;
             const id = env.RATE_LIMITER.idFromName(ip);
             const stub = env.RATE_LIMITER.get(id);
-            const res = await stub.fetch(`https://rl/?key=${encodeURIComponent(key)}&limit=${cfg.limit}&window=${windowSec}`);
+            const res = await stub.fetch(`https://rl/?key=${encodeURIComponent(kind)}&limit=${cfg.limit}&window=${windowSec}`);
             const data = await res.json().catch(() => ({}));
             if (!data.allowed) {
                 return { allowed: false, limit: data.limit ?? cfg.limit, remaining: data.remaining ?? 0 };
