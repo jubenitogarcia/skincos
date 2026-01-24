@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# NOTE: This file is generated/managed by repo automation.
+
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
 . "$ROOT_DIR/backend/scripts/node_pkg.sh"
@@ -142,4 +144,3 @@ case "$cmd" in
     exit 1
     ;;
 esac
-

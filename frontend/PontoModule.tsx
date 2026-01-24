@@ -8,8 +8,8 @@ import { Label } from '@/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
-import * as faceapi from '@vladmandic/face-api'
-import '@tensorflow/tfjs'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import * as QRCode from 'qrcode'
 
 type ApiError = { ok?: boolean; error?: string; message?: string; code?: string }
 
@@ -101,7 +101,10 @@ async function apiJson<T>(
   }
   if (res.ok) return json as T
   const err = (json || {}) as ApiError
-  throw new Error(err.error || err.message || `HTTP ${res.status}`)
+  const e = new Error(err.error || err.message || `HTTP ${res.status}`)
+  ;(e as any).details = json
+  ;(e as any).status = res.status
+  throw e
 }
 
 async function apiBlob(path: string, opts: { adminToken?: string; signal?: AbortSignal } = {}): Promise<Blob> {
@@ -119,11 +122,24 @@ async function apiBlob(path: string, opts: { adminToken?: string; signal?: Abort
   return await res.blob()
 }
 
+let faceLibPromise: Promise<any> | null = null
 let faceInitPromise: Promise<void> | null = null
+
+async function getFaceApi() {
+  if (faceLibPromise) return faceLibPromise
+  faceLibPromise = (async () => {
+    await import('@tensorflow/tfjs')
+    const mod: any = await import('@vladmandic/face-api')
+    return mod
+  })()
+  return faceLibPromise
+}
+
 async function ensureFaceModels() {
   if (faceInitPromise) return faceInitPromise
   faceInitPromise = (async () => {
-    const tf = (faceapi as any).tf as any
+    const faceapi = await getFaceApi()
+    const tf = faceapi?.tf as any
     if (tf?.setBackend) {
       try { await tf.setBackend('webgl') } catch { /* ignore */ }
       await tf.ready()
@@ -153,12 +169,32 @@ function stopCamera(stream: MediaStream | null) {
 
 async function captureDescriptor(videoEl: HTMLVideoElement) {
   await ensureFaceModels()
+  const faceapi = await getFaceApi()
   const detection = await faceapi
     .detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
     .withFaceLandmarks()
     .withFaceDescriptor()
+  const score = detection?.detection?.score
   if (!detection?.descriptor) throw new Error('Nenhum rosto detectado')
+  if (typeof score === 'number' && score < 0.7) throw new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
   return Array.from(detection.descriptor)
+}
+
+async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220) {
+  const n = Math.max(1, Math.min(4, samples))
+  const all: number[][] = []
+  for (let i = 0; i < n; i++) {
+    all.push(await captureDescriptor(videoEl))
+    if (i < n - 1) await new Promise(r => setTimeout(r, waitMs))
+  }
+  if (all.length === 1) return all[0]
+  const len = all[0].length
+  const out = new Array(len).fill(0)
+  for (const d of all) {
+    for (let i = 0; i < len; i++) out[i] += d[i]
+  }
+  for (let i = 0; i < len; i++) out[i] /= all.length
+  return out
 }
 
 export function PontoModule() {
@@ -183,6 +219,7 @@ export function PontoModule() {
 
   const [deviceStatus, setDeviceStatus] = useState<{ ok: boolean; unit?: string; device?: PontoDevicePublic } | null>(null)
   const [deviceEmployees, setDeviceEmployees] = useState<Array<{ id: string; name: string; code?: string; hasFace?: boolean; pinSet?: boolean }>>([])
+  const [deviceConfig, setDeviceConfig] = useState<any>(null)
   const [identifyResult, setIdentifyResult] = useState<{
     match: { employeeId: string; name: string; distance: number } | null
     bestDistance: number | null
@@ -211,6 +248,12 @@ export function PontoModule() {
   const [newDeviceUnit, setNewDeviceUnit] = useState('')
   const [newDeviceLabel, setNewDeviceLabel] = useState('')
   const [newDeviceTokenOnce, setNewDeviceTokenOnce] = useState<string | null>(null)
+  const [newDeviceTokenQr, setNewDeviceTokenQr] = useState<string | null>(null)
+
+  const [qrScanOpen, setQrScanOpen] = useState(false)
+  const [qrScanError, setQrScanError] = useState<string | null>(null)
+  const qrVideoRef = useRef<HTMLVideoElement | null>(null)
+  const qrControlsRef = useRef<any>(null)
 
   const [recordsFrom, setRecordsFrom] = useState('')
   const [recordsTo, setRecordsTo] = useState('')
@@ -233,6 +276,83 @@ export function PontoModule() {
       setCameraOwner(null)
     }
   }, [stream])
+
+  useEffect(() => {
+    let alive = true
+    setNewDeviceTokenQr(null)
+    const val = String(newDeviceTokenOnce || '').trim()
+    if (!val) return () => { alive = false }
+    void (async () => {
+      try {
+        const url = await QRCode.toDataURL(val, { errorCorrectionLevel: 'M', margin: 1, width: 420 })
+        if (!alive) return
+        setNewDeviceTokenQr(url)
+      } catch {
+        if (!alive) return
+        setNewDeviceTokenQr(null)
+      }
+    })()
+    return () => { alive = false }
+  }, [newDeviceTokenOnce])
+
+  const stopQrScan = React.useCallback(() => {
+    try {
+      qrControlsRef.current?.stop?.()
+    } catch { /* ignore */ }
+    qrControlsRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!qrScanOpen) {
+      stopQrScan()
+      setQrScanError(null)
+      return
+    }
+
+    stopCamera(stream)
+    setStream(null)
+    setCameraOwner(null)
+
+    let alive = true
+    setQrScanError(null)
+    void (async () => {
+      try {
+        const mod: any = await import('@zxing/browser')
+        const Reader = mod?.BrowserMultiFormatReader
+        if (!Reader) throw new Error('Scanner indisponível.')
+        const reader = new Reader()
+        const video = qrVideoRef.current
+        if (!video) throw new Error('Pré-visualização indisponível.')
+        const controls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: 'environment' } } } as any,
+          video,
+          (result: any) => {
+            if (!alive) return
+            const raw = result?.getText ? String(result.getText() || '') : ''
+            if (!raw) return
+            stopQrScan()
+            setDeviceToken(raw.trim())
+            setQrScanOpen(false)
+            toast.success('Token preenchido via QR')
+          }
+        )
+        if (!alive) {
+          try { controls?.stop?.() } catch { /* ignore */ }
+          return
+        }
+        qrControlsRef.current = controls
+      } catch (e: any) {
+        if (!alive) return
+        const msg = e?.message || 'Não foi possível iniciar o scanner. Verifique a permissão de câmera.'
+        setQrScanError(msg)
+      }
+    })()
+
+    return () => {
+      alive = false
+      stopQrScan()
+    }
+  }, [qrScanOpen, stopQrScan, stream])
 
   async function ensureModelsUI() {
     if (modelsReady === 'ready') return true
@@ -277,17 +397,19 @@ export function PontoModule() {
     if (!deviceToken.trim()) return toast.error('Informe o token do dispositivo')
     setLoading(true)
     try {
-      const res = await apiJson<{ ok: boolean; unit: string; device: PontoDevicePublic; data: any[] }>(
+      const res = await apiJson<{ ok: boolean; unit: string; device: PontoDevicePublic; config?: any; data: any[] }>(
         '/api/ponto/device/employees',
         { deviceToken }
       )
       setDeviceStatus({ ok: true, unit: res.unit, device: res.device })
       setDeviceEmployees(res.data || [])
+      setDeviceConfig(res.config || null)
       if (!pinEmployeeId && (res.data || []).length) setPinEmployeeId(res.data[0].id)
       toast.success('Dispositivo autenticado')
     } catch (e: any) {
       setDeviceStatus({ ok: false })
       setDeviceEmployees([])
+      setDeviceConfig(null)
       toast.error(e?.message || String(e))
     } finally {
       setLoading(false)
@@ -317,7 +439,7 @@ export function PontoModule() {
           }>('/api/ponto/device/identify', {
             deviceToken,
             method: 'POST',
-            body: { descriptor, threshold: 0.52 }
+            body: { descriptor, threshold: deviceConfig?.faceThresholdDefault ?? 0.52 }
           })
           setIdentifyResult({ match: res.match, bestDistance: res.bestDistance, threshold: res.threshold })
         } catch {
@@ -329,7 +451,7 @@ export function PontoModule() {
       alive = false
       clearInterval(interval)
     }
-  }, [autoIdentify, cameraOwner, deviceToken, stream, tab])
+  }, [autoIdentify, cameraOwner, deviceConfig, deviceToken, stream, tab])
 
   async function devicePunchFace() {
     if (!deviceToken.trim()) return toast.error('Informe o token do dispositivo')
@@ -341,15 +463,25 @@ export function PontoModule() {
 
     setLoading(true)
     try {
-      const descriptor = await captureDescriptor(videoEl)
+      if (identifyResult?.match?.name) {
+        const okConfirm = window.confirm(`Confirmar registrar o ponto agora?\n\nReconhecido: ${identifyResult.match.name}`)
+        if (!okConfirm) return
+      }
+      const descriptor = await captureDescriptorStable(videoEl, 2, 220)
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/device/punch/face',
-        { deviceToken, method: 'POST', body: { descriptor, ...meta, liveness: { mode: 'device-ui', ok: true, detail: 'multi-sample' } } }
+        { deviceToken, method: 'POST', body: { descriptor, ...meta, liveness: { mode: 'multi-sample', ok: true, detail: 'samples=2;avg' } } }
       )
       toast.success(`Ponto registrado: ${res.data.employeeName} (${res.data.type})`)
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const details = e?.details as any
+      const code = String(details?.error || e?.message || '')
+      if (code === 'COOLDOWN') {
+        toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
     } finally {
       setLoading(false)
     }
@@ -370,7 +502,17 @@ export function PontoModule() {
       setPinValue('')
       toast.success(`Ponto registrado: ${res.data.employeeName} (${res.data.type})`)
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const details = e?.details as any
+      const code = String(details?.error || e?.message || '')
+      if (code === 'PIN_LOCKED') {
+        toast.error(`PIN bloqueado. Aguarde ${details?.secondsRemaining || '?'}s e tente novamente.`)
+      } else if (code === 'PIN_INVALID') {
+        toast.error(`PIN inválido${typeof details?.remaining === 'number' ? ` • tentativas restantes: ${details.remaining}` : ''}`)
+      } else if (code === 'COOLDOWN') {
+        toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
     } finally {
       setLoading(false)
     }
@@ -456,7 +598,7 @@ export function PontoModule() {
 
     try {
       for (let i = 0; i < total; i++) {
-        const d = await captureDescriptor(videoEl)
+        const d = await captureDescriptorStable(videoEl, 2, 180)
         descriptors.push(d)
         setEnrollProgress({ total, done: i + 1 })
         await new Promise(r => setTimeout(r, 650))
@@ -622,6 +764,22 @@ export function PontoModule() {
                 <div className="flex items-end gap-2">
                   <Button onClick={deviceConnect} disabled={loading}>Conectar</Button>
                   <Button variant="outline" onClick={() => setDeviceToken('')} disabled={loading}>Limpar</Button>
+                  <Dialog open={qrScanOpen} onOpenChange={setQrScanOpen}>
+                    <Button variant="secondary" onClick={() => setQrScanOpen(true)} disabled={loading}>Ler QR</Button>
+                    <DialogContent className="max-w-xl">
+                      <DialogHeader>
+                        <DialogTitle>Ler token por QR</DialogTitle>
+                        <DialogDescription>Aponte a câmera para o QR do token do dispositivo.</DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-2">
+                        {qrScanError ? <div className="text-sm text-red-600">{qrScanError}</div> : null}
+                        <video ref={qrVideoRef} className="w-full rounded-lg border bg-black" playsInline muted />
+                      </div>
+                      <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={() => { setQrScanOpen(false); stopQrScan() }}>Fechar</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
 
@@ -630,6 +788,9 @@ export function PontoModule() {
                   <Badge>Unidade: {deviceStatus.unit || '-'}</Badge>
                   <Badge variant="secondary">Dispositivo: {deviceStatus.device?.label || deviceStatus.device?.id || '-'}</Badge>
                   <Badge variant="outline">Funcionários: {deviceEmployees.length}</Badge>
+                  {deviceConfig?.punchCooldownSeconds ? (
+                    <Badge variant="outline">Cooldown: {String(deviceConfig.punchCooldownSeconds)}s</Badge>
+                  ) : null}
                 </div>
               ) : deviceStatus?.ok === false ? (
                 <div className="text-sm text-red-600">Dispositivo não autenticado.</div>
@@ -924,6 +1085,12 @@ export function PontoModule() {
                     <div className="rounded-md border p-3 space-y-2">
                       <div className="text-sm">Token (mostrado uma única vez):</div>
                       <div className="font-mono text-sm break-all">{newDeviceTokenOnce}</div>
+                      {newDeviceTokenQr ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <img src={newDeviceTokenQr} alt="QR do token" className="w-56 h-56 rounded-md border" />
+                          <div className="text-xs text-muted-foreground">Escaneie no telefone do relógio para preencher o token.</div>
+                        </div>
+                      ) : null}
                       <div className="flex gap-2">
                         <Button
                           variant="outline"
@@ -1031,4 +1198,3 @@ export function PontoModule() {
     </div>
   )
 }
-

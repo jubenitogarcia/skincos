@@ -141,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           credentials: 'include',
           body: JSON.stringify({ email: email.trim(), password })
         },
-        20000
+        45000
       ).catch((e: any) => {
         if (e?.name === 'AbortError') throw new Error('Tempo limite ao fazer login. Tente novamente.')
         throw e
@@ -185,7 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           credentials: 'include',
           body: JSON.stringify({ name: name.trim(), email: email.trim(), password, token: inviteToken.trim() })
         },
-        20000
+        45000
       ).catch((e: any) => {
         if (e?.name === 'AbortError') throw new Error('Tempo limite ao criar a conta. Tente novamente.')
         throw e
