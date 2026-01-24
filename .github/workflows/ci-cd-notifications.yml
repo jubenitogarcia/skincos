@@ -17,6 +17,7 @@ on:
       - deploy
     types:
       - completed
+  workflow_dispatch:
 
 jobs:
   notify:
