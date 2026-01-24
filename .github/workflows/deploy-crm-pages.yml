@@ -23,6 +23,7 @@ jobs:
         env:
           ENABLE: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           if [[ "${ENABLE:-}" != "true" ]]; then
@@ -30,8 +31,8 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-            echo "CLOUDFLARE_API_TOKEN not configured; skipping deploy."
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Cloudflare deploy secrets not configured; skipping deploy."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
