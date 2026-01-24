@@ -21,6 +21,7 @@ Para o CRM conseguir chamar `/api/*` em produção (sem precisar de um Node serv
 Obs:
 - O deploy do Pages (incluindo `functions/`) pode acontecer automaticamente via integração Git↔Cloudflare Pages **ou**
 - via GitHub Actions + `wrangler` (workflow `.github/workflows/deploy-crm-pages.yml`, requer `secrets.CLOUDFLARE_API_TOKEN`, `secrets.CLOUDFLARE_ACCOUNT_ID` e `vars.ENABLE_CRM_PAGES_DEPLOY=true`).
+- Recomendação: configure o Pages com `path_includes=["frontend/**"]` para não rebuildar/redeployar quando só o backend mudar.
 
 ## Backend (Insumos) → `api.skincos.com.br/insumos/*`
 
