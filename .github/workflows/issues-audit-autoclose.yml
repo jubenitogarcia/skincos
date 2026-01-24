@@ -16,6 +16,19 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
+      - name: Update system and essential tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get upgrade -y
+          sudo apt-get install -y jq curl git
+          # Atualizar o GitHub CLI (gh) para a versão mais recente
+          type -p gh && gh --version
+          sudo apt-get remove -y gh || true
+          type -p gh && gh --version || true
+          type -p curl && curl --version
+          # Instalação oficial do gh
+          type -p gh || (type -p curl && sudo mkdir -p -m 755 /etc/apt/keyrings && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y && sudo apt-get install -y gh)
+          gh --version
       - name: Ensure jq
         run: |
           sudo apt-get update -y && sudo apt-get install -y jq
