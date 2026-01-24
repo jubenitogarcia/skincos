@@ -36,6 +36,8 @@ Este é o “mapa rápido” do `backend/`: o que existe, onde está e como exec
   - Runner: `./backend/scripts/dev.sh sprinta legacy|v2 ...`
 - Scheduled Posting (Python): `backend/apps/automations/scheduled_posting/`
   - Runner: `./backend/scripts/dev.sh scheduled-posting`
+- Cloudflare Workers (produção): `backend/apps/api` e `backend/apps/insumos`
+  - Deploy: `./backend/scripts/cloudflare-workers.sh deploy-all`
 
 ## Configuração (sem segredos no git)
 - Templates: `backend/config/templates/modules/*`
@@ -45,6 +47,10 @@ Este é o “mapa rápido” do `backend/`: o que existe, onde está e como exec
 
 ## Dependências Node (backend)
 Ver `backend/docs/NODE_PACKAGE_MANAGEMENT.md`.
+
+## Deploy (produção)
+- Visão geral: `backend/docs/deploy.md`
+- Mapa completo (Cloudflare + serviços): `backend/docs/DEPLOYMENT_MAP.md`
 
 ## Testes
 - Unit tests (pytest): `python3 -m pytest backend/tests/unit`
