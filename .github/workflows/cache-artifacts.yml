@@ -1,0 +1,76 @@
+name: CI/CD Cache & Artifacts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  js-ts-cache:
+    name: JS/TS Cache & Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+      - name: Cache node_modules by lockfile
+        uses: actions/cache@v4
+        with:
+          path: |
+            **/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      - name: Install dependencies (all projects)
+        run: |
+          set -euxo pipefail
+          mapfile -t PKGS < <(git ls-files | grep -E '(^|/)package.json$')
+          for p in "${PKGS[@]}"; do
+            dir=$(dirname "$p")
+            if [ -f "$dir/package-lock.json" ] || [ -f "$dir/pnpm-lock.yaml" ] || [ -f "$dir/yarn.lock" ]; then
+              (cd "$dir" && npm install --no-audit --no-fund)
+            fi
+          done
+      - name: Upload build artifacts (if any)
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-ts-build-artifacts
+          path: |
+            **/dist
+            **/build
+            **/.next
+            **/out
+            !**/node_modules
+
+  python-cache:
+    name: Python Cache & Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install dev dependencies
+        run: |
+          python -m pip install -r backend/requirements-dev.txt
+      - name: Upload Python build/test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-artifacts
+          path: |
+            backend/**/dist
+            backend/**/build
+            backend/**/logs
+            backend/**/coverage*
+            !**/__pycache__

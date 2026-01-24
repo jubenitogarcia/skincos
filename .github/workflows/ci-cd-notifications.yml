@@ -1,0 +1,49 @@
+name: CI/CD Notifications
+
+description: >
+  Notifica falhas e sucessos críticos de CI/CD para Slack e/ou Teams.
+
+on:
+  workflow_run:
+    workflows:
+      - Security & Secrets Audit
+      - Test Coverage & Quality
+      - Lint, Format & Static Analysis
+      - CI/CD Cache & Artifacts
+      - Docs & Changelog Automation
+      - central-validators-lockfiles-engines
+      - auto-next-steps
+      - build
+      - deploy
+    types:
+      - completed
+
+jobs:
+  notify:
+    name: Notificar CI/CD
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notificar no Slack
+        if: ${{ always() && env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "Workflow `${{ github.workflow }}` finalizado: *${{ github.event.workflow_run.conclusion }}*\nRepositório: ${{ github.repository }}\nBranch: ${{ github.event.workflow_run.head_branch }}\nAutor: ${{ github.event.workflow_run.head_commit.author.name }}\nCommit: ${{ github.event.workflow_run.head_commit.message }}\nVeja detalhes: ${{ github.event.workflow_run.html_url }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      - name: Notificar no Teams
+        if: ${{ always() && env.TEAMS_WEBHOOK_URL != '' }}
+        uses: aliencube/microsoft-teams-actions@v1
+        with:
+          webhook-uri: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          title: CI/CD Workflow
+          summary: "${{ github.workflow }} finalizado: ${{ github.event.workflow_run.conclusion }}"
+          text: |
+            Workflow `${{ github.workflow }}` finalizado: *${{ github.event.workflow_run.conclusion }}*
+            Repositório: ${{ github.repository }}
+            Branch: ${{ github.event.workflow_run.head_branch }}
+            Autor: ${{ github.event.workflow_run.head_commit.author.name }}
+            Commit: ${{ github.event.workflow_run.head_commit.message }}
+            Veja detalhes: ${{ github.event.workflow_run.html_url }}
