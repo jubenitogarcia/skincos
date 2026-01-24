@@ -3,9 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
 import { Badge } from '@/badge'
 import { ScrollArea } from '@/scroll-area'
-import { 
-  MagnifyingGlass, 
-  WifiHigh, 
+import {
+  MagnifyingGlass,
+  WifiHigh,
   DeviceMobile,
   CheckCircle,
   XCircle,
@@ -65,7 +65,7 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
     setIsScanning(true)
     setScanProgress(0)
     setCameras([])
-    
+
     onLog?.('INFO', 'Starting network discovery for compatible cameras...')
     toast.info('Scanning network for cameras...')
 
@@ -86,13 +86,13 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
 
     // Simulate found cameras
     await new Promise(resolve => setTimeout(resolve, 500))
-    
+
     const foundCameras = simulatedCameras.slice(0, Math.floor(Math.random() * 3) + 1)
     setCameras(foundCameras)
-    
+
     onLog?.('INFO', `Discovery found ${foundCameras.length} camera(s)`)
     toast.success(`Found ${foundCameras.length} camera(s)`)
-    
+
     setIsScanning(false)
     setScanProgress(0)
   }
@@ -124,16 +124,16 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
   const refreshToken = async (cameraId: string) => {
     onLog?.('INFO', `Attempting to refresh token for camera ${cameraId}`)
     toast.info('Refreshing camera token...')
-    
+
     // Simulate token refresh
     await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    setCameras(prev => prev.map(cam => 
-      cam.id === cameraId 
+
+    setCameras(prev => prev.map(cam =>
+      cam.id === cameraId
         ? { ...cam, token: Math.random().toString(36).substring(2, 34) }
         : cam
     ))
-    
+
     onLog?.('INFO', 'Token refreshed successfully')
     toast.success('Token refreshed')
   }
@@ -151,8 +151,8 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
           <p className="text-sm text-muted-foreground">
             Scan your network for compatible cameras
           </p>
-          <Button 
-            onClick={startDiscovery} 
+          <Button
+            onClick={startDiscovery}
             disabled={isScanning}
             size="sm"
           >
@@ -173,8 +173,8 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
         {isScanning && (
           <div className="space-y-2">
             <div className="w-full bg-muted rounded-full h-2">
-              <div 
-                className="bg-primary h-2 rounded-full transition-all duration-300 ease-out" 
+              <div
+                className="bg-primary h-2 rounded-full transition-all duration-300 ease-out"
                 style={{ width: `${scanProgress}%` }}
               />
             </div>
@@ -190,8 +190,8 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
             <ScrollArea className="max-h-64">
               <div className="space-y-2">
                 {cameras.map((camera) => (
-                  <div 
-                    key={camera.id} 
+                  <div
+                    key={camera.id}
                     className="flex items-center justify-between p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
                   >
                     <div className="flex items-center gap-3">
@@ -216,16 +216,16 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
                     </div>
                     <div className="flex items-center gap-2">
                       {!camera.token && (
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => refreshToken(camera.id)}
                         >
                           Get Token
                         </Button>
                       )}
-                      <Button 
-                        variant="default" 
+                      <Button
+                        variant="default"
                         size="sm"
                         onClick={() => selectCamera(camera)}
                         disabled={camera.status === 'offline'}

@@ -141,25 +141,27 @@ O webhook envia **12 campos completos**:
 ```bash
 curl -I http://localhost:5678/webhook/sprinta
 ```
+🔗 URL: ${WEBHOOK_URL}
+🔒 Autenticação: Basic Auth (usuário: ${WEBHOOK_USER})
 
 ### Teste manual com curl:
-```bash
-curl -X POST \
-  -u "novohamburgo@espacofacial.com.br:tavpyw-gehgeP-7fytfy" \
-  -H "Content-Type: application/json" \
-  -d '{"test": "data"}' \
-  http://localhost:5678/webhook/sprinta
-```
+    "redirectUrl": "<PREENCHER_COM_ENV:REDIRECT_URL>",
+    "email": "<PREENCHER_COM_ENV:EMAIL>",
+    "telefone": "<PREENCHER_COM_ENV:TELEFONE>",
+    "cpf": "<PREENCHER_COM_ENV:CPF>",
+    "corrida": "<PREENCHER_COM_ENV:CORRIDA>",
+    "dataNascimento": "<PREENCHER_COM_ENV:DATA_NASCIMENTO>",
+    "tamanho": "<PREENCHER_COM_ENV:TAMANHO>"
 
 ### Teste com Python:
-```bash
-python test_webhook_quick.py
-```
-
----
+| Secret Name | Value |
+|-------------|-------|
+| `WEBHOOK_URL` | `${WEBHOOK_URL}` |
+| `WEBHOOK_USER` | `${WEBHOOK_USER}` |
+| `WEBHOOK_PASSWORD` | `${WEBHOOK_PASSWORD}` |
 
 ## 📊 Status Atual
-
+  -u "${WEBHOOK_USER}:${WEBHOOK_PASSWORD}" \
 | Componente | Status | Observação |
 |------------|--------|------------|
 | Código Python | ✅ Pronto | Basic Auth implementado |

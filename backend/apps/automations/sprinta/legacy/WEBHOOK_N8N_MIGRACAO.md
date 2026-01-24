@@ -4,16 +4,16 @@
 
 ### Antes (Wix):
 ```
-URL: https://manage.wix.com/_api/webhook-trigger/report/4e65b86c-5428-4b90-aa76-564e5185bb93/e19eb522-0ffd-4c88-bab0-f06837221b5f
-Autenticação: Token no URL
+URL: <PREENCHER_COM_ENV:WEBHOOK_URL>
+Autenticação: Token no URL (usar variável de ambiente)
 ```
 
 ### Depois (n8n Local):
 ```
-URL: http://localhost:5678/webhook/sprinta
+URL: ${WEBHOOK_URL}
 Autenticação: Basic Auth
-User: novohamburgo@espacofacial.com.br
-Senha: tavpyw-gehgeP-7fytfy
+User: ${WEBHOOK_USER}
+Senha: ${WEBHOOK_PASSWORD}
 ```
 
 ---
@@ -86,7 +86,7 @@ python test_webhook_quick.py
 
 **Autenticação:**
 ```
-🔐 Basic Auth (usuário: novohamburgo@espacofacial.com.br)
+🔒 Basic Auth (usuário: ${WEBHOOK_USER})
 ```
 
 **Resultado:**
@@ -114,14 +114,14 @@ Webhook:
 ├─ HTTP Method: POST
 ├─ Path: sprinta
 ├─ Authentication: Basic Auth
-│  ├─ User: novohamburgo@espacofacial.com.br
-│  └─ Password: tavpyw-gehgeP-7fytfy
+│  ├─ User: ${WEBHOOK_USER}
+│  └─ Password: ${WEBHOOK_PASSWORD}
 └─ Response: Immediately
 ```
 
 **URL resultante:**
 ```
-http://localhost:5678/webhook/sprinta
+${WEBHOOK_URL}
 ```
 
 ### Passo 3: Processar Dados Recebidos
@@ -154,22 +154,22 @@ O n8n receberá este payload:
 {
   "headers": {
     "content-type": "application/json",
-    "authorization": "Basic bm92b2hhbWJ1cmd...",
+    "authorization": "Basic <PREENCHER_COM_ENV:WEBHOOK_AUTH>",
     "user-agent": "Sprinta-Automation/2.0"
   },
   "body": {
     "submissionId": "inscricao_2025-10-05T18-45-30_idf3da204f_linha3",
     "success": true,
-    "redirectUrl": "https://checkout.sprinta.com.br/v27310473FctPA32SzolNIrs",
+    "redirectUrl": "<PREENCHER_COM_ENV:REDIRECT_URL>",
     "nome": "João",
     "sobrenome": "Silva Santos",
-    "email": "joao.silva@espacofacial.com.br",
-    "telefone": "51999887766",
-    "cpf": "12345678900",
+    "email": "<PREENCHER_COM_ENV:EMAIL>",
+    "telefone": "<PREENCHER_COM_ENV:TELEFONE>",
+    "cpf": "<PREENCHER_COM_ENV:CPF>",
     "genero": "Masculino",
-    "corrida": "5K Espaço Facial",
-    "dataNascimento": "15/03/1990",
-    "tamanho": "G"
+    "corrida": "<PREENCHER_COM_ENV:CORRIDA>",
+    "dataNascimento": "<PREENCHER_COM_ENV:DATA_NASCIMENTO>",
+    "tamanho": "<PREENCHER_COM_ENV:TAMANHO>"
   }
 }
 ```
@@ -260,22 +260,17 @@ Para usar no GitHub Actions, adicionar 3 secrets:
 
 ### 1. WEBHOOK_URL
 ```
-http://localhost:5678/webhook/sprinta
-```
-
-⚠️ **IMPORTANTE:** Se o n8n estiver em outro servidor, usar a URL pública:
-```
-https://seu-dominio.com/webhook/sprinta
+${WEBHOOK_URL}  # Defina via variável de ambiente/secret
 ```
 
 ### 2. WEBHOOK_USER
 ```
-novohamburgo@espacofacial.com.br
+${WEBHOOK_USER}  # Defina via variável de ambiente/secret
 ```
 
 ### 3. WEBHOOK_PASSWORD
 ```
-tavpyw-gehgeP-7fytfy
+${WEBHOOK_PASSWORD}  # Defina via variável de ambiente/secret
 ```
 
 ---
@@ -308,7 +303,7 @@ O script automaticamente usará as variáveis de ambiente.
 
 ### Teste 1: Verificar se servidor está online
 ```bash
-curl -I http://localhost:5678/webhook/sprinta
+curl -I "${WEBHOOK_URL}"
 ```
 
 **Resultado esperado:**
@@ -323,10 +318,10 @@ HTTP/1.1 401 Unauthorized  (workflow ativo, mas sem auth)
 ### Teste 2: Teste com autenticação
 ```bash
 curl -X POST \
-  -u "novohamburgo@espacofacial.com.br:tavpyw-gehgeP-7fytfy" \
+  -u "${WEBHOOK_USER}:${WEBHOOK_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d '{"test": "data"}' \
-  http://localhost:5678/webhook/sprinta
+  "${WEBHOOK_URL}"
 ```
 
 **Resultado esperado (workflow ativo):**

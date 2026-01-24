@@ -435,8 +435,8 @@ export function APIExplorer() {
   const generateCurlCommand = (endpoint: APIEndpoint) => {
     let curl = `curl -X ${endpoint.method} "${window.location.origin}${endpoint.path}"`
 
-      if (endpoint.authentication === 'required') {
-        curl += ' \\\n  -H "Authorization: Bearer $API_TOKEN"'
+    if (endpoint.authentication === 'required') {
+      curl += ' \\\n  -H "Authorization: Bearer $API_TOKEN"'
     }
 
     curl += ' \\\n  -H "Content-Type: application/json"'

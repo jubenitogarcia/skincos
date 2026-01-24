@@ -38,8 +38,8 @@ class LocationMixin:
         params = {
             "latitude": lat,
             "longitude": lng,
-            # rankToken=c544eea5-726b-4091-a916-a71a35a76474 - self.uuid?
-            # fb_access_token=EAABwzLixnjYBABK2YBFkT...pKrjju4cijEGYtcbIyCSJ0j4ZD
+            # rankToken=<PREENCHER_COM_ENV:RANK_TOKEN> - self.uuid?
+            # fb_access_token=<PREENCHER_COM_ENV:FB_ACCESS_TOKEN>
         }
         result = self.private_request("location_search/", params=params)
         locations = []
