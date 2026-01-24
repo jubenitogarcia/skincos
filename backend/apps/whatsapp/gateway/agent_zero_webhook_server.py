@@ -23,7 +23,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
 
-SECRET = os.getenv("WHATSAPP_WEBHOOK_SECRET", "AGZ_SECRET_123")
+SECRET = os.getenv("WHATSAPP_WEBHOOK_SECRET")
 PORT = int(os.getenv("PORT", "4000"))
 
 app = FastAPI(title="Agent-Zero Webhook Receiver", version="1.0.0")

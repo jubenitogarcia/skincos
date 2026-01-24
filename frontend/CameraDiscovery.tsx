@@ -39,7 +39,7 @@ export function CameraDiscovery({ onCameraSelect, onLog }: CameraDiscoveryProps)
       name: 'Smart IP Camera 360',
       ip: '192.168.1.101',
       model: 'mjsxj05cm',
-      token: '48a5b5073a2e4d2c8c2e6f1d4e5a3b7c',
+      token: process.env.CAMERA_DISCOVERY_TOKEN || '',
       status: 'online',
       lastSeen: 'Just now'
     },

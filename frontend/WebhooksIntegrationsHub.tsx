@@ -183,7 +183,7 @@ export function WebhooksIntegrationsHub() {
           },
           events: ["lead.created", "lead.updated"],
           isActive: true,
-          secret: "whsec_1234567890",
+          secret: process.env.WEBHOOK_SECRET || "",
           retryAttempts: 3,
           timeoutSeconds: 30,
           createdAt: "2024-01-15T10:00:00Z",
@@ -197,7 +197,7 @@ export function WebhooksIntegrationsHub() {
           id: "2",
           name: "Slack Notifications",
           description: "Envia notificações para canal do Slack",
-          url: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+          url: process.env.SLACK_WEBHOOK_URL || "",
           method: "POST",
           headers: {
             "Content-Type": "application/json"

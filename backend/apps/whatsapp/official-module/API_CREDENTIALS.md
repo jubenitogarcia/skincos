@@ -63,7 +63,7 @@ curl http://localhost:3001/api/endpoint?api_key=$WHATSAPP_API_KEY
 
 **Rate Limiting:**
 - Strict: 10 req/15min para APIs críticas
-- Moderate: 100 req/15min para APIs normais  
+- Moderate: 100 req/15min para APIs normais
 - Lenient: 1000 req/15min para consultas
 
 **IP Allowlist:**

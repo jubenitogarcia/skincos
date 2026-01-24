@@ -2926,7 +2926,7 @@ app.post('/api/email/templates/:id/send-test', async (req, res) => {
 // =================================================================
 
 const UNIFIED_SYSTEM_URL = 'http://localhost:3001'
-const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY || 'sk_prod_a7b8c9d0e1f2g3h4i5j6k7l8m9n0p1q2'
+const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY
 
 // Facade: GET /api/unified/status → Unified System /whatsapp/1/status (Legacy)
 app.get('/api/unified/status', async (req, res) => {
