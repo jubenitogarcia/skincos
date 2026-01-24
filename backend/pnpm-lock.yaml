@@ -8,6 +8,19 @@ importers:
 
   .: {}
 
+  apps/api:
+    dependencies:
+      bcryptjs:
+        specifier: ^2.4.3
+        version: 2.4.3
+      qrcode-generator:
+        specifier: ^1.4.4
+        version: 1.5.2
+    devDependencies:
+      wrangler:
+        specifier: ^3.22.4
+        version: 3.114.16
+
   apps/crm-api:
     dependencies:
       axios:

@@ -1,0 +1,37 @@
+name = "skincos-api"
+main = "workers/index.js"
+compatibility_date = "2024-11-20"
+routes = ["api.skincos.com.br/*"]
+
+[triggers]
+crons = ["0 * * * *"]
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[durable_objects.bindings]]
+name = "JOB_QUEUE"
+class_name = "JobQueue"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JobQueue"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-db"
+database_id = "13e59612-99ba-450e-9014-ddefbee72965"
+
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "skincos-backups"
+
+# IMPORTANT:
+# - Production vars/secrets should live in Cloudflare Dashboard.
+# - Deploy uses `--keep-vars` to avoid overwriting production configuration.
+

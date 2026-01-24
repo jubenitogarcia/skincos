@@ -1,0 +1,19 @@
+{
+  "name": "@skincos/api-worker",
+  "private": true,
+  "type": "module",
+  "description": "SKINCOS API (Cloudflare Worker) - shared implementation with insumos",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.toml",
+    "deploy": "wrangler deploy --config wrangler.toml --keep-vars",
+    "lint": "echo \"(todo)\""
+  },
+  "devDependencies": {
+    "wrangler": "^3.22.4"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "qrcode-generator": "^1.4.4"
+  }
+}
+

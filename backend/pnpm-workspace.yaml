@@ -1,5 +1,6 @@
 packages:
   # Simple Node apps (no nested workspaces)
+  - "apps/api"
   - "apps/crm-api"
   - "apps/insumos"
   - "apps/instagram/module"

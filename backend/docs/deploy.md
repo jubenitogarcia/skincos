@@ -26,6 +26,10 @@ Obs:
 
 É um **Cloudflare Worker** em `backend/apps/insumos`.
 
+## Backend (API) → `api.skincos.com.br/*`
+
+É um **Cloudflare Worker** em `backend/apps/api` (implementação compartilhada com `apps/insumos`).
+
 Workflow de deploy:
 - `.github/workflows/deploy-insumos-worker.yml`
 
