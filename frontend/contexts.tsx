@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useReplitAuth } from '@/useReplitAuth'
 import { logContextEvent } from '@/ContextDebugger'
 import { createAuthHook } from '@/createRequiredContextHook'
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   logContextEvent('AuthProvider', 'INITIALIZING', { timestamp: Date.now() })
   if (import.meta.env.DEV) console.log('[AuthProvider] 🚀 Initializing AuthProvider...')
 
+  const queryClient = useQueryClient()
   const replitAuth = useReplitAuth()
 
   logContextEvent('AuthProvider', 'REPLIT_AUTH_CALLED', {
@@ -53,6 +55,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = replitAuth?.isAuthenticated || false
   const shouldShowLoadingOverlay = isLoading && !isNoAuthMode()
   const [actionLoading, setActionLoading] = useState(false)
+  const AUTH_ME_QUERY_KEY = ['/api/insumos/auth/me']
+
+  const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(input, { ...init, signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
 
   const readJson = (text: string) => {
     try {
@@ -60,6 +73,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       return null
     }
+  }
+
+  const mapMeToAuthUser = (me: any): AuthUser | null => {
+    const insumosUser = me?.user || null
+    if (!insumosUser) return null
+    const email = String(insumosUser.email || '')
+    const id = String(insumosUser.username || insumosUser.email || '')
+    return {
+      id,
+      name: String(insumosUser.displayName || insumosUser.name || insumosUser.username || email || ''),
+      email,
+      createdAt: String(insumosUser.createdAt || new Date().toISOString()),
+      avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
+    }
+  }
+
+  const setAuthenticatedUserFromMe = (me: any) => {
+    const mapped = mapMeToAuthUser(me)
+    queryClient.setQueryData(AUTH_ME_QUERY_KEY, mapped)
   }
 
   const friendlyLoginError = (status: number, payload: any) => {
@@ -101,26 +133,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setActionLoading(true)
     try {
-      const res = await fetch('/api/insumos/auth/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email: email.trim(), password })
+      const res = await fetchWithTimeout(
+        '/api/insumos/auth/login',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email: email.trim(), password })
+        },
+        20000
+      ).catch((e: any) => {
+        if (e?.name === 'AbortError') throw new Error('Tempo limite ao fazer login. Tente novamente.')
+        throw e
       })
+
       const text = await res.text()
       const json: any = readJson(text)
-      if (!res.ok) {
-        throw new Error(friendlyLoginError(res.status, json))
-      }
+      if (!res.ok) throw new Error(friendlyLoginError(res.status, json))
 
-      // Confirm session is actually established (cookie survived the proxy) before reloading.
-      const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
+      // Confirm session is actually established (cookie survived the proxy) and hydrate React Query cache.
+      const meRes = await fetchWithTimeout('/api/insumos/auth/me', { credentials: 'include' }, 15000).catch((e: any) => {
+        if (e?.name === 'AbortError') return null
+        return null
+      })
       if (!meRes || !meRes.ok) {
         throw new Error('Login OK, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
       }
-
-      // Refresh app state so useReplitAuth picks up the new session cookie.
-      window.location.assign('/')
+      const me = await meRes.json().catch(() => null)
+      setAuthenticatedUserFromMe(me)
+      const updated = queryClient.getQueryData(AUTH_ME_QUERY_KEY) as any
+      if (!updated) {
+        throw new Error('Login OK, mas não foi possível carregar o perfil. Recarregue a página.')
+      }
     } finally {
       setActionLoading(false)
     }
@@ -133,25 +177,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setActionLoading(true)
     try {
-      const res = await fetch('/api/insumos/auth/register', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ name: name.trim(), email: email.trim(), password, token: inviteToken.trim() })
+      const res = await fetchWithTimeout(
+        '/api/insumos/auth/register',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ name: name.trim(), email: email.trim(), password, token: inviteToken.trim() })
+        },
+        20000
+      ).catch((e: any) => {
+        if (e?.name === 'AbortError') throw new Error('Tempo limite ao criar a conta. Tente novamente.')
+        throw e
       })
+
       const text = await res.text()
       const json: any = readJson(text)
-      if (!res.ok) {
-        throw new Error(friendlySignupError(res.status, json))
-      }
+      if (!res.ok) throw new Error(friendlySignupError(res.status, json))
 
-      // Confirm session is actually established (cookie survived the proxy) before reloading.
-      const meRes = await fetch('/api/insumos/auth/me', { credentials: 'include' }).catch(() => null)
+      // Confirm session is actually established (cookie survived the proxy) and hydrate React Query cache.
+      const meRes = await fetchWithTimeout('/api/insumos/auth/me', { credentials: 'include' }, 15000).catch(() => null)
       if (!meRes || !meRes.ok) {
         throw new Error('Conta criada, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
       }
-
-      window.location.assign('/')
+      const me = await meRes.json().catch(() => null)
+      setAuthenticatedUserFromMe(me)
+      const updated = queryClient.getQueryData(AUTH_ME_QUERY_KEY) as any
+      if (!updated) {
+        throw new Error('Conta criada, mas não foi possível carregar o perfil. Recarregue a página.')
+      }
     } finally {
       setActionLoading(false)
     }
@@ -173,7 +227,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextValue = {
     user,
-    loading: isLoading || actionLoading,
+    loading: actionLoading,
     signIn,
     signUp,
     signOut,
