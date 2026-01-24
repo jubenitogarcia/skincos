@@ -684,31 +684,23 @@ export function UnitMonitor() {
   return (
     <>
       <div className="space-y-6 max-w-6xl mx-auto">
-        <div className="space-y-2">
-          <p className="text-sm text-blue-300/80">Monitoramento e gravação RTSP por unidade (MediaMTX + ffmpeg).</p>
-          <div className="lg:hidden space-y-2">
-            <Label className="text-white">Unidade</Label>
-            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
-              <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-                <SelectValue placeholder="Selecione" />
-              </SelectTrigger>
-              <SelectContent>
-                {unitOptionsForSelect.map((unit) => (
-                  <SelectItem key={unit.value} value={unit.value}>
-                    {unit.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {selectedUnit === UNIT_CUSTOM_VALUE ? (
-              <Input
-                value={customUnit}
-                onChange={(e) => setCustomUnit(e.target.value)}
-                placeholder="ex: unidade-centro"
-                className="bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-              />
-            ) : null}
-          </div>
+	        <div className="space-y-2">
+	          <p className="text-sm text-blue-300/80">Monitoramento e gravação RTSP por unidade (MediaMTX + ffmpeg).</p>
+	          <div className="lg:hidden space-y-2">
+	            <Label className="text-white">Unidade</Label>
+	            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
+	              <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
+	                <SelectValue placeholder="Selecione" />
+	              </SelectTrigger>
+	              <SelectContent>
+	                {unitOptionsForSelect.map((unit) => (
+	                  <SelectItem key={unit.value} value={unit.value}>
+	                    {unit.label}
+	                  </SelectItem>
+	                ))}
+	              </SelectContent>
+	            </Select>
+	          </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs text-blue-200/70">
               Unidade atual: <span className="font-mono text-white">{effectiveUnit || '-'}</span>
@@ -716,74 +708,155 @@ export function UnitMonitor() {
           </div>
         </div>
 
-        <Card className="glass-morphism border-white/20">
-          <CardHeader>
-            <CardTitle className="text-white">Instalar Gateway na LAN</CardTitle>
-            <CardDescription className="text-blue-200/70">
-              Necessário quando as câmeras estão em <span className="font-mono">192.168.x.x</span>. O instalador faz as perguntas, conecta na LAN e expõe uma URL via Cloudflare Tunnel.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={proxyStatus?.targetConfigured ? 'default' : 'destructive'}>
-                Pages: {proxyStatus?.targetConfigured ? 'target OK' : 'sem UNIT_MONITOR_API_TARGET'}
-              </Badge>
-              <Badge variant={proxyStatus?.proxyTokenConfigured ? 'default' : 'outline'}>
-                Token: {proxyStatus?.proxyTokenConfigured ? 'configurado' : 'não configurado'}
-              </Badge>
-              <Badge variant={gatewayReachable === 'ok' ? 'default' : gatewayReachable === 'fail' ? 'destructive' : 'outline'}>
-                Gateway: {gatewayReachable === 'ok' ? 'online' : gatewayReachable === 'fail' ? 'offline' : '?'}
-              </Badge>
-              <Button size="sm" variant="outline" onClick={() => refreshGatewaySetup()} disabled={gatewayCheckBusy} className="bg-white/[0.06] border-white/20 text-white">
-                {gatewayCheckBusy ? 'Verificando…' : 'Verificar'}
-              </Button>
-            </div>
-            {proxyStatus?.hint ? <div className="text-xs text-blue-200/70">{proxyStatus.hint}</div> : null}
-            {gatewayInfo?.ok ? (
-              <div className="text-xs text-blue-200/70">
-                Gateway info: {gatewayInfo.gateway?.version ? `v${gatewayInfo.gateway.version}` : 'v?'} · Node {gatewayInfo.node} · uptime{' '}
-                {Math.floor(Number(gatewayInfo.uptimeSec || 0) / 60)}m · {gatewayInfo.host?.ips?.[0] ? `IP ${gatewayInfo.host.ips[0]}` : 'IP ?'} ·{' '}
-                {gatewayInfo.bins?.mediamtxVersion ? `MediaMTX ${gatewayInfo.bins.mediamtxVersion}` : 'MediaMTX ?'}
-              </div>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <a href={macInstallerUrl} download>
-                <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white">
-                  Baixar (macOS)
-                </Button>
-              </a>
-              <a href={winInstallerUrl} download>
-                <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white">
-                  Baixar (Windows)
-                </Button>
-              </a>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="bg-white/[0.06] border-white/20 text-white justify-start"
-                onClick={() =>
-                  copyText(`curl -fsSL "${macInstallerUrl}" -o unit-monitor-gateway.command && chmod +x unit-monitor-gateway.command && ./unit-monitor-gateway.command`)
-                }
-              >
-                Copiar comando (macOS)
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="bg-white/[0.06] border-white/20 text-white justify-start"
-                onClick={() => copyText(`powershell -ExecutionPolicy Bypass -Command "iwr -useb '${winInstallerUrl}' | iex"`)}
-              >
-                Copiar comando (Windows)
-              </Button>
-            </div>
-            <div className="text-xs text-blue-200/70">
-              Após rodar, configure no Cloudflare Pages: <span className="font-mono text-white">UNIT_MONITOR_API_TARGET</span> e{' '}
-              <span className="font-mono text-white">UNIT_MONITOR_PROXY_TOKEN</span>.
-            </div>
-          </CardContent>
-        </Card>
+	        <Card className="glass-morphism border-white/20">
+	          <CardHeader>
+	            <CardTitle className="text-white">Instalar Gateway na LAN</CardTitle>
+	            <CardDescription className="text-blue-200/70">
+	              Necessário quando as câmeras estão em <span className="font-mono">192.168.x.x</span>. O instalador faz as perguntas, conecta na LAN e expõe uma URL via Cloudflare Tunnel.
+	            </CardDescription>
+	          </CardHeader>
+	          <CardContent className="flex flex-col gap-4">
+	            <div className="flex flex-wrap items-center gap-2">
+	              <Badge variant={proxyStatus?.targetConfigured ? 'default' : 'destructive'}>
+	                CRM online: {proxyStatus?.targetConfigured ? 'apontando para o gateway' : 'falta configurar'}
+	              </Badge>
+	              <Badge variant={proxyStatus?.proxyTokenConfigured ? 'default' : 'outline'}>
+	                Token: {proxyStatus?.proxyTokenConfigured ? 'ok' : 'falta configurar'}
+	              </Badge>
+	              <Badge variant={gatewayReachable === 'ok' ? 'default' : gatewayReachable === 'fail' ? 'destructive' : 'outline'}>
+	                Gateway na LAN: {gatewayReachable === 'ok' ? 'online' : gatewayReachable === 'fail' ? 'offline' : '—'}
+	              </Badge>
+	              <Button
+	                size="sm"
+	                variant="outline"
+	                onClick={() => refreshGatewaySetup()}
+	                disabled={gatewayCheckBusy}
+	                className="bg-white/[0.06] border-white/20 text-white"
+	              >
+	                {gatewayCheckBusy ? 'Verificando…' : 'Verificar agora'}
+	              </Button>
+	            </div>
+	            {proxyStatus?.hint ? <div className="text-xs text-blue-200/70">{proxyStatus.hint}</div> : null}
+
+	            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+	              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+	                <div className="flex items-start gap-3">
+	                  <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white">1</div>
+	                  <div className="min-w-0">
+	                    <div className="text-sm font-semibold text-white">Baixe e execute o instalador</div>
+	                    <div className="mt-1 text-xs text-blue-200/70">
+	                      Execute em um computador que fica na mesma rede das câmeras (LAN). Ele instala dependências, inicia o serviço e cria o Tunnel.
+	                    </div>
+	                    <div className="mt-3 flex flex-wrap gap-2">
+	                      <a href={macInstallerUrl} download>
+	                        <Button size="sm" className="bg-white/[0.10] border border-white/20 text-white hover:bg-white/[0.16]">
+	                          Baixar para macOS
+	                        </Button>
+	                      </a>
+	                      <a href={winInstallerUrl} download>
+	                        <Button size="sm" className="bg-white/[0.10] border border-white/20 text-white hover:bg-white/[0.16]">
+	                          Baixar para Windows
+	                        </Button>
+	                      </a>
+	                    </div>
+	                    <div className="mt-3 text-xs text-blue-200/70">Se preferir rodar via terminal (um comando):</div>
+	                    <div className="mt-2 grid grid-cols-1 gap-2">
+	                      <div className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/30 p-2">
+	                        <div className="min-w-0 font-mono text-[11px] text-blue-100/80 truncate">{macOneLiner}</div>
+	                        <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white" onClick={() => copyText(macOneLiner)}>
+	                          Copiar
+	                        </Button>
+	                      </div>
+	                      <div className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/30 p-2">
+	                        <div className="min-w-0 font-mono text-[11px] text-blue-100/80 truncate">{winOneLiner}</div>
+	                        <Button size="sm" variant="outline" className="bg-white/[0.06] border-white/20 text-white" onClick={() => copyText(winOneLiner)}>
+	                          Copiar
+	                        </Button>
+	                      </div>
+	                    </div>
+	                  </div>
+	                </div>
+	              </div>
+
+	              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+	                <div className="flex items-start gap-3">
+	                  <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white">2</div>
+	                  <div className="min-w-0">
+	                    <div className="text-sm font-semibold text-white">Responda as perguntas do assistente</div>
+	                    <div className="mt-1 text-xs text-blue-200/70">Ele vai pedir (nessa ordem):</div>
+	                    <ul className="mt-3 space-y-1 text-xs text-blue-100/80">
+	                      <li>
+	                        <span className="font-semibold text-white">Porta local</span> do gateway (padrão <span className="font-mono text-white">8099</span>)
+	                      </li>
+	                      <li>
+	                        <span className="font-semibold text-white">URL pública</span> do Tunnel (ex: <span className="font-mono text-white">https://unit-monitor-gw.seudominio.com</span>)
+	                      </li>
+	                      <li>
+	                        <span className="font-semibold text-white">CLOUDFLARE_TUNNEL_TOKEN</span> (Cloudflare Zero Trust)
+	                      </li>
+	                      <li>
+	                        <span className="font-semibold text-white">UNIT_MONITOR_PROXY_TOKEN</span> (aperte Enter para gerar automaticamente)
+	                      </li>
+	                    </ul>
+	                    <div className="mt-3 text-xs text-blue-200/70">
+	                      Dica: deixe o assistente instalar como serviço (auto-start) para não precisar rodar manualmente depois.
+	                    </div>
+	                  </div>
+	                </div>
+	              </div>
+
+	              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+	                <div className="flex items-start gap-3">
+	                  <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white">3</div>
+	                  <div className="min-w-0">
+	                    <div className="text-sm font-semibold text-white">Conecte o CRM online ao seu gateway</div>
+	                    <div className="mt-1 text-xs text-blue-200/70">No Cloudflare Pages (projeto do CRM), configure as variáveis:</div>
+	                    <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-blue-100/80">
+	                      <div>
+	                        <span className="font-mono text-white">UNIT_MONITOR_API_TARGET</span> = <span className="text-blue-200/80">URL pública do Tunnel</span>
+	                      </div>
+	                      <div className="mt-1">
+	                        <span className="font-mono text-white">UNIT_MONITOR_PROXY_TOKEN</span> = <span className="text-blue-200/80">token gerado no assistente</span>
+	                      </div>
+	                    </div>
+	                    <div className="mt-3 text-xs text-blue-200/70">
+	                      Depois disso, o CRM consegue falar com seu computador na LAN de forma segura (via Cloudflare Tunnel).
+	                    </div>
+	                  </div>
+	                </div>
+	              </div>
+
+	              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+	                <div className="flex items-start gap-3">
+	                  <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white">4</div>
+	                  <div className="min-w-0">
+	                    <div className="text-sm font-semibold text-white">Verifique e finalize</div>
+	                    <div className="mt-1 text-xs text-blue-200/70">
+	                      Clique em <span className="text-white font-semibold">Verificar agora</span> acima. Quando estiver online, você já pode configurar RTSP e iniciar o streaming.
+	                    </div>
+	                    {gatewayInfo?.ok ? (
+	                      <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-blue-100/80">
+	                        <div className="flex flex-wrap items-center gap-2">
+	                          <Badge variant="secondary">Gateway</Badge>
+	                          <Badge variant="outline">{gatewayInfo.gateway?.version ? `v${gatewayInfo.gateway.version}` : 'v?'}</Badge>
+	                          <Badge variant="outline">{gatewayInfo.host?.ips?.[0] ? `IP ${gatewayInfo.host.ips[0]}` : 'IP ?'}</Badge>
+	                          <Badge variant="outline">{gatewayInfo.bins?.mediamtxVersion ? `MediaMTX ${gatewayInfo.bins.mediamtxVersion}` : 'MediaMTX ?'}</Badge>
+	                        </div>
+	                        <div className="mt-2 text-[11px] text-blue-200/70">
+	                          uptime {Math.floor(Number(gatewayInfo.uptimeSec || 0) / 60)}m · node {gatewayInfo.node || '—'}
+	                        </div>
+	                      </div>
+	                    ) : (
+	                      <div className="mt-3 text-xs text-blue-200/70">
+	                        Se ficar <span className="text-white font-semibold">offline</span>, confirme que o computador está ligado, com internet, e que o Tunnel está ativo.
+	                      </div>
+	                    )}
+	                  </div>
+	                </div>
+	              </div>
+	            </div>
+	          </CardContent>
+	        </Card>
 
         <Card className="glass-morphism border-white/20">
           <CardHeader>

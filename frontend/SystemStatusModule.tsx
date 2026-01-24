@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
-import { DEFAULT_UNIT_OPTIONS, UNIT_CUSTOM_VALUE, useGlobalUnitSelection } from '@/unitSelection'
+import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 
 type StatusKind = 'ok' | 'warn' | 'error' | 'unknown'
 
@@ -125,8 +125,8 @@ async function apiJson<T>(
 }
 
 export function SystemStatusModule() {
-  const { selectedUnit, customUnit, effectiveUnit } = useGlobalUnitSelection(DEFAULT_UNIT_OPTIONS)
-  const unitMonitorUnitKey = selectedUnit === UNIT_CUSTOM_VALUE ? (customUnit.trim() || UNIT_CUSTOM_VALUE) : selectedUnit
+  const { effectiveUnit } = useGlobalUnitSelection(DEFAULT_UNIT_OPTIONS)
+  const unitMonitorUnitKey = effectiveUnit
   const insumosUnit = effectiveUnit
   const [insumosMe, setInsumosMe] = React.useState<InsumosMe | null>(null)
 

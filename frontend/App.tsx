@@ -302,12 +302,12 @@ export default function AppFunctionalNeatlab() {
 			    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value), [unitOptions])
 			    const insumosUnitsForHeaderSelect = useMemo(() => {
 			        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
-			        const out = [...new Set(fromApi)]
+			        const out = [...new Set(fromApi)].filter((u) => String(u) !== 'custom')
 			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
 			        return out
 			    }, [canonicalUnitValues, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
 			    const unitMonitorUnitsForHeaderSelect = useMemo(() => {
-			        const out = [...new Set(canonicalUnitValues)]
+			        const out = [...new Set(canonicalUnitValues)].filter((u) => String(u) !== 'custom')
 			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
 			        return out
 			    }, [canonicalUnitValues, selectedUnit])
