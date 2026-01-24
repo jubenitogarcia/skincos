@@ -376,7 +376,7 @@ export function SystemStatusModule() {
               {row.key === 'insumos-api' ? (
                 <div>Integração do módulo</div>
               ) : row.key === 'unit-monitor-api' ? (
-                <div>Unidade atual: {unitMonitorSelectedUnit === 'custom' ? (unitMonitorCustomUnit.trim() || 'custom') : unitMonitorSelectedUnit}</div>
+                <div>Unidade atual: {formatUnitLabel(unitMonitorUnitKey)}</div>
               ) : (
                 <div>Login e permissões</div>
               )}
