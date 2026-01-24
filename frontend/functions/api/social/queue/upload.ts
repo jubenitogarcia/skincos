@@ -11,6 +11,14 @@ const json = (status: number, body: any) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   })
 
+const parseUnitKeys = (raw: string): string[] => {
+  const parts = String(raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return [...new Set(parts)]
+}
+
 const parsePlatforms = (raw: string): SocialPlatform[] => {
   const parts = String(raw || '')
     .split(',')
@@ -29,6 +37,10 @@ export async function onRequestPost(context: any): Promise<Response> {
 
   const fd = await context.request.formData()
   const unitKey = String(fd.get('unitKey') || '').trim() || 'BSS'
+  const unitKeysRaw = String(fd.get('unitKeys') || '').trim()
+  const defaultUnitsRaw = String(context?.env?.SOCIAL_DEFAULT_UNITS || '').trim()
+  const defaultUnits = defaultUnitsRaw ? parseUnitKeys(defaultUnitsRaw) : []
+  const unitKeys = unitKeysRaw ? parseUnitKeys(unitKeysRaw) : (defaultUnits.length ? defaultUnits : [unitKey])
   const platforms = parsePlatforms(String(fd.get('platforms') || 'instagram,facebook,threads'))
   if (!platforms.length) return json(400, { ok: false, error: 'INVALID_PLATFORMS' })
 
@@ -63,7 +75,7 @@ export async function onRequestPost(context: any): Promise<Response> {
     ? {
         ...groupExisting,
         scheduledAt: scheduledAtExplicit ? scheduledAt : groupExisting.scheduledAt,
-        unitKeys: [...new Set([...(groupExisting.unitKeys || []), unitKey])],
+        unitKeys: [...new Set([...(groupExisting.unitKeys || []), ...unitKeys])],
         platforms: [...new Set([...(groupExisting.platforms || []), ...platforms])],
         captions: { ...(groupExisting.captions || {}), ...captions },
         updatedAt: nowIso,
@@ -72,7 +84,7 @@ export async function onRequestPost(context: any): Promise<Response> {
         dateKey,
         groupKey,
         scheduledAt,
-        unitKeys: [unitKey],
+        unitKeys,
         platforms,
         captions: Object.keys(captions).length ? captions : undefined,
         createdAt: nowIso,
@@ -95,7 +107,7 @@ export async function onRequestPost(context: any): Promise<Response> {
       contentType,
       size: buf.byteLength,
       createdAt: nowIso,
-      unitKey,
+      unitKey: unitKeys[0] || unitKey,
       platforms,
       dateKey,
       groupKey,
@@ -109,4 +121,3 @@ export async function onRequestPost(context: any): Promise<Response> {
 
   return json(200, { ok: true, dateKey, groupKey, scheduledAt: group.scheduledAt, assetIds: storedAssetIds })
 }
-
