@@ -1,8 +1,9 @@
 import express from 'express'
 import cors from 'cors'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHmac, timingSafeEqual, randomBytes, createHash, createCipheriv, createDecipheriv } from 'crypto'
 import { promises as fs } from 'fs'
 import fsSync from 'fs'
+import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { spawn, spawnSync } from 'child_process'
@@ -28,6 +29,29 @@ const CORE_STATE_DIR = path.join(VAR_DIR, 'core')
 try { await fs.mkdir(CORE_STATE_DIR, { recursive: true }) } catch { /* ignore */ }
 
 const app = express()
+
+// -------------------------------------------------------------
+// Gateway hardening (Unit Monitor LAN gateway behind a tunnel)
+// -------------------------------------------------------------
+const IS_GATEWAY_MODE = String(process.env.SKINCOS_GATEWAY || '') === '1'
+
+// Correlation id for diagnostics across Pages -> Gateway -> child processes.
+app.use((req, res, next) => {
+    const incoming = String(req.headers['x-request-id'] || '').trim()
+    const requestId = incoming || randomUUID()
+    req.requestId = requestId
+    res.setHeader('x-request-id', requestId)
+    next()
+})
+
+// In gateway mode, fail closed: only expose health + Unit Monitor routes.
+app.use((req, res, next) => {
+    if (!IS_GATEWAY_MODE) return next()
+    if (req.method === 'OPTIONS') return res.sendStatus(200)
+    const p = req.path || '/'
+    if (p === '/health' || p.startsWith('/api/unit-monitor')) return next()
+    return res.status(404).json({ ok: false, error: 'Not found' })
+})
 
 // -------------------------------------------------------------
 // Capabilities catalog (core + capabilities)
@@ -584,7 +608,9 @@ async function loadConversations() {
         if (json && Array.isArray(json.conversations)) {
             conversations = json.conversations
         }
-    } catch { /* ignore */ }
+    } catch (e) {
+        console.warn('[UNIT_MONITOR] Load failed', e?.message || String(e))
+    }
 }
 async function persistConversationsNow() {
     try { await fs.writeFile(CONVERSATIONS_FILE, JSON.stringify({ conversations }, null, 2)) } catch (e) { console.error('[CONVERSATIONS] Persist failed', e) }
@@ -667,6 +693,40 @@ const UNIT_MONITOR_FILE = process.env.CRM_UNIT_MONITOR_FILE || path.join(CORE_ST
 let unitMonitorState = { units: {}, recordings: [] }
 let saveUnitMonitorTimer = null
 
+// Optional at-rest encryption for unit_monitor.json (recommended for gateway deployments).
+// If not set, state is stored as plain JSON.
+const UNIT_MONITOR_STATE_KEY = String(process.env.CRM_UNIT_MONITOR_STATE_KEY || process.env.CRM_UNIT_MONITOR_PROXY_TOKEN || '').trim()
+
+function deriveAes256Key(secret) {
+    return createHash('sha256').update(String(secret || ''), 'utf8').digest()
+}
+
+function encryptUnitMonitorStateJson(secret, plaintext) {
+    const key = deriveAes256Key(secret)
+    const iv = randomBytes(12) // AES-GCM recommended nonce size
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
+    const ct = Buffer.concat([cipher.update(String(plaintext || ''), 'utf8'), cipher.final()])
+    const tag = cipher.getAuthTag()
+    return {
+        v: 1,
+        enc: 'aes-256-gcm',
+        iv: iv.toString('base64url'),
+        tag: tag.toString('base64url'),
+        data: ct.toString('base64url'),
+    }
+}
+
+function decryptUnitMonitorStateJson(secret, payload) {
+    const key = deriveAes256Key(secret)
+    const iv = Buffer.from(String(payload?.iv || ''), 'base64url')
+    const tag = Buffer.from(String(payload?.tag || ''), 'base64url')
+    const data = Buffer.from(String(payload?.data || ''), 'base64url')
+    const decipher = createDecipheriv('aes-256-gcm', key, iv)
+    decipher.setAuthTag(tag)
+    const pt = Buffer.concat([decipher.update(data), decipher.final()])
+    return pt.toString('utf8')
+}
+
 // Unit Monitor streaming (RTSP -> HLS) via MediaMTX (mediamtx)
 const MEDIAMTX_BIN = process.env.CRM_UNIT_MONITOR_MEDIAMTX_BIN || 'mediamtx'
 const MEDIAMTX_CONFIG_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_CONFIG ||
@@ -694,6 +754,7 @@ const FFMPEG_BIN = process.env.CRM_UNIT_MONITOR_FFMPEG_BIN || process.env.FFMPEG
 const FFPROBE_BIN = process.env.CRM_UNIT_MONITOR_FFPROBE_BIN || process.env.FFPROBE_BIN || 'ffprobe'
 const UNIT_MONITOR_MIN_FREE_GB = Math.max(0, Math.min(10_000, Number(process.env.CRM_UNIT_MONITOR_MIN_FREE_GB || 20) || 20))
 const UNIT_MONITOR_MIN_FREE_BYTES = Math.floor(UNIT_MONITOR_MIN_FREE_GB * 1024 * 1024 * 1024)
+const UNIT_MONITOR_MAX_RECORDERS = Math.max(0, Math.min(10_000, Number(process.env.CRM_UNIT_MONITOR_MAX_RECORDERS || 16) || 16))
 
 const UNIT_MONITOR_ICE_SERVERS = (() => {
     try {
@@ -1129,6 +1190,12 @@ async function startUnitMonitorRecorder({ unit, cameraId, segmentSeconds }) {
         throw err
     }
 
+    if (UNIT_MONITOR_MAX_RECORDERS > 0 && unitMonitorRecorders.size >= UNIT_MONITOR_MAX_RECORDERS) {
+        const err = new Error(`Max recorders reached (${UNIT_MONITOR_MAX_RECORDERS})`)
+        err.code = 'LIMIT_REACHED'
+        throw err
+    }
+
     const key = unitMonitorRecorderKey(u, id)
     if (unitMonitorRecorders.has(key)) {
         const err = new Error('Recorder already running')
@@ -1342,7 +1409,18 @@ setInterval(() => { cleanupUnitMonitorSegments().catch(() => { }) }, 60 * 60 * 1
 async function loadUnitMonitorState() {
     try {
         const raw = await fs.readFile(UNIT_MONITOR_FILE, 'utf-8')
-        const json = JSON.parse(raw)
+        const outer = JSON.parse(raw)
+        if (!outer || typeof outer !== 'object') return
+
+        let json = outer
+        if (outer.enc === 'aes-256-gcm') {
+            if (!UNIT_MONITOR_STATE_KEY) {
+                throw new Error('unit_monitor.json is encrypted but CRM_UNIT_MONITOR_STATE_KEY is not set')
+            }
+            const plaintext = decryptUnitMonitorStateJson(UNIT_MONITOR_STATE_KEY, outer)
+            json = JSON.parse(plaintext)
+        }
+
         if (json && typeof json === 'object') {
             const units = json.units && typeof json.units === 'object' ? json.units : {}
             const recordings = Array.isArray(json.recordings) ? json.recordings : []
@@ -1353,7 +1431,13 @@ async function loadUnitMonitorState() {
 
 async function persistUnitMonitorNow() {
     try {
-        await fs.writeFile(UNIT_MONITOR_FILE, JSON.stringify(unitMonitorState, null, 2))
+        const plaintext = JSON.stringify(unitMonitorState, null, 2)
+        if (UNIT_MONITOR_STATE_KEY) {
+            const enc = encryptUnitMonitorStateJson(UNIT_MONITOR_STATE_KEY, plaintext)
+            await fs.writeFile(UNIT_MONITOR_FILE, JSON.stringify(enc, null, 2))
+        } else {
+            await fs.writeFile(UNIT_MONITOR_FILE, plaintext)
+        }
     } catch (e) {
         console.error('[UNIT_MONITOR] Persist failed', e)
     }
@@ -1366,14 +1450,169 @@ function schedulePersistUnitMonitor() {
 
 await loadUnitMonitorState()
 
-// Optional hardening for public "gateway" deployments behind a simple shared secret.
-// If set, every /api/unit-monitor request must include header: x-unit-monitor-proxy-token
+function parseCsv(value) {
+    return String(value || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+}
+
+function b64UrlToUtf8(b64url) {
+    const s = String(b64url || '').trim()
+    if (!s) return ''
+    const padded = s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=')
+    return Buffer.from(padded, 'base64').toString('utf-8')
+}
+
+function timingSafeEqualStr(a, b) {
+    const aa = Buffer.from(String(a || ''), 'utf-8')
+    const bb = Buffer.from(String(b || ''), 'utf-8')
+    if (aa.length !== bb.length) return false
+    return timingSafeEqual(aa, bb)
+}
+
+// Shared secret used by the Pages proxy to authenticate to the gateway.
 const UNIT_MONITOR_PROXY_TOKEN = String(process.env.CRM_UNIT_MONITOR_PROXY_TOKEN || '').trim()
+
+// Optional actor signing key. If not set, default to the proxy token (one-secret setup).
+const UNIT_MONITOR_ACTOR_HMAC_KEY = String(process.env.CRM_UNIT_MONITOR_ACTOR_HMAC_KEY || UNIT_MONITOR_PROXY_TOKEN).trim()
+const UNIT_MONITOR_ALLOWED_EMAILS = new Set(parseCsv(process.env.CRM_UNIT_MONITOR_ALLOWED_EMAILS).map((s) => s.toLowerCase()))
+const UNIT_MONITOR_ALLOWED_DOMAINS = new Set(parseCsv(process.env.CRM_UNIT_MONITOR_ALLOWED_DOMAINS).map((s) => s.toLowerCase()))
+const UNIT_MONITOR_ACTOR_SKEW_MS = Math.max(5_000, Math.min(60 * 60 * 1000, Number(process.env.CRM_UNIT_MONITOR_ACTOR_SKEW_MS || 5 * 60 * 1000) || 5 * 60 * 1000))
+const UNIT_MONITOR_RATE_LIMIT_PER_MIN = Math.max(0, Math.min(100_000, Number(process.env.CRM_UNIT_MONITOR_RATE_LIMIT_PER_MIN || 120) || 120))
+const unitMonitorRate = new Map() // key -> number[] timestamps (ms)
+
+function allowUnitMonitorActor(actor) {
+    if (UNIT_MONITOR_ALLOWED_EMAILS.size === 0 && UNIT_MONITOR_ALLOWED_DOMAINS.size === 0) return true
+    const email = String(actor?.email || '').trim().toLowerCase()
+    const domain = email.includes('@') ? (email.split('@').pop() || '') : ''
+    if (email && UNIT_MONITOR_ALLOWED_EMAILS.has(email)) return true
+    if (domain && UNIT_MONITOR_ALLOWED_DOMAINS.has(domain)) return true
+    return false
+}
+
+function verifyUnitMonitorActor(req) {
+    const actorB64 = String(req.headers['x-skincos-actor'] || '').trim()
+    const tsRaw = String(req.headers['x-skincos-actor-ts'] || '').trim()
+    const sig = String(req.headers['x-skincos-actor-sig'] || '').trim()
+
+    if (!actorB64 || !tsRaw) return { ok: false, code: 'ACTOR_MISSING' }
+
+    const ts = Number(tsRaw)
+    if (!Number.isFinite(ts) || ts <= 0) return { ok: false, code: 'ACTOR_TS_INVALID' }
+    if (Math.abs(Date.now() - ts) > UNIT_MONITOR_ACTOR_SKEW_MS) return { ok: false, code: 'ACTOR_TS_SKEW' }
+
+    const actorJson = b64UrlToUtf8(actorB64)
+    let actor = null
+    try { actor = JSON.parse(actorJson) } catch { actor = null }
+    if (!actor || typeof actor !== 'object') return { ok: false, code: 'ACTOR_INVALID' }
+
+    // Signature is optional outside gateway mode, but required when a key is configured or in gateway mode.
+    const sigRequired = IS_GATEWAY_MODE || !!UNIT_MONITOR_ACTOR_HMAC_KEY
+    if (sigRequired) {
+        if (!UNIT_MONITOR_ACTOR_HMAC_KEY) return { ok: false, code: 'ACTOR_KEY_MISSING' }
+        if (!sig) return { ok: false, code: 'ACTOR_SIG_MISSING' }
+        const expected = createHmac('sha256', UNIT_MONITOR_ACTOR_HMAC_KEY).update(`${tsRaw}.${actorB64}`).digest('base64url')
+        if (!timingSafeEqualStr(sig, expected)) return { ok: false, code: 'ACTOR_SIG_INVALID' }
+    }
+
+    if (!allowUnitMonitorActor(actor)) return { ok: false, code: 'ACTOR_FORBIDDEN' }
+
+    return { ok: true, actor }
+}
+
+function unitMonitorActorLabel(req) {
+    const a = req?.skincosActor || null
+    const email = a?.email ? String(a.email) : ''
+    const id = a?.id ? String(a.id) : ''
+    return email || id || 'unknown'
+}
+
+function logUnitMonitor(req, event, data = {}) {
+    const rid = String(req?.requestId || '').trim() || 'no-request-id'
+    const actor = unitMonitorActorLabel(req)
+    try {
+        console.log('[UNIT_MONITOR]', event, JSON.stringify({ requestId: rid, actor, ...(data || {}) }))
+    } catch {
+        console.log('[UNIT_MONITOR]', event, `{requestId:${rid}, actor:${actor}}`)
+    }
+}
+
+function unitMonitorRateLimitKey(req) {
+    const actorB64 = String(req.headers['x-skincos-actor'] || '').trim()
+    if (!actorB64) return 'unknown'
+    const actorJson = b64UrlToUtf8(actorB64)
+    try {
+        const a = JSON.parse(actorJson)
+        return String(a?.id || a?.email || 'unknown')
+    } catch {
+        return 'unknown'
+    }
+}
+
+function isSensitiveUnitMonitorRoute(req) {
+    const method = String(req.method || '').toUpperCase()
+    const p = String(req.path || '')
+    if (method === 'PUT' && p === '/api/unit-monitor/state') return true
+    if (method === 'POST' && p.startsWith('/api/unit-monitor/streaming/')) return true
+    if (method === 'POST' && p === '/api/unit-monitor/rtsp/test') return true
+    if (method === 'POST' && p.startsWith('/api/unit-monitor/rtsp/recorders/')) return true
+    return false
+}
+
+// Optional hardening for public "gateway" deployments behind a simple shared secret.
+// In gateway mode, the token is REQUIRED.
 app.use('/api/unit-monitor', (req, res, next) => {
-    if (!UNIT_MONITOR_PROXY_TOKEN) return next()
+    const required = IS_GATEWAY_MODE || !!UNIT_MONITOR_PROXY_TOKEN
+    if (!required) return next()
+    if (!UNIT_MONITOR_PROXY_TOKEN) {
+        return res.status(503).json({
+            ok: false,
+            error: 'GATEWAY_MISCONFIGURED',
+            hint: 'Set CRM_UNIT_MONITOR_PROXY_TOKEN (shared secret) on the gateway.',
+        })
+    }
     const token = String(req.headers['x-unit-monitor-proxy-token'] || '')
     if (token && token === UNIT_MONITOR_PROXY_TOKEN) return next()
     return res.status(401).json({ ok: false, error: 'Unauthorized' })
+})
+
+// Actor identity + rate limiting (primarily for gateway mode).
+app.use('/api/unit-monitor', (req, res, next) => {
+    const hardeningEnabled =
+        IS_GATEWAY_MODE ||
+        !!UNIT_MONITOR_ACTOR_HMAC_KEY ||
+        UNIT_MONITOR_ALLOWED_EMAILS.size > 0 ||
+        UNIT_MONITOR_ALLOWED_DOMAINS.size > 0 ||
+        UNIT_MONITOR_RATE_LIMIT_PER_MIN > 0
+
+    if (!hardeningEnabled) return next()
+
+    const verified = verifyUnitMonitorActor(req)
+    if (!verified.ok) {
+        return res.status(401).json({
+            ok: false,
+            error: 'UNAUTHORIZED',
+            code: verified.code,
+            hint: 'Missing/invalid actor headers. Requests must come from the CRM Pages proxy.',
+        })
+    }
+    req.skincosActor = verified.actor
+
+    if (UNIT_MONITOR_RATE_LIMIT_PER_MIN > 0 && isSensitiveUnitMonitorRoute(req)) {
+        const key = unitMonitorRateLimitKey(req)
+        const now = Date.now()
+        const windowMs = 60 * 1000
+        const list = unitMonitorRate.get(key) || []
+        const pruned = list.filter((t) => now - t < windowMs)
+        pruned.push(now)
+        unitMonitorRate.set(key, pruned)
+        if (pruned.length > UNIT_MONITOR_RATE_LIMIT_PER_MIN) {
+            return res.status(429).json({ ok: false, error: 'RATE_LIMITED', hint: 'Too many requests. Try again soon.' })
+        }
+    }
+
+    return next()
 })
 
 app.get('/api/unit-monitor/health', async (req, res) => {
@@ -1461,6 +1700,7 @@ app.put('/api/unit-monitor/state', async (req, res) => {
         config
     }
     schedulePersistUnitMonitor()
+    logUnitMonitor(req, 'state_saved', { unit })
     res.json({ ok: true, unit, saved: true })
 })
 
@@ -1631,6 +1871,7 @@ app.post('/api/unit-monitor/rtsp/test', async (req, res) => {
             rtspUrl
         ]
 
+        logUnitMonitor(req, 'rtsp_test', { maskedUrl: maskRtspUrl(rtspUrl), timeoutMs })
         const { code, signal, stdout, stderr, timedOut } = await spawnCapture(FFPROBE_BIN, args, { timeoutMs: timeoutMs + 2000 })
         if (timedOut) {
             return res.status(408).json({ ok: false, error: 'Timeout ao testar RTSP', maskedUrl: maskRtspUrl(rtspUrl) })
@@ -1670,6 +1911,7 @@ app.post('/api/unit-monitor/rtsp/test', async (req, res) => {
 
 app.post('/api/unit-monitor/streaming/start', async (req, res) => {
     try {
+        logUnitMonitor(req, 'streaming_start')
         const result = await startMediamtx()
         res.json({ ok: true, ...result })
     } catch (e) {
@@ -1681,6 +1923,7 @@ app.post('/api/unit-monitor/streaming/start', async (req, res) => {
 })
 
 app.post('/api/unit-monitor/streaming/stop', async (req, res) => {
+    logUnitMonitor(req, 'streaming_stop')
     const result = await stopMediamtx()
     res.json({ ok: true, ...result })
 })
@@ -1705,6 +1948,7 @@ app.post('/api/unit-monitor/rtsp/recorders/start', async (req, res) => {
         const unit = normalizeUnitKey(req.body?.unit || '')
         const cameraId = String(req.body?.cameraId || '').trim()
         const segmentSeconds = Number(req.body?.segmentSeconds || 0) || undefined
+        logUnitMonitor(req, 'recorder_start', { unit, cameraId, segmentSeconds: segmentSeconds || null })
         const result = await startUnitMonitorRecorder({ unit, cameraId, segmentSeconds })
         res.json({ ok: true, ...result })
     } catch (e) {
@@ -1715,6 +1959,7 @@ app.post('/api/unit-monitor/rtsp/recorders/start', async (req, res) => {
 app.post('/api/unit-monitor/rtsp/recorders/stop', async (req, res) => {
     const unit = normalizeUnitKey(req.body?.unit || '')
     const cameraId = String(req.body?.cameraId || '').trim()
+    logUnitMonitor(req, 'recorder_stop', { unit, cameraId })
     const result = await stopUnitMonitorRecorder({ unit, cameraId })
     res.json({ ok: true, ...result })
 })

@@ -7,6 +7,53 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CRM_PORT="${CRM_PORT:-5173}"
 CRM_API_PORT="${CRM_API_PORT:-8099}"
 
+um_curl_headers() {
+  UM_CURL_HEADERS=()
+  local token="${CRM_UNIT_MONITOR_PROXY_TOKEN:-}"
+
+  # Actor headers are required in gateway mode (requests must come from the CRM proxy).
+  # For local gateway scripts, we sign using the same shared secret (proxy token).
+  local actor_json='{"id":"gateway-script","name":"Unit Monitor Script","email":"gateway@local"}'
+  local ts
+  ts="$(python3 - <<'PY' 2>/dev/null || true
+import time
+print(int(time.time() * 1000))
+PY
+)"
+  if [[ -z "${ts:-}" ]]; then ts="$(date +%s)000"; fi
+
+  local actor_b64
+  actor_b64="$(ACTOR_JSON="$actor_json" python3 - <<'PY' 2>/dev/null || true
+import base64, os
+raw=os.environ.get("ACTOR_JSON","")
+print(base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("="))
+PY
+)"
+  if [[ -z "${actor_b64:-}" ]]; then
+    actor_b64="$(echo -n "$actor_json" | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
+  fi
+
+  UM_CURL_HEADERS+=(-H "x-skincos-actor: $actor_b64" -H "x-skincos-actor-ts: $ts")
+
+  if [[ -n "${token:-}" ]]; then
+    local sig
+    sig="$(TOKEN="$token" TS="$ts" ACTOR_B64="$actor_b64" python3 - <<'PY' 2>/dev/null || true
+import base64, hashlib, hmac, os
+token=os.environ.get("TOKEN","")
+ts=os.environ.get("TS","")
+actor=os.environ.get("ACTOR_B64","")
+msg=(ts+"."+actor).encode("utf-8")
+digest=hmac.new(token.encode("utf-8"), msg, hashlib.sha256).digest()
+print(base64.urlsafe_b64encode(digest).decode("ascii").rstrip("="))
+PY
+)"
+    if [[ -z "${sig:-}" ]]; then
+      sig="$(printf '%s' "${ts}.${actor_b64}" | openssl dgst -sha256 -hmac "$token" -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
+    fi
+    UM_CURL_HEADERS+=(-H "x-unit-monitor-proxy-token: $token" -H "x-skincos-actor-sig: $sig")
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <dev|api|fe|diagnostics|start-streaming|tunnel|gateway|check> [options]
@@ -60,7 +107,7 @@ start_api_watch() {
 }
 
 start_api() {
-  (cd "$ROOT_DIR/backend/apps/crm-api" && CRM_API_PORT="$CRM_API_PORT" PORT="$CRM_API_PORT" ./scripts/run.sh start) &
+  (cd "$ROOT_DIR/backend/apps/crm-api" && CRM_API_PORT="$CRM_API_PORT" PORT="$CRM_API_PORT" SKINCOS_GATEWAY=1 ./scripts/run.sh start) &
   echo $!
 }
 
@@ -118,10 +165,12 @@ case "$cmd" in
     exec npm -s --prefix "$ROOT_DIR/frontend" run dev -- --port "$CRM_PORT"
     ;;
   diagnostics)
-    exec curl -fsS "http://localhost:${CRM_API_PORT}/api/unit-monitor/diagnostics" | head -c 4000
+    um_curl_headers
+    exec curl -fsS "${UM_CURL_HEADERS[@]}" "http://localhost:${CRM_API_PORT}/api/unit-monitor/diagnostics" | head -c 4000
     ;;
   start-streaming)
-    exec curl -fsS -X POST "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/start" | head -c 4000
+    um_curl_headers
+    exec curl -fsS -X POST "${UM_CURL_HEADERS[@]}" "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/start" | head -c 4000
     ;;
   tunnel)
     if [[ -z "${tunnel_token:-}" ]]; then
@@ -159,7 +208,8 @@ case "$cmd" in
 
     cleanup() {
       echo "[unit-monitor] Stopping..."
-      curl -fsS -X POST "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/stop" >/dev/null 2>&1 || true
+      um_curl_headers
+      curl -fsS -X POST "${UM_CURL_HEADERS[@]}" "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/stop" >/dev/null 2>&1 || true
       kill "$api_pid" >/dev/null 2>&1 || true
     }
     trap cleanup EXIT INT TERM
@@ -171,7 +221,8 @@ case "$cmd" in
     fi
 
     echo "[unit-monitor] Starting streaming gateway (MediaMTX)..."
-    curl -fsS -X POST "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/start" >/dev/null 2>&1 || {
+    um_curl_headers
+    curl -fsS -X POST "${UM_CURL_HEADERS[@]}" "http://localhost:${CRM_API_PORT}/api/unit-monitor/streaming/start" >/dev/null 2>&1 || {
       echo "[unit-monitor] WARN: failed to start streaming. You can retry in the CRM UI." >&2
     }
 

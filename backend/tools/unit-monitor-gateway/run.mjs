@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
+import { createHmac, randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -75,7 +76,26 @@ async function main() {
     }
   }
 
-  const headers = proxyToken ? { 'x-unit-monitor-proxy-token': proxyToken } : {}
+  const requestId = (() => {
+    try { return randomUUID() } catch { return String(Date.now()) }
+  })()
+
+  const actor = {
+    id: 'gateway',
+    name: 'Unit Monitor Gateway',
+    email: 'gateway@local',
+  }
+  const actorB64 = Buffer.from(JSON.stringify(actor), 'utf8').toString('base64url')
+  const actorTs = String(Date.now())
+  const actorSig = proxyToken ? createHmac('sha256', proxyToken).update(`${actorTs}.${actorB64}`).digest('base64url') : ''
+
+  const headers = {
+    ...(proxyToken ? { 'x-unit-monitor-proxy-token': proxyToken } : {}),
+    'x-request-id': requestId,
+    'x-skincos-actor': actorB64,
+    'x-skincos-actor-ts': actorTs,
+    ...(actorSig ? { 'x-skincos-actor-sig': actorSig } : {}),
+  }
 
   console.log(`[gateway] Starting crm-api on :${port}`)
   const apiProc = spawn(process.execPath, [resolve(repoRoot, 'backend/apps/crm-api/server.js')], {

@@ -36,10 +36,20 @@ Módulo do CRM para monitorar e gravar evidências de câmeras IP via **RTSP** p
 - O CRM (frontend) pode estar online no Cloudflare Pages, mas o **Unit Monitor depende de um backend (crm-api) que consiga acessar as câmeras na LAN** (ex.: `192.168.x.x`).
 - Configure no Cloudflare Pages (Environment Variables) a variável:
   - `UNIT_MONITOR_API_TARGET` → URL pública do `crm-api` (ex.: via Cloudflare Tunnel).
+- (Opcional) Restrinja quem pode operar o módulo (recomendado):
+  - `UNIT_MONITOR_ALLOWED_EMAILS=a@b.com,c@d.com`
+  - `UNIT_MONITOR_ALLOWED_DOMAINS=empresa.com`
 - Se `UNIT_MONITOR_API_TARGET` não estiver configurado (ou apontar para um host inválido), o módulo vai aparecer como **Servidor: offline**.
 - (Recomendado) Configure um segredo compartilhado:
   - Cloudflare Pages: `UNIT_MONITOR_PROXY_TOKEN`
   - Gateway (`crm-api`): `CRM_UNIT_MONITOR_PROXY_TOKEN`
+  - Obs: o CRM (Pages Function) assina a identidade do usuario por request usando o mesmo segredo (HMAC) para auditoria e rate limit no gateway.
+
+## Seguranca adicional (recomendado)
+- Restrinja o tunnel por path (exponha apenas `/health` e `/api/unit-monitor/*`):
+  - Exemplo: `backend/docs/modules/crm/unit-monitor-cloudflared.example.yml`
+- Criptografia em repouso do estado do Unit Monitor (no gateway):
+  - Configure `CRM_UNIT_MONITOR_STATE_KEY` (fallback: `CRM_UNIT_MONITOR_PROXY_TOKEN`) para criptografar `backend/var/core/unit_monitor.json`.
 
 ### Exemplo com Cloudflare Tunnel
 1. Na máquina que está na mesma rede das câmeras (gateway), suba API + streaming + tunnel:

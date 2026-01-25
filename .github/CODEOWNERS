@@ -1,38 +1,17 @@
-# Global code owners
+# Default owner
 * @jubenitogarcia
 
-# Core automation system
-/automation/ @jubenitogarcia
-/main.py @jubenitogarcia
-
-# Configuration and infrastructure
-/config/ @jubenitogarcia
-/tools/ @jubenitogarcia
+# CI / workflows
 /.github/ @jubenitogarcia
-/pyproject.toml @jubenitogarcia
-/Makefile @jubenitogarcia
 
-# API integrations
-/gapis/ @jubenitogarcia
-/whatsapp/ @jubenitogarcia
-/umbler/ @jubenitogarcia
+# Core code
+/backend/ @jubenitogarcia
+/frontend/ @jubenitogarcia
 
-# Shared packages
-/packages/ @jubenitogarcia
-/crm/ @jubenitogarcia
-/chat-module/ @jubenitogarcia
-
-# Documentation
-/README.md @jubenitogarcia
-/CONTRIBUTING.md @jubenitogarcia
-/docs/ @jubenitogarcia
-
-# Scripts and utilities
-/utils/ @jubenitogarcia
-/run.sh @jubenitogarcia
-/backend/apps/automations/sales_chart_messenger/scripts/setup.sh @jubenitogarcia
-
-# Quality and testing
+# Repo hygiene
 /.pre-commit-config.yaml @jubenitogarcia
 /.flake8 @jubenitogarcia
-/tests/ @jubenitogarcia
+/.editorconfig @jubenitogarcia
+/Makefile @jubenitogarcia
+/README.md @jubenitogarcia
+

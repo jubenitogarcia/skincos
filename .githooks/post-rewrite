@@ -4,7 +4,7 @@ set -euo pipefail
 # Auto-deploy Insumos Worker after `git rebase` updates `main`.
 # See `.githooks/pre-push` for opt-outs.
 
-if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-1}" == "0" ]]; then
+if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-0}" != "1" ]]; then
   exit 0
 fi
 
@@ -43,4 +43,3 @@ else
 fi
 
 echo "[skincos] Insumos deploy done."
-

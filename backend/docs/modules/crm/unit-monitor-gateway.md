@@ -18,11 +18,19 @@ Use um segredo compartilhado entre Cloudflare Pages Function e o gateway:
 
 Sem isso, qualquer pessoa que descobrir a URL do gateway pode tentar chamar os endpoints.
 
+Hardening recomendado no gateway:
+- `CRM_UNIT_MONITOR_STATE_KEY=<segredo>`: criptografa `backend/var/core/unit_monitor.json` em repouso.
+- (Opcional) allowlist:
+  - `CRM_UNIT_MONITOR_ALLOWED_EMAILS=a@b.com,c@d.com`
+  - `CRM_UNIT_MONITOR_ALLOWED_DOMAINS=empresa.com`
+
 ## Passo a passo (Cloudflare Tunnel + gateway)
 1. Configure um Cloudflare Tunnel para publicar o serviço local:
    - Service/Origin: `http://localhost:8099`
    - Hostname: ex. `https://unit-monitor-gw.seudominio.com`
    - Pegue o token do tunnel (Zero Trust).
+   - Recomendacao: restrinja o tunnel por path (exponha apenas `/health` e `/api/unit-monitor/*`).
+     Exemplo: `backend/docs/modules/crm/unit-monitor-cloudflared.example.yml`
 
 2. No gateway, instale dependências do módulo CRM API (uma vez):
    - `./backend/scripts/bootstrap.sh --module crm`

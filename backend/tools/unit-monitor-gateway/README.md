@@ -11,3 +11,6 @@ O gateway é o “servidor local” que roda dentro da rede das câmeras (RTSP) 
 
 O token `CRM_UNIT_MONITOR_PROXY_TOKEN` deve bater com `UNIT_MONITOR_PROXY_TOKEN` no Cloudflare Pages (CRM).
 
+Hardening recomendado:
+- Restrinja o tunnel por path (exponha apenas `/health` e `/api/unit-monitor/*`).
+- Configure `CRM_UNIT_MONITOR_STATE_KEY` para criptografar `backend/var/core/unit_monitor.json` em repouso.

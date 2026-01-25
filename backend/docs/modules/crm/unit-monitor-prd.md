@@ -2,6 +2,12 @@
 
 A professional macOS-style web application for monitoring and managing IP camera streams through RTSP with real-time recording capabilities.
 
+NOTE (source of truth):
+- This document is aspirational and may not reflect the current implementation.
+- For the actual behavior, endpoints and deployment model, prefer:
+  - `backend/docs/modules/crm/unit-monitor.md`
+  - `backend/docs/modules/crm/unit-monitor-gateway.md`
+
 Experience qualities:
 1. Professional - clean, technical interface that inspires confidence in monitoring capabilities
 2. Intuitive - macOS-native patterns and interactions that feel familiar to Mac users
@@ -10,7 +16,7 @@ Experience qualities:
 Complexity level: complex application (advanced functionality with persistent state)
 - Multiple interconnected features including connection management, video streaming, recording controls, network discovery, and real-time logging with persistent configuration state
 
-## Implementation Status: COMPLETE
+## Implementation Status: PARTIAL (verify in code)
 
 All core features are implemented with modern web technologies:
 

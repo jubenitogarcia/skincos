@@ -1,0 +1,28 @@
+#
+# Example Cloudflare Tunnel config for Unit Monitor Gateway
+#
+# Goal: expose ONLY health + unit-monitor API paths, fail closed for everything else.
+#
+# Usage (one option):
+#   cloudflared tunnel run --config ./unit-monitor-cloudflared.example.yml <TUNNEL_NAME>
+#
+# Notes:
+# - Prefer service tokens / Zero Trust policies on the hostname too.
+# - Keep the origin local and private (localhost / LAN only).
+#
+
+tunnel: <TUNNEL_UUID_OR_NAME>
+credentials-file: /path/to/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: unit-monitor-gw.seudominio.com
+    path: /health
+    service: http://localhost:8099
+
+  - hostname: unit-monitor-gw.seudominio.com
+    path: /api/unit-monitor/*
+    service: http://localhost:8099
+
+  # Default rule: block anything else
+  - service: http_status:404
+

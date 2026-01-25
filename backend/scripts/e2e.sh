@@ -5,6 +5,7 @@ set -euo pipefail
 # Commands:
 #   smoke      - start real gateway instances (default 1,2) and run basic checks
 #   ci-smoke   - start mock servers on 3001/3002 and assert basic JSON shapes
+#   unit-monitor-ci - start crm-api in gateway mode and assert hardening behavior
 #   health     - repository health checks (non-failing)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -85,6 +86,113 @@ start_mocks() {
     sleep 0.2
   done
   return 1
+}
+
+start_crm_api_gateway() {
+  local port="${1:-8099}"
+  local token="${2:-testtoken}"
+  local var_dir="${3:-}"
+  local out="${PID_DIR}/crm_api_gateway_${port}.out"
+  local pidfile="${PID_DIR}/crm_api_gateway_${port}.pid"
+
+  if curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Unit Monitor CI: starting crm-api gateway on :${port}"
+  (
+    cd "$ROOT_DIR"
+    if [[ -n "${var_dir:-}" ]]; then
+      export VAR_DIR="$var_dir"
+    fi
+    PORT="$port" \
+    CRM_API_PORT="$port" \
+    SKINCOS_GATEWAY=1 \
+    CRM_UNIT_MONITOR_PROXY_TOKEN="$token" \
+    node backend/apps/crm-api/server.js >"$out" 2>&1 &
+    echo $! >"$pidfile"
+  )
+
+  for _ in {1..60}; do
+    if curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "[e2e] crm-api gateway FAILED to become healthy on :${port}" >&2
+  tail -n 60 "$out" 2>/dev/null || true
+  return 1
+}
+
+stop_crm_api_gateway() {
+  local port="${1:-8099}"
+  local pidfile="${PID_DIR}/crm_api_gateway_${port}.pid"
+  if [[ ! -f "$pidfile" ]]; then return 0; fi
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  rm -f "$pidfile" >/dev/null 2>&1 || true
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill "$pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  return 0
+}
+
+unit_monitor_ci() {
+  local port=8099
+  local token="testtoken"
+  local var_dir
+  var_dir="$(mktemp -d 2>/dev/null || true)"
+  trap "stop_crm_api_gateway \"$port\"; [[ -n \"${var_dir:-}\" ]] && rm -rf \"$var_dir\" >/dev/null 2>&1 || true" EXIT
+
+  start_crm_api_gateway "$port" "$token" "$var_dir"
+
+  # 1) /api/unit-monitor requires auth headers in gateway mode
+  local code
+  code="$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}/api/unit-monitor/health" || true)"
+  assert_condition "[[ \"$code\" == \"401\" ]]" "expected 401 without headers (got $code)"
+
+  # 2) /api/health is NOT exposed in gateway mode (fail-closed)
+  code="$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}/api/health" || true)"
+  assert_condition "[[ \"$code\" == \"404\" ]]" "expected 404 for /api/health in gateway mode (got $code)"
+
+  # 3) Valid signed actor headers allow access
+  local hdrs
+  hdrs="$(TOKEN="$token" node - <<'NODE'
+const { createHmac } = require('node:crypto')
+const token = process.env.TOKEN || ''
+const actor = { id: 'e2e', email: 'e2e@local', name: 'E2E' }
+const actorB64 = Buffer.from(JSON.stringify(actor), 'utf8').toString('base64url')
+const ts = String(Date.now())
+const sig = createHmac('sha256', token).update(`${ts}.${actorB64}`).digest('base64url')
+process.stdout.write(
+  [
+    `-H`, `x-unit-monitor-proxy-token: ${token}`,
+    `-H`, `x-skincos-actor: ${actorB64}`,
+    `-H`, `x-skincos-actor-ts: ${ts}`,
+    `-H`, `x-skincos-actor-sig: ${sig}`,
+  ].join('\n')
+)
+NODE
+)"
+  # Convert newline-separated args into an array (bash 3 compatible).
+  hdr_arr=()
+  while IFS= read -r line; do
+    [[ -z "${line:-}" ]] && continue
+    hdr_arr+=("$line")
+  done <<EOF
+$hdrs
+EOF
+  body="$(curl -fsS "${hdr_arr[@]}" "http://localhost:${port}/api/unit-monitor/health" || true)"
+  if have_jq; then
+    echo "$body" | jq -e '.ok==true' >/dev/null
+  else
+    assert_condition "[[ \"$body\" == *'\"ok\":true'* ]]" "expected ok response for signed request"
+  fi
+  log "unit-monitor-ci PASS"
 }
 
 cleanup_mocks() {
@@ -208,6 +316,9 @@ case "$cmd" in
     resp=$(curl -sf "http://localhost:3001/v1/search?limit=5")
     if have_jq; then echo "$resp" | jq -e '.meta and (.contacts|type=="array") and (.messages|type=="array")' >/dev/null; fi
     log "ci-smoke PASS"
+    ;;
+  unit-monitor-ci)
+    unit_monitor_ci
     ;;
   health)
     health_checks || true

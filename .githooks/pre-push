@@ -3,16 +3,16 @@ set -euo pipefail
 
 # Auto-deploy Insumos Worker when pushing updates to `main`.
 #
-# Opt-outs:
+# Opt-ins/outs:
+#   SKINCOS_AUTO_DEPLOY=1        -> enable auto-deploy (recommended: only in a dedicated deploy environment)
 #   SKINCOS_SKIP_DEPLOY=1        -> skip everything
-#   SKINCOS_AUTO_DEPLOY=0        -> skip everything
 #   SKINCOS_AUTO_MIGRATE=1       -> also apply D1 migrations (best effort)
 #   SKINCOS_DEPLOY_STRICT=0      -> do not block push if deploy fails
 
 REMOTE_NAME="${1:-}"
 REMOTE_URL="${2:-}"
 
-if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-1}" == "0" ]]; then
+if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-0}" != "1" ]]; then
   exit 0
 fi
 
@@ -68,4 +68,3 @@ else
 fi
 
 echo "[skincos] Insumos deploy done."
-
