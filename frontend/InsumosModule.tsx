@@ -698,6 +698,12 @@ export function InsumosModule() {
   const [csrfToken, setCsrfToken] = React.useState<string | null>(null)
   const [user, setUser] = React.useState<InsumosUser | null>(null)
   const [authLoading, setAuthLoading] = React.useState(true)
+  const [healthLoaded, setHealthLoaded] = React.useState(false)
+  const [authLoaded, setAuthLoaded] = React.useState(false)
+  const [overviewLoaded, setOverviewLoaded] = React.useState(false)
+  const [insumosLoaded, setInsumosLoaded] = React.useState(false)
+  const [movLoaded, setMovLoaded] = React.useState(false)
+  const [insightsLoaded, setInsightsLoaded] = React.useState(false)
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
@@ -961,6 +967,48 @@ export function InsumosModule() {
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
 
   const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
+
+  React.useEffect(() => {
+    if (!isAuthed || !canUseApi) {
+      setOverviewLoaded(false)
+      setInsumosLoaded(false)
+      setMovLoaded(false)
+      setInsightsLoaded(false)
+    }
+  }, [isAuthed, canUseApi])
+
+  const dashboardProgress = React.useMemo(() => {
+    const steps = [
+      healthLoaded,
+      authLoaded,
+      ...(canUseApi && isAuthed ? [overviewLoaded, insumosLoaded, movLoaded, insightsLoaded] : [])
+    ]
+    const total = steps.length || 1
+    const done = steps.filter(Boolean).length
+    return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
+  }, [authLoaded, canUseApi, healthLoaded, insumosLoaded, insightsLoaded, isAuthed, movLoaded, overviewLoaded])
+
+  const isDashboardLoading =
+    authLoading || healthLoading || (canUseApi && isAuthed && dashboardProgress < 100)
+
+  const DashboardLoadingButton = React.useCallback(
+    ({ size = 'sm', className = '' }: { size?: 'sm' | 'default' | 'lg'; className?: string } = {}) => (
+      <Button variant="secondary" size={size} disabled className={`gap-2 ${className}`.trim()}>
+        <span className="animate-pulse">⏳</span>
+        {`Carregando dados ${dashboardProgress}%`}
+      </Button>
+    ),
+    [dashboardProgress]
+  )
+
+  const renderListPlaceholder = React.useCallback(
+    (loading: boolean, emptyLabel: string) => {
+      if (loading || isDashboardLoading) return <DashboardLoadingButton />
+      if (isAuthed) return emptyLabel
+      return 'Faça login para carregar.'
+    },
+    [DashboardLoadingButton, isAuthed, isDashboardLoading]
+  )
 
   const visibleMainPanels = React.useMemo(() => {
     const allowed = new Set(DEFAULT_MAIN_PANELS)
@@ -2183,6 +2231,7 @@ export function InsumosModule() {
       setHealth(null)
       setError(e instanceof Error ? e.message : String(e))
     } finally {
+      setHealthLoaded(true)
       setHealthLoading(false)
     }
   }, [])
@@ -2197,6 +2246,7 @@ export function InsumosModule() {
       setUser(null)
       setCsrfToken(null)
     } finally {
+      setAuthLoaded(true)
       setAuthLoading(false)
     }
   }, [])
@@ -2234,6 +2284,7 @@ export function InsumosModule() {
       const limite = Math.max(1, Math.min(1000, opts?.limite ?? insumosLimite))
       const q = String(opts?.q ?? insumosQuery).trim()
       const append = opts?.append === true
+      const isInitialLoad = pagina === 1 && !append
 
       setInsumosLoading(true)
       try {
@@ -2274,6 +2325,7 @@ export function InsumosModule() {
         setInsumosHasMore(false)
         return null
       } finally {
+        if (isInitialLoad) setInsumosLoaded(true)
         setInsumosLoading(false)
       }
     },
@@ -2386,6 +2438,7 @@ export function InsumosModule() {
       setMovTotal(null)
       setMovHasMore(false)
     } finally {
+      if (!opts?.append) setMovLoaded(true)
       setMovLoading(false)
     }
   }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, selectedCodigoBarras, unidade])
@@ -2536,6 +2589,7 @@ export function InsumosModule() {
       setOverviewMovResumo(null)
       setOverviewMovSeries([])
     } finally {
+      setOverviewLoaded(true)
       setOverviewLoading(false)
     }
   }, [canUseApi, isAuthed, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
@@ -2754,6 +2808,7 @@ export function InsumosModule() {
 	      setInsightsTrends(null)
 	      setInsightsTurnover(null)
 	    } finally {
+	      setInsightsLoaded(true)
 	      setInsightsLoading(false)
 	    }
 	  }, [canUseApi, isAuthed, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
@@ -4302,7 +4357,7 @@ export function InsumosModule() {
                   {!filteredInsumos.length ? (
                     <tr>
                       <td className="p-3 text-blue-100/70" colSpan={8}>
-                        {insumosLoading ? 'Carregando…' : isAuthed ? 'Sem itens.' : 'Faça login para carregar.'}
+                        {renderListPlaceholder(insumosLoading, 'Sem itens.')}
                       </td>
                     </tr>
                   ) : null}
@@ -4443,7 +4498,11 @@ export function InsumosModule() {
           </DialogHeader>
 
           {!isAuthed ? (
-            <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
+            isDashboardLoading ? (
+              <DashboardLoadingButton size="sm" />
+            ) : (
+              <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
+            )
           ) : null}
 
           <div className="space-y-3">
@@ -5292,7 +5351,7 @@ export function InsumosModule() {
                       {!insightsAlertasFiltrados.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={7}>
-                            {insightsLoading ? 'Carregando…' : isAuthed ? 'Sem alertas.' : 'Faça login para carregar.'}
+                            {renderListPlaceholder(insightsLoading, 'Sem alertas.')}
                           </td>
                         </tr>
                       ) : null}
@@ -6812,7 +6871,7 @@ export function InsumosModule() {
               {!filteredInsumos.length ? (
                 <tr>
                   <td className="p-3 text-blue-100/70" colSpan={8}>
-                    {insumosLoading ? 'Carregando…' : isAuthed ? 'Sem itens.' : 'Faça login para carregar.'}
+                    {renderListPlaceholder(insumosLoading, 'Sem itens.')}
                   </td>
                 </tr>
               ) : null}
@@ -7227,7 +7286,7 @@ export function InsumosModule() {
 	              {!movimentacoesView.length ? (
 	                <tr>
 	                  <td className="p-3 text-blue-100/70 text-center" colSpan={9}>
-	                    {movLoading ? 'Carregando…' : isAuthed ? 'Sem movimentações.' : 'Faça login para carregar.'}
+	                    {renderListPlaceholder(movLoading, 'Sem movimentações.')}
 	                  </td>
 	                </tr>
 	              ) : null}
