@@ -24,8 +24,14 @@ export async function getInsumosUser(context: any): Promise<InsumosAuthUser | nu
   if (!res || !res.ok) return null
 
   const data = await res.json().catch(() => null)
-  if (!data?.id) return null
-  return data as InsumosAuthUser
+  const raw = data?.user || data?.usuario || data || null
+  const id = raw?.username || raw?.email || raw?.id
+  if (!id) return null
+  return {
+    id: String(id),
+    name: raw?.displayName || raw?.name || raw?.username || raw?.email || undefined,
+    email: raw?.email || undefined,
+  }
 }
 
 export async function requireInsumosUser(context: any): Promise<InsumosAuthUser | Response> {
@@ -33,4 +39,3 @@ export async function requireInsumosUser(context: any): Promise<InsumosAuthUser 
   if (!user) return json(401, { ok: false, error: 'UNAUTHORIZED', hint: 'Faça login para usar a integração Instagram.' })
   return user
 }
-

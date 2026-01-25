@@ -40,12 +40,26 @@ export async function onRequest(context: any): Promise<Response> {
     // Cloudflare-specific: preserve multiple Set-Cookie headers.
     try {
         const getSetCookie = (upstream.headers as any).getSetCookie
+        const rewriteCookie = (cookie: string) => {
+            if (!cookie) return cookie
+            const parts = cookie.split(';').map(part => part.trim()).filter(Boolean)
+            if (!parts.length) return cookie
+            const [nameValue, ...attrs] = parts
+            const filtered = attrs.filter(attr => !attr.toLowerCase().startsWith('domain='))
+            return [nameValue, ...filtered].join('; ')
+        }
+        const applyCookies = (cookies: string[]) => {
+            if (!Array.isArray(cookies) || !cookies.length) return
+            outHeaders.delete('set-cookie')
+            for (const c of cookies) outHeaders.append('Set-Cookie', rewriteCookie(c))
+        }
+
         if (typeof getSetCookie === 'function') {
             const cookies = getSetCookie.call(upstream.headers) as string[]
-            if (Array.isArray(cookies) && cookies.length) {
-                outHeaders.delete('set-cookie')
-                for (const c of cookies) outHeaders.append('Set-Cookie', c)
-            }
+            applyCookies(cookies)
+        } else {
+            const single = upstream.headers.get('set-cookie')
+            if (single) applyCookies([single])
         }
     } catch {
         // ignore

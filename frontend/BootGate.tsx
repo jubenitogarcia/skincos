@@ -9,7 +9,7 @@
  * - Shows specific error screens for different failure types
  * - Integrates with ErrorReporter for proper error handling
  */
-import React, { ReactNode, useEffect, useState } from 'react'
+import React, { ReactNode, useEffect, useRef, useState } from 'react'
 import { errorReporter, BootError } from '@/ErrorReporter'
 
 function BootFailureScreen({ error, onRetry }: { error: BootError; onRetry: () => void }) {
@@ -197,9 +197,18 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
   const [isReady, setIsReady] = useState(false)
   const [criticalError, setCriticalError] = useState<BootError | null>(null)
   const [bootPhase, setBootPhase] = useState<'preflight' | 'initialization' | 'ready' | 'failed'>('preflight')
+  const bootPhaseRef = useRef(bootPhase)
+  const bootStartedRef = useRef(false)
+
+  useEffect(() => {
+    bootPhaseRef.current = bootPhase
+  }, [bootPhase])
 
   // Deterministic preflight checks with proper error handling
   useEffect(() => {
+    if (bootStartedRef.current) return
+    bootStartedRef.current = true
+
     let bootTimeout: NodeJS.Timeout
     let isCleanedUp = false
 
@@ -222,7 +231,7 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
         
         // 3. Backend Health Check (with multiple fallbacks)
         let backendHealthy = false;
-        const healthEndpoints = ['/health', '/v1/health', '/api/system/health'];
+        const healthEndpoints = ['/api/health', '/api/insumos/health'];
         
         for (const endpoint of healthEndpoints) {
           try {
@@ -279,7 +288,7 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
           message: error instanceof Error ? error.message : 'Unknown critical error',
           details: error,
           timestamp: Date.now(),
-          phase: bootPhase
+          phase: bootPhaseRef.current
         }
         
         // Report error and show failure screen
@@ -299,7 +308,7 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
           type: 'BOOT_TIMEOUT',
           message: `Boot process timed out after ${timeout}ms`,
           timestamp: Date.now(),
-          phase: bootPhase
+          phase: bootPhaseRef.current
         }
         
         errorReporter.reportBootError(bootError)
@@ -314,7 +323,7 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
       isCleanedUp = true
       clearTimeout(bootTimeout)
     }
-  }, [timeout, isReady, bootPhase])
+  }, [timeout])
 
   // Show boot failure screen for critical errors
   if (criticalError) {
