@@ -379,7 +379,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [active])
 
 			    React.useEffect(() => {
-			        if (active !== 'insumos') {
+			        if (active !== 'insumos' || !isAuthenticated) {
 			            setInsumosHeaderStatus(null)
 			            return
 			        }
@@ -440,7 +440,7 @@ export default function AppFunctionalNeatlab() {
 	        })()
 
 			        return () => ac.abort()
-			    }, [active, effectiveUnit, setSelectedUnit])
+				    }, [active, effectiveUnit, isAuthenticated, setSelectedUnit])
 
 		    React.useEffect(() => {
 		        if (active !== 'insumos') return

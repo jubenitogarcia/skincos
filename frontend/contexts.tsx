@@ -330,6 +330,7 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
     ; (window as any).__INTEGRATIONS_PROVIDER_MOUNTED__ = true
   }
 
+  const { isAuthenticated } = useAuth()
   const [instagram, setInstagram] = useState<InstagramIntegrationState>({ connected: false })
   const [whatsapp, setWhatsApp] = useState<WhatsAppIntegrationState>({ connected: false })
 
@@ -365,9 +366,13 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setInstagram({ connected: false })
+      return
+    }
     void refreshInstagram()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isAuthenticated])
 
   const connectInstagram = async (token: string, businessAccountId: string) => {
     const res = await fetch('/api/instagram/connect', {
@@ -627,12 +632,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     return unsubscribe
   }, [webSocket, setNotifications])
-
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission()
-    }
-  }, [])
 
   useEffect(() => {
     if (!webSocket.isConnected) return
