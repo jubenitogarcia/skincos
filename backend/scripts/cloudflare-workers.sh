@@ -50,7 +50,8 @@ deploy_insumos() {
   echo "[workers] Applying D1 migrations (best effort) ..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm exec wrangler d1 migrations apply "${INSUMOS_D1_DB_NAME:-skincos-db}" --config apps/insumos/wrangler.toml || true
+    # Run wrangler through the insumos package context to avoid picking the wrong major version.
+    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "${INSUMOS_D1_DB_NAME:-skincos-db}" --config apps/insumos/wrangler.toml || true
   )
   echo "[workers] Deploying skincos-insumos..."
   (

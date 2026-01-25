@@ -2,6 +2,7 @@ name: Deploy CRM (Cloudflare Pages)
 
 on:
   push:
+    branches: [ main ]
     paths:
       - "frontend/**"
       - ".github/workflows/deploy-crm-pages.yml"

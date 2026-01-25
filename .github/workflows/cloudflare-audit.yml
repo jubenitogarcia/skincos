@@ -39,5 +39,5 @@ jobs:
           CLOUDFLARE_PAGES_PROJECT: skincos
         run: |
           set -euo pipefail
+          command -v jq >/dev/null 2>&1 || (sudo apt-get update -y && sudo apt-get install -y jq)
           bash backend/scripts/cloudflare-audit.sh
-

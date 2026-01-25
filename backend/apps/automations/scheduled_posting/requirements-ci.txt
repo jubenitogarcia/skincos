@@ -1,0 +1,17 @@
+#
+# Scheduled Posting - CI dependencies
+#
+# Keep this lightweight so GitHub Actions can run diagnostics quickly.
+# Heavy media/AI deps (torch/opencv/whisper/etc.) stay in requirements.txt.
+#
+
+python-dotenv>=1.0.0
+requests>=2.31.0
+PyGithub>=2.3.0
+
+google-auth>=2.22.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.2.0
+google-api-python-client>=2.95.0
+
+pyyaml>=6.0.0

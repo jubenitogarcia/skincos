@@ -4,66 +4,113 @@ on:
   schedule:
     - cron: '0 8 * * *'  # Executa todos os dias às 8:00 UTC
   workflow_dispatch:      # Permite execução manual
+    inputs:
+      mode:
+        description: "Modo de execução"
+        required: false
+        type: choice
+        default: diagnose
+        options:
+          - diagnose
+          - test
   push:
     branches: [ main ]
-    paths-ignore:
-      - '**.md'           # Ignora atualizações em arquivos markdown
-      - '.vscode/**'      # Ignora arquivos de configuração do VS Code
+    paths:
+      - "backend/apps/automations/scheduled_posting/**"
+      - "backend/libs/scheduler_config.py"
+      - ".github/workflows/scheduled-posting-ci.yml"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "backend/apps/automations/scheduled_posting/**"
+      - "backend/libs/scheduler_config.py"
+      - ".github/workflows/scheduled-posting-ci.yml"
 
 jobs:
-  diagnose:
+  smoke:
     runs-on: ubuntu-latest
-    name: Run System Diagnostics
+    name: Scheduled Posting Smoke (offline)
     defaults:
       run:
         working-directory: backend
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           cache: 'pip'
+          cache-dependency-path: |
+            backend/apps/automations/scheduled_posting/requirements-ci.txt
+            backend/apps/automations/scheduled_posting/requirements.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f automations/scheduled_posting/requirements.txt ]; then pip install -r automations/scheduled_posting/requirements.txt; fi
+          if [ -f apps/automations/scheduled_posting/requirements-ci.txt ]; then pip install -r apps/automations/scheduled_posting/requirements-ci.txt; fi
 
-      - name: Run diagnostic tests
+      - name: Import/compile checks (no external calls)
+        run: |
+          python -m compileall apps/automations/scheduled_posting
+          python -c "from libs.scheduler_config import ConfigManager; from apps.automations.scheduled_posting.diagnostics.runner import DiagnosticsRunner; print('imports ok')"
+
+  diagnose:
+    runs-on: ubuntu-latest
+    name: Run Live Diagnostics (optional)
+    needs: smoke
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && vars.ENABLE_SCHEDULED_POSTING_AUTOMATION == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'diagnose') }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: backend/apps/automations/scheduled_posting/requirements-ci.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/automations/scheduled_posting/requirements-ci.txt
+
+      - name: Run diagnostic mode
         run: |
           python -m apps.automations.scheduled_posting --mode diagnose
-        # GITHUB_TOKEN é automaticamente injetado pelo GitHub Actions
-        # e será detectado pelo código atualizado
 
   test:
     runs-on: ubuntu-latest
-    name: Run Test Mode
-    needs: diagnose
+    name: Run Test Mode (manual, heavy deps)
+    needs: smoke
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'test' && vars.ENABLE_SCHEDULED_POSTING_AUTOMATION == 'true' }}
     defaults:
       run:
         working-directory: backend
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           cache: 'pip'
+          cache-dependency-path: backend/apps/automations/scheduled_posting/requirements.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f automations/scheduled_posting/requirements.txt ]; then pip install -r automations/scheduled_posting/requirements.txt; fi
+          pip install -r apps/automations/scheduled_posting/requirements.txt
 
       - name: Run test mode
         run: |
           python -m apps.automations.scheduled_posting --mode test
-        # GITHUB_TOKEN é automaticamente injetado pelo GitHub Actions
 
   # Execução real (descomentada apenas quando necessário)
   # deploy:

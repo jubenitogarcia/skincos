@@ -16,11 +16,13 @@ jobs:
           token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Initialize submodules with GH_TOKEN
+      - name: Initialize submodules (if configured)
+        if: ${{ hashFiles('.gitmodules') != '' }}
         run: |
           set -euxo pipefail
           if [ -z "${{ secrets.GH_TOKEN }}" ]; then
-            echo "::error::GH_TOKEN secret is required to fetch private submodules"; exit 1;
+            echo "::warning::GH_TOKEN not set; skipping submodule init."
+            exit 0
           fi
           git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git submodule sync --recursive
@@ -29,10 +31,14 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Ensure jq
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null 2>&1 && exit 0
+          sudo apt-get update -y
+          sudo apt-get install -y jq
 
       - name: Run assertive smoke in mock mode
         run: bash backend/scripts/e2e.sh ci-smoke
