@@ -42,14 +42,21 @@ export async function onRequest(context: any): Promise<Response> {
 
   const headers = new Headers(request.headers)
   headers.delete('host')
+  headers.delete('content-length')
+  headers.delete('content-encoding')
+  headers.delete('transfer-encoding')
+  headers.delete('connection')
 
   const proxyToken = (context.env?.UNIT_MONITOR_PROXY_TOKEN as string | undefined) || ''
   if (proxyToken) headers.set('x-unit-monitor-proxy-token', proxyToken)
 
+  const method = (request.method || 'GET').toUpperCase()
+  const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
+
   const upstreamRequest = new Request(targetUrl.toString(), {
-    method: request.method,
+    method,
     headers,
-    body: request.body,
+    body,
     redirect: 'manual'
   })
 

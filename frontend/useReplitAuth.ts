@@ -31,9 +31,13 @@ export function useReplitAuth() {
     queryFn: async () => {
       if (import.meta.env.DEV) console.log('[useReplitAuth] 📡 Fetching user authentication status...')
       
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 12000)
       const response = await fetch('/api/insumos/auth/me', {
-        credentials: 'include' // Important for cookies/sessions
-      });
+        credentials: 'include', // Important for cookies/sessions
+        signal: ac.signal,
+        headers: { 'accept': 'application/json' }
+      }).finally(() => clearTimeout(timer))
       
       if (import.meta.env.DEV) console.log('[useReplitAuth] 📊 Response status:', response.status, response.statusText)
       

@@ -14,11 +14,18 @@ export async function onRequest(context: any): Promise<Response> {
 
     const headers = new Headers(request.headers)
     headers.delete('host')
+    headers.delete('content-length')
+    headers.delete('content-encoding')
+    headers.delete('transfer-encoding')
+    headers.delete('connection')
+
+    const method = (request.method || 'GET').toUpperCase()
+    const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
 
     const upstreamRequest = new Request(targetUrl.toString(), {
-        method: request.method,
+        method,
         headers,
-        body: request.body,
+        body,
         redirect: 'manual'
     })
 

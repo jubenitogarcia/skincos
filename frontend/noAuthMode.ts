@@ -1,35 +1,33 @@
 // NO_AUTH MODE: Utility functions for NO_AUTH mode detection
-// Checks for VITE_NO_AUTH=true or NODE_ENV=development to bypass authentication
+// Security rule:
+// - NO_AUTH is only allowed when explicitly enabled AND running on localhost.
+// - Never enable automatically in dev: we still want to test real auth flows by default.
 
 export const isNoAuthMode = (): boolean => {
-  // PRODUCTION SAFETY: NO_AUTH is NEVER enabled in production
-  const IS_PRODUCTION = import.meta.env.PROD || 
-                       import.meta.env.NODE_ENV === 'production' ||
-                       (typeof process !== 'undefined' && process.env.NODE_ENV === 'production')
-  
-  if (IS_PRODUCTION) {
-    console.log('[NO_AUTH MODE] Production environment detected - NO_AUTH mode disabled for security')
-    return false
+  const explicit = import.meta.env.VITE_NO_AUTH === 'true'
+
+  let hostname = ''
+  try {
+    hostname = typeof window !== 'undefined' ? window.location.hostname : ''
+  } catch {
+    hostname = ''
   }
-  
-  // Check explicit VITE_NO_AUTH flag (highest priority)
-  const EXPLICIT_NO_AUTH = import.meta.env.VITE_NO_AUTH === 'true'
-  
-  // Check NODE_ENV=development (fallback)
-  const IS_DEVELOPMENT = import.meta.env.DEV || 
-                        import.meta.env.NODE_ENV === 'development' ||
-                        (typeof process !== 'undefined' && process.env.NODE_ENV === 'development')
-  
-  const result = EXPLICIT_NO_AUTH || IS_DEVELOPMENT
-  
+
+  const isLocalhost =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname.endsWith('.local')
+
+  const result = Boolean(explicit && isLocalhost)
+
   console.log('[NO_AUTH MODE] Auth mode check:', {
-    IS_PRODUCTION,
-    EXPLICIT_NO_AUTH,
-    IS_DEVELOPMENT,
-    viteEnv: import.meta.env.DEV,
-    finalResult: result
+    explicit,
+    hostname,
+    isLocalhost,
+    finalResult: result,
   })
-  
+
   return result
 }
 
