@@ -22,7 +22,37 @@ import axios from 'axios'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
 const BACKEND_ROOT = path.join(REPO_ROOT, 'backend')
-const CRM_UI_DIR = process.env.CRM_UI_DIR || path.join(REPO_ROOT, 'frontend')
+function resolveCrmUiDir() {
+    const env = String(process.env.CRM_UI_DIR || '').trim()
+    const candidates = []
+
+    if (env) {
+        const abs = path.resolve(env)
+        if (path.basename(abs) === 'dist') {
+            candidates.push(abs)
+        } else {
+            // If env points to the frontend root, prefer the built output.
+            candidates.push(path.join(abs, 'dist'))
+            candidates.push(abs)
+        }
+    }
+
+    // Prefer built UI if present (prevents browsers trying to import /main.tsx in production).
+    candidates.push(path.join(REPO_ROOT, 'frontend', 'dist'))
+
+    // Fallback for dev environments (Vite dev server uses frontend/ index.html).
+    candidates.push(path.join(REPO_ROOT, 'frontend'))
+
+    for (const dir of candidates) {
+        try {
+            if (fsSync.existsSync(path.join(dir, 'index.html'))) return dir
+        } catch { /* ignore */ }
+    }
+
+    return path.join(REPO_ROOT, 'frontend')
+}
+
+const CRM_UI_DIR = resolveCrmUiDir()
 const VAR_DIR = process.env.VAR_DIR || path.join(BACKEND_ROOT, 'var')
 const CORE_STATE_DIR = path.join(VAR_DIR, 'core')
 
@@ -347,7 +377,19 @@ app.use((req, res, next) => {
         req.path.startsWith('/auth/')) {
         return next()
     }
-    express.static(CRM_UI_DIR)(req, res, next)
+    express.static(CRM_UI_DIR, {
+        index: false,
+        setHeaders(res, filePath) {
+            const normalized = String(filePath || '').replaceAll('\\', '/')
+            if (normalized.endsWith('/index.html')) {
+                res.setHeader('Cache-Control', 'no-store')
+                return
+            }
+            if (normalized.includes('/assets/')) {
+                res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+            }
+        }
+    })(req, res, next)
 })
 
 // -------------------------------------------------------------
@@ -4141,7 +4183,13 @@ app.use((req, res, next) => {
         return next()
     }
 
+    // Don't serve the SPA shell for paths that look like files (prevents HTML being served for JS chunks).
+    if (path.extname(req.path || '')) {
+        return res.status(404).end()
+    }
+
     // For all other routes, serve the React app
+    res.setHeader('Cache-Control', 'no-store')
     res.sendFile(path.join(CRM_UI_DIR, 'index.html'))
 })
 

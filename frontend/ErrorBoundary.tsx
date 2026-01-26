@@ -3,6 +3,38 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/car
 import { Button } from "@/button"
 import { Warning } from "@phosphor-icons/react"
 
+function isDynamicImportFailure(error: Error) {
+  const name = String((error as any)?.name || '')
+  const message = String(error?.message || '')
+
+  return (
+    name === 'ChunkLoadError' ||
+    message.includes('ChunkLoadError') ||
+    message.includes('Loading chunk') ||
+    message.includes('Failed to fetch dynamically imported module') ||
+    message.includes('Importing a module script failed')
+  )
+}
+
+function tryHardReloadOnce() {
+  if (typeof window === 'undefined') return false
+
+  const key = 'skincos.reload.chunk-failure.v1'
+  try {
+    if (window.sessionStorage.getItem(key) === '1') return false
+    window.sessionStorage.setItem(key, '1')
+  } catch {
+    return false
+  }
+
+  try {
+    window.location.reload()
+    return true
+  } catch {
+    return false
+  }
+}
+
 interface Props {
   children: ReactNode
   fallback?: ReactNode
@@ -26,6 +58,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo)
+
+    if (isDynamicImportFailure(error)) {
+      const reloaded = tryHardReloadOnce()
+      if (reloaded) return
+    }
+
     this.setState({ errorInfo: errorInfo.componentStack })
   }
 

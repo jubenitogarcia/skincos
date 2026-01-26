@@ -21,12 +21,14 @@ export const isNoAuthMode = (): boolean => {
 
   const result = Boolean(explicit && isLocalhost)
 
-  console.log('[NO_AUTH MODE] Auth mode check:', {
-    explicit,
-    hostname,
-    isLocalhost,
-    finalResult: result,
-  })
+  if (import.meta.env.DEV) {
+    console.log('[NO_AUTH MODE] Auth mode check:', {
+      explicit,
+      hostname,
+      isLocalhost,
+      finalResult: result,
+    })
+  }
 
   return result
 }
@@ -37,7 +39,7 @@ export const getMockUser = () => ({
   name: 'Dev User (NO_AUTH)',
   email: 'dev@noauth.local',
   createdAt: new Date().toISOString(),
-  avatarUrl: undefined
+  avatarUrl: undefined,
 })
 
 export const logNoAuthMode = (context: string, action: string) => {
