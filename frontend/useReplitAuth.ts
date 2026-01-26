@@ -6,28 +6,15 @@ import { isNoAuthMode, getMockUser, logNoAuthMode } from '@/noAuthMode';
 export function useReplitAuth() {
   if (import.meta.env.DEV) console.log('[useReplitAuth] 🔍 Starting authentication check...')
   
-  // NO_AUTH MODE: Bypass authentication completely when in NO_AUTH mode
-  if (isNoAuthMode()) {
-    logNoAuthMode('useReplitAuth', 'Bypassing authentication - returning mock user')
-    const mockUser = getMockUser()
-    return {
-      user: mockUser,
-      isLoading: false, // NO_AUTH MODE: No loading in development
-      isAuthenticated: true, // NO_AUTH MODE: Always authenticated in development
-      error: null
-    };
+  const noAuth = isNoAuthMode()
+  if (noAuth) {
+    logNoAuthMode('useReplitAuth', 'NO_AUTH mode enabled - returning mock user')
   }
+
+  const queryClient = useQueryClient()
+  if (import.meta.env.DEV) console.log('[useReplitAuth] ✅ QueryClient acessível:', !!queryClient)
   
-  // Check if QueryClient is available
-  let queryClient: any = null
-  try {
-    queryClient = useQueryClient()
-    if (import.meta.env.DEV) console.log('[useReplitAuth] ✅ QueryClient acessível:', !!queryClient)
-  } catch (error) {
-    if (import.meta.env.DEV) console.error('[useReplitAuth] ❌ QueryClient não disponível:', error)
-  }
-  
-  const [authChecked, setAuthChecked] = useState(false)
+  const [authChecked, setAuthChecked] = useState(noAuth)
 
   const { data: user, error, status } = useQuery({
     queryKey: ["/api/auth/me"],
@@ -71,30 +58,30 @@ export function useReplitAuth() {
     retry: false, // Don't retry on 401
     staleTime: 0,
     refetchOnMount: 'always',
-    enabled: !!queryClient, // CRITICAL: Only run if QueryClient is available
+    enabled: !noAuth && !!queryClient, // In NO_AUTH mode we bypass /me entirely
   });
 
   useEffect(() => {
-    if (!authChecked && status !== 'loading') {
+    if (!noAuth && !authChecked && status !== 'loading') {
       setAuthChecked(true)
     }
-  }, [authChecked, status])
+  }, [authChecked, noAuth, status])
 
-  const safeUser = authChecked ? (user ?? null) : null
+  const safeUser = noAuth ? getMockUser() : (authChecked ? (user ?? null) : null)
 
   const result = {
     user: safeUser,
-    isLoading: !authChecked,
-    isAuthenticated: authChecked && !!safeUser,
-    error
+    isLoading: noAuth ? false : !authChecked,
+    isAuthenticated: noAuth ? true : (authChecked && !!safeUser),
+    error: noAuth ? null : error
   };
   
   if (import.meta.env.DEV) {
     console.log('[useReplitAuth] 📋 Hook result:', {
       hasUser: !!safeUser,
-      isLoading: !authChecked,
-      isAuthenticated: authChecked && !!safeUser,
-      hasError: !!error
+      isLoading: noAuth ? false : !authChecked,
+      isAuthenticated: noAuth ? true : (authChecked && !!safeUser),
+      hasError: noAuth ? false : !!error
     })
   }
   

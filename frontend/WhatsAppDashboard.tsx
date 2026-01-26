@@ -188,7 +188,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       const response = await fetch(buildGatewayUrl(`/whatsapp/${channelId}/chats`))
       
       if (response.ok) {
-        const data = await response.json()
+        const data: any = await response.json()
         const chatList = data.chats || data.data || []
         
         // Transformar dados para formato esperado
@@ -223,7 +223,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       const response = await fetch(buildGatewayUrl(`/whatsapp/${channelId}/chats/${encodeURIComponent(chatId)}/messages`))
       
       if (response.ok) {
-        const data = await response.json()
+        const data: any = await response.json()
         const messageList = data.messages || data.data || []
         
         // Transformar dados para formato esperado

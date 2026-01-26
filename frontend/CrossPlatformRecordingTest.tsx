@@ -349,22 +349,26 @@ export function CrossPlatformRecordingTest({
           }, 'video/webm', 5000)
 
         case 'webm-codec':
-          const webmType = capabilities?.supportedMimeTypes.find(t => t.includes('webm'))
-          if (!webmType) {
-            return { ...test, status: 'failed', details: 'WebM format not supported' }
+          {
+            const webmType = capabilities?.supportedMimeTypes.find(t => t.includes('webm'))
+            if (!webmType) {
+              return { ...test, status: 'failed', details: 'WebM format not supported' }
+            }
+            return await performRecordingTest(test, {
+              video: { width: 1280, height: 720 }
+            }, webmType, 3000)
           }
-          return await performRecordingTest(test, {
-            video: { width: 1280, height: 720 }
-          }, webmType, 3000)
 
         case 'mp4-codec':
-          const mp4Type = capabilities?.supportedMimeTypes.find(t => t.includes('mp4'))
-          if (!mp4Type) {
-            return { ...test, status: 'warning', details: 'MP4 format not supported (WebM fallback available)' }
+          {
+            const mp4Type = capabilities?.supportedMimeTypes.find(t => t.includes('mp4'))
+            if (!mp4Type) {
+              return { ...test, status: 'warning', details: 'MP4 format not supported (WebM fallback available)' }
+            }
+            return await performRecordingTest(test, {
+              video: { width: 1280, height: 720 }
+            }, mp4Type, 3000)
           }
-          return await performRecordingTest(test, {
-            video: { width: 1280, height: 720 }
-          }, mp4Type, 3000)
 
         case 'audio-recording':
           try {
@@ -404,29 +408,30 @@ export function CrossPlatformRecordingTest({
           }, 'video/webm', 30000)
 
         case 'multiple-sessions':
-          // Test starting and stopping multiple times
-          let sessionsSuccessful = 0
-          for (let i = 0; i < 3; i++) {
-            try {
-              const result = await performRecordingTest(test, {
-                video: { width: 640, height: 480 }
-              }, 'video/webm', 1000)
-              if (result.status === 'passed') sessionsSuccessful++
-            } catch (e) {
-              // Continue with next session
+          {
+            // Test starting and stopping multiple times
+            let sessionsSuccessful = 0
+            for (let i = 0; i < 3; i++) {
+              try {
+                const result = await performRecordingTest(test, {
+                  video: { width: 640, height: 480 }
+                }, 'video/webm', 1000)
+                if (result.status === 'passed') sessionsSuccessful++
+              } catch {
+                // Continue with next session
+              }
+              await new Promise(resolve => setTimeout(resolve, 500))
             }
-            await new Promise(resolve => setTimeout(resolve, 500))
-          }
-          
-          if (sessionsSuccessful === 3) {
-            return { ...test, status: 'passed', details: 'All 3 recording sessions successful' }
-          } else if (sessionsSuccessful > 0) {
-            return { 
-              ...test, 
-              status: 'warning', 
-              details: `${sessionsSuccessful}/3 recording sessions successful` 
+            
+            if (sessionsSuccessful === 3) {
+              return { ...test, status: 'passed', details: 'All 3 recording sessions successful' }
+            } else if (sessionsSuccessful > 0) {
+              return { 
+                ...test, 
+                status: 'warning', 
+                details: `${sessionsSuccessful}/3 recording sessions successful` 
+              }
             }
-          } else {
             return { ...test, status: 'failed', details: 'Multiple recording sessions failed' }
           }
 
