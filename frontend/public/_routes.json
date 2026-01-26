@@ -2,6 +2,8 @@
     "version": 1,
     "include": [
         "/api/health",
+        "/api/auth",
+        "/api/auth/*",
         "/api/insumos",
         "/api/insumos/*",
         "/api/placeholder/*",

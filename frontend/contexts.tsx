@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = replitAuth?.isAuthenticated || false
   const shouldShowLoadingOverlay = isLoading && !isNoAuthMode()
   const [actionLoading, setActionLoading] = useState(false)
-  const AUTH_ME_QUERY_KEY = ['/api/insumos/auth/me']
+  const AUTH_ME_QUERY_KEY = ['/api/auth/me']
 
   const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
     const controller = new AbortController()
@@ -134,7 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActionLoading(true)
     try {
       const res = await fetchWithTimeout(
-        '/api/insumos/auth/login',
+        '/api/auth/login',
         {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -152,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) throw new Error(friendlyLoginError(res.status, json))
 
       // Confirm session is actually established (cookie survived the proxy) and hydrate React Query cache.
-      const meRes = await fetchWithTimeout('/api/insumos/auth/me', { credentials: 'include' }, 15000).catch((e: any) => {
+      const meRes = await fetchWithTimeout('/api/auth/me', { credentials: 'include' }, 15000).catch((e: any) => {
         if (e?.name === 'AbortError') return null
         return null
       })
@@ -178,7 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActionLoading(true)
     try {
       const res = await fetchWithTimeout(
-        '/api/insumos/auth/register',
+        '/api/auth/register',
         {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -196,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) throw new Error(friendlySignupError(res.status, json))
 
       // Confirm session is actually established (cookie survived the proxy) and hydrate React Query cache.
-      const meRes = await fetchWithTimeout('/api/insumos/auth/me', { credentials: 'include' }, 15000).catch(() => null)
+      const meRes = await fetchWithTimeout('/api/auth/me', { credentials: 'include' }, 15000).catch(() => null)
       if (!meRes || !meRes.ok) {
         throw new Error('Conta criada, mas a sessão não persistiu (cookies). Verifique se o navegador aceita cookies para crm.skincos.com.br.')
       }
@@ -216,7 +216,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logNoAuthMode('AuthContext.signOut', 'Bypassing logout redirect - staying authenticated in NO_AUTH mode')
       return
     }
-    fetch('/api/insumos/auth/logout', { method: 'POST', credentials: 'include' })
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
       .catch(() => null)
       .finally(() => { window.location.href = '/' })
   }

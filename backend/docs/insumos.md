@@ -82,6 +82,7 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 Para evitar CORS e manter o padrão same-origin do CRM, o backend do CRM expõe proxy:
 
 - `GET/POST/... /api/insumos/*` → `https://api.skincos.com.br/insumos/*`
+- `GET/POST... /api/auth/*` → `https://api.skincos.com.br/insumos/auth/*` (alias de login/registro/sessão)
 
 Variável opcional:
 

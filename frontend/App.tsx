@@ -390,7 +390,7 @@ export default function AppFunctionalNeatlab() {
 	            try {
 	                const [healthRes, meRes] = await Promise.all([
 	                    fetch('/api/insumos/health', { credentials: 'include', signal: ac.signal }).catch(() => null),
-	                    fetch('/api/insumos/auth/me', { credentials: 'include', signal: ac.signal }).catch(() => null),
+	                    fetch('/api/auth/me', { credentials: 'include', signal: ac.signal }).catch(() => null),
 	                ])
 
 	                let online: boolean | null = null

@@ -178,7 +178,7 @@ export function SystemStatusModule() {
     try {
       const [insHealth, insMe, umStreaming] = await Promise.allSettled([
         fetch('/api/insumos/health', { credentials: 'include' }).then(async (r) => ({ ok: r.ok, json: await r.json().catch(() => null) })),
-        fetch('/api/insumos/auth/me', { credentials: 'include' }).then(async (r) => ({ ok: r.ok, json: await r.json().catch(() => null) })),
+        fetch('/api/auth/me', { credentials: 'include' }).then(async (r) => ({ ok: r.ok, json: await r.json().catch(() => null) })),
         fetch(`/api/unit-monitor/streaming/status`, { credentials: 'include' }).then(async (r) => ({
           ok: r.ok,
           json: await r.json().catch(() => null)
