@@ -42,6 +42,17 @@ Recomendação: configurar alertas com janelas de 5–10 minutos e rotas especí
 - `api.skincos.com.br/*`
 - `crm.skincos.com.br/api/*`
 
+### Checklist rápido (Cloudflare)
+
+1. **Workers / Pages → Analytics → Alerts**:
+   - 5xx rate ≥ 1% (5m)
+   - p95 latency ≥ 800ms (5m)
+   - 429 rate ≥ 5% (5m)
+2. **D1 → Analytics**:
+   - D1 errors ≥ 1% (5m)
+3. **R2 → Analytics**:
+   - R2 4xx/5xx ≥ 1% (5m)
+
 ## Runbook mínimo
 
 1. Validar status com os endpoints de health.
