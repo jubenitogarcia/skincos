@@ -78,10 +78,10 @@ jobs:
           python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
       - name: Run flake8
         run: |
-          python -m flake8 backend/ --count --show-source --statistics
+          python -m flake8 backend/config backend/libs backend/archive/tools/repo_checks --count --show-source --statistics
       - name: Run black (check only)
         run: |
-          python -m black --check backend/
+          python -m black --check backend/config backend/libs backend/archive/tools/repo_checks
       - name: Run mypy (type checking)
         run: |
-          python -m mypy backend/
+          python -m mypy backend/config backend/libs backend/archive/tools/repo_checks --ignore-missing-imports

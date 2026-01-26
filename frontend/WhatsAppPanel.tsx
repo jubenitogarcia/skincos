@@ -87,7 +87,6 @@ export const WhatsAppPanel: React.FC = () => {
 
     // Poll suppression status every 60s when we have a conversation target
     useEffect(() => {
-        let iv: any
         async function poll() {
             if (!toNumber) return
             try {
@@ -99,17 +98,18 @@ export const WhatsAppPanel: React.FC = () => {
             } catch { /* ignore */ }
         }
         poll()
-        iv = setInterval(poll, 60000)
-        return () => iv && clearInterval(iv)
+        const iv = setInterval(poll, 60000)
+        return () => clearInterval(iv)
     }, [toNumber])
 
     // Fetch metrics periodically
     useEffect(() => {
-        let iv: any
         async function load() {
             try { const r = await fetch('/api/ai-suppression/metrics'); if (r.ok) { setMetrics(await r.json()) } } catch { }
         }
-        load(); iv = setInterval(load, 30000); return () => iv && clearInterval(iv)
+        load()
+        const iv = setInterval(load, 30000)
+        return () => clearInterval(iv)
     }, [])
 
     // SSE subscription for suppression events
