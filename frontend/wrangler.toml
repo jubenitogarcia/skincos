@@ -22,3 +22,13 @@ INSUMOS_API_TARGET = "https://api.skincos.com.br"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "false"
 R2_KEY_PREFIX = "preview/"
 R2_PRODUCTION_BRANCH = "main"
+
+[[env.staging.r2_buckets]]
+binding = "SHARE_BUCKET"
+bucket_name = "skincos-share-staging"
+
+[env.staging.vars]
+INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
+REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
+R2_KEY_PREFIX = "staging/"
+R2_PRODUCTION_BRANCH = "staging"

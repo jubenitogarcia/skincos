@@ -31,7 +31,19 @@ database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 binding = "BACKUP_BUCKET"
 bucket_name = "skincos-backups"
 
+[env.staging]
+name = "skincos-api-staging"
+routes = ["api-staging.skincos.com.br/*"]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "skincos-db-staging"
+database_id = "REPLACE_ME"
+
+[[env.staging.r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "skincos-backups-staging"
+
 # IMPORTANT:
 # - Production vars/secrets should live in Cloudflare Dashboard.
 # - Deploy uses `--keep-vars` to avoid overwriting production configuration.
-

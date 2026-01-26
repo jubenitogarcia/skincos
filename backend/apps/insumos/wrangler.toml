@@ -38,6 +38,26 @@ SHEET_RANGE = "Insumos!A:AZ"
 USER_SHEET_RANGE = "Usuarios!A:AZ"
 MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
 
+[env.staging]
+name = "skincos-insumos-staging"
+routes = ["api-staging.skincos.com.br/insumos/*"]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "skincos-db-staging"
+database_id = "REPLACE_ME"
+
+[[env.staging.r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "skincos-backups-staging"
+
+[env.staging.vars]
+APP_ORIGIN = "https://crm-staging.skincos.com.br"
+INSUMOS_STORAGE = "d1"
+SHEET_RANGE = "Insumos!A:AZ"
+USER_SHEET_RANGE = "Usuarios!A:AZ"
+MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
+
 # Optional:
 # UNIDADES = "novo-hamburgo,barra-shopping-sul"
 # UNIDADES_HEADERS_JSON = "{\"barra-shopping-sul\":\"barrashoppingsul\",\"novo-hamburgo\":\"novo hamburgo\"}"

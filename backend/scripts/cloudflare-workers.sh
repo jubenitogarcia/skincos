@@ -14,10 +14,10 @@ SKINCOS Cloudflare Workers deploy helper
 Usage: backend/scripts/cloudflare-workers.sh <command> [args]
 
 Commands:
-  deploy [--before <sha>] [--after <sha>]
+  deploy [--before <sha>] [--after <sha>] [--env <name>]
       Deploy workers. If before/after are provided, deploy only what changed.
 
-  deploy-all
+  deploy-all [--env <name>]
       Deploy all workers regardless of changes.
 
 Notes:
@@ -28,6 +28,7 @@ Notes:
 Examples:
   backend/scripts/cloudflare-workers.sh deploy-all
   backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA"
+  backend/scripts/cloudflare-workers.sh deploy --env staging
 EOF
 }
 
@@ -38,11 +39,30 @@ ensure_backend_deps() {
   fi
 }
 
+resolve_env_flag() {
+  if [[ -n "${ENV_NAME:-}" ]]; then
+    ENV_FLAG=(--env "$ENV_NAME")
+  else
+    ENV_FLAG=()
+  fi
+}
+
+resolve_insumos_db_name() {
+  INSUMOS_DB_NAME="${INSUMOS_D1_DB_NAME:-skincos-db}"
+  if [[ -n "${ENV_NAME:-}" ]]; then
+    case "$ENV_NAME" in
+      staging)
+        INSUMOS_DB_NAME="${INSUMOS_D1_DB_NAME_STAGING:-skincos-db-staging}"
+        ;;
+    esac
+  fi
+}
+
 deploy_api() {
   echo "[workers] Deploying skincos-api..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/api-worker run deploy
+    run_pnpm -F @skincos/api-worker exec wrangler deploy --config apps/api/wrangler.toml --keep-vars "${ENV_FLAG[@]}"
   )
 }
 
@@ -50,13 +70,12 @@ deploy_insumos() {
   echo "[workers] Applying D1 migrations (best effort) ..."
   (
     cd "$BACKEND_DIR"
-    # Run wrangler through the insumos package context to avoid picking the wrong major version.
-    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "${INSUMOS_D1_DB_NAME:-skincos-db}" --config apps/insumos/wrangler.toml || true
+    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" --config apps/insumos/wrangler.toml "${ENV_FLAG[@]}" || true
   )
   echo "[workers] Deploying skincos-insumos..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/insumos-worker run deploy
+    run_pnpm -F @skincos/insumos-worker exec wrangler deploy --config apps/insumos/wrangler.toml --keep-vars "${ENV_FLAG[@]}"
   )
 }
 
@@ -116,6 +135,10 @@ deploy_by_changes() {
 cmd="${1:-help}"
 shift || true
 
+ENV_NAME="${DEPLOY_ENV:-}"
+ENV_FLAG=()
+INSUMOS_DB_NAME=""
+
 ensure_backend_deps
 
 case "$cmd" in
@@ -126,13 +149,25 @@ case "$cmd" in
       case "$1" in
         --before) before="${2:-}"; shift 2 ;;
         --after) after="${2:-}"; shift 2 ;;
+        --env) ENV_NAME="${2:-}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "[workers] Unknown arg: $1" >&2; usage; exit 1 ;;
       esac
     done
+    resolve_env_flag
+    resolve_insumos_db_name
     deploy_by_changes "$before" "$after"
     ;;
   deploy-all)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --env) ENV_NAME="${2:-}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "[workers] Unknown arg: $1" >&2; usage; exit 1 ;;
+      esac
+    done
+    resolve_env_flag
+    resolve_insumos_db_name
     deploy_api
     deploy_insumos
     ;;

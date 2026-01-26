@@ -2,7 +2,7 @@ name: Deploy Cloudflare Workers (API + Insumos)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, staging ]
     paths:
       - "backend/apps/api/**"
       - "backend/apps/insumos/**"
@@ -24,8 +24,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENABLE_STAGING: ${{ vars.ENABLE_INSUMOS_DEPLOY_STAGING }}
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [[ "$BRANCH_NAME" == "staging" && "${ENABLE_STAGING:-}" != "true" ]]; then
+            echo "ENABLE_INSUMOS_DEPLOY_STAGING!=true; skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
             echo "Cloudflare deploy secrets not configured; skipping deploy."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -61,8 +68,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           INSUMOS_D1_DB_NAME: ${{ vars.INSUMOS_D1_DB_NAME }}
+          INSUMOS_D1_DB_NAME_STAGING: ${{ vars.INSUMOS_D1_DB_NAME_STAGING }}
           GITHUB_BEFORE_SHA: ${{ github.event.before }}
           GITHUB_SHA: ${{ github.sha }}
+          DEPLOY_ENV: ${{ github.ref_name == 'staging' && 'staging' || '' }}
         run: |
           set -euo pipefail
-          bash backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA"
+          if [[ "${DEPLOY_ENV:-}" == "staging" ]]; then
+            bash backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA" --env staging
+          else
+            bash backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA"
+          fi
