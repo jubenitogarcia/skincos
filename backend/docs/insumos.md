@@ -26,6 +26,8 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Refresh: `POST /insumos/auth/refresh`
 - Perfil (nome/email/senha): `PUT /insumos/auth/profile`
 - Cadastro (com token de convite): `POST /insumos/auth/register`
+- Solicitar reset de senha: `POST /insumos/auth/password/request`
+- Resetar senha: `POST /insumos/auth/password/reset`
 
 ### Insumos e operações
 
@@ -89,6 +91,8 @@ Variável opcional:
 - `INSUMOS_API_TARGET` (default `https://api.skincos.com.br`)
 - `AUTH_LOCKOUT_MAX_ATTEMPTS` (default `5`)
 - `AUTH_LOCKOUT_WINDOW_MINUTES` (default `15`)
+- `AUTH_RESET_TTL_MINUTES` (default `30`)
+- `AUTH_RESET_RETURN_TOKEN` (default `false`)
 
 ### Nota: crm-api (backend/apps/crm-api)
 

@@ -420,6 +420,95 @@ export async function handleAuthRoutes({
             }
         }
 
+        // POST /auth/password/request
+        if (url.pathname === "/auth/password/request" && request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const identifierRaw = String(body.email || body.username || body.user || '').trim();
+            const identifier = normalizeIdentifier(identifierRaw);
+            if (!identifier) {
+                return withCORS(JSON.stringify({ success: false, error: "IDENTIFIER_REQUIRED" }), { status: 400 }, appOrigin);
+            }
+            try {
+                const userDb = await d1.getUserByIdentifier(identifierRaw);
+                if (userDb && userDb.ativo) {
+                    const token = crypto.randomUUID();
+                    const tokenHash = await sha256Hex(token);
+                    const ttlMinutes = Math.max(5, toInt(env?.AUTH_RESET_TTL_MINUTES, 30));
+                    const now = new Date();
+                    const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000).toISOString();
+                    await env.DB.prepare(
+                        `DELETE FROM insumos_password_resets WHERE username = ? OR (email IS NOT NULL AND email = ?)`
+                    )
+                        .bind(userDb.username, userDb.email || '')
+                        .run();
+                    await env.DB.prepare(
+                        `INSERT INTO insumos_password_resets (token_hash, username, email, created_at, expires_at)
+                         VALUES (?, ?, ?, ?, ?)`
+                    )
+                        .bind(tokenHash, userDb.username, userDb.email || '', now.toISOString(), expiresAt)
+                        .run();
+                    await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_REQUEST', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
+                    const allowTokenReturn = String(env?.AUTH_RESET_RETURN_TOKEN || '').trim().toLowerCase() === 'true';
+                    if (allowTokenReturn) {
+                        return withCORS(JSON.stringify({ success: true, resetToken: token, expiresAt }), { status: 200 }, appOrigin);
+                    }
+                }
+                return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/password/reset
+        if (url.pathname === "/auth/password/reset" && request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const token = String(body.token || '').trim();
+            const newPassword = String(body.password || body.newPassword || '').trim();
+            if (!token) {
+                return withCORS(JSON.stringify({ success: false, error: "TOKEN_REQUIRED" }), { status: 400 }, appOrigin);
+            }
+            if (!newPassword || newPassword.length < 6) {
+                return withCORS(JSON.stringify({ success: false, error: "PASSWORD_TOO_SHORT" }), { status: 400 }, appOrigin);
+            }
+            try {
+                const tokenHash = await sha256Hex(token);
+                const row = await env.DB.prepare(
+                    `SELECT id, username, expires_at, used_at
+                     FROM insumos_password_resets
+                     WHERE token_hash = ?
+                     LIMIT 1`
+                )
+                    .bind(tokenHash)
+                    .first();
+                if (!row?.id) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_INVALID" }), { status: 400 }, appOrigin);
+                }
+                if (row.used_at) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_USED" }), { status: 400 }, appOrigin);
+                }
+                const exp = row.expires_at ? new Date(row.expires_at).getTime() : 0;
+                if (!exp || Date.now() > exp) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXPIRED" }), { status: 400 }, appOrigin);
+                }
+                const hash = await bcrypt.hash(newPassword, 10);
+                const updated = await d1.updateUserProfile(row.username, { passwordHash: hash });
+                if (!updated?.ok) {
+                    return withCORS(JSON.stringify({ success: false, error: updated?.error || 'PASSWORD_RESET_FAILED' }), { status: updated?.status || 500 }, appOrigin);
+                }
+                await env.DB.prepare(
+                    `UPDATE insumos_password_resets SET used_at = ? WHERE id = ?`
+                )
+                    .bind(new Date().toISOString(), row.id)
+                    .run();
+                await clearAuthFailures(normalizeIdentifier(row.username));
+                await logAuthAudit({ action: 'AUTH_PASSWORD_RESET', actor: row.username, role: '', detail: { username: row.username } });
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: row.username });
+                return withCORS(JSON.stringify({ success: true, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
+            }
+        }
+
         // PUT /auth/profile
         if (url.pathname === "/auth/profile" && request.method === "PUT") {
             if (!sessionUsername) {
@@ -669,6 +758,16 @@ export async function handleAuthRoutes({
             await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'LOGIN_ERROR' } });
             return withCORS(JSON.stringify({ error: `Login error: ${err.message}` }), { status: 500 }, appOrigin);
         }
+    }
+
+    // POST /auth/password/request
+    if (url.pathname === "/auth/password/request" && request.method === "POST") {
+        return withCORS(JSON.stringify({ success: false, error: "RESET_UNAVAILABLE" }), { status: 501 }, appOrigin);
+    }
+
+    // POST /auth/password/reset
+    if (url.pathname === "/auth/password/reset" && request.method === "POST") {
+        return withCORS(JSON.stringify({ success: false, error: "RESET_UNAVAILABLE" }), { status: 501 }, appOrigin);
     }
 
     // PUT /auth/profile
