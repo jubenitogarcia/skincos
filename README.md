@@ -29,6 +29,10 @@ Plataforma interna (local) para automações e operações da clínica.
 - Mapa do backend: `backend/docs/INDEX.md`
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
 - Segredos e rotação: `docs/secrets-rotation.md`
+- Observabilidade/SLOs: `docs/observability.md`
+
+## CRM (banner de demo)
+- `VITE_DEMO_DATA=false` para ocultar o aviso de dados simulados quando tudo estiver integrado.
 
 ## Sanity check
 - Suite rápida (recomendado): `./backend/scripts/doctor.sh`
