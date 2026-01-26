@@ -1,0 +1,36 @@
+name: codex-automerge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    if: >-
+      startsWith(github.head_ref, 'codex/') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'jubenitogarcia'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge (squash)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prId = context.payload.pull_request.node_id;
+            const mutation = `
+              mutation EnableAutoMerge($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+                  pullRequest { number }
+                }
+              }
+            `;
+            try {
+              await github.graphql(mutation, { pullRequestId: prId });
+              core.info(`Enabled auto-merge for PR #${context.payload.pull_request.number}`);
+            } catch (err) {
+              core.warning(`Could not enable auto-merge: ${err?.message || err}`);
+            }
