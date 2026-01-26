@@ -106,14 +106,22 @@ if (IS_PRODUCTION && !SESSION_SECRET) {
     throw new Error('SESSION_SECRET is required in production');
 }
 
+const sessionMaxAgeMs = 24 * 60 * 60 * 1000; // 24 hours
+const sessionCookieDomain = process.env.SESSION_COOKIE_DOMAIN || undefined;
+
 app.use(session({
+    name: 'skincos_whatsapp_session',
     secret: SESSION_SECRET || crypto.randomBytes(64).toString('hex'),
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'production',
+        secure: true,
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        sameSite: 'lax',
+        path: '/',
+        domain: sessionCookieDomain,
+        maxAge: sessionMaxAgeMs,
+        expires: new Date(Date.now() + sessionMaxAgeMs)
     }
 }));
 
