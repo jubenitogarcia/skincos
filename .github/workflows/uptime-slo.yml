@@ -1,0 +1,46 @@
+name: uptime-slo
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    env:
+      OBS_HEALTHCHECK_URLS: ${{ vars.OBS_HEALTHCHECK_URLS }}
+      OBS_LATENCY_MS: ${{ vars.OBS_LATENCY_MS }}
+      OBS_TIMEOUT_SEC: ${{ vars.OBS_TIMEOUT_SEC }}
+    steps:
+      - name: Health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          urls="${OBS_HEALTHCHECK_URLS:-https://crm.skincos.com.br/api/health,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health}"
+          max_ms="${OBS_LATENCY_MS:-800}"
+          timeout_sec="${OBS_TIMEOUT_SEC:-10}"
+          IFS=',' read -ra list <<< "$urls"
+          failures=0
+          for url in "${list[@]}"; do
+            url="$(echo "$url" | xargs)"
+            [ -z "$url" ] && continue
+            out=$(curl -s -o /tmp/health-body -w "%{http_code} %{time_total}" --max-time "$timeout_sec" "$url" || true)
+            code=$(echo "$out" | awk '{print $1}')
+            time=$(echo "$out" | awk '{print $2}')
+            ms=$(awk -v t="$time" 'BEGIN{printf "%.0f", t*1000}')
+            echo "url=$url status=$code time_ms=$ms"
+            if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+              echo "ERROR status $code for $url"
+              failures=$((failures+1))
+              continue
+            fi
+            if [[ "$ms" -gt "$max_ms" ]]; then
+              echo "ERROR latency $ms ms (budget $max_ms) for $url"
+              failures=$((failures+1))
+            fi
+          done
+          if [[ "$failures" -gt 0 ]]; then
+            echo "FAILED health checks: $failures"
+            exit 1
+          fi
