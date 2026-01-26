@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { InstagramStudioPro } from '@/InstagramStudioPro'
 import { ThreadsStudio } from '@/ThreadsStudio'
+import { csrfHeader } from '@/csrf'
 
 type SocialPlatform = 'instagram' | 'facebook' | 'threads'
 
@@ -52,7 +53,7 @@ export function SocialNetworksStudio() {
 
   const [adminToken, setAdminToken] = useState<string>(() => {
     try {
-      return localStorage.getItem('social.adminToken') || ''
+      return sessionStorage.getItem('social.adminToken') || ''
     } catch {
       return ''
     }
@@ -127,7 +128,7 @@ export function SocialNetworksStudio() {
       if (captionThreads.trim()) fd.set('captionThreads', captionThreads.trim())
       for (const f of files) fd.append('files', f)
 
-      const res = await fetch('/api/social/queue/upload', { method: 'POST', body: fd, credentials: 'include' })
+      const res = await fetch('/api/social/queue/upload', { method: 'POST', body: fd, credentials: 'include', headers: csrfHeader() })
       const data = await res.json().catch(() => null)
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       toast.success(`Enfileirado: ${data.groupKey}`)
@@ -143,7 +144,7 @@ export function SocialNetworksStudio() {
   const saveAdminToken = (v: string) => {
     setAdminToken(v)
     try {
-      localStorage.setItem('social.adminToken', v)
+      sessionStorage.setItem('social.adminToken', v)
     } catch {}
   }
 
@@ -156,7 +157,7 @@ export function SocialNetworksStudio() {
       const res = await fetch('/api/social/admin/accounts', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim() },
+        headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim(), ...csrfHeader() },
         body: JSON.stringify({
           unitKey: accountUnit.trim(),
           platform: accountPlatform,
@@ -182,7 +183,7 @@ export function SocialNetworksStudio() {
       const res = await fetch('/api/social/publish', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim() },
+        headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim(), ...csrfHeader() },
         body: JSON.stringify({ dateKey: g.group.dateKey, groupKey: g.group.groupKey }),
       })
       const data = await res.json().catch(() => null)
@@ -453,4 +454,3 @@ export function SocialNetworksStudio() {
     </div>
   )
 }
-

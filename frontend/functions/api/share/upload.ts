@@ -1,3 +1,8 @@
+import { requireCsrfForMutations } from '../../_lib/csrf'
+import { requireInsumosUser } from '../../_lib/insumosAuth'
+import { getShareBucket } from '../../_lib/r2'
+import { requestAuditMeta, writeAuditEvent } from '../../_lib/audit'
+
 type UploadFileOut = {
   name: string
   key: string
@@ -15,12 +20,14 @@ const sanitizeName = (name: string) => {
   return cleaned || 'arquivo'
 }
 
-const getBucket = (context: any) => {
-  return (context?.env?.SHARE_BUCKET as R2Bucket | undefined) || undefined
-}
-
 export async function onRequestPost(context: { request: Request; env?: Record<string, unknown> }): Promise<Response> {
-  const bucket = getBucket(context)
+  const userOrRes = await requireInsumosUser(context)
+  if (userOrRes instanceof Response) return userOrRes
+
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
+
+  const bucket = getShareBucket(context)
   if (!bucket) {
     return new Response(JSON.stringify({ success: false, error: 'Share storage not configured' }), {
       status: 404,
@@ -68,6 +75,15 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
       { httpMetadata: { contentType: 'application/json' } },
     )
 
+    await writeAuditEvent(bucket, {
+      scope: 'share',
+      action: 'share.upload',
+      actor: { id: userOrRes.id, email: userOrRes.email, name: userOrRes.name },
+      request: requestAuditMeta(context.request),
+      target: { shareId, fileCount: storedFiles.length, totalBytes: total },
+      ok: true,
+    }).catch(() => null)
+
     return new Response(JSON.stringify({ success: true, shareId, files: storedFiles }), {
       status: 200,
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
@@ -79,4 +95,3 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
     })
   }
 }
-

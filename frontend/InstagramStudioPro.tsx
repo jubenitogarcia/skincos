@@ -12,6 +12,7 @@ import { ScrollArea } from "@/scroll-area"
 import { Avatar, AvatarFallback, AvatarImage } from "@/avatar"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/dialog"
 import { toast } from 'sonner'
+import { csrfHeader } from '@/csrf'
 import {
   InstagramLogo,
   Heart,
@@ -438,7 +439,7 @@ export function InstagramStudioPro() {
   const uploadShareFiles = async (files: File[]) => {
     const fd = new FormData()
     for (const f of files) fd.append('files', f)
-    const res = await fetch('/api/share/upload', { method: 'POST', body: fd })
+    const res = await fetch('/api/share/upload', { method: 'POST', body: fd, headers: csrfHeader(), credentials: 'include' })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
     if (!data?.success) throw new Error(data?.error || 'Upload falhou')

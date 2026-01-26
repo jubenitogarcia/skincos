@@ -18,6 +18,13 @@ Plataforma interna (local) para automações e operações da clínica.
 - Frontend: baixe os modelos faciais para `frontend/public/face-models/` com `cd frontend && npm run fetch-face-models`.
 - Fluxo recomendado: Admin cria funcionários (PIN + cadastro facial) → Admin cria token do dispositivo por unidade → telefone da clínica usa aba “Ponto” em “Dispositivo (relógio)” com o token.
 
+## Redes Sociais (Instagram/Facebook/Threads)
+- Config (env, recomendado): `INTEGRATIONS_ENCRYPTION_SECRET` (AES-GCM p/ tokens em repouso no R2).
+- Config (env, recomendado): `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true` (falha fechado se o secret não estiver configurado).
+- Config (env, recomendado): `R2_KEY_PREFIX` (ex: `preview/`) para isolar dados de R2 entre ambientes (preview ≠ production).
+- Config (env, opcional): `SOCIAL_MEDIA_MAX_AGE_DAYS` e `SHARE_MAX_AGE_DAYS` (se definidos, links públicos antigos passam a retornar 404).
+- Config (env, opcional): `SOCIAL_ADMIN_EMAIL_ALLOWLIST` (lista de emails, separados por vírgula, exigidos para ações de admin Social).
+
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`
 - Política de lockfiles: `backend/docs/LOCKFILES.md`

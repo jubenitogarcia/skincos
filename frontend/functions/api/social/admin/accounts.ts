@@ -1,6 +1,9 @@
 import { requireSocialAdmin } from '../../../_lib/socialAuth'
 import { getShareBucket } from '../../../_lib/r2'
 import { deleteSocialAccount, listSocialAccounts, upsertSocialAccount } from '../../../_lib/socialAccounts'
+import { requireCsrfForMutations } from '../../../_lib/csrf'
+import { getIntegrationsEncryptionSecret, integrationsEncryptionSecretRequired } from '../../../_lib/integrationsEncryption'
+import { requestAuditMeta, writeAuditEvent } from '../../../_lib/audit'
 import type { SocialPlatform } from '../../../_lib/socialTypes'
 
 const json = (status: number, body: any) =>
@@ -14,6 +17,8 @@ const isPlatform = (v: string): v is SocialPlatform => ['instagram', 'facebook',
 export async function onRequestGet(context: any): Promise<Response> {
   const adminOrRes = await requireSocialAdmin(context)
   if (adminOrRes instanceof Response) return adminOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
 
   const bucket = getShareBucket(context)
   if (!bucket) return json(503, { ok: false, error: 'SHARE_BUCKET not configured' })
@@ -25,11 +30,16 @@ export async function onRequestGet(context: any): Promise<Response> {
 export async function onRequestPost(context: any): Promise<Response> {
   const adminOrRes = await requireSocialAdmin(context)
   if (adminOrRes instanceof Response) return adminOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
 
   const bucket = getShareBucket(context)
   if (!bucket) return json(503, { ok: false, error: 'SHARE_BUCKET not configured' })
 
-  const secret = String(context?.env?.INTEGRATIONS_ENCRYPTION_SECRET || '').trim() || undefined
+  const secret = getIntegrationsEncryptionSecret(context)
+  if (integrationsEncryptionSecretRequired(context) && !secret) {
+    return json(503, { ok: false, error: 'INTEGRATIONS_ENCRYPTION_SECRET_REQUIRED' })
+  }
 
   const body = await context.request.json().catch(() => null)
   const unitKey = String(body?.unitKey || '').trim()
@@ -44,12 +54,22 @@ export async function onRequestPost(context: any): Promise<Response> {
   }
 
   await upsertSocialAccount(bucket, { unitKey, platform, accountId, accessToken, apiVersion, apiBase }, secret)
+  await writeAuditEvent(bucket, {
+    scope: 'social',
+    action: 'social.account.upsert',
+    actor: { id: adminOrRes.id, email: adminOrRes.email, name: adminOrRes.name },
+    request: requestAuditMeta(context.request),
+    target: { unitKey, platform, accountId, apiVersion, apiBase },
+    ok: true,
+  }).catch(() => null)
   return json(200, { ok: true })
 }
 
 export async function onRequestDelete(context: any): Promise<Response> {
   const adminOrRes = await requireSocialAdmin(context)
   if (adminOrRes instanceof Response) return adminOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
 
   const bucket = getShareBucket(context)
   if (!bucket) return json(503, { ok: false, error: 'SHARE_BUCKET not configured' })
@@ -60,6 +80,13 @@ export async function onRequestDelete(context: any): Promise<Response> {
   if (!unitKey || !isPlatform(platform)) return json(400, { ok: false, error: 'INVALID_INPUT' })
 
   await deleteSocialAccount(bucket, unitKey, platform)
+  await writeAuditEvent(bucket, {
+    scope: 'social',
+    action: 'social.account.delete',
+    actor: { id: adminOrRes.id, email: adminOrRes.email, name: adminOrRes.name },
+    request: requestAuditMeta(context.request),
+    target: { unitKey, platform },
+    ok: true,
+  }).catch(() => null)
   return json(200, { ok: true })
 }
-

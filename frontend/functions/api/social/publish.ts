@@ -4,6 +4,9 @@ import { readSocialAccount } from '../../_lib/socialAccounts'
 import { readAssetMeta, isPublished, markPublished } from '../../_lib/socialQueue'
 import { socialQueueGroupKey } from '../../_lib/socialKeys'
 import { graphGet, graphPost } from '../../_lib/socialGraph'
+import { requireCsrfForMutations } from '../../_lib/csrf'
+import { getIntegrationsEncryptionSecret, integrationsEncryptionSecretRequired, isMissingIntegrationsEncryptionSecretError } from '../../_lib/integrationsEncryption'
+import { requestAuditMeta, writeAuditEvent } from '../../_lib/audit'
 import type { SocialPlatform, SocialQueueAsset, SocialQueueGroup } from '../../_lib/socialTypes'
 
 const json = (status: number, body: any) =>
@@ -121,6 +124,8 @@ async function publishThreads(base: string, threadsId: string, token: string, as
 export async function onRequestPost(context: any): Promise<Response> {
   const adminOrRes = await requireSocialAdmin(context)
   if (adminOrRes instanceof Response) return adminOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
 
   const bucket = getShareBucket(context)
   if (!bucket) return json(503, { ok: false, error: 'SHARE_BUCKET not configured' })
@@ -151,7 +156,10 @@ export async function onRequestPost(context: any): Promise<Response> {
   }
   if (!assets.length) return json(400, { ok: false, error: 'NO_ASSET_META' })
 
-  const secret = String(context?.env?.INTEGRATIONS_ENCRYPTION_SECRET || '').trim() || undefined
+  const secret = getIntegrationsEncryptionSecret(context)
+  if (integrationsEncryptionSecretRequired(context) && !secret) {
+    return json(503, { ok: false, error: 'INTEGRATIONS_ENCRYPTION_SECRET_REQUIRED' })
+  }
 
   const results: any[] = []
   for (const unitKey of group.unitKeys || []) {
@@ -164,7 +172,17 @@ export async function onRequestPost(context: any): Promise<Response> {
         }
       }
 
-      const account = await readSocialAccount(bucket, unitKey, platform, secret).catch(() => null)
+      let account: any = null
+      try {
+        account = await readSocialAccount(bucket, unitKey, platform, secret)
+      } catch (e: any) {
+        if (!secret && isMissingIntegrationsEncryptionSecretError(e)) {
+          results.push({ ok: false, unitKey, platform, error: 'INTEGRATIONS_ENCRYPTION_SECRET_REQUIRED' })
+          continue
+        }
+        results.push({ ok: false, unitKey, platform, error: 'ACCOUNT_READ_FAILED' })
+        continue
+      }
       if (!account) {
         results.push({ ok: false, unitKey, platform, error: 'ACCOUNT_NOT_CONFIGURED' })
         continue
@@ -192,6 +210,21 @@ export async function onRequestPost(context: any): Promise<Response> {
     }
   }
 
+  await writeAuditEvent(bucket, {
+    scope: 'social',
+    action: 'social.publish',
+    actor: { id: adminOrRes.id, email: adminOrRes.email, name: adminOrRes.name },
+    request: requestAuditMeta(context.request),
+    target: {
+      dateKey,
+      groupKey,
+      force,
+      attempted: results.length,
+      okCount: results.filter((r) => r && r.ok).length,
+      failCount: results.filter((r) => r && !r.ok).length,
+    },
+    ok: true,
+  }).catch(() => null)
+
   return json(200, { ok: true, dateKey, groupKey, results })
 }
-

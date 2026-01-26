@@ -1,6 +1,9 @@
 import { requireInsumosUser } from '../../../_lib/insumosAuth'
 import { getShareBucket } from '../../../_lib/r2'
 import { deletePending, readPendingDecrypted, writeConnection } from '../../../_lib/instagramStore'
+import { requireCsrfForMutations } from '../../../_lib/csrf'
+import { getIntegrationsEncryptionSecret, integrationsEncryptionSecretRequired, isMissingIntegrationsEncryptionSecretError } from '../../../_lib/integrationsEncryption'
+import { requestAuditMeta, writeAuditEvent } from '../../../_lib/audit'
 
 const json = (status: number, body: any) =>
   new Response(JSON.stringify(body), {
@@ -11,6 +14,8 @@ const json = (status: number, body: any) =>
 export async function onRequestPost(context: any): Promise<Response> {
   const userOrRes = await requireInsumosUser(context)
   if (userOrRes instanceof Response) return userOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
 
   const bucket = getShareBucket(context)
   if (!bucket) return json(503, { ok: false, error: 'SHARE_BUCKET not configured' })
@@ -20,8 +25,20 @@ export async function onRequestPost(context: any): Promise<Response> {
   const pageId = String(body?.pageId || '').trim()
   if (!pendingId || !pageId) return json(400, { ok: false, error: 'INVALID_INPUT' })
 
-  const encSecret = String(context?.env?.INTEGRATIONS_ENCRYPTION_SECRET || '').trim() || undefined
-  const pending = await readPendingDecrypted(bucket, userOrRes.id, pendingId, encSecret)
+  const encSecret = getIntegrationsEncryptionSecret(context)
+  if (integrationsEncryptionSecretRequired(context) && !encSecret) {
+    return json(503, { ok: false, error: 'INTEGRATIONS_ENCRYPTION_SECRET_REQUIRED' })
+  }
+
+  let pending: any = null
+  try {
+    pending = await readPendingDecrypted(bucket, userOrRes.id, pendingId, encSecret)
+  } catch (e: any) {
+    if (!encSecret && isMissingIntegrationsEncryptionSecretError(e)) {
+      return json(503, { ok: false, error: 'INTEGRATIONS_ENCRYPTION_SECRET_REQUIRED' })
+    }
+    return json(500, { ok: false, error: 'INTERNAL' })
+  }
   if (!pending) return json(404, { ok: false, error: 'PENDING_NOT_FOUND' })
   if (pending.userId !== userOrRes.id) return json(403, { ok: false, error: 'FORBIDDEN' })
 
@@ -37,6 +54,14 @@ export async function onRequestPost(context: any): Promise<Response> {
   )
   await deletePending(bucket, userOrRes.id, pendingId).catch(() => null)
 
+  await writeAuditEvent(bucket, {
+    scope: 'instagram',
+    action: 'instagram.connect.oauth',
+    actor: { id: userOrRes.id, email: userOrRes.email, name: userOrRes.name },
+    request: requestAuditMeta(context.request),
+    target: { pageId, igBusinessAccountId: String(igId) },
+    ok: true,
+  }).catch(() => null)
+
   return json(200, { ok: true, connected: true, businessAccountId: String(igId) })
 }
-

@@ -7,6 +7,7 @@ import { isNoAuthMode, logNoAuthMode } from '@/noAuthMode'
 import { fetchInstagramAccountMetrics } from '@/instagramIntegration'
 import { useWebSocket } from '@/useWebSocket'
 import { useKV } from '@/spark-mock'
+import { csrfHeader } from '@/csrf'
 
 // =========================
 // Auth
@@ -377,7 +378,7 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
   const connectInstagram = async (token: string, businessAccountId: string) => {
     const res = await fetch('/api/instagram/connect', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...csrfHeader() },
       credentials: 'include',
       body: JSON.stringify({ accessToken: token, businessAccountId })
     })
@@ -391,7 +392,7 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
   }
 
   const disconnectInstagram = () => {
-    fetch('/api/instagram/disconnect', { method: 'POST', credentials: 'include' })
+    fetch('/api/instagram/disconnect', { method: 'POST', credentials: 'include', headers: csrfHeader() })
       .catch(() => null)
       .finally(() => setInstagram({ connected: false }))
   }

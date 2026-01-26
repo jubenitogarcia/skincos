@@ -9,6 +9,9 @@ bucket_name = "skincos-share"
 
 [env.production.vars]
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
+REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
+R2_KEY_PREFIX = ""
+R2_PRODUCTION_BRANCH = "main"
 
 [[env.preview.r2_buckets]]
 binding = "SHARE_BUCKET"
@@ -16,3 +19,6 @@ bucket_name = "skincos-share"
 
 [env.preview.vars]
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
+REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "false"
+R2_KEY_PREFIX = "preview/"
+R2_PRODUCTION_BRANCH = "main"

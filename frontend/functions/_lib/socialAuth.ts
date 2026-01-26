@@ -6,9 +6,23 @@ const json = (status: number, body: any) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   })
 
+function parseAllowlist(raw: any): Set<string> {
+  const parts = String(raw || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  return new Set(parts)
+}
+
 export async function requireSocialAdmin(context: any) {
   const userOrRes = await requireInsumosUser(context)
   if (userOrRes instanceof Response) return userOrRes
+
+  const allowlist = parseAllowlist(context?.env?.SOCIAL_ADMIN_EMAIL_ALLOWLIST)
+  if (allowlist.size) {
+    const email = String(userOrRes.email || '').trim().toLowerCase()
+    if (!email || !allowlist.has(email)) return json(403, { ok: false, error: 'FORBIDDEN' })
+  }
 
   const expected = String(context?.env?.SOCIAL_ADMIN_TOKEN || '').trim()
   if (!expected) return json(503, { ok: false, error: 'SOCIAL_ADMIN_TOKEN_NOT_CONFIGURED' })
@@ -18,4 +32,3 @@ export async function requireSocialAdmin(context: any) {
 
   return userOrRes
 }
-

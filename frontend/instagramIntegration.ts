@@ -3,6 +3,8 @@
 // https://graph.facebook.com/v20.0/{ig_business_account_id}/...
 // Necessário: access_token com permissões instagram_basic, instagram_manage_messages, instagram_manage_insights
 
+import { csrfHeader } from '@/csrf'
+
 export interface InstagramUserProfile {
     id: string
     username: string
@@ -33,7 +35,7 @@ async function apiGet<T>(path: string): Promise<T> {
 async function apiPost<T>(path: string, body: any): Promise<T> {
     const res = await fetch(path, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        headers: { 'content-type': 'application/json', accept: 'application/json', ...csrfHeader() },
         credentials: 'include' as any,
         body: JSON.stringify(body),
     })

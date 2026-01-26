@@ -3,11 +3,31 @@ import { getShareBucket } from '../../../_lib/r2'
 import { verifyState } from '../../../_lib/oauthState'
 import { graphGet } from '../../../_lib/instagramGraph'
 import { writeConnection, writePending } from '../../../_lib/instagramStore'
+import { getIntegrationsEncryptionSecret, integrationsEncryptionSecretRequired } from '../../../_lib/integrationsEncryption'
 
 type OAuthState = { userId: string; nonce: string; iat: number }
 
 const html = (body: string) =>
-  new Response(body, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
+  new Response(body, {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'same-origin',
+      'content-security-policy': [
+        "default-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+        "script-src 'unsafe-inline'",
+        "style-src 'unsafe-inline'",
+        "connect-src 'self'",
+        "img-src 'self' data:",
+      ].join('; '),
+    },
+  })
 
 const esc = (s: any) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 
@@ -28,7 +48,10 @@ export async function onRequestGet(context: any): Promise<Response> {
   const appId = String(context?.env?.META_APP_ID || '').trim()
   const appSecret = String(context?.env?.META_APP_SECRET || '').trim()
   const stateSecret = String(context?.env?.META_OAUTH_STATE_SECRET || context?.env?.META_APP_SECRET || '').trim()
-  const encSecret = String(context?.env?.INTEGRATIONS_ENCRYPTION_SECRET || '').trim() || undefined
+  const encSecret = getIntegrationsEncryptionSecret(context)
+  if (integrationsEncryptionSecretRequired(context) && !encSecret) {
+    return html('<p>Integrações: INTEGRATIONS_ENCRYPTION_SECRET não configurado.</p>')
+  }
 
   if (!appId || !appSecret || !stateSecret) {
     return html('<p>Meta OAuth not configured (META_APP_ID / META_APP_SECRET / META_OAUTH_STATE_SECRET).</p>')
@@ -124,6 +147,19 @@ export async function onRequestGet(context: any): Promise<Response> {
       <h3>Escolha qual conta Instagram conectar</h3>
       <div id="root"></div>
       <script>
+        const getCookie = (name) => {
+          try {
+            const parts = String(document.cookie || '').split(';').map(s => s.trim()).filter(Boolean);
+            for (const p of parts) {
+              const idx = p.indexOf('=');
+              if (idx <= 0) continue;
+              const k = p.slice(0, idx).trim();
+              const v = p.slice(idx + 1).trim();
+              if (k === name) return v;
+            }
+          } catch {}
+          return null;
+        };
         const pendingId = ${JSON.stringify(pendingId)};
         const pages = ${pagesJson};
         const root = document.getElementById('root');
@@ -134,9 +170,10 @@ export async function onRequestGet(context: any): Promise<Response> {
           btn.onclick = async () => {
             btn.disabled = true;
             try {
+              const csrf = getCookie('csrfToken');
               const res = await fetch('/api/instagram/oauth/complete', {
                 method: 'POST',
-                headers: { 'content-type': 'application/json' },
+                headers: { 'content-type': 'application/json', ...(csrf ? { 'x-csrf-token': csrf } : {}) },
                 body: JSON.stringify({ pendingId, pageId: p.id })
               });
               const data = await res.json().catch(() => null);
@@ -157,4 +194,3 @@ export async function onRequestGet(context: any): Promise<Response> {
     return html(`<p>Falha ao conectar: ${esc(e?.message || 'Erro')}</p>`)
   }
 }
-

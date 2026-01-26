@@ -1,3 +1,7 @@
+import { requireSameOrigin } from './_lib/csrf'
+import { getInsumosUser } from './_lib/insumosAuth'
+import { getShareBucket } from './_lib/r2'
+
 type ShareFile = {
     name: string
     key: string
@@ -43,12 +47,11 @@ const buildRedirect = (request: Request, payload: SharePayload, shareId?: string
     return Response.redirect(target, 303)
 }
 
-const getBucket = (context: any) => {
-    return (context?.env?.SHARE_BUCKET as R2Bucket | undefined) || undefined
-}
-
 export async function onRequestPost(context: { request: Request; env?: Record<string, unknown> }): Promise<Response> {
     try {
+        const originRes = requireSameOrigin(context)
+        if (originRes) return originRes
+
         const form = await context.request.formData()
         const title = form.get('title')
         const text = form.get('text')
@@ -63,7 +66,8 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
             url: url ? String(url) : undefined
         }
 
-        const bucket = getBucket(context)
+        const user = await getInsumosUser(context)
+        const bucket = user ? getShareBucket(context) : null
         if (bucket && fileObjs.length) {
             let total = 0
             const shareId = crypto.randomUUID()
