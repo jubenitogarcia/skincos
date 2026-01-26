@@ -319,7 +319,7 @@ export class JobQueue {
     }
 }
 
-function withCORS(body, init = {}, origin) {
+function withCORSBase(body, init = {}, origin) {
     const headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers || {});
     headers.set("content-type", headers.get("content-type") || "application/json");
     headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1284,9 +1284,8 @@ export default {
         const idempotencyKey = request.headers.get('idempotency-key') || request.headers.get('Idempotency-Key') || '';
         const isSecureContext = url.protocol === 'https:';
 
-        const baseWithCORS = withCORS;
         const withCORS = (body, init = {}) => {
-            const res = baseWithCORS(body, init, appOrigin);
+            const res = withCORSBase(body, init, appOrigin);
             res.headers.set('x-request-id', requestId);
             const durationMs = Date.now() - startedAt;
             const status = res.status || 200;
