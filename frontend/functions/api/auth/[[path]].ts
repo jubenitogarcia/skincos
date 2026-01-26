@@ -35,7 +35,35 @@ export async function onRequest(context: any): Promise<Response> {
     outHeaders.set('Cache-Control', 'no-store')
 
     try {
+        const splitSetCookie = (headerValue: string): string[] => {
+            const raw = String(headerValue || '').trim()
+            if (!raw) return []
+
+            const out: string[] = []
+            let start = 0
+            let inExpires = false
+
+            for (let i = 0; i < raw.length; i++) {
+                const ch = raw[i]
+                if (!inExpires && (ch === 'e' || ch === 'E')) {
+                    const maybe = raw.slice(i, i + 8).toLowerCase()
+                    if (maybe === 'expires=') inExpires = true
+                }
+                if (inExpires && ch === ';') inExpires = false
+                if (!inExpires && ch === ',') {
+                    const part = raw.slice(start, i).trim()
+                    if (part) out.push(part)
+                    start = i + 1
+                }
+            }
+
+            const tail = raw.slice(start).trim()
+            if (tail) out.push(tail)
+            return out
+        }
+
         const getSetCookie = (upstream.headers as any).getSetCookie
+        const getSetCookieMethod = (upstream.headers as any).getSetCookie?.bind?.(upstream.headers)
         const rewriteCookie = (cookie: string) => {
             if (!cookie) return cookie
             const parts = cookie.split(';').map(part => part.trim()).filter(Boolean)
@@ -50,12 +78,12 @@ export async function onRequest(context: any): Promise<Response> {
             for (const c of cookies) outHeaders.append('Set-Cookie', rewriteCookie(c))
         }
 
-        if (typeof getSetCookie === 'function') {
-            const cookies = getSetCookie.call(upstream.headers) as string[]
+        if (typeof getSetCookieMethod === 'function') {
+            const cookies = getSetCookieMethod() as string[]
             applyCookies(cookies)
         } else {
             const single = upstream.headers.get('set-cookie')
-            if (single) applyCookies([single])
+            if (single) applyCookies(splitSetCookie(single))
         }
     } catch {
         // ignore

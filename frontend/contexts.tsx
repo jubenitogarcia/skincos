@@ -24,6 +24,8 @@ export interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
+  initializing: boolean
+  initProgress: number
   signIn: (email: string, password: string) => Promise<void>
   signUp: (name: string, email: string, password: string, inviteToken: string) => Promise<void>
   signOut: () => void
@@ -56,6 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = replitAuth?.isAuthenticated || false
   const shouldShowLoadingOverlay = isLoading && !isNoAuthMode()
   const [actionLoading, setActionLoading] = useState(false)
+  const [initProgress, setInitProgress] = useState(0)
+  const initStartedAtRef = React.useRef<number | null>(null)
   const AUTH_ME_QUERY_KEY = ['/api/auth/me']
 
   const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
@@ -229,6 +233,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextValue = {
     user,
     loading: actionLoading,
+    initializing: shouldShowLoadingOverlay,
+    initProgress,
     signIn,
     signUp,
     signOut,
@@ -236,6 +242,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     token: null,
     isAuthenticated
   }
+
+  useEffect(() => {
+    if (!shouldShowLoadingOverlay) {
+      initStartedAtRef.current = null
+      setInitProgress(100)
+      const t = setTimeout(() => setInitProgress(0), 250)
+      return () => clearTimeout(t)
+    }
+
+    if (!initStartedAtRef.current) initStartedAtRef.current = Date.now()
+    const tick = () => {
+      const started = initStartedAtRef.current || Date.now()
+      const elapsed = Date.now() - started
+      const budgetMs = 12000
+      const pct = Math.min(95, Math.max(1, Math.floor((elapsed / budgetMs) * 95)))
+      setInitProgress(pct)
+    }
+    tick()
+    const id = window.setInterval(tick, 150)
+    return () => window.clearInterval(id)
+  }, [shouldShowLoadingOverlay])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -268,7 +295,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🔄</div>
-            <div>Inicializando autenticação...</div>
+            <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Carregando…</div>
+            <div style={{ opacity: 0.9 }}>{initProgress}%</div>
           </div>
         </div>
       )}

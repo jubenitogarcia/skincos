@@ -186,7 +186,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
 ]
 
 export default function AppFunctionalNeatlab() {
-    const { isAuthenticated, user, signOut } = useAuth()
+    const { isAuthenticated, user, signOut, initializing, initProgress } = useAuth()
 
     const DEFAULT_MODULE_KEY = 'insumos'
 
@@ -474,6 +474,24 @@ export default function AppFunctionalNeatlab() {
         () => modules.find(m => m.key === active) || modules.find(m => m.key === DEFAULT_MODULE_KEY),
         [DEFAULT_MODULE_KEY, active]
     )
+
+	    if (initializing) {
+	        return (
+	            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
+	                <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl">
+	                    <div className="text-3xl mb-4">⏳</div>
+	                    <div className="text-lg font-semibold">Carregando sessão…</div>
+	                    <div className="text-sm text-blue-100/70 mt-1">Aguarde enquanto verificamos sua sessão.</div>
+	                    <div className="mt-6 flex items-center justify-center">
+	                        <Button variant="secondary" size="lg" disabled className="gap-2">
+	                            <span className="animate-pulse">🔄</span>
+	                            {`Carregando ${Math.max(0, Math.min(100, Number.isFinite(initProgress as any) ? (initProgress as any) : 0))}%`}
+	                        </Button>
+	                    </div>
+	                </div>
+	            </div>
+	        )
+	    }
 
 	    if (!isAuthenticated) {
 	        return <AuthScreen />
