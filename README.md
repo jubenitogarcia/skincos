@@ -28,6 +28,7 @@ Plataforma interna (local) para automações e operações da clínica.
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
+- Segredos e rotação: `docs/secrets-rotation.md`
 
 ## Sanity check
 - Suite rápida (recomendado): `./backend/scripts/doctor.sh`
