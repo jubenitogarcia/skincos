@@ -6,7 +6,10 @@ type ActionHandler = (el: HTMLElement) => void
 
 const registry: Record<string, ActionHandler> = {
     'refresh': () => { window.location.reload() },
-    'go-back': () => { window.history.length > 1 ? window.history.back() : toast.info('Sem histórico anterior') },
+    'go-back': () => {
+        if (window.history.length > 1) window.history.back()
+        else toast.info('Sem histórico anterior')
+    },
     'open-docs': () => { window.open('/docs', '_blank', 'noreferrer') },
     'create-generic': () => { document.dispatchEvent(new CustomEvent('app:create-generic')); toast.success('Ação de criação disparada') },
     'not-implemented': (el) => { toast.info(`Ação ainda não implementada: ${(el.getAttribute('data-action') || '')}`) },

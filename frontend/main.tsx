@@ -4,12 +4,13 @@ import { createRoot } from 'react-dom/client'
 try {
   if (import.meta.env.DEV) console.log('GitHub Spark Mock: Initialized')
   ;(window as any).sparkComponents = (window as any).sparkComponents || {}
+  type SparkCallback = (...args: any[]) => void
   ;(window as any).sparkEvents = {
     emit: (event: string, data?: any) => {
       if (import.meta.env.DEV) console.log('Spark Event:', event, data)
     },
-    on: (event: string, callback: Function) => { },
-    off: (event: string, callback: Function) => { }
+    on: (_event: string, _callback: SparkCallback) => { },
+    off: (_event: string, _callback: SparkCallback) => { }
   }
 } catch { /* ignore */ }
 

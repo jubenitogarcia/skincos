@@ -68,7 +68,7 @@ async function tryFetch(base: string, candidate: EndpointCandidate): Promise<any
         if (!res.ok) return null
         const contentType = res.headers.get('content-type') || ''
         if (contentType.includes('application/json')) {
-            return await res.json()
+            return await (res.json() as Promise<any>)
         }
         return await res.text()
     } catch {
@@ -139,7 +139,7 @@ export async function sendAuto(base: string, payload: any) {
         const url = normalize(base) + cand.path
         try {
             const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-            if (res.ok) return await res.json()
+            if (res.ok) return await (res.json() as Promise<any>)
         } catch { /* ignore */ }
     }
     throw new Error('Nenhum endpoint de envio funcionou')
@@ -161,7 +161,7 @@ export async function fetchMessagesAuto(base: string, since?: string) {
             if (since) url.searchParams.set('since', since)
             const res = await fetch(url.toString())
             if (!res.ok) continue
-            const data = await res.json()
+            const data: any = await res.json()
             if (Array.isArray(data)) return data
             if (Array.isArray((data as any).messages)) return (data as any).messages
         } catch { /* ignore */ }
@@ -174,7 +174,7 @@ export async function fetchChatsAuto(base: string) {
         try {
             const res = await fetch(normalize(base) + cand.path)
             if (!res.ok) continue
-            const data = await res.json()
+            const data: any = await res.json()
             if (Array.isArray(data)) return data
             if (Array.isArray((data as any).chats)) return (data as any).chats
         } catch { /* ignore */ }
@@ -219,7 +219,7 @@ export async function fetchAvatarAuto(base: string, contactIdOrPhone: string): P
                 const blob = await res.blob()
                 return URL.createObjectURL(blob)
             }
-            const data = await res.json().catch(() => null)
+            const data: any = await (res.json() as Promise<any>).catch(() => null)
             if (data && typeof data === 'object') {
                 const u = (data.url || data.avatar || data.profilePicUrl)
                 if (typeof u === 'string') return u
@@ -247,7 +247,7 @@ export async function fetchRecentMediaAuto(base: string, contactIdOrPhone: strin
         try {
             const res = await fetch(url)
             if (!res.ok) continue
-            const data = await res.json()
+            const data: any = await res.json()
             const list = Array.isArray(data) ? data : (Array.isArray((data as any).media) ? (data as any).media : (Array.isArray((data as any).messages) ? (data as any).messages : null))
             if (!Array.isArray(list)) continue
             // Normalize common fields if possible
@@ -280,7 +280,7 @@ export async function fetchChatFlagsAuto(base: string): Promise<{ pinned: Set<st
         try {
             const res = await fetch(url)
             if (!res.ok) continue
-            const data = await res.json()
+            const data: any = await res.json()
             const p = (data?.pinned || data?.pins || []) as any[]
             const a = (data?.archived || []) as any[]
             const u = (data?.unread || []) as any[]
@@ -317,7 +317,7 @@ export async function fetchUnreadCountsAuto(base: string): Promise<Record<string
         try {
             const res = await fetch(url)
             if (!res.ok) continue
-            const data = await res.json()
+            const data: any = await res.json()
             if (data && typeof data.counts === 'object') return data.counts as Record<string, number>
         } catch { /* try next */ }
     }
@@ -333,7 +333,7 @@ export async function globalSearchAuto(base: string, params: { q?: string, phone
     try {
         const res = await fetch(url)
         if (!res.ok) return { contacts: [], messages: [], media: [] }
-        const data = await res.json()
+        const data: any = await res.json()
         return { contacts: data.contacts || [], messages: data.messages || [], media: data.media || [], meta: { total: data.total || {}, query: data.query || {} } }
     } catch { return { contacts: [], messages: [], media: [] } }
 }

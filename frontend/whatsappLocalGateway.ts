@@ -11,7 +11,7 @@ export interface WhatsAppGatewayStatus {
     message?: string
 }
 
-async function safeJson(res: Response) {
+async function safeJson(res: Response): Promise<any> {
     try { return await res.json() } catch { return null }
 }
 
