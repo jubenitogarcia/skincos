@@ -24,7 +24,91 @@ export async function handleAuthRoutes({
     buildUserResponseFromSheetRow,
     MAX_PROFILE_PHOTO_URL_CHARS,
     d1,
+    appendAuditLog,
+    ip,
+    userAgent,
 }) {
+    const toInt = (value, fallback) => {
+        const n = parseInt(String(value ?? ''), 10);
+        return Number.isFinite(n) ? n : fallback;
+    };
+    const authLockoutWindowMinutes = Math.max(1, toInt(env?.AUTH_LOCKOUT_WINDOW_MINUTES, 15));
+    const authLockoutMaxAttempts = Math.max(1, toInt(env?.AUTH_LOCKOUT_MAX_ATTEMPTS, 5));
+    const authIp = String(ip || '').trim();
+    const authUserAgent = String(userAgent || '').trim();
+    const normalizeIdentifier = (value) => String(value || '').trim().toLowerCase();
+
+    const getAuthLockout = async (identifier) => {
+        if (!env?.DB || !identifier) return null;
+        try {
+            const since = new Date(Date.now() - authLockoutWindowMinutes * 60 * 1000).toISOString();
+            const row = await env.DB.prepare(
+                `SELECT COUNT(1) AS n, MIN(ts) AS first_ts
+                 FROM auth_attempts
+                 WHERE success = 0 AND ts >= ? AND (username = ? OR ip = ?)`
+            )
+                .bind(since, identifier, authIp)
+                .first();
+            const attempts = toInt(row?.n, 0);
+            if (attempts < authLockoutMaxAttempts) return null;
+            const firstTs = row?.first_ts ? new Date(row.first_ts).getTime() : Date.now();
+            const retryAt = firstTs + authLockoutWindowMinutes * 60 * 1000;
+            const retryAfterSeconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+            return { retryAfterSeconds };
+        } catch {
+            return null;
+        }
+    };
+
+    const recordAuthFailure = async (identifier, reason) => {
+        if (!env?.DB || !identifier) return;
+        try {
+            await env.DB.prepare(
+                `INSERT INTO auth_attempts (ts, username, ip, success, reason)
+                 VALUES (?, ?, ?, 0, ?)`
+            )
+                .bind(new Date().toISOString(), identifier, authIp, String(reason || ''))
+                .run();
+        } catch {
+            // ignore
+        }
+    };
+
+    const clearAuthFailures = async (identifier) => {
+        if (!env?.DB || !identifier) return;
+        try {
+            await env.DB.prepare(
+                `DELETE FROM auth_attempts WHERE success = 0 AND (username = ? OR ip = ?)`
+            )
+                .bind(identifier, authIp)
+                .run();
+        } catch {
+            // ignore
+        }
+    };
+
+    const logAuthAudit = async ({ action, actor, role, detail }) => {
+        if (!appendAuditLog) return;
+        try {
+            await appendAuditLog({
+                env,
+                spreadsheetId,
+                accessToken,
+                actor,
+                role,
+                ip: authIp,
+                userAgent: authUserAgent,
+                action,
+                entity: 'auth',
+                entityId: actor,
+                unidade: '',
+                before: null,
+                after: detail || null
+            });
+        } catch {
+            // ignore
+        }
+    };
     if (d1?.enabled) {
         const normalizeRole = (role) => String(role || 'CONSULTOR').trim().toUpperCase();
         const normalizeAllowedUnits = (value) => {
@@ -149,24 +233,46 @@ export async function handleAuthRoutes({
             const body = await request.json().catch(() => ({}));
             const usernameInput = (body.username || body.user || body.email || '').toString().trim();
             const password = (body.password || body.senha || '').toString();
+            const identifier = normalizeIdentifier(usernameInput);
 
             if (!usernameInput || !password) {
+                await recordAuthFailure(identifier, 'MISSING_CREDENTIALS');
+                await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'MISSING_CREDENTIALS' } });
                 return withCORS(JSON.stringify({ error: "Username and password required" }), { status: 400 }, appOrigin);
+            }
+            const lockout = await getAuthLockout(identifier);
+            if (lockout) {
+                const headers = new Headers();
+                headers.set('Retry-After', String(lockout.retryAfterSeconds));
+                await logAuthAudit({ action: 'AUTH_LOCKED', actor: identifier, role: '', detail: { retryAfterSeconds: lockout.retryAfterSeconds } });
+                return withCORS(
+                    JSON.stringify({ error: "Muitas tentativas. Aguarde para tentar novamente.", code: "AUTH_LOCKED", retryAfterSeconds: lockout.retryAfterSeconds }),
+                    { status: 429, headers },
+                    appOrigin
+                );
             }
 
             try {
                 const userDb = await d1.getUserByIdentifier(usernameInput);
                 if (!userDb) {
+                    await recordAuthFailure(identifier, 'INVALID_CREDENTIALS');
+                    await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'INVALID_CREDENTIALS' } });
                     return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
                 if (!userDb.ativo) {
+                    await recordAuthFailure(identifier, 'USER_INACTIVE');
+                    await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'USER_INACTIVE', username: userDb.username } });
                     return withCORS(JSON.stringify({ error: "User inactive" }), { status: 403 }, appOrigin);
                 }
                 if (!userDb.passwordHash) {
+                    await recordAuthFailure(identifier, 'PASSWORD_NOT_SET');
+                    await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'PASSWORD_NOT_SET', username: userDb.username } });
                     return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
                 }
                 const ok = await bcrypt.compare(password, userDb.passwordHash);
                 if (!ok) {
+                    await recordAuthFailure(identifier, 'INVALID_CREDENTIALS');
+                    await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'INVALID_CREDENTIALS', username: userDb.username } });
                     return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
                 const user = {
@@ -178,9 +284,13 @@ export async function handleAuthRoutes({
                     photoUrl: userDb.photoUrl,
                     allowedUnits: userDb.allowedUnits || [],
                 };
+                await clearAuthFailures(identifier);
+                await logAuthAudit({ action: 'AUTH_LOGIN_SUCCESS', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
+                await recordAuthFailure(identifier, 'LOGIN_ERROR');
+                await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'LOGIN_ERROR' } });
                 return withCORS(JSON.stringify({ error: `Login error: ${err.message}` }), { status: 500 }, appOrigin);
             }
         }
@@ -491,32 +601,53 @@ export async function handleAuthRoutes({
         const body = await request.json().catch(() => ({}));
         const usernameInput = (body.username || body.user || body.email || '').toString().trim();
         const password = (body.password || body.senha || '').toString();
+        const identifier = normalizeIdentifier(usernameInput);
 
         if (!usernameInput || !password) {
+            await recordAuthFailure(identifier, 'MISSING_CREDENTIALS');
+            await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'MISSING_CREDENTIALS' } });
             return withCORS(JSON.stringify({ error: "Username and password required" }), { status: 400 }, appOrigin);
+        }
+        const lockout = await getAuthLockout(identifier);
+        if (lockout) {
+            const headers = new Headers();
+            headers.set('Retry-After', String(lockout.retryAfterSeconds));
+            await logAuthAudit({ action: 'AUTH_LOCKED', actor: identifier, role: '', detail: { retryAfterSeconds: lockout.retryAfterSeconds } });
+            return withCORS(
+                JSON.stringify({ error: "Muitas tentativas. Aguarde para tentar novamente.", code: "AUTH_LOCKED", retryAfterSeconds: lockout.retryAfterSeconds }),
+                { status: 429, headers },
+                appOrigin
+            );
         }
 
         try {
             const userRows = await readSheet(spreadsheetId, userRange, accessToken);
             const users = parseUsers(userRows);
-            const identifier = usernameInput.toLowerCase();
             const userDb = users.find((u) => {
                 const uName = (u.username || '').toLowerCase();
                 const uEmail = (u.email || '').toLowerCase();
                 return uName === identifier || (uEmail && uEmail === identifier);
             });
             if (!userDb) {
+                await recordAuthFailure(identifier, 'INVALID_CREDENTIALS');
+                await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'INVALID_CREDENTIALS' } });
                 return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
             }
             if (!userDb.ativo) {
+                await recordAuthFailure(identifier, 'USER_INACTIVE');
+                await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'USER_INACTIVE', username: userDb.username } });
                 return withCORS(JSON.stringify({ error: "User inactive" }), { status: 403 }, appOrigin);
             }
             if (!userDb.passwordHash) {
+                await recordAuthFailure(identifier, 'PASSWORD_NOT_SET');
+                await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'PASSWORD_NOT_SET', username: userDb.username } });
                 return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
             }
 
             const ok = await bcrypt.compare(password, userDb.passwordHash);
             if (!ok) {
+                await recordAuthFailure(identifier, 'INVALID_CREDENTIALS');
+                await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'INVALID_CREDENTIALS', username: userDb.username } });
                 return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
             }
 
@@ -529,9 +660,13 @@ export async function handleAuthRoutes({
                 photoUrl: userDb.photoUrl,
                 allowedUnits: userDb.allowedUnits || [],
             };
+            await clearAuthFailures(identifier);
+            await logAuthAudit({ action: 'AUTH_LOGIN_SUCCESS', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
             const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
             return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
         } catch (err) {
+            await recordAuthFailure(identifier, 'LOGIN_ERROR');
+            await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: '', detail: { reason: 'LOGIN_ERROR' } });
             return withCORS(JSON.stringify({ error: `Login error: ${err.message}` }), { status: 500 }, appOrigin);
         }
     }

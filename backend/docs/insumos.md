@@ -87,6 +87,8 @@ Para evitar CORS e manter o padrão same-origin do CRM, o backend do CRM expõe 
 Variável opcional:
 
 - `INSUMOS_API_TARGET` (default `https://api.skincos.com.br`)
+- `AUTH_LOCKOUT_MAX_ATTEMPTS` (default `5`)
+- `AUTH_LOCKOUT_WINDOW_MINUTES` (default `15`)
 
 ### Nota: crm-api (backend/apps/crm-api)
 

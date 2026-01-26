@@ -1519,6 +1519,9 @@ export default {
                     updateUserProfile: d1UpdateUserProfile,
                 }
                 : { enabled: false },
+            appendAuditLog,
+            ip,
+            userAgent,
         });
         if (authResp) return authResp;
 
