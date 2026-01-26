@@ -29,9 +29,15 @@
     "pre-commit": "lint-staged"
   },
   "dependencies": {
-    "body-parser": "^2.2.0",
+    "body-parser": "^2.2.2",
     "cors": "^2.8.5",
     "express": "^5.1.0"
+  },
+  "overrides": {
+    "axios": "1.13.3",
+    "glob": "10.5.0",
+    "js-yaml": "4.1.1",
+    "lodash": "4.17.23"
   },
   "devDependencies": {
     "nx": "21.4.0",
