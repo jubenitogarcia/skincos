@@ -55,10 +55,10 @@ export async function fetchSession(baseUrl: string): Promise<WhatsAppSessionStat
     try {
         const res = await fetch(normalizeBase(baseUrl) + '/sessions')
         if (!res.ok) return null
-        const data = await res.json()
+        const data: any = await res.json()
         // Se a API retornar array, pegue a primeira
-        if (Array.isArray(data)) return data[0] || null
-        return data
+        if (Array.isArray(data)) return (data[0] || null) as any
+        return (data || null) as any
     } catch {
         return null
     }
@@ -88,7 +88,7 @@ export async function sendWhatsAppMessage(baseUrl: string, payload: WhatsAppOutb
                 body: JSON.stringify(bodyBase)
             })
             if (!res.ok) { lastError = await res.text(); continue }
-            return await res.json()
+            return await (res.json() as Promise<any>)
         } catch (e) { lastError = e }
     }
     throw new Error('Falha ao enviar mensagem WhatsApp: ' + (lastError || 'unknown'))
@@ -110,7 +110,7 @@ export async function sendWhatsAppContact(baseUrl: string, to: string, contactPh
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
             })
             if (!res.ok) { lastError = await res.text(); continue }
-            return await res.json()
+            return await (res.json() as Promise<any>)
         } catch (e) { lastError = e }
     }
     // fallback: plain text message with details

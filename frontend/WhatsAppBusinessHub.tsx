@@ -886,7 +886,7 @@ export function WhatsAppBusinessHub() {
     try {
       const resp = await apiFetch('/api/wa/instances')
       if (resp.ok) {
-        const json = await resp.json()
+        const json: any = await resp.json()
         const list = Array.isArray(json) ? json : (json?.instances || [])
         if (Array.isArray(list)) {
           // Only update state if list meaningfully changed to avoid extra rerenders every 10s
@@ -956,10 +956,10 @@ export function WhatsAppBusinessHub() {
         const resp = await apiFetch(`/api/wa/start/${inst}`, { method: 'POST' })
         if (!resp.ok) {
           let detail = 'Falha ao iniciar instância específica'
-          try { const j = await resp.json(); detail = j?.detail || j?.error || detail } catch { /* ignore */ }
+          try { const j: any = await resp.json(); detail = j?.detail || j?.error || detail } catch { /* ignore */ }
           throw new Error(detail)
         }
-        const json = await resp.json(); assignedBase = json.baseUrl || `http://localhost:${3000 + inst}`
+        const json: any = await resp.json(); assignedBase = json.baseUrl || `http://localhost:${3000 + inst}`
       }
       currentInstanceRef.current = inst
       const base = assignedBase as string
@@ -1170,7 +1170,7 @@ export function WhatsAppBusinessHub() {
         try {
           const res = await apiFetch(`/api/conversations/${encodeURIComponent(selectedContact)}/ai-status`)
           if (!res.ok) return
-          const json = await res.json()
+          const json: any = await res.json()
           if (!cancelled) {
             setAiSuppressed(!!json.suppressed)
             setAiResumeAt(json.resumeAt || null)
@@ -1995,7 +1995,7 @@ export function WhatsAppBusinessHub() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: ctx, n: 4 })
           })
           if (res.ok) {
-            const js = await res.json()
+            const js: any = await res.json()
             const list: string[] = Array.isArray(js?.suggestions) ? js.suggestions : []
             if (list.length) setAiSuggestionsByChat(prev => ({ ...prev, [selectedContact!]: list }))
             else {
@@ -2033,7 +2033,7 @@ export function WhatsAppBusinessHub() {
           let reply = ''
           try {
             const r = await fetch(`/api/conversations/${encodeURIComponent(chatKey)}/ai-suggestions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: ctx, n: 1 }) })
-            const js = r.ok ? await r.json() : null
+            const js: any = r.ok ? await r.json() : null
             reply = (Array.isArray(js?.suggestions) && js.suggestions[0]) || ''
           } catch { /* ignore */ }
           if (!reply) {
@@ -2122,7 +2122,7 @@ export function WhatsAppBusinessHub() {
     try {
       const resp = await apiFetch('/api/wa/start', { method: 'POST' })
       if (!resp.ok) throw new Error('Falha ao iniciar instância do gateway')
-      const json = await resp.json()
+      const json: any = await resp.json()
       const assignedBase = json.baseUrl as string
       if (typeof json.instance === 'number') currentInstanceRef.current = json.instance
       setBaseUrlInput(assignedBase)
@@ -2162,7 +2162,7 @@ export function WhatsAppBusinessHub() {
               const resp = await apiFetch('/api/wa/instances')
               let foundName = null
               if (resp.ok) {
-                const js = await resp.json()
+                const js: any = await resp.json()
                 if (Array.isArray(js.instances)) {
                   const found = js.instances.find((i: any) => i.instance === inst)
                   foundName = found?.name || null
@@ -2493,10 +2493,10 @@ export function WhatsAppBusinessHub() {
                         const resp = await apiFetch('/api/wa/start', { method: 'POST' })
                         if (!resp.ok) {
                           let detail = 'Falha ao iniciar instância do gateway'
-                          try { const j = await resp.json(); detail = j?.detail || j?.error || detail } catch { /* ignore */ }
+                          try { const j: any = await resp.json(); detail = j?.detail || j?.error || detail } catch { /* ignore */ }
                           throw new Error(detail)
                         }
-                        const json = await resp.json(); assignedBase = json.baseUrl; instNumber = json.instance
+                        const json: any = await resp.json(); assignedBase = json.baseUrl; instNumber = json.instance
                       } else {
                         const inst = desiredPort - 3000
                         // Preselect instance so logs can target it if start fails
@@ -2512,10 +2512,10 @@ export function WhatsAppBusinessHub() {
                           const resp = await apiFetch(`/api/wa/start/${inst}`, { method: 'POST' })
                           if (!resp.ok) {
                             let detail = 'Falha ao iniciar instância específica'
-                            try { const j = await resp.json(); detail = j?.detail || j?.error || detail } catch { /* ignore */ }
+                            try { const j: any = await resp.json(); detail = j?.detail || j?.error || detail } catch { /* ignore */ }
                             throw new Error(detail)
                           }
-                          const json = await resp.json(); assignedBase = json.baseUrl; instNumber = json.instance
+                          const json: any = await resp.json(); assignedBase = json.baseUrl; instNumber = json.instance
                         }
                       }
                       if (!assignedBase) throw new Error('Sem baseUrl')
@@ -3171,7 +3171,7 @@ export function WhatsAppBusinessHub() {
                                           try {
                                             if (!ensureWhatsAppConnected() || !whatsapp.baseUrl) { setCommonGroups([]); return }
                                             const key = contact.phone || contact.id
-                                            const data = await fetchCommonGroups(whatsapp.baseUrl, key)
+                                            const data: any = await fetchCommonGroups(whatsapp.baseUrl, key)
                                             setCommonGroups(data.groups || [])
                                           } catch { setCommonGroups([]) }
                                         }}>Grupos em comum</DropdownMenuItem>
@@ -3278,7 +3278,7 @@ export function WhatsAppBusinessHub() {
                             try {
                               if (!ensureWhatsAppConnected() || !whatsapp.baseUrl) { setCommonGroups([]); return }
                               const key = contact.phone || contact.id
-                              const data = await fetchCommonGroups(whatsapp.baseUrl, key)
+                              const data: any = await fetchCommonGroups(whatsapp.baseUrl, key)
                               setCommonGroups(data.groups || [])
                             } catch { setCommonGroups([]) }
                           }}>Grupos em comum</ContextMenuItem>
@@ -3387,7 +3387,7 @@ export function WhatsAppBusinessHub() {
                                 try {
                                   const res = await fetch(`/api/conversations/${encodeURIComponent(selectedContact)}/human-intervention`, { method: 'POST' })
                                   if (res.ok) {
-                                    const j = await res.json(); setAiSuppressed(true); setAiResumeAt(j.suppressedUntil || null)
+                                    const j: any = await res.json(); setAiSuppressed(true); setAiResumeAt(j.suppressedUntil || null)
                                     toast.success('IA silenciada por 24h')
                                   } else throw new Error('Falha ao silenciar')
                                 } catch (e: any) { toast.error(e?.message || 'Erro ao silenciar IA') }
@@ -3578,7 +3578,7 @@ export function WhatsAppBusinessHub() {
                                                     try {
                                                       if (!selectedContact) return
                                                       if (!ensureWhatsAppConnected()) return
-                                                      const res = await searchWhatsAppMessages(whatsapp.baseUrl!, convSearch.trim(), selectedContact)
+                                                      const res: any = await searchWhatsAppMessages(whatsapp.baseUrl!, convSearch.trim(), selectedContact)
                                                       const list = res?.messages || []
                                                       setLastSearchResults(list)
                                                       setIsSearchOpen(true)
@@ -3930,7 +3930,7 @@ export function WhatsAppBusinessHub() {
                           if (!selectedContact || !whatsapp.connected || !whatsapp.baseUrl) { setCommonGroups([]); return }
                           const contact = contacts.find(c => c.id === selectedContact)
                           const key = contact?.phone || selectedContact
-                          const data = await fetchCommonGroups(whatsapp.baseUrl, key)
+                          const data: any = await fetchCommonGroups(whatsapp.baseUrl, key)
                           setCommonGroups(data.groups || [])
                         } catch {
                           setCommonGroups([])
