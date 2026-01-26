@@ -42,6 +42,31 @@ Recomendação: configurar alertas com janelas de 5–10 minutos e rotas especí
 - `api.skincos.com.br/*`
 - `crm.skincos.com.br/api/*`
 
+### Automação de alertas via API (baseline)
+
+Workflow: `.github/workflows/cloudflare-alerting-apply.yml`
+
+Este workflow cria/atualiza (idempotente) um baseline de políticas via **Cloudflare Alerting API v3**:
+- Incidents (Cloudflare Status)
+- Maintenance (Cloudflare Status)
+- Pages events (deploy/erros)
+- Passive Origin Monitoring (origin unreachable)
+- HTTP DDoS (L7)
+- Universal SSL events
+
+Configuração (repo → Settings):
+- **Secrets → Actions**
+  - `CLOUDFLARE_ACCOUNT_ID`
+  - `CLOUDFLARE_ALERTS_API_TOKEN`
+  - (opcional) `CLOUDFLARE_ALERT_WEBHOOK_URL`
+- **Variables → Actions**
+  - `CLOUDFLARE_ALERT_EMAILS` (CSV)
+  - (opcional) `CLOUDFLARE_PAGES_PROJECT_IDS` (CSV)
+  - (opcional) `CLOUDFLARE_PAGES_ENVIRONMENTS` (CSV, default sugerido: `production,preview`)
+  - (opcional) `CLOUDFLARE_PAGES_EVENTS` (CSV)
+
+Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produtos/telemetria adicionais (ex.: Workers Observability) e podem não estar disponíveis diretamente via Alerting API v3; mantenha também o `uptime-slo.yml` como monitor sintético.
+
 ### Checklist rápido (Cloudflare)
 
 1. **Workers / Pages → Analytics → Alerts**:

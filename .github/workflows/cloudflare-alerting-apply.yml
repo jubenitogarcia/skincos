@@ -1,0 +1,76 @@
+name: cloudflare-alerting-apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without mutating Cloudflare (prints payloads)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  schedule:
+    - cron: "23 3 * * 1" # weekly drift remediation
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard Cloudflare alerting secrets
+        id: guard
+        env:
+          CLOUDFLARE_ALERTS_API_TOKEN: ${{ secrets.CLOUDFLARE_ALERTS_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_ALERTS_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Cloudflare alerting secrets not configured; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Ensure jq
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null 2>&1 && exit 0
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Apply Cloudflare alerting policies
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_ALERTS_API_TOKEN: ${{ secrets.CLOUDFLARE_ALERTS_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ALERT_EMAILS: ${{ vars.CLOUDFLARE_ALERT_EMAILS }}
+          CLOUDFLARE_ALERT_WEBHOOK_URL: ${{ secrets.CLOUDFLARE_ALERT_WEBHOOK_URL }}
+          CLOUDFLARE_ALERT_WEBHOOK_NAME: skincos-alerts
+          CLOUDFLARE_PAGES_PROJECT_IDS: ${{ vars.CLOUDFLARE_PAGES_PROJECT_IDS }}
+          CLOUDFLARE_PAGES_ENVIRONMENTS: ${{ vars.CLOUDFLARE_PAGES_ENVIRONMENTS }}
+          CLOUDFLARE_PAGES_EVENTS: ${{ vars.CLOUDFLARE_PAGES_EVENTS }}
+          CLOUDFLARE_ALERTING_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          bash "$GITHUB_WORKSPACE/backend/scripts/cloudflare-alerting-apply.sh"
+          cat cloudflare-alerting-apply.summary.json
+
+      - name: Upload summary artifact
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-alerting-apply
+          path: /tmp/cloudflare-alerting-apply.summary.json
+
