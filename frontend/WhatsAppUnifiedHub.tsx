@@ -490,9 +490,11 @@ export function WhatsAppUnifiedHub() {
             
           case 'message':
           case 'new-message':
-            const message = data.message
-            if (message.conversationId === selectedConversation) {
-              setMessages(prev => [...prev, message])
+            {
+              const message = data.message
+              if (message.conversationId === selectedConversation) {
+                setMessages(prev => [...prev, message])
+              }
             }
             break
         }

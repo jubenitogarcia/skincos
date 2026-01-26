@@ -209,7 +209,22 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
     if (bootStartedRef.current) return
     bootStartedRef.current = true
 
-    let bootTimeout: NodeJS.Timeout
+    const bootTimeout = setTimeout(() => {
+      if (!isReady && !isCleanedUp) {
+        console.error('[BootGate] ❌ Boot timeout reached - this is a critical failure')
+        
+        const bootError: BootError = {
+          type: 'BOOT_TIMEOUT',
+          message: `Boot process timed out after ${timeout}ms`,
+          timestamp: Date.now(),
+          phase: bootPhaseRef.current
+        }
+        
+        errorReporter.reportBootError(bootError)
+        setCriticalError(bootError)
+        setBootPhase('failed')
+      }
+    }, timeout)
     let isCleanedUp = false
 
     async function runPreflightChecks() {
@@ -299,24 +314,6 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
       }
     }
 
-    // Set up timeout that creates a boot timeout error
-    bootTimeout = setTimeout(() => {
-      if (!isReady && !isCleanedUp) {
-        console.error('[BootGate] ❌ Boot timeout reached - this is a critical failure')
-        
-        const bootError: BootError = {
-          type: 'BOOT_TIMEOUT',
-          message: `Boot process timed out after ${timeout}ms`,
-          timestamp: Date.now(),
-          phase: bootPhaseRef.current
-        }
-        
-        errorReporter.reportBootError(bootError)
-        setCriticalError(bootError)
-        setBootPhase('failed')
-      }
-    }, timeout)
-    
     runPreflightChecks()
     
     return () => {

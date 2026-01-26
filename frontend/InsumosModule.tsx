@@ -1465,18 +1465,17 @@ export function InsumosModule() {
           setQuickLookupCode(codigo)
           setQuickLookupCtxUnidade(ctxUnidade)
           if (!items.length) setQuickLookupError('Nenhum insumo encontrado para este código.')
-        } catch (e: any) {
-          if (token !== quickLookupTokenRef.current) return
-          setQuickLookupError(e?.message || 'Falha ao buscar o insumo.')
-          setQuickLookupItems([])
-          setQuickLookupCode(codigo)
-          setQuickLookupCtxUnidade(ctxUnidade)
-        } finally {
-          if (token !== quickLookupTokenRef.current) return
-          setQuickLookupLoading(false)
-        }
-      })()
-    }, 250)
+	        } catch (e: any) {
+	          if (token !== quickLookupTokenRef.current) return
+	          setQuickLookupError(e?.message || 'Falha ao buscar o insumo.')
+	          setQuickLookupItems([])
+	          setQuickLookupCode(codigo)
+	          setQuickLookupCtxUnidade(ctxUnidade)
+	        } finally {
+	          if (token === quickLookupTokenRef.current) setQuickLookupLoading(false)
+	        }
+	      })()
+	    }, 250)
 
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, lookupInsumosByCodigo, quickCodigo, quickOp, transferFrom, unidade])
@@ -1528,16 +1527,15 @@ export function InsumosModule() {
           setCreateLookupItems(items)
           if (!items.length) setCreateLookupError('Nenhum insumo encontrado para este código.')
           createLookupApplyPrefill(items)
-        } catch (e: any) {
-          if (token !== createLookupTokenRef.current) return
-          setCreateLookupError(e?.message || 'Falha ao buscar o insumo.')
-          setCreateLookupItems([])
-        } finally {
-          if (token !== createLookupTokenRef.current) return
-          setCreateLookupLoading(false)
-        }
-      })()
-    }, 250)
+	        } catch (e: any) {
+	          if (token !== createLookupTokenRef.current) return
+	          setCreateLookupError(e?.message || 'Falha ao buscar o insumo.')
+	          setCreateLookupItems([])
+	        } finally {
+	          if (token === createLookupTokenRef.current) setCreateLookupLoading(false)
+	        }
+	      })()
+	    }, 250)
     return () => window.clearTimeout(t)
   }, [canUseApi, createCodigo, createLookupApplyPrefill, createOpen, isAuthed, lookupInsumosByCodigo, unidade])
 
@@ -4730,11 +4728,11 @@ export function InsumosModule() {
             }
             const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]))
 
-            const escapeCsv = (v: any) => {
-              const s = String(v ?? '')
-              if (/[\";\n\r]/.test(s)) return `"${s.replace(/\"/g, '""')}"`
-              return s
-            }
+	            const escapeCsv = (v: any) => {
+	              const s = String(v ?? '')
+	              if (/[";\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+	              return s
+	            }
             const toCsv = () => {
               const header = ['Categoria', 'Produto', 'Código', 'Qtd sugerida', 'Valor estimado (R$)']
               const rows = items.map((it) => [

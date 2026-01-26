@@ -87,8 +87,7 @@ export function CapabilitiesCenter() {
         if (!mounted) return
         setStatusError(e?.message || 'Failed to load platform status')
       } finally {
-        if (!mounted) return
-        if (!opts?.silent) setLoadingStatus(false)
+        if (mounted && !opts?.silent) setLoadingStatus(false)
       }
     }
 

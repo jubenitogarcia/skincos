@@ -43,8 +43,7 @@ export function logContextEvent(provider: string, event: string, details: any, e
   }
 }
 
-export function ContextDebugger() {
-  if (!CONTEXT_DEBUG_ENABLED) return null
+function ContextDebuggerImpl() {
   const [logs, setLogs] = useState<DebugLog[]>([])
   const [isVisible, setIsVisible] = useState(false)
   
@@ -152,3 +151,5 @@ export function ContextDebugger() {
     </div>
   )
 }
+
+export const ContextDebugger = CONTEXT_DEBUG_ENABLED ? ContextDebuggerImpl : (() => null)
