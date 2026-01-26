@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
-import { detectWhatsAppMediaType, sendWhatsAppMessage, sendWhatsAppAttachments, LocalAttachment } from '../whatsappIntegration'
-import { performAction } from '../actionsRegistry'
+import { detectWhatsAppMediaType, sendWhatsAppMessage, sendWhatsAppAttachments, LocalAttachment } from './whatsappIntegration'
+import { performAction } from './actionsRegistry'
 import { QRModal } from './QRModal'
 import WhatsAppDashboard from './WhatsAppDashboard'
 
@@ -38,6 +38,10 @@ export const WhatsAppPanel: React.FC = () => {
     const [showQRModal, setShowQRModal] = useState(false)
     const [showDashboard, setShowDashboard] = useState(false)
     const firstLoad = useRef(true)
+
+    const readJsonAny = async (res: Response) => {
+        try { return await res.json() as any } catch { return null as any }
+    }
     const [toNumber, setToNumber] = useState('')
     const [message, setMessage] = useState('')
     const [sending, setSending] = useState(false)
@@ -79,7 +83,7 @@ export const WhatsAppPanel: React.FC = () => {
             const convId = toNumber // usando número como id simplificado
             const res = await fetch(`/api/conversations/${encodeURIComponent(convId)}/human-intervention`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
             if (!res.ok) throw new Error('Falha na intervenção')
-            const data = await res.json()
+            const data = await readJsonAny(res)
             setAiSuppressed({ active: true, resumeAt: data.suppressedUntil })
             alert('IA silenciada por 24h para esta conversa.')
         } catch (e: any) { alert(e.message) }
@@ -92,7 +96,7 @@ export const WhatsAppPanel: React.FC = () => {
             try {
                 const res = await fetch(`/api/conversations/${encodeURIComponent(toNumber)}/ai-status`)
                 if (res.ok) {
-                    const data = await res.json()
+                    const data = await readJsonAny(res)
                     setAiSuppressed({ active: data.suppressed, resumeAt: data.resumeAt })
                 }
             } catch { /* ignore */ }
@@ -105,7 +109,7 @@ export const WhatsAppPanel: React.FC = () => {
     // Fetch metrics periodically
     useEffect(() => {
         async function load() {
-            try { const r = await fetch('/api/ai-suppression/metrics'); if (r.ok) { setMetrics(await r.json()) } } catch { }
+            try { const r = await fetch('/api/ai-suppression/metrics'); if (r.ok) { setMetrics(await readJsonAny(r)) } } catch { }
         }
         load()
         const iv = setInterval(load, 30000)
@@ -143,7 +147,7 @@ export const WhatsAppPanel: React.FC = () => {
     async function fetchStatus() {
         try {
             const res = await fetch(`${GATEWAY_BASE}/whatsapp/1/status`)
-            const data: GatewayStatus = await res.json()
+            const data: GatewayStatus = await readJsonAny(res)
             setStatus(data)
             const isConnected = data.ready || data.status === 'ready' || data.status === 'connected' || data.status === 'READY' || data.status === 'CONNECTED'
             setConnected(!!isConnected)
@@ -169,7 +173,7 @@ export const WhatsAppPanel: React.FC = () => {
     async function fetchQr() {
         try {
             const res = await fetch(`${GATEWAY_BASE}/whatsapp/1/qr`)
-            const data: QrResponse = await res.json()
+            const data: QrResponse = await readJsonAny(res)
             if (data.qr) setQr(data.qr)
         } catch {/* ignore */ }
     }
@@ -355,7 +359,7 @@ export const WhatsAppPanel: React.FC = () => {
             try {
                 const r = await fetch(GATEWAY_BASE + '/agent-zero/direct')
                 if (!r.ok) return
-                const data = await r.json()
+                const data = await readJsonAny(r)
                 if (aborted) return
                 setAgzDirect(!!data.enabled)
                 setAgzEnvEnabled(!!data.envEnabled)
@@ -372,7 +376,7 @@ export const WhatsAppPanel: React.FC = () => {
         try {
             const r = await fetch(GATEWAY_BASE + '/agent-zero/direct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !agzDirect }) })
             if (r.ok) {
-                const data = await r.json()
+                const data = await readJsonAny(r)
                 setAgzDirect(!!data.enabled)
             } else {
                 alert('Falha ao alternar Agent Zero Direct')
@@ -431,7 +435,7 @@ export const WhatsAppPanel: React.FC = () => {
             try {
                 const r = await fetch(`/api/conversations/${encodeURIComponent(toNumber)}/messages?limit=50`)
                 if (r.ok) {
-                    const data = await r.json()
+                    const data = await readJsonAny(r)
                     if (!aborted) {
                         setMessages(data.items)
                         setMessagesHasMore(data.hasMore)
@@ -455,7 +459,7 @@ export const WhatsAppPanel: React.FC = () => {
             const before = earliestMessageTsRef.current
             const r = await fetch(`/api/conversations/${encodeURIComponent(toNumber)}/messages?limit=50&before=${encodeURIComponent(before || '')}`)
             if (r.ok) {
-                const data = await r.json()
+                const data = await readJsonAny(r)
                 setMessages(prev => [...data.items, ...prev])
                 setMessagesHasMore(data.hasMore)
                 earliestMessageTsRef.current = data.items.length ? data.items[0].createdAt : earliestMessageTsRef.current
@@ -474,10 +478,10 @@ export const WhatsAppPanel: React.FC = () => {
             const res = await fetch(`/api/actions/${encodeURIComponent(action)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: toNumber, payload }) })
             if (!res.ok) throw new Error('Falha ação ' + action)
             // Refresh conversation list quickly after stateful actions
-            const r = await fetch('/api/conversations?includeArchived=1'); if (r.ok) setConversationList(await r.json())
+            const r = await fetch('/api/conversations?includeArchived=1'); if (r.ok) setConversationList(await readJsonAny(r))
             // Reload first page
             const m = await fetch(`/api/conversations/${encodeURIComponent(toNumber)}/messages?limit=50`)
-            if (m.ok) { const data = await m.json(); setMessages(data.items); setMessagesHasMore(data.hasMore); earliestMessageTsRef.current = data.items.length ? data.items[0].createdAt : null }
+            if (m.ok) { const data: any = await readJsonAny(m); setMessages(data.items); setMessagesHasMore(data.hasMore); earliestMessageTsRef.current = data.items.length ? data.items[0].createdAt : null }
         } catch (e: any) { alert(e.message) }
     }
 
@@ -672,7 +676,7 @@ export const WhatsAppPanel: React.FC = () => {
                                         try {
                                             const r = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: convId, initialMessage: initial }) })
                                             if (r.ok) {
-                                                const data = await r.json(); setToNumber(data.conversation.conversationId)
+                                                const data: any = await readJsonAny(r); setToNumber(data.conversation.conversationId)
                                             } else alert('Falha ao criar conversa')
                                         } catch (e: any) { alert(e.message) }
                                     }} className="px-2 py-1 rounded bg-indigo-600 text-white text-xs">Nova</button>
