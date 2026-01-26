@@ -1,5 +1,6 @@
 // Replit Auth Integration: Custom hook for authentication
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { isNoAuthMode, getMockUser, logNoAuthMode } from '@/noAuthMode';
 
 export function useReplitAuth() {
@@ -26,7 +27,9 @@ export function useReplitAuth() {
     if (import.meta.env.DEV) console.error('[useReplitAuth] ❌ QueryClient não disponível:', error)
   }
   
-  const { data: user, isLoading, error } = useQuery({
+  const [authChecked, setAuthChecked] = useState(false)
+
+  const { data: user, error, status } = useQuery({
     queryKey: ["/api/auth/me"],
     queryFn: async () => {
       if (import.meta.env.DEV) console.log('[useReplitAuth] 📡 Fetching user authentication status...')
@@ -66,22 +69,31 @@ export function useReplitAuth() {
       return mapped;
     },
     retry: false, // Don't retry on 401
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 0,
+    refetchOnMount: 'always',
     enabled: !!queryClient, // CRITICAL: Only run if QueryClient is available
   });
 
+  useEffect(() => {
+    if (!authChecked && status !== 'loading') {
+      setAuthChecked(true)
+    }
+  }, [authChecked, status])
+
+  const safeUser = authChecked ? (user ?? null) : null
+
   const result = {
-    user,
-    isLoading,
-    isAuthenticated: !!user,
+    user: safeUser,
+    isLoading: !authChecked,
+    isAuthenticated: authChecked && !!safeUser,
     error
   };
   
   if (import.meta.env.DEV) {
     console.log('[useReplitAuth] 📋 Hook result:', {
-      hasUser: !!user,
-      isLoading,
-      isAuthenticated: !!user,
+      hasUser: !!safeUser,
+      isLoading: !authChecked,
+      isAuthenticated: authChecked && !!safeUser,
       hasError: !!error
     })
   }

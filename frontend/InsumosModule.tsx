@@ -990,6 +990,8 @@ export function InsumosModule() {
 
   const isDashboardLoading =
     authLoading || healthLoading || (canUseApi && isAuthed && dashboardProgress < 100)
+  const shouldShowDashboardLoading =
+    isDashboardLoading || !authLoaded || !healthLoaded
 
   const DashboardLoadingButton = React.useCallback(
     ({ size = 'sm', className = '' }: { size?: 'sm' | 'default' | 'lg'; className?: string } = {}) => (
@@ -1003,11 +1005,11 @@ export function InsumosModule() {
 
   const renderListPlaceholder = React.useCallback(
     (loading: boolean, emptyLabel: string) => {
-      if (loading || isDashboardLoading) return <DashboardLoadingButton />
+      if (loading || shouldShowDashboardLoading) return <DashboardLoadingButton />
       if (isAuthed) return emptyLabel
       return 'Faça login para carregar.'
     },
-    [DashboardLoadingButton, isAuthed, isDashboardLoading]
+    [DashboardLoadingButton, isAuthed, shouldShowDashboardLoading]
   )
 
   const visibleMainPanels = React.useMemo(() => {
@@ -4498,7 +4500,7 @@ export function InsumosModule() {
           </DialogHeader>
 
           {!isAuthed ? (
-            isDashboardLoading ? (
+            shouldShowDashboardLoading ? (
               <DashboardLoadingButton size="sm" />
             ) : (
               <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
