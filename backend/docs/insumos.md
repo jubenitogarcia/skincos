@@ -79,6 +79,16 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Restore: `POST /insumos/backup/restore`
 - Cleanup: `POST /insumos/backup/cleanup`
 
+#### Verificação (rotina de teste)
+
+Script: `backend/scripts/backup-verify.sh`
+
+```bash
+INSUMOS_COOKIE="session=...; csrfToken=..." \
+INSUMOS_CSRF_TOKEN="..." \
+./backend/scripts/backup-verify.sh --api-url https://api.skincos.com.br/insumos --unidade novo-hamburgo
+```
+
 ## Consumo no CRM
 
 Para evitar CORS e manter o padrão same-origin do CRM, o backend do CRM expõe proxy:
