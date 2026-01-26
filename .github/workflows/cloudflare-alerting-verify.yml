@@ -1,0 +1,55 @@
+name: cloudflare-alerting-verify
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify token + alerting permissions
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error::Missing secrets.CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "::error::Missing secrets.CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+
+          api="https://api.cloudflare.com/client/v4"
+          hdr=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json")
+
+          echo "== token verify =="
+          curl -fsS "${hdr[@]}" "${api}/user/tokens/verify" | jq -c '{success, errors, messages, result}'
+
+          echo "== alerting eligible destinations (needs Notifications/Alerting perms) =="
+          code=$(curl -sS -o /tmp/cf_alerting_dest.json -w "%{http_code}" "${hdr[@]}" \
+            "${api}/accounts/${CLOUDFLARE_ACCOUNT_ID}/alerting/v3/destinations/eligible" || true)
+          echo "http_status=${code}"
+          if [[ "${code}" != "200" ]]; then
+            cat /tmp/cf_alerting_dest.json || true
+            echo "::error::Token lacks alerting permissions or account_id is wrong."
+            exit 1
+          fi
+          jq -c '{success, errors, messages, result_count: (.result|length)}' /tmp/cf_alerting_dest.json
+
+          echo "== alerting policies list =="
+          code=$(curl -sS -o /tmp/cf_alerting_policies.json -w "%{http_code}" "${hdr[@]}" \
+            "${api}/accounts/${CLOUDFLARE_ACCOUNT_ID}/alerting/v3/policies" || true)
+          echo "http_status=${code}"
+          if [[ "${code}" != "200" ]]; then
+            cat /tmp/cf_alerting_policies.json || true
+            echo "::error::Token cannot list alerting policies (missing permissions)."
+            exit 1
+          fi
+          jq -c '{success, errors, messages, result_count: (.result|length)}' /tmp/cf_alerting_policies.json
