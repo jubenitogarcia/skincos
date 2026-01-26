@@ -35,6 +35,7 @@ jobs:
           set -euxo pipefail
           cd frontend
           npm run lint
+          npm run typecheck
           npm run build
 
       - name: Setup pnpm (for backend workspace)

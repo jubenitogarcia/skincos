@@ -22,7 +22,8 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "types": [
-      "vite/client"
+      "vite/client",
+      "@cloudflare/workers-types"
     ],
     "paths": {
       "@/*": [
@@ -31,10 +32,14 @@
     }
   },
   "include": [
-    "*.ts",
-    "*.tsx"
+    "**/*.ts",
+    "**/*.tsx"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "dist",
+    "public/face-models",
+    "logs",
+    "scripts"
   ]
 }
