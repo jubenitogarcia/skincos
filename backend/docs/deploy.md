@@ -48,4 +48,14 @@ O servidor local é `backend/apps/crm-api/server.js` (Express). Para produção,
 - **VPS + Cloudflare Tunnel** (sem Docker): rodar Node + `systemd/pm2`, expor via `cloudflared`.
 - **Outro hosting Node** (Railway/Render/etc) e configurar DNS/proxy no Cloudflare.
 
-O repo hoje não inclui workflow de deploy do `crm-api` porque depende do provedor/infra escolhidos.
+Workflow de deploy (opcional):
+- `.github/workflows/deploy-crm-api.yml`
+
+Requer:
+- `vars.ENABLE_CRM_API_DEPLOY=true`
+- `secrets.CRM_API_SSH_HOST`
+- `secrets.CRM_API_SSH_USER`
+- `secrets.CRM_API_SSH_KEY`
+- (opcional) `secrets.CRM_API_SSH_PORT`
+- `vars.CRM_API_APP_DIR` (diretório do repo no servidor)
+- `vars.CRM_API_DEPLOY_COMMAND` (ex.: `pm2 reload crm-api` ou `systemctl restart crm-api`)
