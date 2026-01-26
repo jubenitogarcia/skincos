@@ -327,8 +327,8 @@ function withCORS(body, init = {}, origin) {
         headers.set("Access-Control-Allow-Origin", origin);
         headers.set("Access-Control-Allow-Credentials", "true");
         headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-        headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key, X-Requested-With");
-        headers.set("Access-Control-Expose-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key");
+        headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key, X-Requested-With, X-Request-Id");
+        headers.set("Access-Control-Expose-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key, X-Request-Id");
         headers.set("Access-Control-Max-Age", "86400");
         headers.append("Vary", "Origin");
     }
@@ -1220,6 +1220,10 @@ function toSheetRows(data, headers) {
 
 export default {
     async fetch(request, env, ctx) {
+        const startedAt = Date.now();
+        const incomingRequestId = String(request.headers.get('x-request-id') || request.headers.get('cf-ray') || '').trim();
+        const requestId = incomingRequestId || crypto.randomUUID();
+
         // Service mount: api.skincos.com.br/insumos/*
         // Keep internal routes unchanged by stripping the /insumos prefix.
         try {
@@ -1279,6 +1283,27 @@ export default {
         const userAgent = getUserAgent(request);
         const idempotencyKey = request.headers.get('idempotency-key') || request.headers.get('Idempotency-Key') || '';
         const isSecureContext = url.protocol === 'https:';
+
+        const baseWithCORS = withCORS;
+        const withCORS = (body, init = {}) => {
+            const res = baseWithCORS(body, init, appOrigin);
+            res.headers.set('x-request-id', requestId);
+            const durationMs = Date.now() - startedAt;
+            const status = res.status || 200;
+            const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+            const payload = {
+                level,
+                request_id: requestId,
+                method: request.method,
+                path: url.pathname,
+                status,
+                duration_ms: durationMs,
+            };
+            if (ip) payload.ip = ip;
+            if (userAgent) payload.user_agent = userAgent;
+            console.log(JSON.stringify(payload));
+            return res;
+        };
 
         const enforceRateLimit = async (kind) => {
             if (!env.RATE_LIMITER) return { allowed: true };

@@ -74,6 +74,25 @@ app.use((req, res, next) => {
     next()
 })
 
+app.use((req, res, next) => {
+    const startedAt = Date.now()
+    res.on('finish', () => {
+        const status = res.statusCode || 200
+        const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info'
+        const payload = {
+            level,
+            request_id: req.requestId || 'unknown',
+            method: req.method,
+            path: req.originalUrl || req.path || '/',
+            status,
+            duration_ms: Date.now() - startedAt,
+            ip: req.ip,
+        }
+        console.log(JSON.stringify(payload))
+    })
+    next()
+})
+
 // In gateway mode, fail closed: only expose health + Unit Monitor routes.
 app.use((req, res, next) => {
     if (!IS_GATEWAY_MODE) return next()
