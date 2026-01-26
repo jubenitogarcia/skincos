@@ -1,0 +1,48 @@
+name: cloudflare-alerting-export
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure jq
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null 2>&1 && exit 0
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Export alerting data
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_ALERTS_API_TOKEN != '' && secrets.CLOUDFLARE_ALERTS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_NAME: skincos.com.br
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          bash "$GITHUB_WORKSPACE/backend/scripts/cloudflare-alerting-export.sh"
+          ls -la
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-alerting-export
+          path: |
+            /tmp/token_verify.json
+            /tmp/eligible_destinations.json
+            /tmp/policies.json
+            /tmp/zones.json
+            /tmp/zone_id.txt
+            /tmp/alert_types.json
+            /tmp/alert_types_endpoint.txt
+
