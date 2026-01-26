@@ -38,8 +38,13 @@ export function getSession(useMemoryStore = false) {
     });
   }
   
+  const secret = useMemoryStore ? 'dev-only-memory-secret' : process.env.SESSION_SECRET;
+  if (!secret) {
+    throw new Error('SESSION_SECRET is required when NO_AUTH is disabled');
+  }
+
   return session({
-    secret: useMemoryStore ? 'dev-only-memory-secret' : (process.env.SESSION_SECRET || 'fallback-development-secret-not-for-production'),
+    secret,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
@@ -69,12 +74,13 @@ async function upsertUser(claims) {
 }
 
 export async function setupAuth(app) {
+  const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+  const NO_AUTH_REQUESTED = process.env.NO_AUTH === 'true';
+  const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
+
   try {
     // ===== PRODUCTION SAFETY CHECK =====
     // NO_AUTH is NEVER allowed in production, regardless of NO_AUTH setting
-    const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-    const NO_AUTH_REQUESTED = process.env.NO_AUTH === 'true';
-    const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
     
     if (IS_PRODUCTION && NO_AUTH_REQUESTED) {
       console.warn('🚫 PRODUCTION SAFETY: NO_AUTH=true is set but NODE_ENV=production');
@@ -138,6 +144,10 @@ export async function setupAuth(app) {
       
       console.log('✅ NO_AUTH MODE: Mock authentication setup completed');
       return;
+    }
+
+    if (IS_PRODUCTION && !process.env.SESSION_SECRET) {
+      throw new Error('SESSION_SECRET is required in production');
     }
 
     // Validate required environment variables
@@ -300,8 +310,8 @@ export async function setupAuth(app) {
 
     console.log("✅ Replit Auth configured successfully");
   } catch (error) {
-    console.warn("⚠️  Replit Auth setup failed, continuing without auth:", error.message);
-    // Don't throw error - let the server continue without auth
+    console.warn("⚠️  Replit Auth setup failed:", error.message);
+    if (IS_PRODUCTION) throw error;
   }
 }
 
