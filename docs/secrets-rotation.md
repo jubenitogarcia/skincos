@@ -8,7 +8,9 @@ Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo m�
 ### GitHub Actions (secrets)
 - `GH_TOKEN` (CI submodules)
 - `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ALERTS_API_TOKEN` (alerting/notifications — escopo mínimo, sem permissões de deploy)
 - `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_ALERT_WEBHOOK_URL` (opcional)
 - `CRM_API_SSH_HOST`
 - `CRM_API_SSH_USER`
 - `CRM_API_SSH_KEY`
