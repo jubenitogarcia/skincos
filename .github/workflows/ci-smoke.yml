@@ -33,6 +33,14 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install backend workspace deps (pnpm)
+        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        run: |
+          set -euxo pipefail
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          pnpm -C backend install --frozen-lockfile
+
       - name: Ensure jq
         run: |
           set -euo pipefail
