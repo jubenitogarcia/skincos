@@ -500,11 +500,6 @@ function buildJobCommand(job, params = {}) {
         return { cmd: 'python3', args }
     }
 
-    if (name === 'scheduled-posting') {
-        const mode = validateEnum(String(params.mode || 'diagnose'), ['run', 'test', 'diagnose'], 'mode')
-        return { cmd: 'python3', args: ['-m', 'apps.automations.scheduled_posting', '--mode', mode] }
-    }
-
     throw new Error(`Job desconhecido: ${job}`)
 }
 

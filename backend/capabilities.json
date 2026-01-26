@@ -66,13 +66,6 @@
       "notes": "Entrypoint: backend/scripts/dev.sh sprinta (legacy|v2)"
     },
     {
-      "id": "scheduled-posting",
-      "label": "Scheduled Posting",
-      "path": "backend/apps/automations/scheduled_posting",
-      "kind": "automation",
-      "notes": "Entrypoint: backend/scripts/dev.sh scheduled-posting. Config/paths em backend/libs/scheduler_config.py e estado local em backend/var/scheduled_posting/."
-    },
-    {
       "id": "xiaomi-token-extractor",
       "label": "Xiaomi Token Extractor",
       "path": "backend/tools/scripts/xiaomi",

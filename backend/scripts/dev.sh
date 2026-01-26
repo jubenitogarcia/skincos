@@ -29,7 +29,6 @@ Commands:
   instagram-module  Start Instagram Module API (start|stop|logs)
   scraper           Run Scraper module
   sprinta           Run Sprinta (legacy|v2)
-  scheduled-posting Run scheduled posting automation
   xiaomi-token      Run Xiaomi Token Extractor
   actual-server     Start Actual Server helper (menu|start)
   e2e smoke         Run smoke checks (real gateway instances)
@@ -811,10 +810,6 @@ EOF
         exit 1 ;;
     esac
     ;;
-  scheduled-posting)
-    RUNNER="$ROOT_DIR/backend/apps/automations/scheduled_posting/scripts/run.sh"
-    [[ -x "$RUNNER" ]] || { echo "[scheduled-posting] Runner not found at $RUNNER" >&2; exit 1; }
-    exec bash "$RUNNER" "$@" ;;
   xiaomi-token)
     XIAOMI_DIR="$ROOT_DIR/backend/tools/scripts/xiaomi"
     [[ -d "$XIAOMI_DIR" ]] || { echo "[xiaomi-token] Module not found at $XIAOMI_DIR" >&2; exit 1; }

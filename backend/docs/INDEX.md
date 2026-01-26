@@ -34,8 +34,6 @@ Este é o “mapa rápido” do `backend/`: o que existe, onde está e como exec
   - Runner: `./backend/scripts/dev.sh scraper all`
 - Sprinta (Python): `backend/apps/automations/sprinta/`
   - Runner: `./backend/scripts/dev.sh sprinta legacy|v2 ...`
-- Scheduled Posting (Python): `backend/apps/automations/scheduled_posting/`
-  - Runner: `./backend/scripts/dev.sh scheduled-posting`
 - Cloudflare Workers (produção): `backend/apps/api` e `backend/apps/insumos`
   - Deploy: `./backend/scripts/cloudflare-workers.sh deploy-all`
 

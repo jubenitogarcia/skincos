@@ -3,7 +3,7 @@
 - backend/scripts/dev.sh
   - CLI único: start/stop/restart da stack e atalhos de E2E
   - Ex.: `./backend/scripts/dev.sh restart` ; `INSTANCES=1,2 ./backend/scripts/dev.sh restart` ; `./backend/scripts/dev.sh e2e smoke`
-  - Atalhos de módulos: `./backend/scripts/dev.sh agent|sales-chart-messenger|scraper|sprinta|scheduled-posting|xiaomi-token|actual-server|crm`
+  - Atalhos de módulos: `./backend/scripts/dev.sh agent|sales-chart-messenger|scraper|sprinta|xiaomi-token|actual-server|crm`
 
 - backend/scripts/dev.sh watch
   - Ponto único de entrada: mata portas comuns e inicia CRM API (watch), CRM Frontend (HMR) e WhatsApp (oficial por padrão; stub como fallback)
@@ -21,7 +21,6 @@
 - Atalhos de automações/utilitários (via `dev.sh`):
   - Scraper: `./backend/scripts/dev.sh scraper all`
   - Sprinta: `./backend/scripts/dev.sh sprinta legacy ...` / `./backend/scripts/dev.sh sprinta v2 ...`
-  - Scheduled Posting: `./backend/scripts/dev.sh scheduled-posting`
   - Xiaomi token: `./backend/scripts/dev.sh xiaomi-token`
   - Actual Server: `./backend/scripts/dev.sh actual-server start|menu`
 

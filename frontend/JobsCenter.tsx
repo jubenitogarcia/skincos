@@ -77,16 +77,11 @@ export function JobsCenter() {
   const [logLines, setLogLines] = useState<number>(200)
   const [loadingLog, setLoadingLog] = useState(false)
 
-  const [activeTab, setActiveTab] = useState<'sales-chart-messenger' | 'scheduled-posting'>('sales-chart-messenger')
-
   // Sales Chart Messenger form
   const [salesMode, setSalesMode] = useState<'diagnose' | 'test' | 'run'>('diagnose')
   const [salesPeriod, setSalesPeriod] = useState<'morning' | 'evening'>('morning')
   const [salesCellSet, setSalesCellSet] = useState<'bss' | 'nh' | ''>('')
   const [salesForce, setSalesForce] = useState(false)
-
-  // Scheduled Posting form
-  const [schedMode, setSchedMode] = useState<'diagnose' | 'test' | 'run'>('diagnose')
 
   const selectedJob = useMemo(() => jobs.find((j) => j.id === selectedJobId) || null, [jobs, selectedJobId])
 
@@ -166,21 +161,6 @@ export function JobsCenter() {
     }
   }
 
-  async function onRunScheduled() {
-    setError(null)
-    if (schedMode === 'run') {
-      if (!window.confirm('Você está prestes a EXECUTAR (ações reais). Confirmar?')) return
-    }
-    try {
-      const meta = await runJob('scheduled-posting', { mode: schedMode })
-      await refreshJobs()
-      setSelectedJobId(meta.id)
-      setTimeout(() => refreshLog().catch(() => {}), 400)
-    } catch (e) {
-      setError(e?.message || 'Falha ao iniciar job')
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -216,10 +196,9 @@ export function JobsCenter() {
           <Badge className="bg-white/10 text-white border-white/20">UI → backend</Badge>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+          <Tabs defaultValue="sales-chart-messenger">
             <TabsList>
               <TabsTrigger value="sales-chart-messenger">Sales Chart</TabsTrigger>
-              <TabsTrigger value="scheduled-posting">Scheduled Posting</TabsTrigger>
             </TabsList>
 
             <TabsContent value="sales-chart-messenger" className="mt-4">
@@ -275,30 +254,6 @@ export function JobsCenter() {
                 <Button onClick={() => onRunSales()}>
                   Executar
                 </Button>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="scheduled-posting" className="mt-4">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <div className="text-xs text-blue-200/70">Modo</div>
-                  <Select value={schedMode} onValueChange={(v) => setSchedMode(v as any)}>
-                    <SelectTrigger className="w-full bg-white/[0.06] border-white/20 text-white">
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="diagnose">diagnose (seguro)</SelectItem>
-                      <SelectItem value="test">test (teste)</SelectItem>
-                      <SelectItem value="run">run (real)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-end">
-                  <Button onClick={() => onRunScheduled()} className="w-full lg:w-auto">
-                    Executar
-                  </Button>
-                </div>
               </div>
             </TabsContent>
           </Tabs>
@@ -404,4 +359,3 @@ export function JobsCenter() {
     </div>
   )
 }
-

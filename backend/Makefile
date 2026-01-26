@@ -4,7 +4,7 @@ BACKEND_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 .PHONY: dev-all dev-gateway dev-official e2e-smoke e2e-ci e2e-health dev restart stop start
 .PHONY: var-migrate var-migrate-apply
 .PHONY: scraper scraper-all scraper-bss scraper-nh scraper-rj scraper-diagnose scraper-configure scraper-test-sheets
-.PHONY: scheduled-posting xiaomi-token
+.PHONY: xiaomi-token
 .PHONY: sprinta sprinta-legacy sprinta-v2
 .PHONY: actual-server actual-server-start actual-server-menu
 
@@ -69,9 +69,6 @@ scraper-configure:
 
 scraper-test-sheets:
 	@bash $(BACKEND_DIR)/scripts/dev.sh scraper --test-sheets
-
-scheduled-posting:
-	@bash $(BACKEND_DIR)/scripts/dev.sh scheduled-posting
 
 xiaomi-token:
 	@bash $(BACKEND_DIR)/scripts/dev.sh xiaomi-token

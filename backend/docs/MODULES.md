@@ -63,9 +63,6 @@ Ferramentas do workspace:
 
 ## Archive / Backup
 
-- `backend/apps/automations/scheduled_posting/` — automação de postagens agendadas (Python).
-  - Start: `./backend/scripts/dev.sh scheduled-posting`
-
 - `backend/tools/scripts/xiaomi/` — utilitário para extração de token (histórico).
   - Start: `./backend/scripts/dev.sh xiaomi-token`
 

@@ -78,7 +78,6 @@ Este documento é um “mapa rápido” do que existe hoje dentro de `skincos/` 
 - `backend/apps/instagram/module/` — API Node + módulo Python; config local em `backend/apps/instagram/module/config/config.local.json` (ignorado).
 
 **Conteúdo histórico / backups:**
-- `backend/apps/automations/scheduled_posting/` — automações de postagens agendadas (Python).
 - `backend/tools/scripts/xiaomi/` — utilitário (histórico).
 - `backend/var/browser-profiles/` — perfis de navegador / dados locais (não-código).
 - `archive/` — histórico/legado não-executável (preservado para referência).
@@ -389,7 +388,7 @@ Nota (estado atual):
 Sem mexer em runtime de imediato, mas como direção:
 - `apps/` (UIs: CRM, dashboards)
 - `services/` (APIs/servidores: WhatsApp official/gateway, actual-server, etc.)
-- `apps/automations/` (scraper, sprinta, scheduled_posting)
+- `apps/automations/` (scraper, sprinta)
 - `agents/` (a0)
 - `libs/` (código compartilhado Python/JS)
 - `backend/config/` (templates e exemplos versionados; sem segredos)

@@ -13,4 +13,3 @@ Sugestão prática:
 Nota:
 - O pacote Python `config/` (ex.: `config/manager.py`) continua aqui por compatibilidade de imports.
 - Templates e exemplos ficam em `backend/config/templates`.
-- Scheduled Posting: preferir `backend/libs/scheduler_config.py`.
