@@ -10,15 +10,24 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      - name: Ensure jq
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null 2>&1 && exit 0
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
       - name: Verify token + alerting permissions
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Prefer a dedicated alerting token (least privilege), fallback to the deploy token.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_ALERTS_API_TOKEN != '' && secrets.CLOUDFLARE_ALERTS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-            echo "::error::Missing secrets.CLOUDFLARE_API_TOKEN"
+            echo "::error::Missing Cloudflare API token. Set secrets.CLOUDFLARE_ALERTS_API_TOKEN (preferred) or secrets.CLOUDFLARE_API_TOKEN."
             exit 1
           fi
           if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
