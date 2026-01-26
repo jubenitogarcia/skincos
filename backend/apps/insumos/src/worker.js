@@ -852,17 +852,13 @@ async function decodeSessionV2(token, secret) {
 }
 
 async function decodeSessionCookie(token, secret) {
-    if (!token) return null;
+    if (!token || !secret) return null;
+    if (!String(token).includes('.')) return null;
     try {
-        if (secret && String(token).includes('.')) return await decodeSessionV2(token, secret);
+        return await decodeSessionV2(token, secret);
     } catch {
-        // fall back
+        return null;
     }
-    const legacy = decodeSessionLegacy(token);
-    if (!legacy) return null;
-    const exp = Number(legacy?.exp || 0);
-    if (exp && Date.now() > exp) return null;
-    return legacy;
 }
 
 function deleteAuthCookies({ secure } = {}) {
@@ -1406,13 +1402,16 @@ export default {
             }
         }
 
-        const sessionSecret = env.SESSION_SECRET || '';
+        const sessionSecret = String(env.SESSION_SECRET || '').trim();
+        if (!sessionSecret) {
+            return withCORS(JSON.stringify({ error: "SESSION_SECRET not configured" }), { status: 500 }, appOrigin);
+        }
 
         const issueAuthCookies = async (sessionPayload) => {
             const csrf = crypto.randomUUID();
             const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
             const payload = { ...sessionPayload, csrf, exp };
-            const token = sessionSecret ? await encodeSessionV2(payload, sessionSecret) : encodeSessionLegacy(payload);
+            const token = await encodeSessionV2(payload, sessionSecret);
 
             // Dev (http) cannot set Secure cookies; SameSite=None also requires Secure.
             const sameSite = isSecureContext ? 'None' : 'Lax';

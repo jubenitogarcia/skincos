@@ -67,7 +67,7 @@ MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
 # Sheets é opcional (apenas para migração/restore legado) e pode ficar desabilitado em produção.
 #
 # Secrets (set via `wrangler secret put`):
-# - SESSION_SECRET (recommended)
+# - SESSION_SECRET (required)
 # - MIGRATION_TOKEN (optional, one-time)  # permite chamar POST /admin/migrate/sheets-to-d1 sem sessão/CSRF
 #
 # Optional legacy (Sheets):

@@ -100,8 +100,14 @@ app.use(helmet({
 app.set('trust proxy', 1);
 
 // Session configuration for CSRF protection
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (IS_PRODUCTION && !SESSION_SECRET) {
+    throw new Error('SESSION_SECRET is required in production');
+}
+
 app.use(session({
-    secret: process.env.SESSION_SECRET || crypto.randomBytes(64).toString('hex'),
+    secret: SESSION_SECRET || crypto.randomBytes(64).toString('hex'),
     resave: false,
     saveUninitialized: false,
     cookie: {
