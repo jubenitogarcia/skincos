@@ -199,6 +199,16 @@ export async function d1HasInsumos(env) {
   }
 }
 
+export async function d1HasUsers(env) {
+  if (!env?.DB) return false;
+  try {
+    const row = await env.DB.prepare('SELECT COUNT(1) AS n FROM insumos_users').first();
+    return (toInt(row?.n, 0) || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function resolveStorageMode(env) {
   const raw = String(env?.INSUMOS_STORAGE || 'auto').trim().toLowerCase();
   if (raw === 'd1' || raw === 'sheets') return raw;

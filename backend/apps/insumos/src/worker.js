@@ -17,6 +17,7 @@ import { handleCategoriasRoutes } from './routes/categorias.js';
 import { handlePrefsRoutes } from './routes/prefs.js';
 import {
     shouldUseD1,
+    d1HasUsers,
     d1ListInsumos,
     d1CreateInsumo,
     d1UpdateInsumo,
@@ -1302,6 +1303,8 @@ export default {
             return withCORS(null, { status: 204 }, appOrigin);
         }
 
+        const useD1 = await shouldUseD1(env);
+
         // Public endpoints (must not depend on Google auth / secrets)
         if (url.pathname === "/health") {
             const sheetsEnv = {
@@ -1315,7 +1318,7 @@ export default {
                 sheetsEnv.privateKeyPresent ? null : 'GOOGLE_PRIVATE_KEY',
             ].filter(Boolean);
 
-            const storageMode = await shouldUseD1(env) ? 'd1' : 'sheets';
+            const storageMode = useD1 ? 'd1' : 'sheets';
             return withCORS(
                 JSON.stringify({
                     ok: true,
@@ -1353,8 +1356,6 @@ export default {
         } catch {
             // If rate limiting fails, continue without blocking
         }
-
-        const useD1 = await shouldUseD1(env);
 
         // Get credentials and authenticate (Sheets mode only)
         let accessToken = '';
@@ -1403,6 +1404,7 @@ export default {
         const session = cookies.session ? await decodeSessionCookie(cookies.session, sessionSecret) : null;
         const sessionUsername = session?.username ? String(session.username).trim() : null;
         const sessionCsrf = session?.csrf ? String(session.csrf) : null;
+        const useD1ForAuth = useD1 || await d1HasUsers(env);
 
         // CSRF protection for mutating calls (requires header token matching session/cookie)
         const methodUpper = (request.method || 'GET').toUpperCase();
@@ -1430,7 +1432,7 @@ export default {
         const loadSessionUser = async () => {
             if (sessionUser) return sessionUser;
             if (!sessionUsername) return null;
-            if (useD1) {
+            if (useD1ForAuth) {
                 const userDb = await d1GetUserByUsername(env, sessionUsername);
                 if (!userDb || !userDb.ativo) return null;
                 sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
@@ -1509,7 +1511,7 @@ export default {
             toA1Col,
             buildUserResponseFromSheetRow,
             MAX_PROFILE_PHOTO_URL_CHARS,
-            d1: useD1
+            d1: useD1ForAuth
                 ? {
                     enabled: true,
                     getUserByUsername: (u) => d1GetUserByUsername(env, u),
