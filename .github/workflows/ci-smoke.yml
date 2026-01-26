@@ -8,6 +8,7 @@ on:
 
 jobs:
   smoke:
+    name: CI Smoke (Assert)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (no submodules)
