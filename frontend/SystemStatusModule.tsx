@@ -129,6 +129,8 @@ export function SystemStatusModule() {
   const unitMonitorUnitKey = effectiveUnit
   const insumosUnit = effectiveUnit
   const [insumosMe, setInsumosMe] = React.useState<InsumosMe | null>(null)
+  const [loadingProgress, setLoadingProgress] = React.useState(0)
+  const loadingStartedAtRef = React.useRef<number | null>(null)
 
   const [rows, setRows] = React.useState<ServiceRow[]>([
     { key: 'insumos-api', title: 'Insumos', status: 'unknown', subtitle: 'API' },
@@ -250,6 +252,27 @@ export function SystemStatusModule() {
   }, [unitMonitorUnitKey])
 
   React.useEffect(() => {
+    if (!loading) {
+      loadingStartedAtRef.current = null
+      setLoadingProgress(100)
+      const t = window.setTimeout(() => setLoadingProgress(0), 250)
+      return () => window.clearTimeout(t)
+    }
+
+    if (!loadingStartedAtRef.current) loadingStartedAtRef.current = Date.now()
+    const tick = () => {
+      const started = loadingStartedAtRef.current || Date.now()
+      const elapsed = Date.now() - started
+      const budgetMs = 6000
+      const pct = Math.min(95, Math.max(1, Math.floor((elapsed / budgetMs) * 95)))
+      setLoadingProgress(pct)
+    }
+    tick()
+    const id = window.setInterval(tick, 150)
+    return () => window.clearInterval(id)
+  }, [loading])
+
+  React.useEffect(() => {
     void refresh()
   }, [refresh])
 
@@ -335,6 +358,14 @@ export function SystemStatusModule() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      {loading ? (
+        <div className="flex items-center justify-end">
+          <Button variant="secondary" size="sm" disabled className="gap-2">
+            <span className="animate-pulse">⏳</span>
+            {`Carregando status ${loadingProgress}%`}
+          </Button>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-xl font-semibold text-white">Status do sistema</h2>
