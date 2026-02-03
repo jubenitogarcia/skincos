@@ -69,6 +69,18 @@ As rotas admin exigem usuário autenticado no Insumos e seguem a ordem:
 - `PUBLIC_ORIGIN`
 - `SHARE_BUCKET`, `LOCK` (bindings)
 
+## Checklist de deploy (Social)
+- `INTEGRATIONS_ENCRYPTION_SECRET` configurado e `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`.
+- `R2_KEY_PREFIX` definido para preview (ou `R2_PRODUCTION_BRANCH` correto) — preview não pode escrever em prod.
+- `SOCIAL_PUBLISHER_ENABLED=true` e cron ativo no Worker.
+- `SOCIAL_JOBS_ENABLED=true` (publish assíncrono).
+- `SOCIAL_ADMIN_ROLE_ALLOWLIST` ou `SOCIAL_ADMIN_TOKEN` definidos.
+- URLs públicas (`/social-media/*`, `/share/*`) acessíveis no domínio correto.
+
+## Matriz de ambientes (mínimo recomendado)
+- **Production**: `R2_KEY_PREFIX` vazio, `SOCIAL_PUBLISHER_ENABLED=true`, `SOCIAL_CLEANUP_ENABLED=true`.
+- **Preview**: `R2_KEY_PREFIX=preview/<branch>/`, `SOCIAL_PUBLISHER_ENABLED=false` (evita publicar real), `SOCIAL_JOBS_ENABLED=true` se quiser testar fila/worker.
+
 ## Runbook (diagnóstico rápido)
 - **“FORBIDDEN”** em admin:
   - Verifique `SOCIAL_ADMIN_ROLE_ALLOWLIST` e `SOCIAL_ADMIN_EMAIL_ALLOWLIST`.
@@ -82,4 +94,3 @@ As rotas admin exigem usuário autenticado no Insumos e seguem a ordem:
   - Verifique `R2_KEY_PREFIX` e `SOCIAL_MEDIA_MAX_AGE_DAYS`.
 - **UNAUTHORIZED**:
   - Sessão do Insumos expirada ou ausente (login necessário).
-
