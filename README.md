@@ -34,14 +34,6 @@ Plataforma interna (local) para automações e operações da clínica.
   - `INTEGRATIONS_ENCRYPTION_SECRET=...`
   - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`
 
-### Dev local (Social via Pages Functions)
-- Recomendado: `cd frontend && npm run dev:pages` (sobe Vite + Pages Functions com bindings locais).
-- Acesse `http://localhost:8788` (Pages) — a UI usa Functions reais (`/api/social/*`, `/social-media/*`).
-- Se precisar de variáveis locais, crie `frontend/.dev.vars` (ignorado) com, por exemplo:
-  - `SOCIAL_ADMIN_TOKEN=...`
-  - `INTEGRATIONS_ENCRYPTION_SECRET=...`
-  - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`
-
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
