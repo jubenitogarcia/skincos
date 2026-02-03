@@ -124,11 +124,12 @@ if [[ -n "${webhook_url}" ]]; then
   fi
 fi
 
-mechanisms="$(jq -n --argjson emails "${emails_json}" --arg webhook_id "${webhook_id}" '
-  {}
-  + ( ($emails|length)>0 ? {email: $emails} : {} )
-  + ( ($webhook_id|length)>0 ? {webhooks: [$webhook_id]} : {} )
-')"
+mechanisms="$(jq -n \
+  --argjson emails "${emails_json}" \
+  --arg webhook_id "${webhook_id}" \
+  '{} | 
+   if ($emails | length) > 0 then .email = $emails else . end |
+   if ($webhook_id | length) > 0 then .webhooks = [$webhook_id] else . end')"
 
 if [[ "$(jq -r 'keys|length' <<<"${mechanisms}")" == "0" ]]; then
   echo "[cloudflare-alerting-apply] No valid mechanisms resolved (check CLOUDFLARE_ALERT_EMAILS / webhook creation)" >&2
