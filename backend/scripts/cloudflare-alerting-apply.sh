@@ -163,7 +163,7 @@ ensure_policy() {
       alert_type: $alert_type,
       enabled: $enabled,
       mechanisms: $mechanisms
-    } + ( ($filters|keys|length)>0 ? {filters: $filters} : {} )
+    } | if ($filters | keys | length) > 0 then .filters = $filters else . end
   ')"
 
   if [[ -z "${existing_id}" || "${existing_id}" == "null" ]]; then
@@ -183,10 +183,10 @@ pages_filters="$(jq -n \
   --argjson pids "${pages_project_ids_json}" \
   --argjson envs "${pages_envs_json}" \
   --argjson events "${pages_events_json}" \
-  '({})
-    + ( ($pids|length)>0 ? {project_id:$pids} : {} )
-    + ( ($envs|length)>0 ? {environment:$envs} : {} )
-    + ( ($events|length)>0 ? {event:$events} : {} )
+  '{} |
+    if ($pids | length) > 0 then .project_id = $pids else . end |
+    if ($envs | length) > 0 then .environment = $envs else . end |
+    if ($events | length) > 0 then .event = $events else . end
   ')"
 
 if [[ "$(jq -r 'keys|length' <<<"${pages_filters}")" == "0" ]]; then
