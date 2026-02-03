@@ -106,12 +106,13 @@ export function SocialNetworksStudio() {
   }
 
   const refreshAccounts = async () => {
-    if (!adminToken.trim()) return
     setAccountsLoading(true)
     try {
+      const headers: Record<string, string> = {}
+      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch('/api/social/admin/accounts', {
         credentials: 'include',
-        headers: { 'x-social-admin-token': adminToken.trim() },
+        headers,
       })
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
@@ -170,15 +171,16 @@ export function SocialNetworksStudio() {
   }
 
   const saveAccount = async () => {
-    if (!adminToken.trim()) return toast.error('Informe o token admin.')
     if (!accountUnit.trim() || !accountPlatform || !accountId.trim() || !accountToken.trim()) {
       return toast.error('Preencha unit/platform/accountId/accessToken.')
     }
     try {
+      const headers: Record<string, string> = { 'content-type': 'application/json', ...csrfHeader() }
+      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch('/api/social/admin/accounts', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim(), ...csrfHeader() },
+        headers,
         body: JSON.stringify({
           unitKey: accountUnit.trim(),
           platform: accountPlatform,
@@ -199,12 +201,13 @@ export function SocialNetworksStudio() {
   }
 
   const publishNow = async (g: QueueGroup, force = false) => {
-    if (!adminToken.trim()) return toast.error('Informe o token admin para publicar.')
     try {
+      const headers: Record<string, string> = { 'content-type': 'application/json', ...csrfHeader() }
+      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch('/api/social/publish', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim(), ...csrfHeader() },
+        headers,
         body: JSON.stringify({ dateKey: g.group.dateKey, groupKey: g.group.groupKey, force }),
       })
       const data = (await res.json().catch(() => null)) as any
@@ -264,7 +267,8 @@ export function SocialNetworksStudio() {
             <CardHeader>
               <CardTitle className="text-white">Admin</CardTitle>
               <CardDescription className="text-blue-200/70">
-                Token admin (header <span className="font-mono">x-social-admin-token</span>) para configurar contas e publicar.
+                Token admin (header <span className="font-mono">x-social-admin-token</span>) ou role allowlist (
+                <span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span>) para configurar contas e publicar.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -278,7 +282,7 @@ export function SocialNetworksStudio() {
                 />
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => refreshAccounts()} disabled={accountsLoading || !adminToken.trim()} className="bg-white/[0.06] border-white/20 text-white">
+                <Button variant="outline" onClick={() => refreshAccounts()} disabled={accountsLoading} className="bg-white/[0.06] border-white/20 text-white">
                   {accountsLoading ? 'Carregando…' : 'Carregar contas'}
                 </Button>
                 <Badge variant="outline" className="border-white/20 text-white">
@@ -470,12 +474,7 @@ export function SocialNetworksStudio() {
                             Status: {queueJobStatus[`${g.group.dateKey}:${g.group.groupKey}`] || 'pendente'}
                           </Button>
                         ) : null}
-                        <Button
-                          size="sm"
-                          onClick={() => publishNow(g)}
-                          disabled={!adminToken.trim()}
-                          className="bg-blue-600 hover:bg-blue-500 text-white"
-                        >
+                        <Button size="sm" onClick={() => publishNow(g)} className="bg-blue-600 hover:bg-blue-500 text-white">
                           Publicar agora
                         </Button>
                         <Button
@@ -484,7 +483,6 @@ export function SocialNetworksStudio() {
                             if (!confirm('Forçar reprocesso? Isso tenta publicar mesmo se já marcado como publicado.')) return
                             void publishNow(g, true)
                           }}
-                          disabled={!adminToken.trim()}
                           variant="outline"
                           className="bg-white/[0.06] border-white/20 text-white"
                         >

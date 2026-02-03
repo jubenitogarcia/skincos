@@ -14,9 +14,23 @@ function parseAllowlist(raw: any): Set<string> {
   return new Set(parts)
 }
 
+function parseRoles(raw: any): Set<string> {
+  const parts = String(raw || '')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+  return new Set(parts)
+}
+
 export async function requireSocialAdmin(context: any) {
   const userOrRes = await requireInsumosUser(context)
   if (userOrRes instanceof Response) return userOrRes
+
+  const roleAllowlist = parseRoles(context?.env?.SOCIAL_ADMIN_ROLE_ALLOWLIST)
+  if (roleAllowlist.size) {
+    const role = String((userOrRes as any).role || '').trim().toUpperCase()
+    if (role && roleAllowlist.has(role)) return userOrRes
+  }
 
   const allowlist = parseAllowlist(context?.env?.SOCIAL_ADMIN_EMAIL_ALLOWLIST)
   if (allowlist.size) {
