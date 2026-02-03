@@ -40,6 +40,13 @@ type Env = {
   LOCK: DurableObjectNamespace
   PUBLIC_ORIGIN: string
   SOCIAL_PUBLISHER_ENABLED?: string
+  SOCIAL_CLEANUP_ENABLED?: string
+  SOCIAL_RETENTION_DAYS?: string
+  SOCIAL_CLEANUP_MAX_DATEKEYS_PER_RUN?: string
+  SOCIAL_CLEANUP_MAX_ASSETS_PER_DATEKEY?: string
+  SHARE_CLEANUP_ENABLED?: string
+  SHARE_RETENTION_DAYS?: string
+  SHARE_CLEANUP_MAX_SHARES_PER_RUN?: string
   INTEGRATIONS_ENCRYPTION_SECRET?: string
 }
 
@@ -52,6 +59,20 @@ const json = (status: number, body: any) =>
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 const BRT_OFFSET_MS = 3 * 60 * 60 * 1000
+const MS_DAY = 24 * 60 * 60 * 1000
+
+const parsePositiveInt = (raw: any): number | null => {
+  const n = Number(String(raw ?? '').trim())
+  if (!Number.isFinite(n)) return null
+  const i = Math.floor(n)
+  return i > 0 ? i : null
+}
+
+const chunk = <T,>(arr: T[], size: number) => {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
 const dateKeyBrt = (nowMs = Date.now()) => {
   const d = new Date(nowMs - BRT_OFFSET_MS)
   const dd = String(d.getUTCDate()).padStart(2, '0')
@@ -63,12 +84,36 @@ const dateKeyBrt = (nowMs = Date.now()) => {
 const groupPrefix = (dateKey: string, groupKey: string) => `social/queue/${dateKey}/${groupKey}/`
 const socialQueueGroupKey = (dateKey: string, groupKey: string) => `${groupPrefix(dateKey, groupKey)}group.json`
 const socialAssetMetaKey = (assetId: string) => `social/assets/${assetId}/meta.json`
+const socialAssetFileKey = (assetId: string) => `social/assets/${assetId}/file`
 
 const socialAccountKey = (unitKey: string, platform: SocialPlatform) =>
   `internal/social/accounts/${encodeURIComponent(unitKey)}/${platform}.json`
 
 const socialPublishedMarkerKey = (dateKey: string, groupKey: string, unitKey: string, platform: SocialPlatform) =>
   `social/published/${dateKey}/${groupKey}/${encodeURIComponent(unitKey)}/${platform}.json`
+
+const shareIndexPrefix = (dayKey: string) => `internal/share/index/${dayKey}/`
+
+const dayIndexUtc = (ms: number) => Math.floor(ms / MS_DAY)
+const dayIndexBrt = (ms: number) => Math.floor((ms - BRT_OFFSET_MS) / MS_DAY)
+
+const parseSocialDateKeyToDayIndex = (dateKey: string): number | null => {
+  if (!dateKey.match(/^\d{6}$/)) return null
+  const dd = Number(dateKey.slice(0, 2))
+  const mm = Number(dateKey.slice(2, 4))
+  const yy = Number(dateKey.slice(4, 6))
+  if (!Number.isFinite(dd) || !Number.isFinite(mm) || !Number.isFinite(yy)) return null
+  if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null
+  const year = 2000 + yy
+  return dayIndexUtc(Date.UTC(year, mm - 1, dd))
+}
+
+const parseIsoDayKeyToDayIndex = (dayKey: string): number | null => {
+  if (!dayKey.match(/^\d{4}-\d{2}-\d{2}$/)) return null
+  const ms = Date.parse(`${dayKey}T00:00:00.000Z`)
+  if (!Number.isFinite(ms)) return null
+  return dayIndexUtc(ms)
+}
 
 async function listAll(bucket: R2Bucket, opts: { prefix: string; delimiter?: string }) {
   const objects: R2Object[] = []
@@ -83,6 +128,19 @@ async function listAll(bucket: R2Bucket, opts: { prefix: string; delimiter?: str
     if (!cursor) break
   }
   return { objects, delimitedPrefixes }
+}
+
+async function deleteKeys(bucket: R2Bucket, keys: string[]) {
+  const uniq = [...new Set(keys.filter(Boolean))]
+  for (const batch of chunk(uniq, 900)) {
+    await bucket.delete(batch)
+  }
+  return uniq.length
+}
+
+async function listAllKeys(bucket: R2Bucket, prefix: string) {
+  const { objects } = await listAll(bucket, { prefix })
+  return (objects || []).map((o) => String(o.key || '')).filter(Boolean)
 }
 
 const textEncoder = new TextEncoder()
@@ -340,6 +398,92 @@ async function processDate(env: Env, dateKey: string) {
   }
 }
 
+async function cleanupSocial(env: Env) {
+  const bucket = env.SHARE_BUCKET
+  const retentionDays = parsePositiveInt(env.SOCIAL_RETENTION_DAYS)
+  if (!retentionDays) return
+
+  const maxDateKeys = parsePositiveInt(env.SOCIAL_CLEANUP_MAX_DATEKEYS_PER_RUN) ?? 10
+  const maxAssetsPerDateKey = parsePositiveInt(env.SOCIAL_CLEANUP_MAX_ASSETS_PER_DATEKEY) ?? 2000
+
+  const { delimitedPrefixes } = await listAll(bucket, { prefix: 'social/queue/', delimiter: '/' })
+  const nowIdx = dayIndexBrt(Date.now())
+
+  const candidates: Array<{ dateKey: string; ageDays: number }> = []
+  for (const pref of delimitedPrefixes || []) {
+    const dk = String(pref).replace(/^social\/queue\//, '').replace(/\/$/, '')
+    const idx = parseSocialDateKeyToDayIndex(dk)
+    if (idx === null) continue
+    const ageDays = nowIdx - idx
+    if (ageDays > retentionDays) candidates.push({ dateKey: dk, ageDays })
+  }
+
+  candidates.sort((a, b) => b.ageDays - a.ageDays)
+  const toClean = candidates.slice(0, maxDateKeys)
+
+  for (const { dateKey } of toClean) {
+    const queueKeys = await listAllKeys(bucket, `social/queue/${dateKey}/`)
+
+    const assetIds: string[] = []
+    for (const k of queueKeys) {
+      const m = k.match(/\/assets\/([^/]+)\.json$/)
+      if (m?.[1]) assetIds.push(m[1])
+    }
+    const uniqAssetIds = [...new Set(assetIds)].slice(0, maxAssetsPerDateKey)
+
+    const publishedKeys = await listAllKeys(bucket, `social/published/${dateKey}/`)
+    const resultsKeys = await listAllKeys(bucket, `social/results/${dateKey}/`)
+    await deleteKeys(bucket, [...queueKeys, ...publishedKeys, ...resultsKeys])
+
+    const assetKeys: string[] = []
+    for (const assetId of uniqAssetIds) assetKeys.push(socialAssetMetaKey(assetId), socialAssetFileKey(assetId))
+    if (assetKeys.length) await deleteKeys(bucket, assetKeys)
+  }
+}
+
+async function cleanupShares(env: Env) {
+  const bucket = env.SHARE_BUCKET
+  const retentionDays = parsePositiveInt(env.SHARE_RETENTION_DAYS)
+  if (!retentionDays) return
+
+  const maxShares = parsePositiveInt(env.SHARE_CLEANUP_MAX_SHARES_PER_RUN) ?? 200
+  const nowIdx = dayIndexUtc(Date.now())
+
+  const { delimitedPrefixes } = await listAll(bucket, { prefix: 'internal/share/index/', delimiter: '/' })
+  const dayKeys: Array<{ dayKey: string; ageDays: number }> = []
+  for (const pref of delimitedPrefixes || []) {
+    const dayKey = String(pref).replace(/^internal\/share\/index\//, '').replace(/\/$/, '')
+    const idx = parseIsoDayKeyToDayIndex(dayKey)
+    if (idx === null) continue
+    const ageDays = nowIdx - idx
+    if (ageDays > retentionDays) dayKeys.push({ dayKey, ageDays })
+  }
+
+  dayKeys.sort((a, b) => b.ageDays - a.ageDays)
+
+  let deletedShares = 0
+  for (const { dayKey } of dayKeys) {
+    if (deletedShares >= maxShares) break
+
+    const idxKeys = await listAllKeys(bucket, shareIndexPrefix(dayKey))
+    const shareIds: string[] = []
+    for (const k of idxKeys) {
+      const m = k.match(/internal\/share\/index\/[^/]+\/([^/]+)\.json$/)
+      if (m?.[1]) shareIds.push(m[1])
+    }
+
+    const uniqShareIds = [...new Set(shareIds)]
+    for (const shareId of uniqShareIds) {
+      if (deletedShares >= maxShares) break
+      const shareKeys = await listAllKeys(bucket, `shares/${shareId}/`)
+      if (shareKeys.length) await deleteKeys(bucket, shareKeys)
+      deletedShares += 1
+    }
+
+    if (idxKeys.length) await deleteKeys(bucket, idxKeys)
+  }
+}
+
 export class PublisherLock {
   state: DurableObjectState
 
@@ -362,17 +506,24 @@ export class PublisherLock {
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    if (String(env.SOCIAL_PUBLISHER_ENABLED || '').toLowerCase() !== 'true') return
+    const publisherEnabled = String(env.SOCIAL_PUBLISHER_ENABLED || '').toLowerCase() === 'true'
+    const socialCleanupEnabled = String(env.SOCIAL_CLEANUP_ENABLED || '').toLowerCase() === 'true'
+    const shareCleanupEnabled = String(env.SHARE_CLEANUP_ENABLED || '').toLowerCase() === 'true'
+    if (!publisherEnabled && !socialCleanupEnabled && !shareCleanupEnabled) return
 
     const id = env.LOCK.idFromName('global')
     const stub = env.LOCK.get(id)
     const lockRes = await stub.fetch('https://lock/acquire?ttlMs=240000')
     if (!lockRes.ok) return
 
-    const today = dateKeyBrt()
-    const yesterday = dateKeyBrt(Date.now() - 24 * 60 * 60 * 1000)
-    ctx.waitUntil(processDate(env, yesterday))
-    ctx.waitUntil(processDate(env, today))
+    if (publisherEnabled) {
+      const today = dateKeyBrt()
+      const yesterday = dateKeyBrt(Date.now() - 24 * 60 * 60 * 1000)
+      ctx.waitUntil(processDate(env, yesterday))
+      ctx.waitUntil(processDate(env, today))
+    }
+
+    if (socialCleanupEnabled) ctx.waitUntil(cleanupSocial(env))
+    if (shareCleanupEnabled) ctx.waitUntil(cleanupShares(env))
   },
 }
-

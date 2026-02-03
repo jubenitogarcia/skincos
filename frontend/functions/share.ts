@@ -1,6 +1,7 @@
 import { requireSameOrigin } from './_lib/csrf'
 import { getInsumosUser } from './_lib/insumosAuth'
 import { getShareBucket } from './_lib/r2'
+import { shareIndexDayKeyUtc, shareIndexKey } from './_lib/shareIndex'
 
 type ShareFile = {
     name: string
@@ -72,6 +73,7 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
             let total = 0
             const shareId = crypto.randomUUID()
             const storedFiles: ShareFile[] = []
+            const createdAt = new Date().toISOString()
             for (let idx = 0; idx < fileObjs.length; idx += 1) {
                 const file = fileObjs[idx]
                 if (!file || !file.name) continue
@@ -87,9 +89,15 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
             }
             payload.files = storedFiles.length ? storedFiles : undefined
             const metaKey = `shares/${shareId}/payload.json`
-            await bucket.put(metaKey, JSON.stringify({ ...payload, createdAt: new Date().toISOString() }), {
+            await bucket.put(metaKey, JSON.stringify({ ...payload, createdAt }), {
                 httpMetadata: { contentType: 'application/json' }
             })
+            const dayKey = shareIndexDayKeyUtc(Date.parse(createdAt))
+            await bucket.put(
+                shareIndexKey(dayKey, shareId),
+                JSON.stringify({ shareId, createdAt }),
+                { httpMetadata: { contentType: 'application/json' } },
+            )
             return buildRedirect(context.request, payload, shareId)
         }
 

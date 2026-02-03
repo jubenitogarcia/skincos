@@ -2,6 +2,7 @@ import { requireCsrfForMutations } from '../../_lib/csrf'
 import { requireInsumosUser } from '../../_lib/insumosAuth'
 import { getShareBucket } from '../../_lib/r2'
 import { requestAuditMeta, writeAuditEvent } from '../../_lib/audit'
+import { shareIndexDayKeyUtc, shareIndexKey } from '../../_lib/shareIndex'
 
 type UploadFileOut = {
   name: string
@@ -50,6 +51,7 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
     const shareId = crypto.randomUUID()
     const storedFiles: UploadFileOut[] = []
     const origin = new URL(context.request.url).origin
+    const createdAt = new Date().toISOString()
 
     for (let idx = 0; idx < fileObjs.length; idx += 1) {
       const file = fileObjs[idx]
@@ -71,7 +73,14 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
     const metaKey = `shares/${shareId}/payload.json`
     await bucket.put(
       metaKey,
-      JSON.stringify({ files: storedFiles.map((f) => ({ name: f.name, key: f.key, size: f.size, contentType: f.contentType })), createdAt: new Date().toISOString() }),
+      JSON.stringify({ files: storedFiles.map((f) => ({ name: f.name, key: f.key, size: f.size, contentType: f.contentType })), createdAt }),
+      { httpMetadata: { contentType: 'application/json' } },
+    )
+
+    const dayKey = shareIndexDayKeyUtc(Date.parse(createdAt))
+    await bucket.put(
+      shareIndexKey(dayKey, shareId),
+      JSON.stringify({ shareId, createdAt }),
       { httpMetadata: { contentType: 'application/json' } },
     )
 
@@ -80,7 +89,7 @@ export async function onRequestPost(context: { request: Request; env?: Record<st
       action: 'share.upload',
       actor: { id: userOrRes.id, email: userOrRes.email, name: userOrRes.name },
       request: requestAuditMeta(context.request),
-      target: { shareId, fileCount: storedFiles.length, totalBytes: total },
+      target: { shareId, fileCount: storedFiles.length, totalBytes: total, createdAt },
       ok: true,
     }).catch(() => null)
 
