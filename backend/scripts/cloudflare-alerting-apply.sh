@@ -219,7 +219,14 @@ fi
 
 ensure_policy "skincos - Cloudflare incidents" "incident_alert" "Incidentes do Cloudflare Status" "{}"
 ensure_policy "skincos - Cloudflare maintenance" "maintenance_event_notification" "Janelas de manutenção do Cloudflare Status" "{}"
-ensure_policy "skincos - Pages events" "pages_event_alert" "Eventos e falhas de deploy do Cloudflare Pages" "${pages_filters}"
+
+# Pages events require at least project_id filter; skip if not configured/discovered.
+if [[ "$(jq -r '.project_id // [] | length' <<<"${pages_filters}")" -gt 0 ]]; then
+  ensure_policy "skincos - Pages events" "pages_event_alert" "Eventos e falhas de deploy do Cloudflare Pages" "${pages_filters}"
+else
+  echo "[cloudflare-alerting-apply] skip Pages events policy (no project_id configured/discovered)"
+fi
+
 ensure_policy "skincos - Origin unreachable" "real_origin_monitoring" "Cloudflare não consegue alcançar o origin" "{}"
 ensure_policy "skincos - HTTP DDoS attack" "dos_attack_l7" "Alertas de ataque DDoS HTTP (L7)" "{}"
 ensure_policy "skincos - Universal SSL events" "universal_ssl_event_type" "Eventos de Universal SSL (certificados / validação)" "{}"
