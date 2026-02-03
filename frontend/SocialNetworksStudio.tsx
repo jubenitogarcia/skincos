@@ -52,6 +52,8 @@ export function SocialNetworksStudio() {
   const [queueGroups, setQueueGroups] = useState<QueueGroup[]>([])
   const [queueResults, setQueueResults] = useState<Record<string, Record<string, any>>>({})
   const [queueResultsLoading, setQueueResultsLoading] = useState<Record<string, boolean>>({})
+  const [queueJobIds, setQueueJobIds] = useState<Record<string, string>>({})
+  const [queueJobStatus, setQueueJobStatus] = useState<Record<string, string>>({})
 
   const [adminToken, setAdminToken] = useState<string>(() => {
     try {
@@ -207,7 +209,14 @@ export function SocialNetworksStudio() {
       })
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
-      toast.success('Publish enfileirado')
+      if (data?.jobId) {
+        const key = `${g.group.dateKey}:${g.group.groupKey}`
+        setQueueJobIds((prev) => ({ ...prev, [key]: data.jobId }))
+        setQueueJobStatus((prev) => ({ ...prev, [key]: 'pending' }))
+        toast.success(`Publish enfileirado (${data.jobId})`)
+      } else {
+        toast.success('Publish enfileirado')
+      }
       await refreshQueue(g.group.dateKey)
       await loadResults(g)
     } catch (e: any) {
@@ -215,6 +224,24 @@ export function SocialNetworksStudio() {
     }
   }
 
+  const checkJobStatus = async (g: QueueGroup) => {
+    const key = `${g.group.dateKey}:${g.group.groupKey}`
+    const jobId = queueJobIds[key]
+    if (!jobId) return toast.error('JobId não encontrado. Reenfileire o publish.')
+    try {
+      const res = await fetch(`/api/social/job-status?jobId=${encodeURIComponent(jobId)}`, { credentials: 'include' })
+      const data = (await res.json().catch(() => null)) as any
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      const status = String(data?.status || 'unknown')
+      setQueueJobStatus((prev) => ({ ...prev, [key]: status }))
+      if (status === 'done') {
+        await loadResults(g)
+      }
+      toast.success(`Status do job: ${status}`)
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao carregar status do job')
+    }
+  }
   const platformsLabel = (ps: SocialPlatform[]) => PLATFORM_ORDER.filter((p) => ps.includes(p)).join(', ')
 
   return (
@@ -433,6 +460,16 @@ export function SocialNetworksStudio() {
                         >
                           {queueResultsLoading[`${g.group.dateKey}:${g.group.groupKey}`] ? 'Carregando…' : 'Resultados'}
                         </Button>
+                        {queueJobIds[`${g.group.dateKey}:${g.group.groupKey}`] ? (
+                          <Button
+                            size="sm"
+                            onClick={() => checkJobStatus(g)}
+                            variant="outline"
+                            className="bg-white/[0.06] border-white/20 text-white"
+                          >
+                            Status: {queueJobStatus[`${g.group.dateKey}:${g.group.groupKey}`] || 'pendente'}
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           onClick={() => publishNow(g)}

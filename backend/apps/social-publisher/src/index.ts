@@ -440,6 +440,10 @@ async function processDate(env: Env, dateKey: string) {
 async function processJobs(env: Env) {
   const bucket = env.SHARE_BUCKET
   const maxJobs = parsePositiveInt(env.SOCIAL_JOBS_MAX_PER_RUN) ?? 50
+  const startedAt = Date.now()
+  let processed = 0
+  let okCount = 0
+  let failCount = 0
 
   const { objects } = await listAll(bucket, { prefix: 'social/jobs/' })
   const keys = (objects || []).map((o) => String(o.key || '')).filter(Boolean).slice(0, maxJobs)
@@ -461,6 +465,8 @@ async function processJobs(env: Env) {
         at: new Date().toISOString(),
       }).catch(() => null)
       await deleteKeys(bucket, [key]).catch(() => null)
+      processed += 1
+      failCount += 1
       continue
     }
 
@@ -485,6 +491,19 @@ async function processJobs(env: Env) {
     }).catch(() => null)
 
     await deleteKeys(bucket, [key]).catch(() => null)
+    processed += 1
+    okCount += out?.okCount || 0
+    failCount += out?.failCount || 0
+  }
+
+  if (processed > 0) {
+    await putJsonObj(bucket, 'social/metrics/last_jobs_run.json', {
+      processed,
+      okCount,
+      failCount,
+      startedAt: new Date(startedAt).toISOString(),
+      finishedAt: new Date().toISOString(),
+    }).catch(() => null)
   }
 }
 
