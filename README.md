@@ -25,6 +25,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Config (env, opcional): `SOCIAL_MEDIA_MAX_AGE_DAYS` e `SHARE_MAX_AGE_DAYS` (se definidos, links públicos antigos passam a retornar 404).
 - Config (env, opcional): `SOCIAL_ADMIN_EMAIL_ALLOWLIST` (lista de emails, separados por vírgula, exigidos para ações de admin Social).
 - Publicação manual agora **enfileira job** em `social/jobs/*` e o Worker `social-publisher` processa (habilite `SOCIAL_JOBS_ENABLED=true`).
+- Endpoint de status de job: `GET /api/social/job-status?jobId=...` (retorna `pending|done|unknown`).
 
 ### Dev local (Social via Pages Functions)
 - Recomendado: `cd frontend && npm run dev:pages` (sobe Vite + Pages Functions com bindings locais).

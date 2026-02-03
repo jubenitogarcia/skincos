@@ -32,6 +32,7 @@ export async function onRequestPost(context: any): Promise<Response> {
   const jobId = crypto.randomUUID()
   const requestedAt = new Date().toISOString()
   const jobKey = `social/jobs/${dateKey}/${groupKey}/${jobId}.json`
+  const jobIndexKey = `social/job-index/${jobId}.json`
   await putJson(bucket, jobKey, {
     jobId,
     dateKey,
@@ -40,6 +41,7 @@ export async function onRequestPost(context: any): Promise<Response> {
     requestedAt,
     requestedBy: { id: adminOrRes.id, email: adminOrRes.email, name: adminOrRes.name },
   })
+  await putJson(bucket, jobIndexKey, { jobId, dateKey, groupKey, force, requestedAt })
 
   await writeAuditEvent(bucket, {
     scope: 'social',
