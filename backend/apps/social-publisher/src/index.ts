@@ -35,11 +35,22 @@ type SocialQueueAsset = {
   fileKey: string
 }
 
+type SocialPublishJob = {
+  jobId: string
+  dateKey: string
+  groupKey: string
+  force?: boolean
+  requestedAt?: string
+  requestedBy?: { id?: string; email?: string; name?: string }
+}
+
 type Env = {
   SHARE_BUCKET: R2Bucket
   LOCK: DurableObjectNamespace
   PUBLIC_ORIGIN: string
   SOCIAL_PUBLISHER_ENABLED?: string
+  SOCIAL_JOBS_ENABLED?: string
+  SOCIAL_JOBS_MAX_PER_RUN?: string
   SOCIAL_CLEANUP_ENABLED?: string
   SOCIAL_RETENTION_DAYS?: string
   SOCIAL_CLEANUP_MAX_DATEKEYS_PER_RUN?: string
@@ -323,6 +334,93 @@ async function isPublished(bucket: R2Bucket, dateKey: string, groupKey: string, 
   return !!head
 }
 
+async function buildAssetsForGroup(bucket: R2Bucket, dateKey: string, groupKey: string, publicOrigin: string) {
+  const assetsPointers = await listAll(bucket, { prefix: `${groupPrefix(dateKey, groupKey)}assets/` })
+  const assetIds = assetsPointers.objects
+    .map((o) => String(o.key.split('/').pop() || '').replace(/\.json$/, ''))
+    .filter(Boolean)
+  if (!assetIds.length) return []
+
+  const assets: Array<SocialQueueAsset & { publicUrl: string }> = []
+  for (const assetId of assetIds) {
+    const meta = await getJsonObj<SocialQueueAsset>(bucket, socialAssetMetaKey(assetId))
+    if (!meta) continue
+    assets.push({ ...(meta as any), publicUrl: `${publicOrigin}/social-media/${assetId}?inline=1` })
+  }
+  return assets
+}
+
+async function publishGroup(env: Env, group: SocialQueueGroup, opts: { force?: boolean }) {
+  const bucket = env.SHARE_BUCKET
+  const publicOrigin = String(env.PUBLIC_ORIGIN || '').replace(/\/$/, '')
+  if (!publicOrigin) throw new Error('PUBLIC_ORIGIN not configured')
+
+  const assets = await buildAssetsForGroup(bucket, group.dateKey, group.groupKey, publicOrigin)
+  if (!assets.length) return { okCount: 0, failCount: 0, results: [] }
+
+  const secret = env.INTEGRATIONS_ENCRYPTION_SECRET ? String(env.INTEGRATIONS_ENCRYPTION_SECRET).trim() : undefined
+  const results: any[] = []
+
+  for (const unitKey of group.unitKeys || []) {
+    for (const platform of group.platforms || []) {
+      if (!opts.force) {
+        const already = await isPublished(bucket, group.dateKey, group.groupKey, unitKey, platform).catch(() => false)
+        if (already) {
+          results.push({ ok: true, unitKey, platform, skipped: true, reason: 'ALREADY_PUBLISHED' })
+          continue
+        }
+      }
+
+      const account = await readSocialAccount(bucket, unitKey, platform, secret).catch(() => null)
+      if (!account) {
+        results.push({ ok: false, unitKey, platform, error: 'ACCOUNT_NOT_CONFIGURED' })
+        continue
+      }
+
+      const base = getBase(platform, account.apiBase, account.apiVersion)
+      const caption = String(group.captions?.[platform] || group.captions?.instagram || '').trim()
+
+      try {
+        const out =
+          platform === 'instagram'
+            ? await publishInstagram(base, account.accountId, account.accessToken, assets, caption)
+            : platform === 'facebook'
+              ? await publishFacebook(base, account.accountId, account.accessToken, assets, caption)
+              : await publishThreads(base, account.accountId, account.accessToken, assets, caption)
+
+        await putJsonObj(bucket, `social/results/${group.dateKey}/${group.groupKey}/${encodeURIComponent(unitKey)}/${platform}.json`, {
+          ok: true,
+          unitKey,
+          platform,
+          out,
+          at: new Date().toISOString(),
+        })
+        await putJsonObj(bucket, socialPublishedMarkerKey(group.dateKey, group.groupKey, unitKey, platform), {
+          ok: true,
+          publishedAt: new Date().toISOString(),
+          out,
+        })
+        results.push({ ok: true, unitKey, platform, out })
+      } catch (e: any) {
+        await putJsonObj(bucket, `social/results/${group.dateKey}/${group.groupKey}/${encodeURIComponent(unitKey)}/${platform}.json`, {
+          ok: false,
+          unitKey,
+          platform,
+          error: e?.message || 'PUBLISH_FAILED',
+          at: new Date().toISOString(),
+        })
+        results.push({ ok: false, unitKey, platform, error: e?.message || 'PUBLISH_FAILED' })
+      }
+    }
+  }
+
+  return {
+    okCount: results.filter((r) => r && r.ok).length,
+    failCount: results.filter((r) => r && !r.ok).length,
+    results,
+  }
+}
+
 async function processDate(env: Env, dateKey: string) {
   const bucket = env.SHARE_BUCKET
   const now = Date.now()
@@ -335,66 +433,144 @@ async function processDate(env: Env, dateKey: string) {
     const scheduledAtMs = Date.parse(group.scheduledAt)
     if (Number.isFinite(scheduledAtMs) && scheduledAtMs > now) continue
 
-    const assetsPointers = await listAll(bucket, { prefix: `${groupPrefix(dateKey, groupKey)}assets/` })
-    const assetIds = assetsPointers.objects
-      .map((o) => String(o.key.split('/').pop() || '').replace(/\.json$/, ''))
-      .filter(Boolean)
-    if (!assetIds.length) continue
+    await publishGroup(env, group, { force: false }).catch(() => null)
+  }
+}
 
-    const publicOrigin = String(env.PUBLIC_ORIGIN || '').replace(/\/$/, '')
-    if (!publicOrigin) throw new Error('PUBLIC_ORIGIN not configured')
+async function processJobs(env: Env) {
+  const bucket = env.SHARE_BUCKET
+  const maxJobs = parsePositiveInt(env.SOCIAL_JOBS_MAX_PER_RUN) ?? 50
 
-    const assets: Array<SocialQueueAsset & { publicUrl: string }> = []
-    for (const assetId of assetIds) {
-      const meta = await getJsonObj<SocialQueueAsset>(bucket, socialAssetMetaKey(assetId))
-      if (!meta) continue
-      assets.push({ ...(meta as any), publicUrl: `${publicOrigin}/social-media/${assetId}?inline=1` })
+  const { objects } = await listAll(bucket, { prefix: 'social/jobs/' })
+  const keys = (objects || []).map((o) => String(o.key || '')).filter(Boolean).slice(0, maxJobs)
+  for (const key of keys) {
+    const job = await getJsonObj<SocialPublishJob>(bucket, key).catch(() => null)
+    if (!job?.dateKey || !job?.groupKey || !job?.jobId) {
+      await deleteKeys(bucket, [key]).catch(() => null)
+      continue
     }
-    if (!assets.length) continue
 
-    const secret = env.INTEGRATIONS_ENCRYPTION_SECRET ? String(env.INTEGRATIONS_ENCRYPTION_SECRET).trim() : undefined
-
-    for (const unitKey of group.unitKeys || []) {
-      for (const platform of group.platforms || []) {
-        if (await isPublished(bucket, dateKey, groupKey, unitKey, platform).catch(() => false)) continue
-
-        const account = await readSocialAccount(bucket, unitKey, platform, secret).catch(() => null)
-        if (!account) continue
-
-        const base = getBase(platform, account.apiBase, account.apiVersion)
-        const caption = String(group.captions?.[platform] || group.captions?.instagram || '').trim()
-
-        try {
-          const out =
-            platform === 'instagram'
-              ? await publishInstagram(base, account.accountId, account.accessToken, assets, caption)
-              : platform === 'facebook'
-                ? await publishFacebook(base, account.accountId, account.accessToken, assets, caption)
-                : await publishThreads(base, account.accountId, account.accessToken, assets, caption)
-
-          await putJsonObj(bucket, `social/results/${dateKey}/${groupKey}/${encodeURIComponent(unitKey)}/${platform}.json`, {
-            ok: true,
-            at: new Date().toISOString(),
-            unitKey,
-            platform,
-            out,
-          })
-          await putJsonObj(bucket, socialPublishedMarkerKey(dateKey, groupKey, unitKey, platform), {
-            ok: true,
-            publishedAt: new Date().toISOString(),
-            out,
-          })
-        } catch (e: any) {
-          await putJsonObj(bucket, `social/results/${dateKey}/${groupKey}/${encodeURIComponent(unitKey)}/${platform}.json`, {
-            ok: false,
-            at: new Date().toISOString(),
-            unitKey,
-            platform,
-            error: e?.message || 'PUBLISH_FAILED',
-          })
-        }
-      }
+    const group = await getJsonObj<SocialQueueGroup>(bucket, socialQueueGroupKey(job.dateKey, job.groupKey)).catch(() => null)
+    if (!group) {
+      await putJsonObj(bucket, `social/job-results/${job.jobId}.json`, {
+        ok: false,
+        error: 'GROUP_NOT_FOUND',
+        jobId: job.jobId,
+        dateKey: job.dateKey,
+        groupKey: job.groupKey,
+        at: new Date().toISOString(),
+      }).catch(() => null)
+      await deleteKeys(bucket, [key]).catch(() => null)
+      continue
     }
+
+    const out = await publishGroup(env, group, { force: !!job.force }).catch((e) => ({
+      okCount: 0,
+      failCount: 1,
+      results: [],
+      error: e?.message || 'PUBLISH_FAILED',
+    }))
+
+    await putJsonObj(bucket, `social/job-results/${job.jobId}.json`, {
+      ok: !out?.error,
+      error: out?.error,
+      jobId: job.jobId,
+      dateKey: job.dateKey,
+      groupKey: job.groupKey,
+      requestedAt: job.requestedAt,
+      requestedBy: job.requestedBy,
+      okCount: out?.okCount || 0,
+      failCount: out?.failCount || 0,
+      at: new Date().toISOString(),
+    }).catch(() => null)
+
+    await deleteKeys(bucket, [key]).catch(() => null)
+  }
+}
+
+async function cleanupSocial(env: Env) {
+  const bucket = env.SHARE_BUCKET
+  const retentionDays = parsePositiveInt(env.SOCIAL_RETENTION_DAYS)
+  if (!retentionDays) return
+
+  const maxDateKeys = parsePositiveInt(env.SOCIAL_CLEANUP_MAX_DATEKEYS_PER_RUN) ?? 10
+  const maxAssetsPerDateKey = parsePositiveInt(env.SOCIAL_CLEANUP_MAX_ASSETS_PER_DATEKEY) ?? 2000
+
+  const { delimitedPrefixes } = await listAll(bucket, { prefix: 'social/queue/', delimiter: '/' })
+  const nowIdx = dayIndexBrt(Date.now())
+
+  const candidates: Array<{ dateKey: string; ageDays: number }> = []
+  for (const pref of delimitedPrefixes || []) {
+    const dk = String(pref).replace(/^social\/queue\//, '').replace(/\/$/, '')
+    const idx = parseSocialDateKeyToDayIndex(dk)
+    if (idx === null) continue
+    const ageDays = nowIdx - idx
+    if (ageDays > retentionDays) candidates.push({ dateKey: dk, ageDays })
+  }
+
+  candidates.sort((a, b) => b.ageDays - a.ageDays)
+  const toClean = candidates.slice(0, maxDateKeys)
+
+  for (const { dateKey } of toClean) {
+    const queueKeys = await listAllKeys(bucket, `social/queue/${dateKey}/`)
+
+    const assetIds: string[] = []
+    for (const k of queueKeys) {
+      const m = k.match(/\/assets\/([^/]+)\.json$/)
+      if (m?.[1]) assetIds.push(m[1])
+    }
+    const uniqAssetIds = [...new Set(assetIds)].slice(0, maxAssetsPerDateKey)
+
+    const publishedKeys = await listAllKeys(bucket, `social/published/${dateKey}/`)
+    const resultsKeys = await listAllKeys(bucket, `social/results/${dateKey}/`)
+    await deleteKeys(bucket, [...queueKeys, ...publishedKeys, ...resultsKeys])
+
+    const assetKeys: string[] = []
+    for (const assetId of uniqAssetIds) assetKeys.push(socialAssetMetaKey(assetId), socialAssetFileKey(assetId))
+    if (assetKeys.length) await deleteKeys(bucket, assetKeys)
+  }
+}
+
+async function cleanupShares(env: Env) {
+  const bucket = env.SHARE_BUCKET
+  const retentionDays = parsePositiveInt(env.SHARE_RETENTION_DAYS)
+  if (!retentionDays) return
+
+  const maxShares = parsePositiveInt(env.SHARE_CLEANUP_MAX_SHARES_PER_RUN) ?? 200
+  const nowIdx = dayIndexUtc(Date.now())
+
+  const { delimitedPrefixes } = await listAll(bucket, { prefix: 'internal/share/index/', delimiter: '/' })
+  const dayKeys: Array<{ dayKey: string; ageDays: number }> = []
+  for (const pref of delimitedPrefixes || []) {
+    const dayKey = String(pref).replace(/^internal\/share\/index\//, '').replace(/\/$/, '')
+    const idx = parseIsoDayKeyToDayIndex(dayKey)
+    if (idx === null) continue
+    const ageDays = nowIdx - idx
+    if (ageDays > retentionDays) dayKeys.push({ dayKey, ageDays })
+  }
+
+  dayKeys.sort((a, b) => b.ageDays - a.ageDays)
+
+  let deletedShares = 0
+  for (const { dayKey } of dayKeys) {
+    if (deletedShares >= maxShares) break
+
+    const idxKeys = await listAllKeys(bucket, shareIndexPrefix(dayKey))
+    const shareIds: string[] = []
+    for (const k of idxKeys) {
+      const m = k.match(/internal\/share\/index\/[^/]+\/([^/]+)\.json$/)
+      if (m?.[1]) shareIds.push(m[1])
+    }
+
+    const uniqShareIds = [...new Set(shareIds)]
+    for (const shareId of uniqShareIds) {
+      if (deletedShares >= maxShares) break
+      const shareKeys = await listAllKeys(bucket, `shares/${shareId}/`)
+      if (shareKeys.length) await deleteKeys(bucket, shareKeys)
+      deletedShares += 1
+    }
+
+    if (idxKeys.length) await deleteKeys(bucket, idxKeys)
   }
 }
 
@@ -507,9 +683,10 @@ export class PublisherLock {
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const publisherEnabled = String(env.SOCIAL_PUBLISHER_ENABLED || '').toLowerCase() === 'true'
+    const jobsEnabled = String(env.SOCIAL_JOBS_ENABLED ?? 'true').toLowerCase() === 'true'
     const socialCleanupEnabled = String(env.SOCIAL_CLEANUP_ENABLED || '').toLowerCase() === 'true'
     const shareCleanupEnabled = String(env.SHARE_CLEANUP_ENABLED || '').toLowerCase() === 'true'
-    if (!publisherEnabled && !socialCleanupEnabled && !shareCleanupEnabled) return
+    if (!publisherEnabled && !jobsEnabled && !socialCleanupEnabled && !shareCleanupEnabled) return
 
     const id = env.LOCK.idFromName('global')
     const stub = env.LOCK.get(id)
@@ -523,6 +700,7 @@ export default {
       ctx.waitUntil(processDate(env, today))
     }
 
+    if (jobsEnabled) ctx.waitUntil(processJobs(env))
     if (socialCleanupEnabled) ctx.waitUntil(cleanupSocial(env))
     if (shareCleanupEnabled) ctx.waitUntil(cleanupShares(env))
   },

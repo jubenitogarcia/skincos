@@ -207,7 +207,7 @@ export function SocialNetworksStudio() {
       })
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
-      toast.success('Publish executado')
+      toast.success('Publish enfileirado')
       await refreshQueue(g.group.dateKey)
       await loadResults(g)
     } catch (e: any) {

@@ -22,6 +22,9 @@ new_classes = ["PublisherLock"]
 PUBLIC_ORIGIN = "https://crm.skincos.com.br"
 # Segurança: só roda quando true.
 SOCIAL_PUBLISHER_ENABLED = "false"
+# Processa jobs enfileirados pelo CRM (/api/social/publish). Default: true.
+SOCIAL_JOBS_ENABLED = "true"
+SOCIAL_JOBS_MAX_PER_RUN = "50"
 
 # Limpeza (R2 GC) — roda apenas quando habilitado.
 SOCIAL_CLEANUP_ENABLED = "false"
