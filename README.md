@@ -25,6 +25,14 @@ Plataforma interna (local) para automações e operações da clínica.
 - Config (env, opcional): `SOCIAL_MEDIA_MAX_AGE_DAYS` e `SHARE_MAX_AGE_DAYS` (se definidos, links públicos antigos passam a retornar 404).
 - Config (env, opcional): `SOCIAL_ADMIN_EMAIL_ALLOWLIST` (lista de emails, separados por vírgula, exigidos para ações de admin Social).
 
+### Dev local (Social via Pages Functions)
+- Recomendado: `cd frontend && npm run dev:pages` (sobe Vite + Pages Functions com bindings locais).
+- Acesse `http://localhost:8788` (Pages) — a UI usa Functions reais (`/api/social/*`, `/social-media/*`).
+- Se precisar de variáveis locais, crie `frontend/.dev.vars` (ignorado) com, por exemplo:
+  - `SOCIAL_ADMIN_TOKEN=...`
+  - `INTEGRATIONS_ENCRYPTION_SECRET=...`
+  - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`
+
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`
 - Política de lockfiles: `backend/docs/LOCKFILES.md`

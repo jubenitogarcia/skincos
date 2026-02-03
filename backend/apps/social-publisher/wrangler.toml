@@ -23,3 +23,15 @@ PUBLIC_ORIGIN = "https://crm.skincos.com.br"
 # Segurança: só roda quando true.
 SOCIAL_PUBLISHER_ENABLED = "false"
 
+# Limpeza (R2 GC) — roda apenas quando habilitado.
+SOCIAL_CLEANUP_ENABLED = "false"
+# Retenção em dias (ddMMyy) para social/queue + social/results + social/published + social/assets.
+SOCIAL_RETENTION_DAYS = "45"
+# Guardrails (evita delete gigantesco numa única execução).
+SOCIAL_CLEANUP_MAX_DATEKEYS_PER_RUN = "10"
+SOCIAL_CLEANUP_MAX_ASSETS_PER_DATEKEY = "2000"
+
+SHARE_CLEANUP_ENABLED = "false"
+# Retenção em dias para shares/* baseada em index internal/share/index/YYYY-MM-DD/.
+SHARE_RETENTION_DAYS = "30"
+SHARE_CLEANUP_MAX_SHARES_PER_RUN = "200"

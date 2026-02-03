@@ -50,6 +50,8 @@ export function SocialNetworksStudio() {
   })
   const [queueLoading, setQueueLoading] = useState(false)
   const [queueGroups, setQueueGroups] = useState<QueueGroup[]>([])
+  const [queueResults, setQueueResults] = useState<Record<string, Record<string, any>>>({})
+  const [queueResultsLoading, setQueueResultsLoading] = useState<Record<string, boolean>>({})
 
   const [adminToken, setAdminToken] = useState<string>(() => {
     try {
@@ -73,7 +75,7 @@ export function SocialNetworksStudio() {
     setQueueLoading(true)
     try {
       const res = await fetch(`/api/social/queue/list?dateKey=${encodeURIComponent(dk)}`, { credentials: 'include' })
-      const data = await res.json().catch(() => null)
+      const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       setQueueGroups((data?.groups || []) as QueueGroup[])
     } catch (e: any) {
@@ -81,6 +83,23 @@ export function SocialNetworksStudio() {
       setQueueGroups([])
     } finally {
       setQueueLoading(false)
+    }
+  }
+
+  const loadResults = async (g: QueueGroup) => {
+    const key = `${g.group.dateKey}:${g.group.groupKey}`
+    setQueueResultsLoading((prev) => ({ ...prev, [key]: true }))
+    try {
+      const res = await fetch(`/api/social/results?dateKey=${encodeURIComponent(g.group.dateKey)}&groupKey=${encodeURIComponent(g.group.groupKey)}`, {
+        credentials: 'include',
+      })
+      const data = (await res.json().catch(() => null)) as any
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      setQueueResults((prev) => ({ ...prev, [key]: data?.results || {} }))
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao carregar resultados')
+    } finally {
+      setQueueResultsLoading((prev) => ({ ...prev, [key]: false }))
     }
   }
 
@@ -92,7 +111,7 @@ export function SocialNetworksStudio() {
         credentials: 'include',
         headers: { 'x-social-admin-token': adminToken.trim() },
       })
-      const data = await res.json().catch(() => null)
+      const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       setAccounts((data?.accounts || []) as any)
     } catch (e: any) {
@@ -129,7 +148,7 @@ export function SocialNetworksStudio() {
       for (const f of files) fd.append('files', f)
 
       const res = await fetch('/api/social/queue/upload', { method: 'POST', body: fd, credentials: 'include', headers: csrfHeader() })
-      const data = await res.json().catch(() => null)
+      const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       toast.success(`Enfileirado: ${data.groupKey}`)
       setFiles([])
@@ -166,7 +185,7 @@ export function SocialNetworksStudio() {
           apiVersion: accountApiVersion.trim() || undefined,
         }),
       })
-      const data = await res.json().catch(() => null)
+      const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       toast.success('Conta salva')
       setAccountId('')
@@ -177,19 +196,20 @@ export function SocialNetworksStudio() {
     }
   }
 
-  const publishNow = async (g: QueueGroup) => {
+  const publishNow = async (g: QueueGroup, force = false) => {
     if (!adminToken.trim()) return toast.error('Informe o token admin para publicar.')
     try {
       const res = await fetch('/api/social/publish', {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json', 'x-social-admin-token': adminToken.trim(), ...csrfHeader() },
-        body: JSON.stringify({ dateKey: g.group.dateKey, groupKey: g.group.groupKey }),
+        body: JSON.stringify({ dateKey: g.group.dateKey, groupKey: g.group.groupKey, force }),
       })
-      const data = await res.json().catch(() => null)
+      const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       toast.success('Publish executado')
       await refreshQueue(g.group.dateKey)
+      await loadResults(g)
     } catch (e: any) {
       toast.error(e?.message || 'Falha ao publicar')
     }
@@ -403,14 +423,37 @@ export function SocialNetworksStudio() {
                         <span className="font-mono">{g.group.groupKey}</span> · {g.assetsCount} mídia(s) ·{' '}
                         <span className="text-blue-200/80">{platformsLabel(g.group.platforms || [])}</span>
                       </div>
-                      <Button
-                        size="sm"
-                        onClick={() => publishNow(g)}
-                        disabled={!adminToken.trim()}
-                        className="bg-blue-600 hover:bg-blue-500 text-white"
-                      >
-                        Publicar agora
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => loadResults(g)}
+                          disabled={queueResultsLoading[`${g.group.dateKey}:${g.group.groupKey}`]}
+                          variant="outline"
+                          className="bg-white/[0.06] border-white/20 text-white"
+                        >
+                          {queueResultsLoading[`${g.group.dateKey}:${g.group.groupKey}`] ? 'Carregando…' : 'Resultados'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => publishNow(g)}
+                          disabled={!adminToken.trim()}
+                          className="bg-blue-600 hover:bg-blue-500 text-white"
+                        >
+                          Publicar agora
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            if (!confirm('Forçar reprocesso? Isso tenta publicar mesmo se já marcado como publicado.')) return
+                            void publishNow(g, true)
+                          }}
+                          disabled={!adminToken.trim()}
+                          variant="outline"
+                          className="bg-white/[0.06] border-white/20 text-white"
+                        >
+                          Reprocessar
+                        </Button>
+                      </div>
                     </div>
                     <div className="text-xs text-blue-200/70">scheduledAt: {g.group.scheduledAt}</div>
                     <div className="flex flex-wrap gap-2">
@@ -423,6 +466,25 @@ export function SocialNetworksStudio() {
                         </Badge>
                       ))}
                     </div>
+                    {queueResults[`${g.group.dateKey}:${g.group.groupKey}`] ? (
+                      <div className="rounded-md border border-white/10 bg-white/[0.03] p-2 space-y-2 text-xs text-blue-100/90">
+                        {Object.entries(queueResults[`${g.group.dateKey}:${g.group.groupKey}`] || {}).map(([unitKey, platforms]) => (
+                          <div key={unitKey}>
+                            <div className="text-blue-200/80">{unitKey}</div>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(platforms || {}).map(([platform, result]) => (
+                                <Badge key={`${unitKey}:${platform}`} variant="outline" className="border-white/20 text-white">
+                                  {platform}: {(result as any)?.ok ? 'OK' : ((result as any)?.error || 'ERRO')}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        {!Object.keys(queueResults[`${g.group.dateKey}:${g.group.groupKey}`] || {}).length ? (
+                          <div className="text-blue-200/70">Sem resultados.</div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {!queueGroups.length ? <div className="text-sm text-blue-200/70">Nenhum grupo encontrado.</div> : null}
