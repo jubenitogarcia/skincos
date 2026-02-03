@@ -82,7 +82,14 @@ cf_post() {
     echo "${body}" | jq -c .
     return 0
   fi
-  curl -fsS "${hdr[@]}" -X POST "${api}${path}" --data "${body}"
+  local response
+  response="$(curl -fsS "${hdr[@]}" -X POST "${api}${path}" --data "${body}" 2>&1)" || {
+    local code=$?
+    echo "[ERROR] curl failed with code ${code}" >&2
+    echo "[ERROR] Response: ${response}" >&2
+    return ${code}
+  }
+  echo "${response}"
 }
 
 cf_put() {
@@ -127,7 +134,7 @@ fi
 mechanisms="$(jq -n \
   --argjson emails "${emails_json}" \
   --arg webhook_id "${webhook_id}" \
-  '{} | 
+  '{} |
    if ($emails | length) > 0 then .email = $emails else . end |
    if ($webhook_id | length) > 0 then .webhooks = [$webhook_id] else . end')"
 
@@ -168,6 +175,8 @@ ensure_policy() {
 
   if [[ -z "${existing_id}" || "${existing_id}" == "null" ]]; then
     echo "[cloudflare-alerting-apply] create policy: ${name}"
+    echo "[DEBUG] Policy body:" >&2
+    echo "${body}" | jq -c . >&2
     cf_post "/accounts/${acct}/alerting/v3/policies" "${body}" >/dev/null
   else
     echo "[cloudflare-alerting-apply] update policy: ${name}"
