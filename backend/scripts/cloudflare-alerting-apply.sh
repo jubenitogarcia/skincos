@@ -82,14 +82,21 @@ cf_post() {
     echo "${body}" | jq -c .
     return 0
   fi
-  local response
-  response="$(curl -fsS "${hdr[@]}" -X POST "${api}${path}" --data "${body}" 2>&1)" || {
-    local code=$?
-    echo "[ERROR] curl failed with code ${code}" >&2
-    echo "[ERROR] Response: ${response}" >&2
-    return ${code}
-  }
-  echo "${response}"
+  local tmpout
+  tmpout="$(mktemp)"
+  local code
+  code="$(curl -sS -o "${tmpout}" -w "%{http_code}" "${hdr[@]}" -X POST "${api}${path}" --data "${body}")"
+  if [[ "${code}" == "200" || "${code}" == "201" ]]; then
+    cat "${tmpout}"
+    rm -f "${tmpout}"
+    return 0
+  else
+    echo "[ERROR] POST ${path} returned HTTP ${code}" >&2
+    echo "[ERROR] Response body:" >&2
+    cat "${tmpout}" >&2
+    rm -f "${tmpout}"
+    return 1
+  fi
 }
 
 cf_put() {
