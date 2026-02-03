@@ -30,7 +30,7 @@ mcp==1.26.0
 newspaper3k==0.2.8
 paramiko==3.5.0
 playwright==1.52.0
-pypdf==6.6.0  # prefer pypdf sobre PyPDF2 (removido)
+pypdf==6.6.2  # prefer pypdf sobre PyPDF2 (removido)
 python-dotenv==1.1.0
 pytz==2024.2
 sentence-transformers==3.0.1

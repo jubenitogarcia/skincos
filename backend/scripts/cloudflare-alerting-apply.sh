@@ -82,7 +82,21 @@ cf_post() {
     echo "${body}" | jq -c .
     return 0
   fi
-  curl -fsS "${hdr[@]}" -X POST "${api}${path}" --data "${body}"
+  local tmpout
+  tmpout="$(mktemp)"
+  local code
+  code="$(curl -sS -o "${tmpout}" -w "%{http_code}" "${hdr[@]}" -X POST "${api}${path}" --data "${body}")"
+  if [[ "${code}" == "200" || "${code}" == "201" ]]; then
+    cat "${tmpout}"
+    rm -f "${tmpout}"
+    return 0
+  else
+    echo "[ERROR] POST ${path} returned HTTP ${code}" >&2
+    echo "[ERROR] Response body:" >&2
+    cat "${tmpout}" >&2
+    rm -f "${tmpout}"
+    return 1
+  fi
 }
 
 cf_put() {
@@ -124,11 +138,12 @@ if [[ -n "${webhook_url}" ]]; then
   fi
 fi
 
-mechanisms="$(jq -n --argjson emails "${emails_json}" --arg webhook_id "${webhook_id}" '
-  {}
-  + ( ($emails|length)>0 ? {email: $emails} : {} )
-  + ( ($webhook_id|length)>0 ? {webhooks: [$webhook_id]} : {} )
-')"
+mechanisms="$(jq -n \
+  --argjson emails "${emails_json}" \
+  --arg webhook_id "${webhook_id}" \
+  '{} |
+   if ($emails | length) > 0 then .email = ($emails | map({id: .})) else . end |
+   if ($webhook_id | length) > 0 then .webhooks = [{id: $webhook_id}] else . end')"
 
 if [[ "$(jq -r 'keys|length' <<<"${mechanisms}")" == "0" ]]; then
   echo "[cloudflare-alerting-apply] No valid mechanisms resolved (check CLOUDFLARE_ALERT_EMAILS / webhook creation)" >&2
@@ -162,11 +177,13 @@ ensure_policy() {
       alert_type: $alert_type,
       enabled: $enabled,
       mechanisms: $mechanisms
-    } + ( ($filters|keys|length)>0 ? {filters: $filters} : {} )
+    } | if ($filters | keys | length) > 0 then .filters = $filters else . end
   ')"
 
   if [[ -z "${existing_id}" || "${existing_id}" == "null" ]]; then
     echo "[cloudflare-alerting-apply] create policy: ${name}"
+    echo "[DEBUG] Policy body:" >&2
+    echo "${body}" | jq -c . >&2
     cf_post "/accounts/${acct}/alerting/v3/policies" "${body}" >/dev/null
   else
     echo "[cloudflare-alerting-apply] update policy: ${name}"
@@ -182,10 +199,10 @@ pages_filters="$(jq -n \
   --argjson pids "${pages_project_ids_json}" \
   --argjson envs "${pages_envs_json}" \
   --argjson events "${pages_events_json}" \
-  '({})
-    + ( ($pids|length)>0 ? {project_id:$pids} : {} )
-    + ( ($envs|length)>0 ? {environment:$envs} : {} )
-    + ( ($events|length)>0 ? {event:$events} : {} )
+  '{} |
+    if ($pids | length) > 0 then .project_id = $pids else . end |
+    if ($envs | length) > 0 then .environment = $envs else . end |
+    if ($events | length) > 0 then .event = $events else . end
   ')"
 
 if [[ "$(jq -r 'keys|length' <<<"${pages_filters}")" == "0" ]]; then
@@ -202,7 +219,14 @@ fi
 
 ensure_policy "skincos - Cloudflare incidents" "incident_alert" "Incidentes do Cloudflare Status" "{}"
 ensure_policy "skincos - Cloudflare maintenance" "maintenance_event_notification" "Janelas de manutenção do Cloudflare Status" "{}"
-ensure_policy "skincos - Pages events" "pages_event_alert" "Eventos e falhas de deploy do Cloudflare Pages" "${pages_filters}"
+
+# Pages events require at least project_id filter; skip if not configured/discovered.
+if [[ "$(jq -r '.project_id // [] | length' <<<"${pages_filters}")" -gt 0 ]]; then
+  ensure_policy "skincos - Pages events" "pages_event_alert" "Eventos e falhas de deploy do Cloudflare Pages" "${pages_filters}"
+else
+  echo "[cloudflare-alerting-apply] skip Pages events policy (no project_id configured/discovered)"
+fi
+
 ensure_policy "skincos - Origin unreachable" "real_origin_monitoring" "Cloudflare não consegue alcançar o origin" "{}"
 ensure_policy "skincos - HTTP DDoS attack" "dos_attack_l7" "Alertas de ataque DDoS HTTP (L7)" "{}"
 ensure_policy "skincos - Universal SSL events" "universal_ssl_event_type" "Eventos de Universal SSL (certificados / validação)" "{}"
