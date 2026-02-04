@@ -84,15 +84,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAGES_PROJECT: ${{ steps.guard.outputs.project }}
           BRANCH_NAME: ${{ steps.guard.outputs.branch }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_MESSAGE: ${{ github.event.head_commit.message || github.sha }}
           WRANGLER_CWD: ${{ steps.guard.outputs.wrangler_cwd }}
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
           if [[ -n "${WRANGLER_CWD:-}" ]]; then
             echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME (wrangler cwd=$WRANGLER_CWD)"
-            npx --yes wrangler@3 --cwd "$WRANGLER_CWD" pages deploy ../dist --project-name "$PROJECT" --branch "$BRANCH_NAME"
+            npx --yes wrangler@3 --cwd "$WRANGLER_CWD" pages deploy ../dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
           else
             echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
-            npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME"
+            npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
           fi
         working-directory: frontend

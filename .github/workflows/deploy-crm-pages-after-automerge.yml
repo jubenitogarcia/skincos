@@ -29,13 +29,19 @@ jobs:
             const prNumber = (() => {
               const n = context.payload?.pull_request?.number;
               if (n) return n;
-              const input = core.getInput('pr_number');
+              const input = context.payload?.inputs?.pr_number;
               const parsed = Number(String(input || '').trim());
               if (!Number.isFinite(parsed) || parsed <= 0) {
-                throw new Error(`Invalid pr_number: ${input}`);
+                core.warning(`Invalid or missing workflow_dispatch input pr_number: ${input}`);
+                return null;
               }
               return parsed;
             })();
+
+            if (!prNumber) {
+              core.setOutput('eligible', 'false');
+              return;
+            }
 
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -132,5 +138,5 @@ jobs:
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
           echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME (after automerge)"
-          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME"
+          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "${{ steps.pr.outputs.merge_commit_sha }}" --commit-message "after-automerge PR #${{ steps.pr.outputs.pr_number }}"
         working-directory: frontend
