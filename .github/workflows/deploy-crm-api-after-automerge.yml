@@ -1,0 +1,90 @@
+name: Deploy CRM API after automerge
+
+on:
+  pull_request_target:
+    types: [closed]
+
+concurrency:
+  group: deploy-crm-api-after-automerge-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'codex/') &&
+      github.event.pull_request.user.login == 'jubenitogarcia' &&
+      github.event.pull_request.merged_by.login == 'app/github-actions'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Detect CRM API changes
+        id: changes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+            const changed = files.some((f) => {
+              const p = String(f.filename || '');
+              return (
+                p.startsWith('backend/apps/crm-api/') ||
+                p === 'backend/pnpm-lock.yaml' ||
+                p === 'backend/pnpm-workspace.yaml' ||
+                p === '.github/workflows/deploy-crm-api.yml'
+              );
+            });
+            core.setOutput('crm_api_changed', changed ? 'true' : 'false');
+
+      - name: Guard CRM API deploy secrets
+        if: ${{ steps.changes.outputs.crm_api_changed == 'true' }}
+        id: guard
+        env:
+          ENABLE: ${{ vars.ENABLE_CRM_API_DEPLOY }}
+          HOST: ${{ secrets.CRM_API_SSH_HOST }}
+          USER: ${{ secrets.CRM_API_SSH_USER }}
+          KEY: ${{ secrets.CRM_API_SSH_KEY }}
+          APP_DIR: ${{ vars.CRM_API_APP_DIR }}
+          COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
+        run: |
+          set -euo pipefail
+          if [[ "${ENABLE:-}" != "true" ]]; then
+            echo "CRM API deploy disabled; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "${HOST:-}" || -z "${USER:-}" || -z "${KEY:-}" || -z "${APP_DIR:-}" || -z "${COMMAND:-}" ]]; then
+            echo "CRM API deploy not configured; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy via SSH (merge commit)
+        if: ${{ steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.CRM_API_SSH_HOST }}
+          username: ${{ secrets.CRM_API_SSH_USER }}
+          key: ${{ secrets.CRM_API_SSH_KEY }}
+          port: ${{ secrets.CRM_API_SSH_PORT != '' && secrets.CRM_API_SSH_PORT || '22' }}
+          script: |
+            set -euo pipefail
+            cd "${CRM_API_APP_DIR}"
+            git fetch --all
+            git reset --hard "${GITHUB_SHA}"
+            ${CRM_API_DEPLOY_COMMAND}
+        env:
+          CRM_API_APP_DIR: ${{ vars.CRM_API_APP_DIR }}
+          CRM_API_DEPLOY_COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
+          GITHUB_SHA: ${{ github.event.pull_request.merge_commit_sha }}
