@@ -9,6 +9,7 @@
         "/api/instagram/*",
         "/api/instagram-module/*",
         "/api/social/*",
+        "/api/ponto/*",
         "/api/unit-monitor/*",
         "/share",
         "/share/*",
