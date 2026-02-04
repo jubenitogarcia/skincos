@@ -474,7 +474,12 @@ export function SocialNetworksStudio() {
                             Status: {queueJobStatus[`${g.group.dateKey}:${g.group.groupKey}`] || 'pendente'}
                           </Button>
                         ) : null}
-                        <Button size="sm" onClick={() => publishNow(g)} className="bg-blue-600 hover:bg-blue-500 text-white">
+                        <Button
+                          size="sm"
+                          onClick={() => publishNow(g)}
+                          disabled={!adminToken.trim()}
+                          className="bg-blue-600 hover:bg-blue-500 text-white"
+                        >
                           Publicar agora
                         </Button>
                         <Button
