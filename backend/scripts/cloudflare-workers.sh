@@ -62,7 +62,8 @@ deploy_api() {
   echo "[workers] Deploying skincos-api..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/api-worker exec wrangler deploy --config apps/api/wrangler.toml --keep-vars "${ENV_FLAG[@]}"
+    # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
+    run_pnpm -F @skincos/api-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}"
   )
 }
 
@@ -70,12 +71,13 @@ deploy_insumos() {
   echo "[workers] Applying D1 migrations (best effort) ..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" --config apps/insumos/wrangler.toml "${ENV_FLAG[@]}" || true
+    # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
+    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" --config wrangler.toml "${ENV_FLAG[@]}" || true
   )
   echo "[workers] Deploying skincos-insumos..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/insumos-worker exec wrangler deploy --config apps/insumos/wrangler.toml --keep-vars "${ENV_FLAG[@]}"
+    run_pnpm -F @skincos/insumos-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}"
   )
 }
 
