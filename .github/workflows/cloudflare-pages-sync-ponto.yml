@@ -78,7 +78,8 @@ jobs:
           for env_name in ("production","preview"):
             env_cfg=cfg.get(env_name) or {}
             env_vars=env_cfg.get("env_vars") or {}
-            env_vars["PONTO_API_TARGET"]={"value": target, "type":"plain_text"}
+            # Pages Functions runtime can be inconsistent with plain_text vars; treat as secret_text for reliability.
+            env_vars["PONTO_API_TARGET"]={"value": target, "type":"secret_text"}
             env_vars["PONTO_PROXY_TOKEN"]={"value": proxy, "type":"secret_text"}
             env_vars["PONTO_ACTOR_HMAC_KEY"]={"value": actor, "type":"secret_text"}
             env_cfg["env_vars"]=env_vars
@@ -107,4 +108,3 @@ jobs:
             keys=sorted(((cfg.get(env_name) or {}).get("env_vars") or {}).keys())
             print(f"{env_name} env var keys now include Ponto:", "PONTO_API_TARGET" in keys, "PONTO_PROXY_TOKEN" in keys, "PONTO_ACTOR_HMAC_KEY" in keys)
           PY
-
