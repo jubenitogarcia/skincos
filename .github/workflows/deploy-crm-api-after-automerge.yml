@@ -1,38 +1,71 @@
 name: Deploy CRM API after automerge
 
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to deploy (uses merge commit SHA)"
+        required: true
 
 concurrency:
-  group: deploy-crm-api-after-automerge-${{ github.event.pull_request.base.ref }}
+  group: deploy-crm-api-after-automerge-${{ github.event.pull_request.base.ref || 'manual' }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    if: >-
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.pull_request.head.ref, 'codex/') &&
-      github.event.pull_request.user.login == 'jubenitogarcia' &&
-      github.event.pull_request.merged_by.login == 'app/github-actions'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
 
     steps:
+      - name: Resolve PR context
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = (() => {
+              const n = context.payload?.pull_request?.number;
+              if (n) return n;
+              const input = core.getInput('pr_number');
+              const parsed = Number(String(input || '').trim());
+              if (!Number.isFinite(parsed) || parsed <= 0) {
+                throw new Error(`Invalid pr_number: ${input}`);
+              }
+              return parsed;
+            })();
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const eligible =
+              pr.merged === true &&
+              pr.base?.ref === 'main' &&
+              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              String(pr.head?.ref || '').startsWith('codex/') &&
+              pr.user?.login === 'jubenitogarcia';
+
+            core.info(`PR #${prNumber} merged=${pr.merged} base=${pr.base?.ref} head=${pr.head?.ref} eligible=${eligible}`);
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('merge_commit_sha', pr.merge_commit_sha || '');
+            core.setOutput('eligible', eligible ? 'true' : 'false');
+
       - name: Detect CRM API changes
+        if: ${{ steps.pr.outputs.eligible == 'true' }}
         id: changes
         uses: actions/github-script@v7
         with:
           script: |
-            const pr = context.payload.pull_request;
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: pr.number,
+              pull_number: Number('${{ steps.pr.outputs.pr_number }}'),
               per_page: 100,
             });
             const changed = files.some((f) => {
@@ -47,7 +80,7 @@ jobs:
             core.setOutput('crm_api_changed', changed ? 'true' : 'false');
 
       - name: Guard CRM API deploy secrets
-        if: ${{ steps.changes.outputs.crm_api_changed == 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' }}
         id: guard
         env:
           ENABLE: ${{ vars.ENABLE_CRM_API_DEPLOY }}
@@ -71,7 +104,7 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Deploy via SSH (merge commit)
-        if: ${{ steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.CRM_API_SSH_HOST }}
@@ -87,4 +120,4 @@ jobs:
         env:
           CRM_API_APP_DIR: ${{ vars.CRM_API_APP_DIR }}
           CRM_API_DEPLOY_COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
-          GITHUB_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          GITHUB_SHA: ${{ steps.pr.outputs.merge_commit_sha }}
