@@ -7,11 +7,11 @@
 # - SPREADSHEET_ID (Google Sheet id)
 #
 # Example:
-# GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+# GOOGLE_PRIVATE_KEY="(paste your key here with \\n escapes)"
 
 SPREADSHEET_ID="your-spreadsheet-id"
 GOOGLE_SERVICE_ACCOUNT_EMAIL="your-service-account@your-project.iam.gserviceaccount.com"
-GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+GOOGLE_PRIVATE_KEY="your-private-key-with-\\n-escapes"
 
 # Optional overrides (defaults are in wrangler.toml)
 # SHEET_RANGE="Insumos!A:AZ"
