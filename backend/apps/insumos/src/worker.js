@@ -1302,6 +1302,17 @@ export default {
             return res;
         };
 
+        // Ponto routes must not depend on Insumos session cookies/config (SESSION_SECRET, CSRF, etc).
+        // They have their own auth model (proxy token + signed actor headers / admin token / device token).
+        const pontoEarlyResp = await handlePontoRoutes({
+            request,
+            url,
+            env,
+            appOrigin,
+            withCORS,
+        });
+        if (pontoEarlyResp) return pontoEarlyResp;
+
         const enforceRateLimit = async (kind) => {
             if (!env.RATE_LIMITER) return { allowed: true };
             const windowSec = 60;
@@ -1782,17 +1793,7 @@ export default {
             }
         }
 
-        const pontoPrefix = url.pathname === "/ponto" || url.pathname.startsWith("/ponto/") || url.pathname === "/api/ponto" || url.pathname.startsWith("/api/ponto/");
-        const isPublicEndpoint = pontoPrefix || url.pathname === "/api/metrics" || url.pathname === "/metrics";
-
-        const pontoResp = await handlePontoRoutes({
-            request,
-            url,
-            env,
-            appOrigin,
-            withCORS,
-        });
-        if (pontoResp) return pontoResp;
+        const isPublicEndpoint = url.pathname === "/api/metrics" || url.pathname === "/metrics";
         if (!isPublicEndpoint && !url.pathname.startsWith("/auth/")) {
             if (!sessionUsername) {
                 return withCORS(
