@@ -115,8 +115,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: backend/pnpm-lock.yaml
 
       - name: Setup pnpm (corepack)
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
@@ -136,4 +134,3 @@ jobs:
         run: |
           set -euo pipefail
           bash backend/scripts/cloudflare-workers.sh deploy-all
-

@@ -64,8 +64,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: backend/pnpm-lock.yaml
 
       - name: Setup pnpm (corepack)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
@@ -99,4 +97,3 @@ jobs:
         with:
           key: workers-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/deployed_sha.txt
-
