@@ -61,6 +61,17 @@ export function SocialNetworksStudio() {
 
   const SOCIAL_UNIT_KEY_STORAGE = 'social.unitKey'
   const SOCIAL_ONLY_MY_UNIT_STORAGE = 'social.onlyMyUnit'
+  const SOCIAL_ONBOARDING_SCOPE_UNITS_STORAGE = 'social.onboarding.scopeUnits'
+  const SOCIAL_ONBOARDING_SCOPE_PLATFORMS_STORAGE = 'social.onboarding.scopePlatforms'
+  const SOCIAL_ONBOARDING_COMPLETED_STORAGE = 'social.onboarding.completed'
+  const SOCIAL_ONBOARDING_COMPLETED_AT_STORAGE = 'social.onboarding.completedAt'
+
+  const parseCsvList = (raw: string | null | undefined) =>
+    String(raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  const toCsvList = (items: Array<string | null | undefined>) => items.map((s) => String(s || '').trim()).filter(Boolean).join(',')
 
   const [unitKey, setUnitKey] = useState(() => {
     try {
@@ -94,6 +105,76 @@ export function SocialNetworksStudio() {
     setOnlyMyUnit(next)
     try {
       window.localStorage.setItem(SOCIAL_ONLY_MY_UNIT_STORAGE, String(next))
+    } catch {}
+  }
+
+  const [scopeUnitsWasSaved] = useState(() => {
+    try {
+      return !!window.localStorage.getItem(SOCIAL_ONBOARDING_SCOPE_UNITS_STORAGE)
+    } catch {
+      return false
+    }
+  })
+  const [scopePlatformsWasSaved] = useState(() => {
+    try {
+      return !!window.localStorage.getItem(SOCIAL_ONBOARDING_SCOPE_PLATFORMS_STORAGE)
+    } catch {
+      return false
+    }
+  })
+
+  const [scopeUnits, setScopeUnits] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(SOCIAL_ONBOARDING_SCOPE_UNITS_STORAGE)
+      const parsed = parseCsvList(raw).map((s) => s.toUpperCase())
+      return parsed.length ? parsed : ['BSS', 'NH']
+    } catch {
+      return ['BSS', 'NH']
+    }
+  })
+  const setScopeUnitsPersist = (next: string[]) => {
+    const cleaned = next.map((u) => String(u || '').trim().toUpperCase()).filter(Boolean)
+    setScopeUnits(cleaned)
+    try {
+      window.localStorage.setItem(SOCIAL_ONBOARDING_SCOPE_UNITS_STORAGE, toCsvList(cleaned))
+    } catch {}
+  }
+
+  const [scopePlatforms, setScopePlatforms] = useState<SocialPlatform[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(SOCIAL_ONBOARDING_SCOPE_PLATFORMS_STORAGE)
+      const parsed = parseCsvList(raw) as SocialPlatform[]
+      const cleaned = parsed.filter((p) => PLATFORM_ORDER.includes(p))
+      return cleaned.length ? cleaned : [...PLATFORM_ORDER]
+    } catch {
+      return [...PLATFORM_ORDER]
+    }
+  })
+  const setScopePlatformsPersist = (next: SocialPlatform[]) => {
+    const cleaned = next.filter((p) => PLATFORM_ORDER.includes(p))
+    setScopePlatforms(cleaned)
+    try {
+      window.localStorage.setItem(SOCIAL_ONBOARDING_SCOPE_PLATFORMS_STORAGE, toCsvList(cleaned))
+    } catch {}
+  }
+
+  const [onboardingCompleted, setOnboardingCompleted] = useState(() => {
+    try {
+      return window.localStorage.getItem(SOCIAL_ONBOARDING_COMPLETED_STORAGE) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const setOnboardingCompletedPersist = (next: boolean) => {
+    setOnboardingCompleted(next)
+    try {
+      if (next) {
+        window.localStorage.setItem(SOCIAL_ONBOARDING_COMPLETED_STORAGE, 'true')
+        window.localStorage.setItem(SOCIAL_ONBOARDING_COMPLETED_AT_STORAGE, new Date().toISOString())
+      } else {
+        window.localStorage.removeItem(SOCIAL_ONBOARDING_COMPLETED_STORAGE)
+        window.localStorage.removeItem(SOCIAL_ONBOARDING_COMPLETED_AT_STORAGE)
+      }
     } catch {}
   }
 
@@ -136,6 +217,7 @@ export function SocialNetworksStudio() {
     }
   })
   const [adminValidated, setAdminValidated] = useState(false)
+  const [accountsLoadedOnce, setAccountsLoadedOnce] = useState(false)
   const [accountsLoading, setAccountsLoading] = useState(false)
   const [accounts, setAccounts] = useState<
     Array<{ unitKey: string; platform: SocialPlatform; accountId: string; apiVersion?: string; apiBase?: string; updatedAt?: string }>
@@ -263,6 +345,7 @@ export function SocialNetworksStudio() {
       return false
     } finally {
       setAccountsLoading(false)
+      setAccountsLoadedOnce(true)
     }
   }
 
@@ -292,6 +375,27 @@ export function SocialNetworksStudio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setupAuthed, suggestedUnitKey, setup])
 
+  useEffect(() => {
+    if (!setup || setupAuthed !== true) return
+    if (scopeUnitsWasSaved) return
+
+    const envUnits = Array.isArray(setup?.socialDefaults?.defaultUnitsFromEnv) ? setup!.socialDefaults!.defaultUnitsFromEnv! : []
+    const envCleaned = envUnits
+      .map((u) => String(u || '').trim().toUpperCase())
+      .filter((u) => u && u !== 'NULL')
+      .filter((u) => u === 'BSS' || u === 'NH')
+
+    const next = suggestedUnitKey ? [suggestedUnitKey] : envCleaned.length ? envCleaned : ['BSS', 'NH']
+    setScopeUnitsPersist(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setupAuthed, setup, suggestedUnitKey])
+
+  useEffect(() => {
+    if (scopePlatformsWasSaved) return
+    if (!Array.isArray(scopePlatforms) || !scopePlatforms.length) setScopePlatformsPersist([...PLATFORM_ORDER])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const adminViaRole = !!setup?.adminPolicy?.userCanAdminWithoutToken
   const tokenConfigured = !!setup?.adminPolicy?.tokenConfigured
   const tokenRequiredForThisUser = !!setup?.adminPolicy?.tokenRequiredForThisUser
@@ -306,6 +410,21 @@ export function SocialNetworksStudio() {
     void refreshAccounts({ silent: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminViaRole, autoTriedAccounts, setupAuthed, tab])
+
+  const selectedScopeUnits = useMemo(() => {
+    const cleaned = (scopeUnits || [])
+      .map((u) => String(u || '').trim().toUpperCase())
+      .filter((u) => u && u !== 'NULL')
+      .filter((u) => u === 'BSS' || u === 'NH')
+    return [...new Set(cleaned)]
+  }, [scopeUnits])
+
+  const selectedScopePlatforms = useMemo(() => {
+    const cleaned = (scopePlatforms || []).filter((p) => PLATFORM_ORDER.includes(p))
+    return [...new Set(cleaned)]
+  }, [scopePlatforms])
+
+  const scopeValid = selectedScopeUnits.length > 0 && selectedScopePlatforms.length > 0
 
   const togglePlatform = (p: SocialPlatform) => {
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]))
@@ -452,24 +571,61 @@ export function SocialNetworksStudio() {
   const platformsLabel = (ps: SocialPlatform[]) => PLATFORM_ORDER.filter((p) => ps.includes(p)).join(', ')
 
   const requiredUnits = useMemo(() => {
+    if (selectedScopeUnits.length) return selectedScopeUnits
     const envUnits = Array.isArray(setup?.socialDefaults?.defaultUnitsFromEnv) ? setup!.socialDefaults!.defaultUnitsFromEnv! : []
-    const cleaned = envUnits
-      .map((u) => String(u || '').trim().toUpperCase())
-      .filter((u) => u && unitOptions.includes(u))
+    const cleaned = envUnits.map((u) => String(u || '').trim().toUpperCase()).filter((u) => u && unitOptions.includes(u))
     return cleaned.length ? cleaned : unitOptions
-  }, [setup?.socialDefaults?.defaultUnitsFromEnv, unitOptions])
+  }, [selectedScopeUnits, setup?.socialDefaults?.defaultUnitsFromEnv, unitOptions])
+
+  const requiredPlatforms = useMemo(() => {
+    return selectedScopePlatforms.length ? selectedScopePlatforms : [...PLATFORM_ORDER]
+  }, [selectedScopePlatforms])
 
   const missingAccounts = useMemo(() => {
     const existing = new Set(accounts.map((a) => `${a.unitKey}:${a.platform}`))
     const out: Array<{ unitKey: string; platform: SocialPlatform }> = []
     for (const u of requiredUnits) {
-      for (const p of PLATFORM_ORDER) {
+      for (const p of requiredPlatforms) {
         const key = `${u}:${p}`
         if (!existing.has(key)) out.push({ unitKey: u, platform: p })
       }
     }
     return out
-  }, [accounts, requiredUnits])
+  }, [accounts, requiredPlatforms, requiredUnits])
+
+  const infraOk = setupAuthed === true && !!setup?.r2?.bucketConfigured
+  const encryptionOk = setupAuthed === true && (!setup?.encryption?.required || !!setup?.encryption?.configured)
+  const adminOk = setupAuthed === true && (adminViaRole || (tokenConfigured && adminValidated))
+  const accountsOk = setupAuthed === true && adminOk && missingAccounts.length === 0
+  const unlockReady = scopeValid && infraOk && encryptionOk && adminOk && accountsOk
+
+  const unlockEvaluated = useMemo(() => {
+    if (setupAuthed === false) return true
+    if (setupAuthed !== true) return false
+    if (!scopeValid) return true
+    if (!infraOk) return true
+    if (!encryptionOk) return true
+    if (!adminOk) return true
+    return accountsLoadedOnce
+  }, [accountsLoadedOnce, adminOk, encryptionOk, infraOk, scopeValid, setupAuthed])
+
+  const tabsUnlocked = onboardingCompleted && unlockReady
+
+  useEffect(() => {
+    if (!onboardingCompleted) return
+    if (!unlockEvaluated) return
+    if (unlockReady) return
+    setOnboardingCompletedPersist(false)
+    setTab('planner')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onboardingCompleted, unlockEvaluated, unlockReady])
+
+  useEffect(() => {
+    if (tab === 'planner') return
+    if (tabsUnlocked) return
+    setTab('planner')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabsUnlocked])
 
   const visibleQueueGroups = useMemo(() => {
     if (!onlyMyUnit) return queueGroups
@@ -483,12 +639,30 @@ export function SocialNetworksStudio() {
         <p className="text-blue-300/80 text-sm">Instagram · Facebook · Threads — fila em R2 + publicação (Cloudflare)</p>
       </div>
 
-      <Tabs value={tab} onValueChange={(v: any) => setTab(v)} className="space-y-6">
+      <Tabs
+        value={tab}
+        onValueChange={(v: any) => {
+          const next = v as 'planner' | 'instagram' | 'facebook' | 'threads'
+          if (next !== 'planner' && !tabsUnlocked) {
+            setTab('planner')
+            toast.error('Finalize o Planner para liberar as abas.')
+            return
+          }
+          setTab(next)
+        }}
+        className="space-y-6"
+      >
         <TabsList className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <TabsTrigger value="planner">Planner</TabsTrigger>
-          <TabsTrigger value="instagram">Instagram</TabsTrigger>
-          <TabsTrigger value="facebook">Facebook</TabsTrigger>
-          <TabsTrigger value="threads">Threads</TabsTrigger>
+          <TabsTrigger value="instagram" disabled={!tabsUnlocked}>
+            Instagram{!tabsUnlocked ? ' (bloqueado)' : ''}
+          </TabsTrigger>
+          <TabsTrigger value="facebook" disabled={!tabsUnlocked}>
+            Facebook{!tabsUnlocked ? ' (bloqueado)' : ''}
+          </TabsTrigger>
+          <TabsTrigger value="threads" disabled={!tabsUnlocked}>
+            Threads{!tabsUnlocked ? ' (bloqueado)' : ''}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="planner" className="space-y-6">
@@ -574,6 +748,70 @@ export function SocialNetworksStudio() {
                   </Button>
                 </div>
               ) : null}
+
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-white font-medium">0) O que você quer habilitar?</div>
+                    <div className="text-xs text-blue-200/70">Esse escopo define quais contas/config serão exigidas para liberar as abas.</div>
+                  </div>
+                  {scopeValid ? (
+                    <Badge variant="outline" className="border-white/20 text-white">
+                      OK
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-red-200/50 text-red-100">
+                      Pendente
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <div className="text-xs text-blue-200/70">Unidades</div>
+                    <div className="flex flex-wrap gap-3">
+                      {unitOptions.map((u) => {
+                        const checked = selectedScopeUnits.includes(u)
+                        return (
+                          <label key={u} className="flex items-center gap-2 text-sm text-blue-100/90">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(v) => {
+                                const next = v ? [...new Set([...selectedScopeUnits, u])] : selectedScopeUnits.filter((x) => x !== u)
+                                setScopeUnitsPersist(next)
+                              }}
+                            />
+                            <span className="font-mono">{u}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-xs text-blue-200/70">Redes</div>
+                    <div className="flex flex-wrap gap-3">
+                      {PLATFORM_ORDER.map((p) => {
+                        const checked = selectedScopePlatforms.includes(p)
+                        return (
+                          <label key={p} className="flex items-center gap-2 text-sm text-blue-100/90">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(v) => {
+                                const next = v ? [...new Set([...selectedScopePlatforms, p])] : selectedScopePlatforms.filter((x) => x !== p)
+                                setScopePlatformsPersist(next)
+                              }}
+                            />
+                            <span className="font-mono">{p}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {!scopeValid ? <div className="text-xs text-red-200">Selecione pelo menos 1 unidade e 1 rede.</div> : null}
+              </div>
 
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -861,6 +1099,52 @@ export function SocialNetworksStudio() {
                 ) : (
                   <div className="text-xs text-blue-200/70">Sem dados carregados.</div>
                 )}
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-white font-medium">5) Finalizar</div>
+                    <div className="text-xs text-blue-200/70">Libera as abas Instagram/Facebook/Threads quando tudo estiver OK para o escopo acima.</div>
+                  </div>
+                  {tabsUnlocked ? (
+                    <Badge variant="outline" className="border-white/20 text-white">
+                      Abas liberadas
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-white/20 text-white">
+                      Bloqueado
+                    </Badge>
+                  )}
+                </div>
+
+                {missingAccounts.length ? (
+                  <div className="text-xs text-blue-200/70">
+                    Faltam {missingAccounts.length} conta(s):{' '}
+                    <span className="font-mono">
+                      {missingAccounts
+                        .slice(0, 6)
+                        .map((m) => `${m.unitKey}/${m.platform}`)
+                        .join(', ')}
+                      {missingAccounts.length > 6 ? '…' : ''}
+                    </span>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    onClick={() => {
+                      if (!unlockReady) return
+                      setOnboardingCompletedPersist(true)
+                      toast.success('Planner finalizado. Abas liberadas.')
+                    }}
+                    disabled={!unlockReady}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+                  >
+                    Finalizar e liberar abas
+                  </Button>
+                  {!unlockReady ? <div className="text-xs text-blue-200/70">Conclua os passos pendentes para liberar.</div> : null}
+                </div>
               </div>
             </CardContent>
           </Card>
