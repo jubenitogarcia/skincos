@@ -584,8 +584,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [])
 
   const [notifications, setNotifications] = useKV<Notification[]>('notifications', [])
+  const notificationsWsUrl = (import.meta as any)?.env?.VITE_NOTIFICATIONS_WS_URL
+    ? String((import.meta as any).env.VITE_NOTIFICATIONS_WS_URL || '').trim()
+    : ''
   const webSocket = useWebSocket({
-    url: 'wss://api.crm-demo.com/ws',
+    url: notificationsWsUrl || undefined,
+    enabled: !!notificationsWsUrl,
     reconnectInterval: 3000,
     maxReconnectAttempts: 5,
     heartbeatInterval: 30000
@@ -597,6 +601,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   })
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return
     if (notifications.length === 0) {
       const demoNotifications: Notification[] = [
         {
@@ -663,6 +668,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [webSocket, setNotifications])
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return
     if (!webSocket.isConnected) return
 
     const simulateNotifications = () => {

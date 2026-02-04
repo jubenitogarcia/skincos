@@ -2813,6 +2813,43 @@ export function InsumosModule() {
 	    }
 	  }, [canUseApi, isAuthed, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
+  const postMutationRefreshTimerRef = React.useRef<number | null>(null)
+  const schedulePostMutationRefresh = React.useCallback(
+    (opts?: { overview?: boolean; insights?: boolean }) => {
+      const wantsOverview = opts?.overview !== false
+      const wantsInsights = opts?.insights !== false
+      if (!wantsOverview && !wantsInsights) return
+
+      if (postMutationRefreshTimerRef.current) {
+        window.clearTimeout(postMutationRefreshTimerRef.current)
+        postMutationRefreshTimerRef.current = null
+      }
+
+      postMutationRefreshTimerRef.current = window.setTimeout(() => {
+        const isOverviewVisible = (() => {
+          try {
+            const el = overviewSectionRef.current
+            if (!el) return true
+            const rect = el.getBoundingClientRect()
+            const vh = window.innerHeight || 0
+            if (!vh) return true
+            const topOk = rect.top < vh * 0.85
+            const bottomOk = rect.bottom > vh * 0.15
+            return topOk && bottomOk
+          } catch {
+            return true
+          }
+        })()
+
+        const tasks: Promise<any>[] = []
+        if (wantsOverview && overviewLoaded && isOverviewVisible) tasks.push(Promise.resolve(loadOverview()))
+        if (wantsInsights && insightsLoaded && isOverviewVisible) tasks.push(Promise.resolve(loadInsights()))
+        if (tasks.length) void Promise.allSettled(tasks)
+      }, 2500)
+    },
+    [insightsLoaded, loadInsights, loadOverview, overviewLoaded]
+  )
+
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
       if (!canUseApi || !isAuthed) return
@@ -2848,6 +2885,7 @@ export function InsumosModule() {
         }
 
         await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
+        schedulePostMutationRefresh({ overview: true, insights: true })
         return true
       } catch (e) {
         const code = (e as any)?.code
@@ -2901,6 +2939,7 @@ export function InsumosModule() {
       quickQuantidade,
       quickRegistro,
       refreshInsumos,
+      schedulePostMutationRefresh,
       unidade
     ]
   )
@@ -2935,7 +2974,8 @@ export function InsumosModule() {
       toast.success('Transferência registrada')
 
       // Refresh what the user is seeing (estoque + movimentações)
-      await Promise.allSettled([refreshInsumos(), loadMovimentacoes(), loadOverview()])
+      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
+      schedulePostMutationRefresh({ overview: true, insights: true })
       return true
     } catch (e) {
       const code = (e as any)?.code
@@ -2980,13 +3020,13 @@ export function InsumosModule() {
     isAuthed,
     quickLoteNeedsPick,
     loadMovimentacoes,
-    loadOverview,
     mutateJson,
     quickCodigo,
     quickObs,
     quickQuantidade,
     quickRegistro,
     refreshInsumos,
+    schedulePostMutationRefresh,
     transferFrom,
     transferTo
   ])
