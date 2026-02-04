@@ -1,5 +1,7 @@
 export type InsumosAuthUser = {
   id: string
+  username?: string
+  displayName?: string
   name?: string
   email?: string
   role?: string
@@ -27,12 +29,17 @@ export async function getInsumosUser(context: any): Promise<InsumosAuthUser | nu
 
   const data = await res.json().catch(() => null)
   const raw = data?.user || data?.usuario || data || null
-  const id = raw?.username || raw?.email || raw?.id
+  const username = raw?.username || undefined
+  const email = raw?.email || undefined
+  const id = username || email || raw?.id
   if (!id) return null
+  const displayName = raw?.displayName || raw?.name || raw?.username || raw?.email || undefined
   return {
     id: String(id),
-    name: raw?.displayName || raw?.name || raw?.username || raw?.email || undefined,
-    email: raw?.email || undefined,
+    username: username ? String(username) : undefined,
+    displayName: displayName ? String(displayName) : undefined,
+    name: displayName ? String(displayName) : undefined,
+    email: email ? String(email) : undefined,
     role: raw?.role || undefined,
     allowedUnits: Array.isArray(raw?.allowedUnits) ? raw.allowedUnits : undefined,
   }

@@ -83,6 +83,12 @@ export function getShareBucket(context: any): R2Bucket | null {
   return wrapBucketWithPrefix(bucket, prefix)
 }
 
+export function getShareBucketInfo(context: any): { bucketConfigured: boolean; effectiveKeyPrefix: string } {
+  const bucketConfigured = !!((context?.env?.SHARE_BUCKET as R2Bucket | undefined) || undefined)
+  const effectiveKeyPrefix = computeShareBucketPrefix(context)
+  return { bucketConfigured, effectiveKeyPrefix }
+}
+
 export async function putJson(bucket: R2Bucket, key: string, value: unknown) {
   await bucket.put(key, JSON.stringify(value), { httpMetadata: { contentType: 'application/json' } })
 }

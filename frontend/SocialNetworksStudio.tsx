@@ -7,12 +7,28 @@ import { Textarea } from '@/textarea'
 import { Label } from '@/label'
 import { Badge } from '@/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Checkbox } from '@/checkbox'
 import { toast } from 'sonner'
 import { InstagramStudioPro } from '@/InstagramStudioPro'
 import { ThreadsStudio } from '@/ThreadsStudio'
 import { csrfHeader } from '@/csrf'
 
 type SocialPlatform = 'instagram' | 'facebook' | 'threads'
+
+type SetupStatus = {
+  ok?: boolean
+  user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[] }
+  r2?: { bucketConfigured?: boolean; effectiveKeyPrefix?: string }
+  encryption?: { required?: boolean; configured?: boolean }
+  adminPolicy?: {
+    roleAllowlistConfigured?: boolean
+    emailAllowlistConfigured?: boolean
+    tokenConfigured?: boolean
+    userCanAdminWithoutToken?: boolean
+    tokenRequiredForThisUser?: boolean
+  }
+  socialDefaults?: { defaultUnitsFromEnv?: string[] }
+}
 
 type QueueGroup = {
   group: {
@@ -29,10 +45,58 @@ type QueueGroup = {
 
 const PLATFORM_ORDER: SocialPlatform[] = ['instagram', 'facebook', 'threads']
 
+function mapInsumosUnitToSocialUnitKey(unit: string): string | null {
+  const raw = String(unit || '').trim()
+  if (!raw) return null
+  const upper = raw.toUpperCase()
+  if (upper === 'BSS' || upper === 'NH') return upper
+  const lower = raw.toLowerCase()
+  if (lower === 'barra-shopping-sul') return 'BSS'
+  if (lower === 'novo-hamburgo') return 'NH'
+  return null
+}
+
 export function SocialNetworksStudio() {
   const [tab, setTab] = useState<'planner' | 'instagram' | 'facebook' | 'threads'>('planner')
 
-  const [unitKey, setUnitKey] = useState('BSS')
+  const SOCIAL_UNIT_KEY_STORAGE = 'social.unitKey'
+  const SOCIAL_ONLY_MY_UNIT_STORAGE = 'social.onlyMyUnit'
+
+  const [unitKey, setUnitKey] = useState(() => {
+    try {
+      return window.localStorage.getItem(SOCIAL_UNIT_KEY_STORAGE) || 'BSS'
+    } catch {
+      return 'BSS'
+    }
+  })
+  const [unitKeyWasSaved] = useState(() => {
+    try {
+      return !!window.localStorage.getItem(SOCIAL_UNIT_KEY_STORAGE)
+    } catch {
+      return false
+    }
+  })
+  const setUnitKeyPersist = (next: string) => {
+    setUnitKey(next)
+    try {
+      window.localStorage.setItem(SOCIAL_UNIT_KEY_STORAGE, next)
+    } catch {}
+  }
+
+  const [onlyMyUnit, setOnlyMyUnit] = useState(() => {
+    try {
+      return window.localStorage.getItem(SOCIAL_ONLY_MY_UNIT_STORAGE) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const setOnlyMyUnitPersist = (next: boolean) => {
+    setOnlyMyUnit(next)
+    try {
+      window.localStorage.setItem(SOCIAL_ONLY_MY_UNIT_STORAGE, String(next))
+    } catch {}
+  }
+
   const [platforms, setPlatforms] = useState<SocialPlatform[]>(['instagram', 'facebook', 'threads'])
   const [scheduledAtLocal, setScheduledAtLocal] = useState<string>('')
   const [files, setFiles] = useState<File[]>([])
@@ -55,6 +119,15 @@ export function SocialNetworksStudio() {
   const [queueJobIds, setQueueJobIds] = useState<Record<string, string>>({})
   const [queueJobStatus, setQueueJobStatus] = useState<Record<string, string>>({})
 
+  const [setupLoading, setSetupLoading] = useState(false)
+  const [setup, setSetup] = useState<SetupStatus | null>(null)
+  const [setupAuthed, setSetupAuthed] = useState<boolean | null>(null)
+  const [setupError, setSetupError] = useState<string | null>(null)
+
+  const [metricsLoading, setMetricsLoading] = useState(false)
+  const [lastJobsRun, setLastJobsRun] = useState<any | null>(null)
+  const [lastJobsRunError, setLastJobsRunError] = useState<string | null>(null)
+
   const [adminToken, setAdminToken] = useState<string>(() => {
     try {
       return sessionStorage.getItem('social.adminToken') || ''
@@ -62,16 +135,54 @@ export function SocialNetworksStudio() {
       return ''
     }
   })
+  const [adminValidated, setAdminValidated] = useState(false)
   const [accountsLoading, setAccountsLoading] = useState(false)
-  const [accounts, setAccounts] = useState<Array<{ unitKey: string; platform: SocialPlatform; accountId: string; apiVersion?: string }>>([])
+  const [accounts, setAccounts] = useState<
+    Array<{ unitKey: string; platform: SocialPlatform; accountId: string; apiVersion?: string; apiBase?: string; updatedAt?: string }>
+  >([])
+  const [autoTriedAccounts, setAutoTriedAccounts] = useState(false)
 
-  const [accountUnit, setAccountUnit] = useState('BSS')
+  const [accountUnit, setAccountUnit] = useState(() => {
+    try {
+      return window.localStorage.getItem(SOCIAL_UNIT_KEY_STORAGE) || 'BSS'
+    } catch {
+      return 'BSS'
+    }
+  })
   const [accountPlatform, setAccountPlatform] = useState<SocialPlatform>('instagram')
   const [accountId, setAccountId] = useState('')
   const [accountToken, setAccountToken] = useState('')
   const [accountApiVersion, setAccountApiVersion] = useState('v20.0')
 
   const unitOptions = useMemo(() => ['BSS', 'NH'], [])
+
+  const refreshSetup = async (opts: { silent?: boolean } = {}) => {
+    setSetupLoading(true)
+    try {
+      const res = await fetch('/api/social/setup/status', { credentials: 'include' })
+      if (res.status === 401) {
+        setSetupAuthed(false)
+        setSetup(null)
+        setSetupError('Faça login no módulo Insumos para usar as integrações.')
+        return false
+      }
+      const data = (await res.json().catch(() => null)) as any
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      setSetupAuthed(true)
+      setSetup((data || null) as SetupStatus)
+      setSetupError(null)
+      return true
+    } catch (e: any) {
+      setSetupAuthed(null)
+      setSetup(null)
+      const msg = e?.message || 'Falha ao carregar status de configuração'
+      setSetupError(msg)
+      if (!opts.silent) toast.error(msg)
+      return false
+    } finally {
+      setSetupLoading(false)
+    }
+  }
 
   const refreshQueue = async (dk = dateKey) => {
     setQueueLoading(true)
@@ -85,6 +196,31 @@ export function SocialNetworksStudio() {
       setQueueGroups([])
     } finally {
       setQueueLoading(false)
+    }
+  }
+
+  const refreshLastJobsRun = async (opts: { silent?: boolean } = {}) => {
+    setMetricsLoading(true)
+    setLastJobsRunError(null)
+    try {
+      const res = await fetch('/api/social/metrics/last-jobs-run', { credentials: 'include' })
+      const data = (await res.json().catch(() => null)) as any
+      if (res.status === 404) {
+        setLastJobsRun(null)
+        setLastJobsRunError(data?.hint || 'Métricas não encontradas.')
+        return false
+      }
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      setLastJobsRun(data?.metrics || null)
+      return true
+    } catch (e: any) {
+      const msg = e?.message || 'Falha ao carregar métricas'
+      setLastJobsRun(null)
+      setLastJobsRunError(msg)
+      if (!opts.silent) toast.error(msg)
+      return false
+    } finally {
+      setMetricsLoading(false)
     }
   }
 
@@ -105,7 +241,7 @@ export function SocialNetworksStudio() {
     }
   }
 
-  const refreshAccounts = async () => {
+  const refreshAccounts = async (opts: { silent?: boolean; markValidated?: boolean } = {}) => {
     setAccountsLoading(true)
     try {
       const headers: Record<string, string> = {}
@@ -117,9 +253,14 @@ export function SocialNetworksStudio() {
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       setAccounts((data?.accounts || []) as any)
+      if (opts.markValidated) setAdminValidated(true)
+      return true
     } catch (e: any) {
-      toast.error(e?.message || 'Falha ao carregar contas')
+      const msg = e?.message || 'Falha ao carregar contas'
+      if (!opts.silent) toast.error(msg)
       setAccounts([])
+      if (opts.markValidated) setAdminValidated(false)
+      return false
     } finally {
       setAccountsLoading(false)
     }
@@ -128,8 +269,43 @@ export function SocialNetworksStudio() {
   useEffect(() => {
     if (tab !== 'planner') return
     void refreshQueue()
+    void refreshSetup({ silent: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
+
+  const suggestedUnitKey = useMemo(() => {
+    const allowed = Array.isArray(setup?.user?.allowedUnits) ? setup!.user!.allowedUnits!.filter(Boolean) : []
+    const mapped = [...new Set(allowed.map(mapInsumosUnitToSocialUnitKey).filter(Boolean) as string[])]
+    return mapped.length === 1 ? mapped[0] : null
+  }, [setup?.user?.allowedUnits])
+
+  useEffect(() => {
+    if (!setup || setupAuthed !== true) return
+    if (unitKeyWasSaved) return
+
+    const envDefault = Array.isArray(setup?.socialDefaults?.defaultUnitsFromEnv)
+      ? (setup!.socialDefaults!.defaultUnitsFromEnv!.map(String).map((s) => s.trim()).filter(Boolean)[0] || '')
+      : ''
+
+    const next = suggestedUnitKey || envDefault || 'BSS'
+    if (next && next !== unitKey) setUnitKeyPersist(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setupAuthed, suggestedUnitKey, setup])
+
+  const adminViaRole = !!setup?.adminPolicy?.userCanAdminWithoutToken
+  const tokenConfigured = !!setup?.adminPolicy?.tokenConfigured
+  const tokenRequiredForThisUser = !!setup?.adminPolicy?.tokenRequiredForThisUser
+  const adminReady = adminViaRole || adminValidated
+
+  useEffect(() => {
+    if (tab !== 'planner') return
+    if (!setup || setupAuthed !== true) return
+    if (!adminViaRole) return
+    if (autoTriedAccounts) return
+    setAutoTriedAccounts(true)
+    void refreshAccounts({ silent: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminViaRole, autoTriedAccounts, setupAuthed, tab])
 
   const togglePlatform = (p: SocialPlatform) => {
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]))
@@ -200,6 +376,34 @@ export function SocialNetworksStudio() {
     }
   }
 
+  const deleteAccount = async (u: string, p: SocialPlatform) => {
+    if (!confirm(`Remover conta ${u}/${p}?`)) return
+    try {
+      const headers: Record<string, string> = { ...csrfHeader() }
+      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
+      const res = await fetch(`/api/social/admin/accounts?unitKey=${encodeURIComponent(u)}&platform=${encodeURIComponent(p)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers,
+      })
+      const data = (await res.json().catch(() => null)) as any
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      toast.success('Conta removida')
+      await refreshAccounts({ silent: true })
+    } catch (e: any) {
+      toast.error(e?.message || 'Falha ao remover conta')
+    }
+  }
+
+  const copyText = async (text: string, label = 'Copiado') => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(label)
+    } catch {
+      toast.error('Falha ao copiar')
+    }
+  }
+
   const publishNow = async (g: QueueGroup, force = false) => {
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json', ...csrfHeader() }
@@ -247,6 +451,31 @@ export function SocialNetworksStudio() {
   }
   const platformsLabel = (ps: SocialPlatform[]) => PLATFORM_ORDER.filter((p) => ps.includes(p)).join(', ')
 
+  const requiredUnits = useMemo(() => {
+    const envUnits = Array.isArray(setup?.socialDefaults?.defaultUnitsFromEnv) ? setup!.socialDefaults!.defaultUnitsFromEnv! : []
+    const cleaned = envUnits
+      .map((u) => String(u || '').trim().toUpperCase())
+      .filter((u) => u && unitOptions.includes(u))
+    return cleaned.length ? cleaned : unitOptions
+  }, [setup?.socialDefaults?.defaultUnitsFromEnv, unitOptions])
+
+  const missingAccounts = useMemo(() => {
+    const existing = new Set(accounts.map((a) => `${a.unitKey}:${a.platform}`))
+    const out: Array<{ unitKey: string; platform: SocialPlatform }> = []
+    for (const u of requiredUnits) {
+      for (const p of PLATFORM_ORDER) {
+        const key = `${u}:${p}`
+        if (!existing.has(key)) out.push({ unitKey: u, platform: p })
+      }
+    }
+    return out
+  }, [accounts, requiredUnits])
+
+  const visibleQueueGroups = useMemo(() => {
+    if (!onlyMyUnit) return queueGroups
+    return queueGroups.filter((g) => Array.isArray(g.group?.unitKeys) && g.group.unitKeys.includes(unitKey))
+  }, [onlyMyUnit, queueGroups, unitKey])
+
   return (
     <div className="space-y-6">
       <div>
@@ -265,84 +494,373 @@ export function SocialNetworksStudio() {
         <TabsContent value="planner" className="space-y-6">
           <Card className="glass-morphism border-white/20">
             <CardHeader>
-              <CardTitle className="text-white">Admin</CardTitle>
+              <CardTitle className="text-white">Configuração do módulo (primeiro acesso)</CardTitle>
               <CardDescription className="text-blue-200/70">
-                Token admin (header <span className="font-mono">x-social-admin-token</span>) ou role allowlist (
-                <span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span>) para configurar contas e publicar.
+                Checklist para habilitar “Redes Sociais” com seus dados (login, permissões, contas e processamento).
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-2">
-                <Label className="text-blue-200">SOCIAL_ADMIN_TOKEN</Label>
-                <Input
-                  value={adminToken}
-                  onChange={(e) => saveAdminToken(e.target.value)}
-                  placeholder="Cole aqui"
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => refreshSetup()}
+                  disabled={setupLoading}
                   className="bg-white/[0.06] border-white/20 text-white"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => refreshAccounts()} disabled={accountsLoading} className="bg-white/[0.06] border-white/20 text-white">
-                  {accountsLoading ? 'Carregando…' : 'Carregar contas'}
+                >
+                  {setupLoading ? 'Carregando…' : 'Recarregar status'}
                 </Button>
+
+                {setupAuthed === true ? (
+                  <Badge variant="outline" className="border-white/20 text-white">
+                    Insumos: OK
+                  </Badge>
+                ) : setupAuthed === false ? (
+                  <Badge variant="outline" className="border-red-200/50 text-red-100">
+                    Insumos: login necessário
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-white/20 text-white">
+                    Insumos: …
+                  </Badge>
+                )}
+
+                {setup?.r2?.bucketConfigured ? (
+                  <Badge variant="outline" className="border-white/20 text-white">
+                    R2: OK
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-red-200/50 text-red-100">
+                    R2: não configurado
+                  </Badge>
+                )}
+
+                {setup?.encryption?.required ? (
+                  setup?.encryption?.configured ? (
+                    <Badge variant="outline" className="border-white/20 text-white">
+                      Crypto: OK (required)
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-red-200/50 text-red-100">
+                      Crypto: faltando (required)
+                    </Badge>
+                  )
+                ) : setup?.encryption?.configured ? (
+                  <Badge variant="outline" className="border-white/20 text-white">
+                    Crypto: OK
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-white/20 text-white">
+                    Crypto: opcional
+                  </Badge>
+                )}
+
                 <Badge variant="outline" className="border-white/20 text-white">
-                  {accounts.length} conta(s)
+                  Prefix: <span className="font-mono">{setup?.r2?.effectiveKeyPrefix || '(prod)'}</span>
                 </Badge>
               </div>
 
-              <div className="grid md:grid-cols-5 gap-3">
-                <div className="space-y-2">
-                  <Label className="text-blue-200">Unidade</Label>
-                  <Select value={accountUnit} onValueChange={(v) => setAccountUnit(v)}>
-                    <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unitOptions.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {u}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-blue-200">Plataforma</Label>
-                  <Select value={accountPlatform} onValueChange={(v: any) => setAccountPlatform(v)}>
-                    <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PLATFORM_ORDER.map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {p}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label className="text-blue-200">Account ID</Label>
-                  <Input value={accountId} onChange={(e) => setAccountId(e.target.value)} className="bg-white/[0.06] border-white/20 text-white" />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-blue-200">API Version</Label>
-                  <Input
-                    value={accountApiVersion}
-                    onChange={(e) => setAccountApiVersion(e.target.value)}
-                    placeholder="v20.0 / v1.0"
+              {setupError ? <div className="text-sm text-red-200">{setupError}</div> : null}
+
+              {suggestedUnitKey && suggestedUnitKey !== unitKey ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-blue-200/80">
+                  Detectamos sua unidade provável: <span className="font-mono">{suggestedUnitKey}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setUnitKeyPersist(suggestedUnitKey)}
                     className="bg-white/[0.06] border-white/20 text-white"
-                  />
+                  >
+                    Usar
+                  </Button>
+                </div>
+              ) : null}
+
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-white font-medium">1) Login (Insumos)</div>
+                    <div className="text-xs text-blue-200/70">A aba usa a sessão do Insumos (cookies + CSRF).</div>
+                  </div>
+                  {setupAuthed === true ? (
+                    <Badge variant="outline" className="border-white/20 text-white">
+                      OK
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-red-200/50 text-red-100">
+                      Pendente
+                    </Badge>
+                  )}
+                </div>
+                {setupAuthed === false ? (
+                  <div className="text-sm text-blue-200/80">
+                    Faça login no módulo <span className="font-semibold">Insumos</span> e volte aqui para recarregar o status.
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-white font-medium">2) Permissão Admin Social</div>
+                    <div className="text-xs text-blue-200/70">
+                      Admin por role (<span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span>) / email (<span className="font-mono">SOCIAL_ADMIN_EMAIL_ALLOWLIST</span>) / token (
+                      <span className="font-mono">x-social-admin-token</span>).
+                    </div>
+                  </div>
+                  {adminReady ? (
+                    <Badge variant="outline" className="border-white/20 text-white">
+                      OK
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-red-200/50 text-red-100">
+                      Pendente
+                    </Badge>
+                  )}
+                </div>
+
+                {adminViaRole ? (
+                  <div className="text-sm text-blue-200/80">
+                    Você já tem permissão via role allowlist (<span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span>). Token é opcional.
+                  </div>
+                ) : tokenConfigured ? (
+                  <div className="text-sm text-blue-200/80">
+                    Informe o token admin para validar e habilitar ações de admin nesta aba.
+                  </div>
+                ) : (
+                  <div className="text-sm text-red-200">
+                    Admin não configurado no ambiente. Configure <span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span> ou <span className="font-mono">SOCIAL_ADMIN_TOKEN</span>.
+                  </div>
+                )}
+
+                <div className="grid md:grid-cols-3 gap-3">
+                  <div className="md:col-span-2 space-y-2">
+                    <Label className="text-blue-200">SOCIAL_ADMIN_TOKEN</Label>
+                    <Input
+                      value={adminToken}
+                      onChange={(e) => saveAdminToken(e.target.value)}
+                      placeholder="Cole aqui (se necessário)"
+                      className="bg-white/[0.06] border-white/20 text-white"
+                    />
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (adminViaRole) return refreshAccounts({ silent: false })
+                        if (!adminToken.trim()) return toast.error('Informe o token admin.')
+                        return refreshAccounts({ silent: false, markValidated: true })
+                      }}
+                      disabled={accountsLoading || setupAuthed !== true || (!adminViaRole && tokenRequiredForThisUser && !adminToken.trim())}
+                      className="bg-white/[0.06] border-white/20 text-white"
+                    >
+                      {accountsLoading ? 'Validando…' : (adminViaRole ? 'Carregar contas' : 'Validar token')}
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <div className="grid gap-2">
-                <Label className="text-blue-200">Access Token</Label>
-                <Input value={accountToken} onChange={(e) => setAccountToken(e.target.value)} className="bg-white/[0.06] border-white/20 text-white" />
+
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-white font-medium">3) Contas configuradas</div>
+                    <div className="text-xs text-blue-200/70">Configure accountId + accessToken por unidade e plataforma.</div>
+                  </div>
+                  <Badge variant="outline" className="border-white/20 text-white">
+                    {accounts.length} conta(s)
+                  </Badge>
+                </div>
+
+                {adminReady ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => refreshAccounts()}
+                      disabled={accountsLoading}
+                      className="bg-white/[0.06] border-white/20 text-white"
+                    >
+                      {accountsLoading ? 'Carregando…' : 'Atualizar contas'}
+                    </Button>
+                    {missingAccounts.length ? (
+                      <Badge variant="outline" className="border-yellow-200/40 text-yellow-100">
+                        Faltando: {missingAccounts.length}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-white/20 text-white">
+                        Completo
+                      </Badge>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-blue-200/70">Valide a permissão de admin para carregar e configurar contas.</div>
+                )}
+
+                {adminReady && accounts.length ? (
+                  <div className="rounded-md border border-white/10 bg-white/[0.03] overflow-hidden">
+                    <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs text-blue-200/70 border-b border-white/10">
+                      <div className="col-span-2">Unidade</div>
+                      <div className="col-span-2">Plataforma</div>
+                      <div className="col-span-5">Account ID</div>
+                      <div className="col-span-2">API</div>
+                      <div className="col-span-1 text-right">Ações</div>
+                    </div>
+                    {accounts.map((a) => (
+                      <div key={`${a.unitKey}:${a.platform}`} className="grid grid-cols-12 gap-2 px-3 py-2 text-xs text-white border-b border-white/5">
+                        <div className="col-span-2 font-mono">{a.unitKey}</div>
+                        <div className="col-span-2">{a.platform}</div>
+                        <div className="col-span-5 font-mono truncate" title={a.accountId}>
+                          {a.accountId}
+                        </div>
+                        <div className="col-span-2 font-mono">{a.apiVersion || '—'}</div>
+                        <div className="col-span-1 flex justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => copyText(String(a.accountId || ''), 'Account ID copiado')}
+                            className="bg-white/[0.06] border-white/20 text-white"
+                          >
+                            Copiar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setAccountUnit(a.unitKey)
+                              setAccountPlatform(a.platform)
+                              setAccountId(a.accountId)
+                              setAccountApiVersion(a.apiVersion || 'v20.0')
+                              setAccountToken('')
+                              toast.message('Conta carregada no formulário. Cole um novo token para atualizar.')
+                            }}
+                            className="bg-white/[0.06] border-white/20 text-white"
+                          >
+                            Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void deleteAccount(a.unitKey, a.platform)}
+                            className="bg-white/[0.06] border-white/20 text-white"
+                          >
+                            Remover
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {adminReady && missingAccounts.length ? (
+                  <div className="space-y-2">
+                    <div className="text-xs text-blue-200/70">Faltando configuração (clique para pré-preencher o formulário):</div>
+                    <div className="flex flex-wrap gap-2">
+                      {missingAccounts.slice(0, 20).map((m) => (
+                        <Button
+                          key={`${m.unitKey}:${m.platform}`}
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setAccountUnit(m.unitKey)
+                            setAccountPlatform(m.platform)
+                            toast.message(`Preenchido: ${m.unitKey}/${m.platform}`)
+                          }}
+                          className="bg-white/[0.06] border-white/20 text-white"
+                        >
+                          {m.unitKey}/{m.platform}
+                        </Button>
+                      ))}
+                      {missingAccounts.length > 20 ? <Badge variant="outline" className="border-white/20 text-white">+{missingAccounts.length - 20}</Badge> : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid md:grid-cols-5 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-blue-200">Unidade</Label>
+                    <Select value={accountUnit} onValueChange={(v) => setAccountUnit(v)}>
+                      <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {unitOptions.map((u) => (
+                          <SelectItem key={u} value={u}>
+                            {u}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-blue-200">Plataforma</Label>
+                    <Select value={accountPlatform} onValueChange={(v: any) => setAccountPlatform(v)}>
+                      <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PLATFORM_ORDER.map((p) => (
+                          <SelectItem key={p} value={p}>
+                            {p}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="text-blue-200">Account ID</Label>
+                    <Input value={accountId} onChange={(e) => setAccountId(e.target.value)} className="bg-white/[0.06] border-white/20 text-white" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-blue-200">API Version</Label>
+                    <Input
+                      value={accountApiVersion}
+                      onChange={(e) => setAccountApiVersion(e.target.value)}
+                      placeholder="v20.0 / v1.0"
+                      className="bg-white/[0.06] border-white/20 text-white"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-blue-200">Access Token</Label>
+                  <Input value={accountToken} onChange={(e) => setAccountToken(e.target.value)} className="bg-white/[0.06] border-white/20 text-white" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => saveAccount()}
+                    disabled={!adminReady}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+                  >
+                    Salvar conta
+                  </Button>
+                  {!adminReady ? <div className="text-xs text-blue-200/70">Valide o admin para salvar.</div> : null}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button onClick={() => saveAccount()} className="bg-emerald-600 hover:bg-emerald-500 text-white">
-                  Salvar conta
-                </Button>
+
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-white font-medium">4) Processamento (Worker)</div>
+                    <div className="text-xs text-blue-200/70">Confirma se o worker está processando jobs.</div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => refreshLastJobsRun()}
+                    disabled={metricsLoading || setupAuthed !== true}
+                    className="bg-white/[0.06] border-white/20 text-white"
+                  >
+                    {metricsLoading ? 'Carregando…' : 'Carregar métricas'}
+                  </Button>
+                </div>
+                {lastJobsRun ? (
+                  <div className="text-xs text-blue-200/80">
+                    processed: <span className="font-mono">{String(lastJobsRun.processed ?? '')}</span> · ok:{' '}
+                    <span className="font-mono">{String(lastJobsRun.okCount ?? '')}</span> · fail:{' '}
+                    <span className="font-mono">{String(lastJobsRun.failCount ?? '')}</span> · finishedAt:{' '}
+                    <span className="font-mono">{String(lastJobsRun.finishedAt ?? '')}</span>
+                  </div>
+                ) : lastJobsRunError ? (
+                  <div className="text-xs text-blue-200/70">{lastJobsRunError}</div>
+                ) : (
+                  <div className="text-xs text-blue-200/70">Sem dados carregados.</div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -356,7 +874,7 @@ export function SocialNetworksStudio() {
               <div className="grid md:grid-cols-3 gap-3">
                 <div className="space-y-2">
                   <Label className="text-blue-200">Unidade</Label>
-                  <Select value={unitKey} onValueChange={(v) => setUnitKey(v)}>
+                  <Select value={unitKey} onValueChange={(v) => setUnitKeyPersist(v)}>
                     <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
                       <SelectValue />
                     </SelectTrigger>
@@ -438,16 +956,20 @@ export function SocialNetworksStudio() {
                   <Label className="text-blue-200">dateKey</Label>
                   <Input value={dateKey} onChange={(e) => setDateKey(e.target.value)} placeholder="ddMMyy" className="bg-white/[0.06] border-white/20 text-white w-40" />
                 </div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Checkbox checked={onlyMyUnit} onCheckedChange={(v) => setOnlyMyUnitPersist(!!v)} />
+                  <div className="text-sm text-blue-200/80">Somente minha unidade ({unitKey})</div>
+                </div>
                 <Button variant="outline" onClick={() => refreshQueue()} disabled={queueLoading} className="bg-white/[0.06] border-white/20 text-white">
                   {queueLoading ? 'Carregando…' : 'Carregar'}
                 </Button>
                 <Badge variant="outline" className="border-white/20 text-white">
-                  {queueGroups.length} grupo(s)
+                  {visibleQueueGroups.length} grupo(s)
                 </Badge>
               </div>
 
               <div className="space-y-2">
-                {queueGroups.map((g) => (
+                {visibleQueueGroups.map((g) => (
                   <div key={`${g.group.dateKey}:${g.group.groupKey}`} className="rounded-lg border border-white/10 bg-white/[0.04] p-3 flex flex-col gap-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-sm text-white">
@@ -477,7 +999,7 @@ export function SocialNetworksStudio() {
                         <Button
                           size="sm"
                           onClick={() => publishNow(g)}
-                          disabled={!adminToken.trim()}
+                          disabled={!adminReady}
                           className="bg-blue-600 hover:bg-blue-500 text-white"
                         >
                           Publicar agora
@@ -488,6 +1010,7 @@ export function SocialNetworksStudio() {
                             if (!confirm('Forçar reprocesso? Isso tenta publicar mesmo se já marcado como publicado.')) return
                             void publishNow(g, true)
                           }}
+                          disabled={!adminReady}
                           variant="outline"
                           className="bg-white/[0.06] border-white/20 text-white"
                         >
@@ -527,7 +1050,7 @@ export function SocialNetworksStudio() {
                     ) : null}
                   </div>
                 ))}
-                {!queueGroups.length ? <div className="text-sm text-blue-200/70">Nenhum grupo encontrado.</div> : null}
+                {!visibleQueueGroups.length ? <div className="text-sm text-blue-200/70">Nenhum grupo encontrado.</div> : null}
               </div>
             </CardContent>
           </Card>
