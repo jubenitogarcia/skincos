@@ -20,13 +20,7 @@ type SetupStatus = {
   user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[] }
   r2?: { bucketConfigured?: boolean; effectiveKeyPrefix?: string }
   encryption?: { required?: boolean; configured?: boolean }
-  adminPolicy?: {
-    roleAllowlistConfigured?: boolean
-    emailAllowlistConfigured?: boolean
-    tokenConfigured?: boolean
-    userCanAdminWithoutToken?: boolean
-    tokenRequiredForThisUser?: boolean
-  }
+  admin?: { isAdmin?: boolean; role?: string }
   socialDefaults?: { defaultUnitsFromEnv?: string[] }
 }
 
@@ -45,7 +39,7 @@ type QueueGroup = {
 
 const PLATFORM_ORDER: SocialPlatform[] = ['instagram', 'facebook', 'threads']
 
-function mapInsumosUnitToSocialUnitKey(unit: string): string | null {
+function mapUserUnitToSocialUnitKey(unit: string): string | null {
   const raw = String(unit || '').trim()
   if (!raw) return null
   const upper = raw.toUpperCase()
@@ -209,14 +203,6 @@ export function SocialNetworksStudio() {
   const [lastJobsRun, setLastJobsRun] = useState<any | null>(null)
   const [lastJobsRunError, setLastJobsRunError] = useState<string | null>(null)
 
-  const [adminToken, setAdminToken] = useState<string>(() => {
-    try {
-      return sessionStorage.getItem('social.adminToken') || ''
-    } catch {
-      return ''
-    }
-  })
-  const [adminValidated, setAdminValidated] = useState(false)
   const [accountsLoadedOnce, setAccountsLoadedOnce] = useState(false)
   const [accountsLoading, setAccountsLoading] = useState(false)
   const [accounts, setAccounts] = useState<
@@ -245,7 +231,7 @@ export function SocialNetworksStudio() {
       if (res.status === 401) {
         setSetupAuthed(false)
         setSetup(null)
-        setSetupError('Faça login no módulo Insumos para usar as integrações.')
+        setSetupError('Faça login no CRM para usar este módulo.')
         return false
       }
       const data = (await res.json().catch(() => null)) as any
@@ -323,25 +309,25 @@ export function SocialNetworksStudio() {
     }
   }
 
-  const refreshAccounts = async (opts: { silent?: boolean; markValidated?: boolean } = {}) => {
+  const refreshAccounts = async (opts: { silent?: boolean } = {}) => {
     setAccountsLoading(true)
     try {
-      const headers: Record<string, string> = {}
-      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch('/api/social/admin/accounts', {
         credentials: 'include',
-        headers,
       })
       const data = (await res.json().catch(() => null)) as any
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') {
+          throw new Error('Permissão insuficiente: somente ADMIN pode configurar este módulo.')
+        }
+        throw new Error(data?.error || `HTTP ${res.status}`)
+      }
       setAccounts((data?.accounts || []) as any)
-      if (opts.markValidated) setAdminValidated(true)
       return true
     } catch (e: any) {
       const msg = e?.message || 'Falha ao carregar contas'
       if (!opts.silent) toast.error(msg)
       setAccounts([])
-      if (opts.markValidated) setAdminValidated(false)
       return false
     } finally {
       setAccountsLoading(false)
@@ -358,7 +344,7 @@ export function SocialNetworksStudio() {
 
   const suggestedUnitKey = useMemo(() => {
     const allowed = Array.isArray(setup?.user?.allowedUnits) ? setup!.user!.allowedUnits!.filter(Boolean) : []
-    const mapped = [...new Set(allowed.map(mapInsumosUnitToSocialUnitKey).filter(Boolean) as string[])]
+    const mapped = [...new Set(allowed.map(mapUserUnitToSocialUnitKey).filter(Boolean) as string[])]
     return mapped.length === 1 ? mapped[0] : null
   }, [setup?.user?.allowedUnits])
 
@@ -396,20 +382,22 @@ export function SocialNetworksStudio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const adminViaRole = !!setup?.adminPolicy?.userCanAdminWithoutToken
-  const tokenConfigured = !!setup?.adminPolicy?.tokenConfigured
-  const tokenRequiredForThisUser = !!setup?.adminPolicy?.tokenRequiredForThisUser
-  const adminReady = adminViaRole || adminValidated
+  const adminReady = useMemo(() => {
+    if (setupAuthed !== true) return false
+    if (setup?.admin?.isAdmin === true) return true
+    const role = String(setup?.admin?.role || setup?.user?.role || '').trim().toUpperCase()
+    return role === 'ADMIN'
+  }, [setup?.admin?.isAdmin, setup?.admin?.role, setup?.user?.role, setupAuthed])
 
   useEffect(() => {
     if (tab !== 'planner') return
     if (!setup || setupAuthed !== true) return
-    if (!adminViaRole) return
+    if (!adminReady) return
     if (autoTriedAccounts) return
     setAutoTriedAccounts(true)
     void refreshAccounts({ silent: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminViaRole, autoTriedAccounts, setupAuthed, tab])
+  }, [adminReady, autoTriedAccounts, setupAuthed, tab])
 
   const selectedScopeUnits = useMemo(() => {
     const cleaned = (scopeUnits || [])
@@ -458,20 +446,12 @@ export function SocialNetworksStudio() {
     }
   }
 
-  const saveAdminToken = (v: string) => {
-    setAdminToken(v)
-    try {
-      sessionStorage.setItem('social.adminToken', v)
-    } catch {}
-  }
-
   const saveAccount = async () => {
     if (!accountUnit.trim() || !accountPlatform || !accountId.trim() || !accountToken.trim()) {
       return toast.error('Preencha unit/platform/accountId/accessToken.')
     }
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json', ...csrfHeader() }
-      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch('/api/social/admin/accounts', {
         method: 'POST',
         credentials: 'include',
@@ -499,7 +479,6 @@ export function SocialNetworksStudio() {
     if (!confirm(`Remover conta ${u}/${p}?`)) return
     try {
       const headers: Record<string, string> = { ...csrfHeader() }
-      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch(`/api/social/admin/accounts?unitKey=${encodeURIComponent(u)}&platform=${encodeURIComponent(p)}`, {
         method: 'DELETE',
         credentials: 'include',
@@ -526,7 +505,6 @@ export function SocialNetworksStudio() {
   const publishNow = async (g: QueueGroup, force = false) => {
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json', ...csrfHeader() }
-      if (adminToken.trim()) headers['x-social-admin-token'] = adminToken.trim()
       const res = await fetch('/api/social/publish', {
         method: 'POST',
         credentials: 'include',
@@ -595,7 +573,7 @@ export function SocialNetworksStudio() {
 
   const infraOk = setupAuthed === true && !!setup?.r2?.bucketConfigured
   const encryptionOk = setupAuthed === true && (!setup?.encryption?.required || !!setup?.encryption?.configured)
-  const adminOk = setupAuthed === true && (adminViaRole || (tokenConfigured && adminValidated))
+  const adminOk = adminReady
   const accountsOk = setupAuthed === true && adminOk && missingAccounts.length === 0
   const unlockReady = scopeValid && infraOk && encryptionOk && adminOk && accountsOk
 
@@ -686,15 +664,15 @@ export function SocialNetworksStudio() {
 
                 {setupAuthed === true ? (
                   <Badge variant="outline" className="border-white/20 text-white">
-                    Insumos: OK
+                    Sessão: OK
                   </Badge>
                 ) : setupAuthed === false ? (
                   <Badge variant="outline" className="border-red-200/50 text-red-100">
-                    Insumos: login necessário
+                    Sessão: login necessário
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="border-white/20 text-white">
-                    Insumos: …
+                    Sessão: …
                   </Badge>
                 )}
 
@@ -816,8 +794,8 @@ export function SocialNetworksStudio() {
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm text-white font-medium">1) Login (Insumos)</div>
-                    <div className="text-xs text-blue-200/70">A aba usa a sessão do Insumos (cookies + CSRF).</div>
+                    <div className="text-sm text-white font-medium">1) Login (CRM)</div>
+                    <div className="text-xs text-blue-200/70">A aba usa a sessão do CRM (cookies + CSRF).</div>
                   </div>
                   {setupAuthed === true ? (
                     <Badge variant="outline" className="border-white/20 text-white">
@@ -831,7 +809,7 @@ export function SocialNetworksStudio() {
                 </div>
                 {setupAuthed === false ? (
                   <div className="text-sm text-blue-200/80">
-                    Faça login no módulo <span className="font-semibold">Insumos</span> e volte aqui para recarregar o status.
+                    Faça login no <span className="font-semibold">CRM</span> e volte aqui para recarregar o status.
                   </div>
                 ) : null}
               </div>
@@ -839,11 +817,8 @@ export function SocialNetworksStudio() {
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm text-white font-medium">2) Permissão Admin Social</div>
-                    <div className="text-xs text-blue-200/70">
-                      Admin por role (<span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span>) / email (<span className="font-mono">SOCIAL_ADMIN_EMAIL_ALLOWLIST</span>) / token (
-                      <span className="font-mono">x-social-admin-token</span>).
-                    </div>
+                    <div className="text-sm text-white font-medium">2) Permissão de Admin</div>
+                    <div className="text-xs text-blue-200/70">Somente usuários com role global ADMIN podem configurar contas e publicar.</div>
                   </div>
                   {adminReady ? (
                     <Badge variant="outline" className="border-white/20 text-white">
@@ -855,46 +830,13 @@ export function SocialNetworksStudio() {
                     </Badge>
                   )}
                 </div>
-
-                {adminViaRole ? (
-                  <div className="text-sm text-blue-200/80">
-                    Você já tem permissão via role allowlist (<span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span>). Token é opcional.
-                  </div>
-                ) : tokenConfigured ? (
-                  <div className="text-sm text-blue-200/80">
-                    Informe o token admin para validar e habilitar ações de admin nesta aba.
-                  </div>
+                {setupAuthed !== true ? (
+                  <div className="text-sm text-blue-200/70">Faça login para validar permissões.</div>
+                ) : adminReady ? (
+                  <div className="text-sm text-blue-200/80">Você é ADMIN.</div>
                 ) : (
-                  <div className="text-sm text-red-200">
-                    Admin não configurado no ambiente. Configure <span className="font-mono">SOCIAL_ADMIN_ROLE_ALLOWLIST</span> ou <span className="font-mono">SOCIAL_ADMIN_TOKEN</span>.
-                  </div>
+                  <div className="text-sm text-red-200">Somente ADMIN pode configurar/publicar neste módulo.</div>
                 )}
-
-                <div className="grid md:grid-cols-3 gap-3">
-                  <div className="md:col-span-2 space-y-2">
-                    <Label className="text-blue-200">SOCIAL_ADMIN_TOKEN</Label>
-                    <Input
-                      value={adminToken}
-                      onChange={(e) => saveAdminToken(e.target.value)}
-                      placeholder="Cole aqui (se necessário)"
-                      className="bg-white/[0.06] border-white/20 text-white"
-                    />
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        if (adminViaRole) return refreshAccounts({ silent: false })
-                        if (!adminToken.trim()) return toast.error('Informe o token admin.')
-                        return refreshAccounts({ silent: false, markValidated: true })
-                      }}
-                      disabled={accountsLoading || setupAuthed !== true || (!adminViaRole && tokenRequiredForThisUser && !adminToken.trim())}
-                      className="bg-white/[0.06] border-white/20 text-white"
-                    >
-                      {accountsLoading ? 'Validando…' : (adminViaRole ? 'Carregar contas' : 'Validar token')}
-                    </Button>
-                  </div>
-                </div>
               </div>
 
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">

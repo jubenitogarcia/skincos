@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../_lib/insumosAuth'
+import { requireCrmUser } from '../../_lib/crmAuth'
 import { getShareBucket } from '../../_lib/r2'
 import { graphPost } from '../../_lib/instagramGraph'
 import { readConnectionDecrypted } from '../../_lib/instagramStore'
@@ -15,7 +15,7 @@ const json = (status: number, body: any) =>
 type PublishType = 'image' | 'carousel' | 'story'
 
 export async function onRequestPost(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
   const csrfRes = requireCsrfForMutations(context)
   if (csrfRes) return csrfRes

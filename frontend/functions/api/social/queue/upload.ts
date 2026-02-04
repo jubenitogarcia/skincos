@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../../_lib/insumosAuth'
+import { requireCrmUser } from '../../../_lib/crmAuth'
 import { getShareBucket, getJson, putJson } from '../../../_lib/r2'
 import { socialAssetFileKey, socialAssetMetaKey, socialQueueGroupKey } from '../../../_lib/socialKeys'
 import { groupKeyFromFilename, groupKeyFromMsBrt, normalizeIsoOrThrow, scheduledAtFromGroupKeyBrt, dateKeyFromMsBrt, dateKeyFromGroupKey } from '../../../_lib/socialTime'
@@ -35,7 +35,7 @@ const parsePlatforms = (raw: string): SocialPlatform[] => {
 }
 
 export async function onRequestPost(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
   const csrfRes = requireCsrfForMutations(context)
   if (csrfRes) return csrfRes
