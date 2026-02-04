@@ -20,6 +20,26 @@ Este documento cobre o módulo “Redes Sociais” (Instagram/Facebook/Threads) 
 4) **Resultados**
    - `GET /api/social/results?dateKey=...&groupKey=...` → resultado por unidade/plataforma.
 
+## Setup guiado (CRM)
+O Planner do módulo “Redes Sociais” possui um checklist de primeiro acesso que valida:
+- login (sessão/cookies do Insumos),
+- permissões de admin (role/email/token),
+- contas configuradas por unidade/plataforma,
+- (opcional) métricas do Worker.
+
+Endpoints usados pelo checklist:
+- `GET /api/social/setup/status` (retorna status de R2/prefix, criptografia, policy de admin e defaults)
+- `GET /api/social/metrics/last-jobs-run` (lê `social/metrics/last_jobs_run.json` no R2)
+
+## Unidades (personalização)
+O módulo Social usa chaves curtas de unidade (hoje: `BSS` e `NH`). Para personalização, a UI tenta mapear unidades vindas do Insumos:
+- `barra-shopping-sul` → `BSS`
+- `novo-hamburgo` → `NH`
+
+Preferências locais no browser:
+- `social.unitKey` (unidade padrão no Planner)
+- `social.onlyMyUnit` (filtro da fila)
+
 ## Layout no R2 (prefixos)
 > Observação: se `R2_KEY_PREFIX` estiver definido, **todos os caminhos abaixo** ficam sob esse prefixo.
 
