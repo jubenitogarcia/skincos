@@ -11,6 +11,7 @@ type Invite = {
   tokenHint?: string
   role?: string
   allowedUnits?: string[]
+  allowedModules?: string[]
   maxUses?: number
   usesCount?: number
   expiresAt?: string | null
@@ -22,7 +23,7 @@ type Invite = {
 
 type InsumosMeResponse = {
   success?: boolean
-  user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[] }
+  user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[]; allowedModules?: string[] }
   csrfToken?: string
 }
 
@@ -61,7 +62,17 @@ async function insumosApiJson<T>(
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
 
-  const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
+  let url = ''
+  if (path.startsWith('/api/')) {
+    url = path
+  } else if (path === '/health' || path.startsWith('/health/')) {
+    url = `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
+  } else if (path === '/auth' || path.startsWith('/auth/')) {
+    const rest = path.slice('/auth'.length) || '/'
+    url = `/api/auth${rest.startsWith('/') ? '' : '/'}${rest}`
+  } else {
+    url = `/api/crm${path.startsWith('/') ? '' : '/'}${path}`
+  }
   const res = await fetch(url, {
     method,
     headers,
@@ -163,6 +174,7 @@ export function UsersModule() {
   const [inviteMaxUses, setInviteMaxUses] = React.useState<string>('1')
   const [inviteExpiresInDays, setInviteExpiresInDays] = React.useState<string>('30')
   const [inviteAllowedUnits, setInviteAllowedUnits] = React.useState<string>('')
+  const [inviteAllowedModules, setInviteAllowedModules] = React.useState<string>('')
   const [inviteNote, setInviteNote] = React.useState<string>('')
   const [inviteCreateLoading, setInviteCreateLoading] = React.useState(false)
   const [inviteTokenOnce, setInviteTokenOnce] = React.useState<string | null>(null)
@@ -202,6 +214,7 @@ export function UsersModule() {
       if (cur.trim()) return cur
       return allowedUnits.length ? allowedUnits.join(',') : ''
     })
+    setInviteAllowedModules((cur) => (cur.trim() ? cur : ''))
     void loadInvites()
   }, [allowedUnits.join('|'), inviteOpen, inviteRoleOptions.join('|'), loadInvites])
 
@@ -214,13 +227,14 @@ export function UsersModule() {
       const maxUses = Math.max(1, Math.min(50, parseInt(inviteMaxUses, 10) || 1))
       const expiresInDays = Math.max(1, Math.min(365, parseInt(inviteExpiresInDays, 10) || 30))
       const allowed = parseUnitsInput(inviteAllowedUnits)
+      const allowedModules = parseUnitsInput(inviteAllowedModules)
       const out = await insumosApiJson<{ success?: boolean; data?: Invite; token?: string }>(
         `/admin/invites?${new URLSearchParams({ unidade }).toString()}`,
         {
           method: 'POST',
           csrfToken,
           retryOnCsrf: refreshCsrf,
-          body: { role: inviteRole, maxUses, expiresInDays, allowedUnits: allowed, note: inviteNote }
+          body: { role: inviteRole, maxUses, expiresInDays, allowedUnits: allowed, allowedModules, note: inviteNote }
         }
       )
       const token = out?.token ? String(out.token) : null
@@ -241,6 +255,7 @@ export function UsersModule() {
   }, [
     canManageInvites,
     csrfToken,
+    inviteAllowedModules,
     inviteAllowedUnits,
     inviteExpiresInDays,
     inviteMaxUses,
@@ -353,25 +368,34 @@ export function UsersModule() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Expira em (dias)</div>
-                  <Input value={inviteExpiresInDays} onChange={(e) => setInviteExpiresInDays(e.target.value)} type="number" min={1} max={365} />
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Unidades (opcional)</div>
-                  <Input
-                    value={inviteAllowedUnits}
-                    onChange={(e) => setInviteAllowedUnits(e.target.value)}
-                    placeholder="ex: novo-hamburgo, barra-shopping-sul"
-                  />
-                </div>
-              </div>
+	              <div className="grid grid-cols-2 gap-2">
+	                <div>
+	                  <div className="text-xs text-blue-200/70 mb-1">Expira em (dias)</div>
+	                  <Input value={inviteExpiresInDays} onChange={(e) => setInviteExpiresInDays(e.target.value)} type="number" min={1} max={365} />
+	                </div>
+	                <div>
+	                  <div className="text-xs text-blue-200/70 mb-1">Unidades (opcional)</div>
+	                  <Input
+	                    value={inviteAllowedUnits}
+	                    onChange={(e) => setInviteAllowedUnits(e.target.value)}
+	                    placeholder="ex: novo-hamburgo, barra-shopping-sul"
+	                  />
+	                </div>
+	              </div>
 
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Observação (opcional)</div>
-                <Input value={inviteNote} onChange={(e) => setInviteNote(e.target.value)} placeholder="ex: Equipe recepção" />
-              </div>
+	              <div>
+	                <div className="text-xs text-blue-200/70 mb-1">Módulos (opcional)</div>
+	                <Input
+	                  value={inviteAllowedModules}
+	                  onChange={(e) => setInviteAllowedModules(e.target.value)}
+	                  placeholder="vazio = todos • ex: insumos, status, users"
+	                />
+	              </div>
+
+	              <div>
+	                <div className="text-xs text-blue-200/70 mb-1">Observação (opcional)</div>
+	                <Input value={inviteNote} onChange={(e) => setInviteNote(e.target.value)} placeholder="ex: Equipe recepção" />
+	              </div>
 
               <div className="flex items-center justify-between gap-2">
                 <Button
@@ -474,4 +498,3 @@ export function UsersModule() {
     </div>
   )
 }
-

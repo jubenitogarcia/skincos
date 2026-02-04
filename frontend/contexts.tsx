@@ -15,8 +15,13 @@ import { csrfHeader } from '@/csrf'
 
 export interface AuthUser {
   id: string
+  username: string
   name: string
+  displayName?: string
   email: string
+  role?: string
+  allowedUnits?: string[]
+  allowedModules?: string[]
   createdAt: string
   avatarUrl?: string
 }
@@ -84,11 +89,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const insumosUser = me?.user || null
     if (!insumosUser) return null
     const email = String(insumosUser.email || '')
-    const id = String(insumosUser.username || insumosUser.email || '')
+    const username = String(insumosUser.username || insumosUser.email || '')
+    const id = username
+    const displayName = String(insumosUser.displayName || insumosUser.name || insumosUser.username || email || '')
     return {
       id,
-      name: String(insumosUser.displayName || insumosUser.name || insumosUser.username || email || ''),
+      username,
+      name: displayName,
+      displayName,
       email,
+      role: insumosUser.role ? String(insumosUser.role) : undefined,
+      allowedUnits: Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined,
+      allowedModules: Array.isArray(insumosUser.allowedModules) ? insumosUser.allowedModules : undefined,
       createdAt: String(insumosUser.createdAt || new Date().toISOString()),
       avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
     }
@@ -584,8 +596,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [])
 
   const [notifications, setNotifications] = useKV<Notification[]>('notifications', [])
+  const notificationsWsUrl = (import.meta as any)?.env?.VITE_NOTIFICATIONS_WS_URL
+    ? String((import.meta as any).env.VITE_NOTIFICATIONS_WS_URL || '').trim()
+    : ''
   const webSocket = useWebSocket({
-    url: 'wss://api.crm-demo.com/ws',
+    url: notificationsWsUrl || undefined,
+    enabled: !!notificationsWsUrl,
     reconnectInterval: 3000,
     maxReconnectAttempts: 5,
     heartbeatInterval: 30000
@@ -597,6 +613,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   })
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return
     if (notifications.length === 0) {
       const demoNotifications: Notification[] = [
         {
@@ -663,6 +680,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [webSocket, setNotifications])
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return
     if (!webSocket.isConnected) return
 
     const simulateNotifications = () => {

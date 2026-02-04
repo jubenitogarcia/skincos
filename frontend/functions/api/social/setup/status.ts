@@ -26,7 +26,8 @@ export async function onRequestGet(context: any): Promise<Response> {
 
   const defaultUnitsFromEnv = parseCsv(context?.env?.SOCIAL_DEFAULT_UNITS)
   const role = String((userOrRes as any)?.role || '').trim()
-  const isAdmin = role.toUpperCase() === 'ADMIN'
+  const normalizedRole = role.toUpperCase()
+  const isAdmin = normalizedRole === 'ADMIN' || normalizedRole === 'GESTOR' || normalizedRole === 'GERENTE'
 
   return json(200, {
     ok: true,

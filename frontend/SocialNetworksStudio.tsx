@@ -818,7 +818,7 @@ export function SocialNetworksStudio() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="text-sm text-white font-medium">2) Permissão de Admin</div>
-                    <div className="text-xs text-blue-200/70">Somente usuários com role global ADMIN podem configurar contas e publicar.</div>
+                    <div className="text-xs text-blue-200/70">Somente ADMIN/GESTOR/GERENTE podem configurar contas e publicar.</div>
                   </div>
                   {adminReady ? (
                     <Badge variant="outline" className="border-white/20 text-white">
@@ -835,7 +835,7 @@ export function SocialNetworksStudio() {
                 ) : adminReady ? (
                   <div className="text-sm text-blue-200/80">Você é ADMIN.</div>
                 ) : (
-                  <div className="text-sm text-red-200">Somente ADMIN pode configurar/publicar neste módulo.</div>
+                  <div className="text-sm text-red-200">Somente ADMIN/GESTOR/GERENTE podem configurar/publicar neste módulo.</div>
                 )}
               </div>
 

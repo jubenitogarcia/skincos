@@ -1,5 +1,7 @@
 // @ts-nocheck
 
+import { resolveCrmTables } from '../d1Store.js';
+
 const ROLE_ANY = ['CONSULTOR', 'OPERADOR', 'GERENTE', 'GESTOR', 'ADMIN'];
 
 function safeJsonParse(raw) {
@@ -41,11 +43,13 @@ export async function handlePrefsRoutes({
     return withCORS(JSON.stringify({ success: false, error: 'Not authenticated' }), { status: 401 }, appOrigin);
   }
 
+  const { userPrefsTable } = await resolveCrmTables(env);
+
   // GET /prefs
   if (url.pathname === '/prefs' && request.method === 'GET') {
     try {
       const row = await env.DB.prepare(
-        `SELECT prefs_json, updated_at FROM insumos_user_prefs WHERE username = ? LIMIT 1`
+        `SELECT prefs_json, updated_at FROM ${userPrefsTable} WHERE username = ? LIMIT 1`
       )
         .bind(username)
         .first();
@@ -72,7 +76,7 @@ export async function handlePrefsRoutes({
       }
 
       await env.DB.prepare(
-        `INSERT INTO insumos_user_prefs (username, prefs_json, updated_at)
+        `INSERT INTO ${userPrefsTable} (username, prefs_json, updated_at)
          VALUES (?, ?, datetime('now'))
          ON CONFLICT(username) DO UPDATE SET prefs_json = excluded.prefs_json, updated_at = excluded.updated_at`
       )
@@ -88,7 +92,7 @@ export async function handlePrefsRoutes({
   // DELETE /prefs
   if (url.pathname === '/prefs' && request.method === 'DELETE') {
     try {
-      await env.DB.prepare(`DELETE FROM insumos_user_prefs WHERE username = ?`).bind(username).run();
+      await env.DB.prepare(`DELETE FROM ${userPrefsTable} WHERE username = ?`).bind(username).run();
       return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
     } catch (err) {
       return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -97,4 +101,3 @@ export async function handlePrefsRoutes({
 
   return withCORS(JSON.stringify({ success: false, error: 'NOT_FOUND' }), { status: 404 }, appOrigin);
 }
-

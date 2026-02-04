@@ -1,6 +1,8 @@
 // @ts-nocheck
 // Auth routes extracted from the main worker router.
 
+import { resolveCrmTables } from '../d1Store.js';
+
 export async function handleAuthRoutes({
     request,
     url,
@@ -109,27 +111,59 @@ export async function handleAuthRoutes({
             // ignore
         }
     };
-    if (d1?.enabled) {
-        const normalizeRole = (role) => String(role || 'CONSULTOR').trim().toUpperCase();
-        const normalizeAllowedUnits = (value) => {
-            if (!value) return [];
-            if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
-            if (typeof value === 'string') {
-                const s = value.trim();
-                if (!s) return [];
-                try {
-                    const parsed = JSON.parse(s);
-                    if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
-                } catch {}
-                return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
-            }
-            return [];
-        };
+	    if (d1?.enabled) {
+	        const normalizeRole = (role) => String(role || 'CONSULTOR').trim().toUpperCase();
+	        const normalizeAllowedUnits = (value) => {
+	            if (!value) return [];
+	            if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+	            if (typeof value === 'string') {
+	                const s = value.trim();
+	                if (!s) return [];
+	                try {
+	                    const parsed = JSON.parse(s);
+	                    if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
+	                } catch {}
+	                return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
+	            }
+	            return [];
+	        };
 
-        const sha256Hex = async (input) => {
-            const data = new TextEncoder().encode(String(input || ''));
-            const hash = await crypto.subtle.digest('SHA-256', data);
-            return Array.from(new Uint8Array(hash))
+	        const normalizeAllowedModules = (value) => {
+	            if (!value) return [];
+	            if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+	            if (typeof value === 'string') {
+	                const s = value.trim();
+	                if (!s) return [];
+	                try {
+	                    const parsed = JSON.parse(s);
+	                    if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
+	                } catch {}
+	                return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
+	            }
+	            return [];
+	        };
+
+	        const tableHasColumn = async (tableName, columnName) => {
+	            if (!env?.DB || !tableName || !columnName) return false;
+	            const t = String(tableName);
+	            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
+	            try {
+	                const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
+	                const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
+	                return cols.includes(String(columnName).toLowerCase());
+	            } catch {
+	                return false;
+	            }
+	        };
+
+	        const { usersTable, invitesTable, passwordResetsTable } = await resolveCrmTables(env);
+	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
+	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
+
+	        const sha256Hex = async (input) => {
+	            const data = new TextEncoder().encode(String(input || ''));
+	            const hash = await crypto.subtle.digest('SHA-256', data);
+	            return Array.from(new Uint8Array(hash))
                 .map((b) => b.toString(16).padStart(2, '0'))
                 .join('');
         };
@@ -146,27 +180,43 @@ export async function handleAuthRoutes({
             return cleaned.slice(0, 40);
         };
 
-        const suggestUsername = (name, email) => {
-            const local = String(email || '').split('@')[0] || '';
-            const base = slugifyUsername(local) || slugifyUsername(name) || 'user';
-            return base.length >= 3 ? base : `${base}${Math.floor(100 + Math.random() * 900)}`;
-        };
+		        function randomInt(min, max) {
+		            const lo = Math.ceil(Number(min) || 0);
+		            const hi = Math.floor(Number(max) || 0);
+		            if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return lo;
+		            const range = hi - lo + 1;
+		            // Rejection sampling to avoid modulo bias.
+		            const u32 = new Uint32Array(1);
+		            const maxUint = 0xffffffff;
+		            const limit = maxUint - (maxUint % range);
+		            while (true) {
+		                crypto.getRandomValues(u32);
+		                const x = u32[0];
+		                if (x < limit) return lo + (x % range);
+		            }
+		        }
 
-        const ensureUniqueUsername = async (base) => {
-            const b = String(base || '').trim();
-            if (!b) return null;
-            // 1) try base
-            const taken0 = await env.DB.prepare('SELECT 1 FROM insumos_users WHERE LOWER(username)=LOWER(?) LIMIT 1').bind(b).first();
-            if (!taken0) return b;
-            // 2) add numeric suffixes
-            for (let i = 0; i < 20; i++) {
-                const suffix = String(Math.floor(10 + Math.random() * 90));
-                const candidate = `${b.slice(0, Math.max(0, 40 - (suffix.length + 1)))}-${suffix}`.slice(0, 40);
-                const taken = await env.DB.prepare('SELECT 1 FROM insumos_users WHERE LOWER(username)=LOWER(?) LIMIT 1').bind(candidate).first();
-                if (!taken) return candidate;
-            }
-            return null;
-        };
+		        const suggestUsername = (name, email) => {
+		            const local = String(email || '').split('@')[0] || '';
+		            const base = slugifyUsername(local) || slugifyUsername(name) || 'user';
+		            return base.length >= 3 ? base : `${base}${randomInt(100, 999)}`;
+		        };
+
+		        const ensureUniqueUsername = async (base) => {
+		            const b = String(base || '').trim();
+		            if (!b) return null;
+		            // 1) try base
+		            const taken0 = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(b).first();
+		            if (!taken0) return b;
+		            // 2) add numeric suffixes
+		            for (let i = 0; i < 20; i++) {
+		                const suffix = String(randomInt(10, 99));
+		                const candidate = `${b.slice(0, Math.max(0, 40 - (suffix.length + 1)))}-${suffix}`.slice(0, 40);
+		                const taken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(candidate).first();
+		                if (!taken) return candidate;
+		            }
+		            return null;
+		        };
 
         // GET /auth/me
         if (url.pathname === "/auth/me") {
@@ -182,15 +232,16 @@ export async function handleAuthRoutes({
                         appOrigin
                     );
                 }
-                const user = {
-                    name: userDb.displayName || userDb.username,
-                    displayName: userDb.displayName || userDb.username,
-                    username: userDb.username,
-                    email: userDb.email,
-                    role: userDb.role || "CONSULTOR",
-                    photoUrl: userDb.photoUrl,
-                    allowedUnits: userDb.allowedUnits || [],
-                };
+	                const user = {
+	                    name: userDb.displayName || userDb.username,
+	                    displayName: userDb.displayName || userDb.username,
+	                    username: userDb.username,
+	                    email: userDb.email,
+	                    role: userDb.role || "CONSULTOR",
+	                    photoUrl: userDb.photoUrl,
+	                    allowedUnits: userDb.allowedUnits || [],
+	                    allowedModules: userDb.allowedModules || [],
+	                };
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
@@ -212,15 +263,16 @@ export async function handleAuthRoutes({
                         appOrigin
                     );
                 }
-                const user = {
-                    name: userDb.displayName || userDb.username,
-                    displayName: userDb.displayName || userDb.username,
-                    username: userDb.username,
-                    email: userDb.email,
-                    role: userDb.role || "CONSULTOR",
-                    photoUrl: userDb.photoUrl,
-                    allowedUnits: userDb.allowedUnits || [],
-                };
+	                const user = {
+	                    name: userDb.displayName || userDb.username,
+	                    displayName: userDb.displayName || userDb.username,
+	                    username: userDb.username,
+	                    email: userDb.email,
+	                    role: userDb.role || "CONSULTOR",
+	                    photoUrl: userDb.photoUrl,
+	                    allowedUnits: userDb.allowedUnits || [],
+	                    allowedModules: userDb.allowedModules || [],
+	                };
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
@@ -275,15 +327,16 @@ export async function handleAuthRoutes({
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'INVALID_CREDENTIALS', username: userDb.username } });
                     return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
-                const user = {
-                    name: userDb.displayName || userDb.username,
-                    displayName: userDb.displayName || userDb.username,
-                    username: userDb.username,
-                    email: userDb.email,
-                    role: userDb.role || "CONSULTOR",
-                    photoUrl: userDb.photoUrl,
-                    allowedUnits: userDb.allowedUnits || [],
-                };
+	                const user = {
+	                    name: userDb.displayName || userDb.username,
+	                    displayName: userDb.displayName || userDb.username,
+	                    username: userDb.username,
+	                    email: userDb.email,
+	                    role: userDb.role || "CONSULTOR",
+	                    photoUrl: userDb.photoUrl,
+	                    allowedUnits: userDb.allowedUnits || [],
+	                    allowedModules: userDb.allowedModules || [],
+	                };
                 await clearAuthFailures(identifier);
                 await logAuthAudit({ action: 'AUTH_LOGIN_SUCCESS', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
@@ -324,8 +377,8 @@ export async function handleAuthRoutes({
                 const now = new Date().toISOString();
 
                 const invite = await env.DB.prepare(
-                    `SELECT id, role, allowed_units_json, max_uses, uses_count, expires_at, revoked
-                     FROM insumos_invites
+                    `SELECT id, role, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}, max_uses, uses_count, expires_at, revoked
+                     FROM ${invitesTable}
                      WHERE token_hash = ?
                      LIMIT 1`
                 )
@@ -364,28 +417,50 @@ export async function handleAuthRoutes({
 
                 const role = normalizeRole(invite.role || 'CONSULTOR');
                 const allowedUnits = normalizeAllowedUnits(invite.allowed_units_json || '');
+                const allowedModules = invitesHasModules ? normalizeAllowedModules(invite.allowed_modules_json || '') : [];
                 const hash = await bcrypt.hash(password, 10);
 
-                await env.DB.prepare(
-                    `INSERT INTO insumos_users
-                     (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-                )
-                    .bind(
-                        candidate,
-                        email,
-                        name,
-                        hash,
-                        role,
-                        '',
-                        JSON.stringify(allowedUnits),
-                        now,
-                        now
+                if (usersHasModules) {
+                    await env.DB.prepare(
+                        `INSERT INTO ${usersTable}
+                         (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
                     )
-                    .run();
+                        .bind(
+                            candidate,
+                            email,
+                            name,
+                            hash,
+                            role,
+                            '',
+                            JSON.stringify(allowedUnits),
+                            JSON.stringify(allowedModules),
+                            now,
+                            now
+                        )
+                        .run();
+                } else {
+                    await env.DB.prepare(
+                        `INSERT INTO ${usersTable}
+                         (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+                    )
+                        .bind(
+                            candidate,
+                            email,
+                            name,
+                            hash,
+                            role,
+                            '',
+                            JSON.stringify(allowedUnits),
+                            now,
+                            now
+                        )
+                        .run();
+                }
 
                 await env.DB.prepare(
-                    `UPDATE insumos_invites
+                    `UPDATE ${invitesTable}
                      SET uses_count = uses_count + 1
                      WHERE id = ?`
                 )
@@ -402,6 +477,7 @@ export async function handleAuthRoutes({
                         role: userDb.role || "CONSULTOR",
                         photoUrl: userDb.photoUrl,
                         allowedUnits: userDb.allowedUnits || [],
+                        allowedModules: userDb.allowedModules || [],
                     }
                     : {
                         name,
@@ -411,6 +487,7 @@ export async function handleAuthRoutes({
                         role,
                         photoUrl: '',
                         allowedUnits,
+                        allowedModules,
                     };
 
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: candidate });
@@ -435,18 +512,18 @@ export async function handleAuthRoutes({
                     const tokenHash = await sha256Hex(token);
                     const ttlMinutes = Math.max(5, toInt(env?.AUTH_RESET_TTL_MINUTES, 30));
                     const now = new Date();
-                    const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000).toISOString();
-                    await env.DB.prepare(
-                        `DELETE FROM insumos_password_resets WHERE username = ? OR (email IS NOT NULL AND email = ?)`
-                    )
-                        .bind(userDb.username, userDb.email || '')
-                        .run();
-                    await env.DB.prepare(
-                        `INSERT INTO insumos_password_resets (token_hash, username, email, created_at, expires_at)
-                         VALUES (?, ?, ?, ?, ?)`
-                    )
-                        .bind(tokenHash, userDb.username, userDb.email || '', now.toISOString(), expiresAt)
-                        .run();
+	                    const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000).toISOString();
+	                    await env.DB.prepare(
+	                        `DELETE FROM ${passwordResetsTable} WHERE username = ? OR (email IS NOT NULL AND email = ?)`
+	                    )
+	                        .bind(userDb.username, userDb.email || '')
+	                        .run();
+	                    await env.DB.prepare(
+	                        `INSERT INTO ${passwordResetsTable} (token_hash, username, email, created_at, expires_at)
+	                         VALUES (?, ?, ?, ?, ?)`
+	                    )
+	                        .bind(tokenHash, userDb.username, userDb.email || '', now.toISOString(), expiresAt)
+	                        .run();
                     await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_REQUEST', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
                     const allowTokenReturn = String(env?.AUTH_RESET_RETURN_TOKEN || '').trim().toLowerCase() === 'true';
                     if (allowTokenReturn) {
@@ -471,15 +548,15 @@ export async function handleAuthRoutes({
                 return withCORS(JSON.stringify({ success: false, error: "PASSWORD_TOO_SHORT" }), { status: 400 }, appOrigin);
             }
             try {
-                const tokenHash = await sha256Hex(token);
-                const row = await env.DB.prepare(
-                    `SELECT id, username, expires_at, used_at
-                     FROM insumos_password_resets
-                     WHERE token_hash = ?
-                     LIMIT 1`
-                )
-                    .bind(tokenHash)
-                    .first();
+	                const tokenHash = await sha256Hex(token);
+	                const row = await env.DB.prepare(
+	                    `SELECT id, username, expires_at, used_at
+	                     FROM ${passwordResetsTable}
+	                     WHERE token_hash = ?
+	                     LIMIT 1`
+	                )
+	                    .bind(tokenHash)
+	                    .first();
                 if (!row?.id) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_INVALID" }), { status: 400 }, appOrigin);
                 }
@@ -489,17 +566,17 @@ export async function handleAuthRoutes({
                 const exp = row.expires_at ? new Date(row.expires_at).getTime() : 0;
                 if (!exp || Date.now() > exp) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXPIRED" }), { status: 400 }, appOrigin);
-                }
-                const hash = await bcrypt.hash(newPassword, 10);
-                const updated = await d1.updateUserProfile(row.username, { passwordHash: hash });
-                if (!updated?.ok) {
-                    return withCORS(JSON.stringify({ success: false, error: updated?.error || 'PASSWORD_RESET_FAILED' }), { status: updated?.status || 500 }, appOrigin);
-                }
-                await env.DB.prepare(
-                    `UPDATE insumos_password_resets SET used_at = ? WHERE id = ?`
-                )
-                    .bind(new Date().toISOString(), row.id)
-                    .run();
+	                }
+	                const hash = await bcrypt.hash(newPassword, 10);
+	                const updated = await d1.updateUserProfile(env, row.username, { passwordHash: hash });
+	                if (!updated?.ok) {
+	                    return withCORS(JSON.stringify({ success: false, error: updated?.error || 'PASSWORD_RESET_FAILED' }), { status: updated?.status || 500 }, appOrigin);
+	                }
+	                await env.DB.prepare(
+	                    `UPDATE ${passwordResetsTable} SET used_at = ? WHERE id = ?`
+	                )
+	                    .bind(new Date().toISOString(), row.id)
+	                    .run();
                 await clearAuthFailures(normalizeIdentifier(row.username));
                 await logAuthAudit({ action: 'AUTH_PASSWORD_RESET', actor: row.username, role: '', detail: { username: row.username } });
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: row.username });

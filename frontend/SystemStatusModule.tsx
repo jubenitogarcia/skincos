@@ -83,6 +83,7 @@ type AdminUser = {
   role?: string
   photoUrl?: string
   allowedUnits?: string[]
+  allowedModules?: string[]
   ativo?: boolean
   createdAt?: string | null
   updatedAt?: string | null
@@ -102,7 +103,15 @@ async function apiJson<T>(
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
 
-  const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
+  let url = ''
+  if (path.startsWith('/api/')) {
+    url = path
+  } else if (path === '/auth' || path.startsWith('/auth/')) {
+    const rest = path.slice('/auth'.length) || '/'
+    url = `/api/auth${rest.startsWith('/') ? '' : '/'}${rest}`
+  } else {
+    url = `/api/crm${path.startsWith('/') ? '' : '/'}${path}`
+  }
   const res = await fetch(url, {
     method,
     headers,
@@ -598,7 +607,7 @@ export function SystemStatusModule() {
             ) : (
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm text-blue-100/70">Usuários do Insumos (D1)</div>
+                  <div className="text-sm text-blue-100/70">Usuários do CRM (D1)</div>
                   <div className="flex items-center gap-2">
                     <Input
                       value={usersQuery}
@@ -666,7 +675,7 @@ export function SystemStatusModule() {
             <Dialog open={userCreateOpen} onOpenChange={(o) => { setUserCreateOpen(o); if (!o) setOneTimePassword(null) }}>
               <DialogContent className="sm:max-w-xl">
                 <DialogHeader>
-                  <DialogTitle>Novo usuário (Insumos)</DialogTitle>
+                  <DialogTitle>Novo usuário (CRM)</DialogTitle>
                   <DialogDescription>Cria o usuário no D1 e retorna uma senha temporária.</DialogDescription>
                 </DialogHeader>
                 <AdminUserForm
@@ -835,6 +844,7 @@ function AdminUserForm({
   const [email, setEmail] = React.useState(initial?.email || '')
   const [role, setRole] = React.useState(String(initial?.role || 'CONSULTOR').toUpperCase())
   const [allowedUnits, setAllowedUnits] = React.useState((initial?.allowedUnits || []).join(', '))
+  const [allowedModules, setAllowedModules] = React.useState((initial?.allowedModules || []).join(', '))
   const [ativo, setAtivo] = React.useState(initial?.ativo ?? true)
   const [password, setPassword] = React.useState('')
   const isCreate = mode === 'create'
@@ -850,6 +860,10 @@ function AdminUserForm({
           .split(/[,;|]/g)
           .map((s) => s.trim())
           .filter(Boolean),
+        allowedModules: allowedModules
+          .split(/[,;|]/g)
+          .map((s) => s.trim())
+          .filter(Boolean),
         ativo
       }
       if (isCreate) {
@@ -857,15 +871,16 @@ function AdminUserForm({
         if (password.trim()) payload.password = password.trim()
       }
       await onSubmit(payload)
-      if (isCreate) {
-        setUsername('')
-        setDisplayName('')
-        setEmail('')
-        setRole('CONSULTOR')
-        setAllowedUnits('')
-        setAtivo(true)
-        setPassword('')
-      }
+        if (isCreate) {
+          setUsername('')
+          setDisplayName('')
+          setEmail('')
+          setRole('CONSULTOR')
+          setAllowedUnits('')
+          setAllowedModules('')
+          setAtivo(true)
+          setPassword('')
+        }
     } finally {
       setLoading(false)
     }
@@ -904,6 +919,14 @@ function AdminUserForm({
         <div className="space-y-1 sm:col-span-2">
           <div className="text-xs text-blue-200/70">Unidades permitidas</div>
           <Input value={allowedUnits} onChange={(e) => setAllowedUnits(e.target.value)} placeholder="vazio = todas • ex: novo-hamburgo, barra-shopping-sul" />
+        </div>
+        <div className="space-y-1 sm:col-span-2">
+          <div className="text-xs text-blue-200/70">Módulos permitidos</div>
+          <Input
+            value={allowedModules}
+            onChange={(e) => setAllowedModules(e.target.value)}
+            placeholder="vazio = todos • ex: insumos, status, users"
+          />
         </div>
         {isCreate ? (
           <div className="space-y-1 sm:col-span-2">

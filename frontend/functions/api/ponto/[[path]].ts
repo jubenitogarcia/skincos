@@ -109,6 +109,7 @@ export async function onRequest(context: any): Promise<Response> {
   }
 
   const isEmployeeRoute = rest === '/me' || rest.startsWith('/me/')
+  const isAdminRoute = rest === '/admin' || rest.startsWith('/admin/')
 
   let actorB64 = ''
   let actorTs = ''
@@ -116,25 +117,40 @@ export async function onRequest(context: any): Promise<Response> {
 
   const proxyToken = (context.env?.PONTO_PROXY_TOKEN as string | undefined) || ''
   const actorKey = String((context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || proxyToken || '').trim()
+  const adminToken = String((context.env?.PONTO_ADMIN_TOKEN as string | undefined) || '').trim()
+  let isAdminUser = false
 
-  if (isEmployeeRoute) {
+  if (isEmployeeRoute || isAdminRoute) {
     const user = await getInsumosUser(context)
     if (!user) {
       return json(
         401,
-        { ok: false, error: 'UNAUTHORIZED', hint: 'Faça login para registrar seu ponto.' },
+        { ok: false, error: 'UNAUTHORIZED', hint: 'Faça login no CRM para continuar.' },
         { 'x-request-id': requestId },
       )
     }
-    const actor = {
-      id: String(user.id || ''),
-      email: user.email ? String(user.email) : undefined,
-      name: user.displayName ? String(user.displayName) : (user.name ? String(user.name) : undefined),
+    if (isEmployeeRoute) {
+      const actor = {
+        id: String(user.id || ''),
+        email: user.email ? String(user.email) : undefined,
+        name: user.displayName ? String(user.displayName) : (user.name ? String(user.name) : undefined),
+      }
+      actorB64 = b64UrlEncodeString(JSON.stringify(actor))
+      actorTs = String(Date.now())
+      if (actorKey) {
+        actorSig = await signHmacSha256B64Url(actorKey, `${actorTs}.${actorB64}`)
+      }
     }
-    actorB64 = b64UrlEncodeString(JSON.stringify(actor))
-    actorTs = String(Date.now())
-    if (actorKey) {
-      actorSig = await signHmacSha256B64Url(actorKey, `${actorTs}.${actorB64}`)
+    if (isAdminRoute) {
+      const role = String(user.role || '').toUpperCase()
+      isAdminUser = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
+      if (!isAdminUser) {
+        return json(
+          403,
+          { ok: false, error: 'FORBIDDEN', hint: 'Acesso restrito a administradores.' },
+          { 'x-request-id': requestId },
+        )
+      }
     }
   }
 
@@ -149,6 +165,16 @@ export async function onRequest(context: any): Promise<Response> {
     headers.set('x-skincos-actor', actorB64)
     headers.set('x-skincos-actor-ts', actorTs)
     if (actorSig) headers.set('x-skincos-actor-sig', actorSig)
+  }
+  if (isAdminRoute && isAdminUser) {
+    if (!adminToken) {
+      return json(
+        503,
+        { ok: false, error: 'ADMIN_TOKEN_NOT_CONFIGURED', hint: 'Configure PONTO_ADMIN_TOKEN nas variáveis do Pages.' },
+        { 'x-request-id': requestId },
+      )
+    }
+    headers.set('authorization', `Admin ${adminToken}`)
   }
 
   const method = (request.method || 'GET').toUpperCase()
@@ -173,4 +199,3 @@ export async function onRequest(context: any): Promise<Response> {
     headers: outHeaders,
   })
 }
-

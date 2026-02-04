@@ -282,6 +282,7 @@ export function PontoModule() {
     threshold: number
   } | null>(null)
   const [autoIdentify, setAutoIdentify] = useState(true)
+  const [devicePinOpen, setDevicePinOpen] = useState(false)
 
   const [pinEmployeeId, setPinEmployeeId] = useState<string>('')
   const [pinValue, setPinValue] = useState<string>('')
@@ -319,6 +320,9 @@ export function PontoModule() {
   const [adminPunchUnit, setAdminPunchUnit] = useState('')
   const [adminPunchNote, setAdminPunchNote] = useState('')
 
+  const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string } } | null>(null)
+  const [crmMeLoading, setCrmMeLoading] = useState(false)
+
   useEffect(() => {
     try { localStorage.setItem(LS_DEVICE_TOKEN, deviceToken) } catch { /* ignore */ }
   }, [deviceToken])
@@ -341,6 +345,34 @@ export function PontoModule() {
     setMeRecordsFrom(toDateTimeLocalValue(from))
     setMeRecordsTo(toDateTimeLocalValue(now))
   }, [meRecordsFrom, meRecordsTo])
+
+  const isDev = Boolean((import.meta as any).env?.DEV)
+  const crmRole = String(crmMe?.user?.role || '').toUpperCase()
+  const canAdmin = crmRole === 'ADMIN' || crmRole === 'GESTOR' || crmRole === 'GERENTE'
+  const showAdminTab = canAdmin || isDev
+  const adminAuth = isDev && adminToken.trim() ? { adminToken } : {}
+  const canAdminActions = canAdmin || (isDev && adminToken.trim())
+
+  const loadCrmMe = React.useCallback(async () => {
+    setCrmMeLoading(true)
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'include' })
+      const json = await res.json().catch(() => null)
+      setCrmMe(res.ok ? json : null)
+    } catch {
+      setCrmMe(null)
+    } finally {
+      setCrmMeLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadCrmMe()
+  }, [loadCrmMe])
+
+  useEffect(() => {
+    if (!showAdminTab && tab === 'admin') setTab('employee')
+  }, [showAdminTab, tab])
 
   useEffect(() => {
     return () => {
@@ -620,6 +652,7 @@ export function PontoModule() {
 
   useEffect(() => {
     if (tab !== 'device') return
+    setDevicePinOpen(false)
     if (!autoIdentify) return
     if (!stream || cameraOwner !== 'device') return
     if (!deviceToken.trim()) return
@@ -661,7 +694,10 @@ export function PontoModule() {
     const videoEl = deviceVideoRef.current
     if (!videoEl) return toast.error('Câmera não disponível')
     const ok = await ensureModelsUI()
-    if (!ok) return toast.error('Modelos faciais indisponíveis (use PIN)')
+    if (!ok) {
+      setDevicePinOpen(true)
+      return toast.error('Modelos faciais indisponíveis (use PIN)')
+    }
 
     setLoading(true)
     try {
@@ -679,7 +715,10 @@ export function PontoModule() {
     } catch (e: any) {
       const details = e?.details as any
       const code = String(details?.error || e?.message || '')
-      if (code === 'COOLDOWN') {
+      if (code === 'NOT_RECOGNIZED' || code === 'DESCRIPTOR_INVALID' || code === 'EMPLOYEE_INACTIVE') {
+        setDevicePinOpen(true)
+        toast.error('Não reconhecido. Use PIN.')
+      } else if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
       } else {
         toast.error(e?.message || String(e))
@@ -721,12 +760,12 @@ export function PontoModule() {
   }
 
   async function adminRefreshAll() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     setLoading(true)
     try {
       const [emps, devs] = await Promise.all([
-        apiJson<{ ok: boolean; data: PontoEmployeePublic[] }>('/api/ponto/admin/employees', { adminToken }),
-        apiJson<{ ok: boolean; data: PontoDevicePublic[] }>('/api/ponto/admin/devices', { adminToken })
+        apiJson<{ ok: boolean; data: PontoEmployeePublic[] }>('/api/ponto/admin/employees', adminAuth),
+        apiJson<{ ok: boolean; data: PontoDevicePublic[] }>('/api/ponto/admin/devices', adminAuth)
       ])
       setAdminEmployees(emps.data || [])
       setAdminDevices(devs.data || [])
@@ -740,14 +779,14 @@ export function PontoModule() {
   }
 
   async function adminCreateEmployee() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     const name = newEmployeeName.trim()
     if (!name) return toast.error('Nome é obrigatório')
     setLoading(true)
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
         '/api/ponto/admin/employees',
-        { adminToken, method: 'POST', body: { name, code: newEmployeeCode.trim() } }
+        { ...adminAuth, method: 'POST', body: { name, code: newEmployeeCode.trim() } }
       )
       setNewEmployeeName('')
       setNewEmployeeCode('')
@@ -762,12 +801,12 @@ export function PontoModule() {
   }
 
   async function adminSaveLoginEmail() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
-        adminToken,
+        ...adminAuth,
         method: 'PATCH',
         body: { loginEmail: selectedEmployeeLoginEmail.trim() }
       })
@@ -781,14 +820,14 @@ export function PontoModule() {
   }
 
   async function adminSetPin() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const pin = pinAdminValue.trim()
     if (pin.length < 4) return toast.error('PIN deve ter pelo menos 4 dígitos')
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/pin', {
-        adminToken,
+        ...adminAuth,
         method: 'POST',
         body: { pin }
       })
@@ -803,7 +842,7 @@ export function PontoModule() {
   }
 
   async function adminEnrollFace() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     if (!enrollConsent) return toast.error('Confirme o consentimento para biometria')
     if (!stream || cameraOwner !== 'admin') return toast.error('Ative a câmera (admin)')
@@ -825,7 +864,7 @@ export function PontoModule() {
         await new Promise(r => setTimeout(r, 650))
       }
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/enroll', {
-        adminToken,
+        ...adminAuth,
         method: 'POST',
         body: { descriptors, replace: enrollReplace, consentConfirmed: true }
       })
@@ -839,13 +878,13 @@ export function PontoModule() {
   }
 
   async function adminCreateDevice() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     if (!newDeviceUnit.trim()) return toast.error('Unidade é obrigatória')
     setLoading(true)
     try {
       const res = await apiJson<{ ok: boolean; data: PontoDevicePublic; tokenOnce: string }>(
         '/api/ponto/admin/devices',
-        { adminToken, method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
+        { ...adminAuth, method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
       )
       setNewDeviceTokenOnce(res.tokenOnce)
       setNewDeviceLabel('')
@@ -859,10 +898,10 @@ export function PontoModule() {
   }
 
   async function adminRevokeDevice(deviceId: string) {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     setLoading(true)
     try {
-      await apiJson('/api/ponto/admin/devices/' + deviceId + '/revoke', { adminToken, method: 'POST' })
+      await apiJson('/api/ponto/admin/devices/' + deviceId + '/revoke', { ...adminAuth, method: 'POST' })
       await adminRefreshAll()
       toast.success('Dispositivo revogado')
     } catch (e: any) {
@@ -873,7 +912,7 @@ export function PontoModule() {
   }
 
   async function adminManualPunch() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     setLoading(true)
     try {
@@ -884,7 +923,7 @@ export function PontoModule() {
       if (adminPunchNote.trim()) body.note = adminPunchNote.trim()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/admin/punch',
-        { adminToken, method: 'POST', body }
+        { ...adminAuth, method: 'POST', body }
       )
       toast.success(`Ponto manual: ${res.data.employeeName} (${res.data.type})`)
       setAdminPunchNote('')
@@ -896,7 +935,7 @@ export function PontoModule() {
   }
 
   async function adminLoadRecords() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     setLoading(true)
     try {
       const qs = new URLSearchParams()
@@ -906,7 +945,7 @@ export function PontoModule() {
       qs.set('limit', '500')
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
         '/api/ponto/admin/records?' + qs.toString(),
-        { adminToken }
+        adminAuth
       )
       setRecords(res.data || [])
       toast.success('Registros carregados')
@@ -918,14 +957,14 @@ export function PontoModule() {
   }
 
   async function adminExportCsv() {
-    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     setLoading(true)
     try {
       const qs = new URLSearchParams()
       if (recordsFrom) qs.set('from', new Date(recordsFrom).toISOString())
       if (recordsTo) qs.set('to', new Date(recordsTo).toISOString())
       if (selectedEmployeeId) qs.set('employeeId', selectedEmployeeId)
-      const blob = await apiBlob('/api/ponto/admin/records.csv?' + qs.toString(), { adminToken })
+      const blob = await apiBlob('/api/ponto/admin/records.csv?' + qs.toString(), adminAuth)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -968,7 +1007,7 @@ export function PontoModule() {
         <TabsList>
           <TabsTrigger value="employee">Funcionário</TabsTrigger>
           <TabsTrigger value="device">Kiosk</TabsTrigger>
-          <TabsTrigger value="admin">Admin</TabsTrigger>
+          {showAdminTab ? <TabsTrigger value="admin">Admin</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="employee" className="space-y-6">
@@ -1214,6 +1253,9 @@ export function PontoModule() {
                   <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
                     Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
                   </Button>
+                  <Button variant="outline" onClick={() => setDevicePinOpen(true)} disabled={loading}>
+                    Usar PIN
+                  </Button>
                 </div>
 
                 <div className="rounded-xl overflow-hidden border bg-black">
@@ -1237,38 +1279,45 @@ export function PontoModule() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Fallback por PIN</CardTitle>
-                <CardDescription>Use quando a câmera/modelo falhar ou o usuário não for reconhecido.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="space-y-2">
-                    <Label>Funcionário</Label>
-                    <Select value={pinEmployeeId} onValueChange={setPinEmployeeId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {employeesForPin.map(e => (
-                          <SelectItem key={e.id} value={e.id}>
-                            {e.name}{e.pinSet ? '' : ' (sem PIN)'}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+            {devicePinOpen ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Fallback por PIN</CardTitle>
+                  <CardDescription>Use quando a câmera/modelo falhar ou o usuário não for reconhecido.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="space-y-2">
+                      <Label>Funcionário</Label>
+                      <Select value={pinEmployeeId} onValueChange={setPinEmployeeId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {employeesForPin.map(e => (
+                            <SelectItem key={e.id} value={e.id}>
+                              {e.name}{e.pinSet ? '' : ' (sem PIN)'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>PIN</Label>
+                      <Input value={pinValue} onChange={(e) => setPinValue(e.target.value)} inputMode="numeric" placeholder="••••" />
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>PIN</Label>
-                    <Input value={pinValue} onChange={(e) => setPinValue(e.target.value)} inputMode="numeric" placeholder="••••" />
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={devicePunchPin} disabled={loading || !deviceToken.trim()}>
+                      Registrar ponto por PIN
+                    </Button>
+                    <Button variant="outline" onClick={() => setDevicePinOpen(false)} disabled={loading}>
+                      Fechar PIN
+                    </Button>
                   </div>
-                </div>
-                <Button onClick={devicePunchPin} disabled={loading || !deviceToken.trim()}>
-                  Registrar ponto por PIN
-                </Button>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            ) : null}
           </div>
         </TabsContent>
 
@@ -1276,18 +1325,25 @@ export function PontoModule() {
           <Card>
             <CardHeader>
               <CardTitle>Admin</CardTitle>
-              <CardDescription>Gerencie funcionários, dispositivos e exportações. Somente com token admin.</CardDescription>
+              <CardDescription>Gerencie funcionários, dispositivos e exportações (somente para admins do CRM).</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-2 space-y-2">
-                  <Label>Token Admin</Label>
-                  <Input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} placeholder="Admin token..." />
-                </div>
-                <div className="flex items-end gap-2">
-                  <Button onClick={adminRefreshAll} disabled={loading}>Atualizar</Button>
-                  <Button variant="outline" onClick={() => setAdminToken('')} disabled={loading}>Limpar</Button>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {crmMeLoading ? <Badge variant="secondary">Verificando sessão…</Badge> : null}
+                {canAdmin ? <Badge>Admin logado</Badge> : <Badge variant="secondary">Acesso restrito</Badge>}
+                {crmMe?.user?.username ? <Badge variant="outline">{crmMe.user.username}</Badge> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={adminRefreshAll} disabled={loading || !canAdminActions}>Atualizar</Button>
+                {isDev ? (
+                  <div className="flex items-end gap-2">
+                    <div className="space-y-2">
+                      <Label>Token Admin (dev)</Label>
+                      <Input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} placeholder="Admin token..." />
+                    </div>
+                    <Button variant="outline" onClick={() => setAdminToken('')} disabled={loading}>Limpar</Button>
+                  </div>
+                ) : null}
               </div>
             </CardContent>
           </Card>
@@ -1309,7 +1365,7 @@ export function PontoModule() {
                     <Input value={newEmployeeCode} onChange={(e) => setNewEmployeeCode(e.target.value)} placeholder="Matrícula..." />
                   </div>
                   <div className="flex items-end">
-                    <Button onClick={adminCreateEmployee} disabled={loading || !adminToken.trim()}>Criar</Button>
+                    <Button onClick={adminCreateEmployee} disabled={loading || !canAdminActions}>Criar</Button>
                   </div>
                 </div>
 
@@ -1339,7 +1395,7 @@ export function PontoModule() {
                     />
                   </div>
                   <div className="flex items-end">
-                    <Button onClick={adminSaveLoginEmail} disabled={loading || !adminToken.trim() || !selectedEmployeeId}>Salvar vínculo</Button>
+                    <Button onClick={adminSaveLoginEmail} disabled={loading || !canAdminActions || !selectedEmployeeId}>Salvar vínculo</Button>
                   </div>
                 </div>
 
@@ -1349,7 +1405,7 @@ export function PontoModule() {
                     <Input value={pinAdminValue} onChange={(e) => setPinAdminValue(e.target.value)} inputMode="numeric" placeholder="••••" />
                   </div>
                   <div className="flex items-end">
-                    <Button onClick={adminSetPin} disabled={loading || !adminToken.trim() || !selectedEmployeeId}>Salvar PIN</Button>
+                    <Button onClick={adminSetPin} disabled={loading || !canAdminActions || !selectedEmployeeId}>Salvar PIN</Button>
                   </div>
                 </div>
 
@@ -1400,7 +1456,7 @@ export function PontoModule() {
 
                   <div className="flex gap-2">
                     <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                    <Button onClick={adminEnrollFace} disabled={loading || !adminToken.trim() || !selectedEmployeeId}>
+                    <Button onClick={adminEnrollFace} disabled={loading || !canAdminActions || !selectedEmployeeId}>
                       Capturar & salvar biometria
                     </Button>
                   </div>
@@ -1465,7 +1521,7 @@ export function PontoModule() {
                       <Input value={adminPunchUnit} onChange={(e) => setAdminPunchUnit(e.target.value)} placeholder="ex: unidade-01" />
                     </div>
                     <div className="flex items-end">
-                      <Button onClick={adminManualPunch} disabled={loading || !adminToken.trim() || !selectedEmployeeId}>Registrar</Button>
+                      <Button onClick={adminManualPunch} disabled={loading || !canAdminActions || !selectedEmployeeId}>Registrar</Button>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -1486,7 +1542,7 @@ export function PontoModule() {
                       <Input value={newDeviceLabel} onChange={(e) => setNewDeviceLabel(e.target.value)} placeholder="Recepção, Sala 1..." />
                     </div>
                     <div className="flex items-end">
-                      <Button onClick={adminCreateDevice} disabled={loading || !adminToken.trim()}>Criar token</Button>
+                      <Button onClick={adminCreateDevice} disabled={loading || !canAdminActions}>Criar token</Button>
                     </div>
                   </div>
                   {newDeviceTokenOnce ? (
@@ -1563,8 +1619,8 @@ export function PontoModule() {
                       <Input type="datetime-local" value={recordsTo} onChange={(e) => setRecordsTo(e.target.value)} />
                     </div>
                     <div className="flex items-end gap-2">
-                      <Button onClick={adminLoadRecords} disabled={loading || !adminToken.trim()}>Buscar</Button>
-                      <Button variant="outline" onClick={adminExportCsv} disabled={loading || !adminToken.trim()}>CSV</Button>
+                      <Button onClick={adminLoadRecords} disabled={loading || !canAdminActions}>Buscar</Button>
+                      <Button variant="outline" onClick={adminExportCsv} disabled={loading || !canAdminActions}>CSV</Button>
                     </div>
                   </div>
 

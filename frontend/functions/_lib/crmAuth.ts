@@ -6,6 +6,7 @@ export type CrmAuthUser = {
   email?: string
   role?: string
   allowedUnits?: string[]
+  allowedModules?: string[]
 }
 
 const json = (status: number, body: any) =>
@@ -23,7 +24,7 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
 
   const url = new URL(targetOrigin)
   // Auth backend path (internal implementation detail; UI/docs must not mention it)
-  url.pathname = '/insumos/auth/me'
+  url.pathname = '/auth/me'
 
   const headers = new Headers()
   headers.set('accept', 'application/json')
@@ -49,6 +50,7 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
     email: email ? String(email) : undefined,
     role: raw?.role || undefined,
     allowedUnits: Array.isArray(raw?.allowedUnits) ? raw.allowedUnits : undefined,
+    allowedModules: Array.isArray(raw?.allowedModules) ? raw.allowedModules : undefined,
   }
 }
 
@@ -57,4 +59,3 @@ export async function requireCrmUser(context: any): Promise<CrmAuthUser | Respon
   if (!user) return json(401, { ok: false, error: 'UNAUTHORIZED', hint: 'Faça login no CRM para continuar.' })
   return user
 }
-

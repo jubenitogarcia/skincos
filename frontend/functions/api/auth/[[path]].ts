@@ -3,13 +3,13 @@ export async function onRequest(context: any): Promise<Response> {
     const url = new URL(request.url)
 
     // Incoming:  /api/auth/<rest>
-    // Outgoing:  https://api.skincos.com.br/insumos/auth/<rest>
+    // Outgoing:  https://api.skincos.com.br/auth/<rest>
     const prefix = '/api/auth'
     const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
     const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
     const targetUrl = new URL(targetOrigin)
-    targetUrl.pathname = `/insumos/auth${rest.startsWith('/') ? '' : '/'}${rest}`
+    targetUrl.pathname = `/auth${rest.startsWith('/') ? '' : '/'}${rest}`
     targetUrl.search = url.search
 
     const headers = new Headers(request.headers)
