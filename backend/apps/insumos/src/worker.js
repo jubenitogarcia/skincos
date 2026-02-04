@@ -15,6 +15,7 @@ import { handleInsightsRoutes } from './routes/insights.js';
 import { handleShareRoutes } from './routes/share.js';
 import { handleCategoriasRoutes } from './routes/categorias.js';
 import { handlePrefsRoutes } from './routes/prefs.js';
+import { handlePontoRoutes } from './routes/ponto.js';
 import {
     shouldUseD1,
     d1HasUsers,
@@ -1251,6 +1252,7 @@ export default {
                     '/backup',
                     '/auditoria',
                     '/quality',
+                    '/ponto',
                 ];
                 if (allow.some((prefix) => rest === prefix || rest.startsWith(prefix))) {
                     url.pathname = rest === '/auditoria' ? '/audit' : rest;
@@ -1780,7 +1782,17 @@ export default {
             }
         }
 
-        const isPublicEndpoint = url.pathname === "/api/metrics" || url.pathname === "/metrics";
+        const pontoPrefix = url.pathname === "/ponto" || url.pathname.startsWith("/ponto/") || url.pathname === "/api/ponto" || url.pathname.startsWith("/api/ponto/");
+        const isPublicEndpoint = pontoPrefix || url.pathname === "/api/metrics" || url.pathname === "/metrics";
+
+        const pontoResp = await handlePontoRoutes({
+            request,
+            url,
+            env,
+            appOrigin,
+            withCORS,
+        });
+        if (pontoResp) return pontoResp;
         if (!isPublicEndpoint && !url.pathname.startsWith("/auth/")) {
             if (!sessionUsername) {
                 return withCORS(
