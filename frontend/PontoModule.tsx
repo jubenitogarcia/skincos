@@ -17,6 +17,7 @@ type PontoEmployeePublic = {
   id: string
   code?: string
   name: string
+  loginEmail?: string
   active?: boolean
   createdAt?: string
   updatedAt?: string
@@ -52,8 +53,44 @@ type PontoPunchRecord = {
   corrected?: { id: string; at: string; reason?: string | null } | null
 }
 
+type PontoMeResponse =
+  | { ok: true; linked: false; actorEmail?: string; hint?: string }
+  | {
+    ok: true
+    linked: true
+    actorEmail?: string
+    employee: PontoEmployeePublic
+    hasFace: boolean
+    pinSet: boolean
+    lastPunch: PontoPunchRecord | null
+    cooldown?: { active: boolean; secondsRemaining?: number }
+    suggestedNextMethod?: 'FACE' | 'PIN'
+  }
+
 const LS_DEVICE_TOKEN = 'skincos.ponto.deviceToken.v1'
 const LS_ADMIN_TOKEN = 'skincos.ponto.adminToken.v1'
+const LS_DEV_ACTOR_EMAIL = 'skincos.ponto.devActorEmail.v1'
+
+function b64UrlEncodeBytes(bytes: ArrayBuffer): string {
+  const bin = String.fromCharCode(...new Uint8Array(bytes))
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function b64UrlEncodeString(input: string): string {
+  const bytes = new TextEncoder().encode(input)
+  return b64UrlEncodeBytes(bytes.buffer)
+}
+
+function getDevEmployeeActorHeaders(): Record<string, string> {
+  if (!(import.meta as any).env?.DEV) return {}
+  let email = ''
+  try { email = String(localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '').trim().toLowerCase() } catch { email = '' }
+  if (!email) return {}
+  const actor = { email }
+  const actorB64 = b64UrlEncodeString(JSON.stringify(actor))
+  const actorTs = String(Date.now())
+  return { 'x-skincos-actor': actorB64, 'x-skincos-actor-ts': actorTs }
+}
 
 function fmtDate(value?: string | null) {
   const v = String(value || '').trim()
@@ -65,6 +102,11 @@ function fmtDate(value?: string | null) {
   } catch {
     return d.toISOString()
   }
+}
+
+function toDateTimeLocalValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function createRequestMeta() {
@@ -79,10 +121,10 @@ function createRequestMeta() {
 
 async function apiJson<T>(
   path: string,
-  opts: { method?: string; body?: unknown; adminToken?: string; deviceToken?: string; signal?: AbortSignal } = {}
+  opts: { method?: string; body?: unknown; adminToken?: string; deviceToken?: string; signal?: AbortSignal; headers?: Record<string, string> } = {}
 ): Promise<T> {
   const method = (opts.method || 'GET').toUpperCase()
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers || {}) }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   if (opts.adminToken) headers.authorization = `Admin ${opts.adminToken}`
   if (opts.deviceToken) headers.authorization = `Device ${opts.deviceToken}`
@@ -198,7 +240,7 @@ async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, w
 }
 
 export function PontoModule() {
-  const [tab, setTab] = useState<'device' | 'admin'>('device')
+  const [tab, setTab] = useState<'employee' | 'device' | 'admin'>('employee')
 
   const [deviceToken, setDeviceToken] = useState(() => {
     try { return localStorage.getItem(LS_DEVICE_TOKEN) || '' } catch { return '' }
@@ -206,16 +248,30 @@ export function PontoModule() {
   const [adminToken, setAdminToken] = useState(() => {
     try { return localStorage.getItem(LS_ADMIN_TOKEN) || '' } catch { return '' }
   })
+  const [devActorEmail, setDevActorEmail] = useState(() => {
+    try { return localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '' } catch { return '' }
+  })
 
+  const employeeVideoRef = useRef<HTMLVideoElement | null>(null)
   const deviceVideoRef = useRef<HTMLVideoElement | null>(null)
   const adminVideoRef = useRef<HTMLVideoElement | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
-  const [cameraOwner, setCameraOwner] = useState<'device' | 'admin' | null>(null)
+  const [cameraOwner, setCameraOwner] = useState<'employee' | 'device' | 'admin' | null>(null)
 
   const [modelsReady, setModelsReady] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [modelsError, setModelsError] = useState<string | null>(null)
 
   const [loading, setLoading] = useState(false)
+
+  const [me, setMe] = useState<PontoMeResponse | null>(null)
+  const [meError, setMeError] = useState<any>(null)
+  const [meLoading, setMeLoading] = useState(false)
+  const [mePunchOpen, setMePunchOpen] = useState(false)
+  const [meStep, setMeStep] = useState<'face' | 'pin'>('face')
+  const [mePin, setMePin] = useState('')
+  const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
+  const [meRecordsFrom, setMeRecordsFrom] = useState('')
+  const [meRecordsTo, setMeRecordsTo] = useState('')
 
   const [deviceStatus, setDeviceStatus] = useState<{ ok: boolean; unit?: string; device?: PontoDevicePublic } | null>(null)
   const [deviceEmployees, setDeviceEmployees] = useState<Array<{ id: string; name: string; code?: string; hasFace?: boolean; pinSet?: boolean }>>([])
@@ -238,6 +294,7 @@ export function PontoModule() {
   const [newEmployeeCode, setNewEmployeeCode] = useState('')
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
+  const [selectedEmployeeLoginEmail, setSelectedEmployeeLoginEmail] = useState('')
   const [pinAdminValue, setPinAdminValue] = useState('')
 
   const [enrollCount, setEnrollCount] = useState(5)
@@ -268,6 +325,22 @@ export function PontoModule() {
   useEffect(() => {
     try { localStorage.setItem(LS_ADMIN_TOKEN, adminToken) } catch { /* ignore */ }
   }, [adminToken])
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_DEV_ACTOR_EMAIL, devActorEmail) } catch { /* ignore */ }
+  }, [devActorEmail])
+
+  useEffect(() => {
+    setSelectedEmployeeLoginEmail(selectedEmployee?.loginEmail || '')
+  }, [selectedEmployeeId, selectedEmployee])
+
+  useEffect(() => {
+    if (meRecordsFrom || meRecordsTo) return
+    const now = new Date()
+    const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    setMeRecordsFrom(toDateTimeLocalValue(from))
+    setMeRecordsTo(toDateTimeLocalValue(now))
+  }, [meRecordsFrom, meRecordsTo])
 
   useEffect(() => {
     return () => {
@@ -369,8 +442,12 @@ export function PontoModule() {
     }
   }
 
-  async function startCameraFor(owner: 'device' | 'admin') {
-    const videoEl = owner === 'device' ? deviceVideoRef.current : adminVideoRef.current
+  async function startCameraFor(owner: 'employee' | 'device' | 'admin') {
+    const videoEl = owner === 'employee'
+      ? employeeVideoRef.current
+      : owner === 'device'
+        ? deviceVideoRef.current
+        : adminVideoRef.current
     if (!videoEl) return toast.error('Vídeo não disponível')
     setLoading(true)
     try {
@@ -386,11 +463,122 @@ export function PontoModule() {
     }
   }
 
-  async function stopCameraUI() {
+  async function stopCameraUI(opts: { silent?: boolean } = {}) {
     stopCamera(stream)
     setStream(null)
     setCameraOwner(null)
-    toast.message('Câmera desligada')
+    if (!opts.silent) toast.message('Câmera desligada')
+  }
+
+  async function meRefresh() {
+    setMeLoading(true)
+    setMeError(null)
+    try {
+      const res = await apiJson<PontoMeResponse>('/api/ponto/me', { headers: getDevEmployeeActorHeaders() })
+      setMe(res)
+    } catch (e: any) {
+      setMe(null)
+      setMeError(e)
+    } finally {
+      setMeLoading(false)
+    }
+  }
+
+  async function meLoadRecords() {
+    setMeLoading(true)
+    try {
+      const qs = new URLSearchParams()
+      if (meRecordsFrom) qs.set('from', new Date(meRecordsFrom).toISOString())
+      if (meRecordsTo) qs.set('to', new Date(meRecordsTo).toISOString())
+      qs.set('limit', '500')
+      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
+        '/api/ponto/me/records?' + qs.toString(),
+        { headers: getDevEmployeeActorHeaders() }
+      )
+      setMeRecords(res.data || [])
+    } catch (e: any) {
+      toast.error(e?.message || String(e))
+    } finally {
+      setMeLoading(false)
+    }
+  }
+
+  async function mePunchFace() {
+    if (!me || !('linked' in me) || !me.linked) return toast.error('Usuário não vinculado a funcionário')
+    if (!me.hasFace) return toast.error('Biometria facial não cadastrada (use PIN)')
+    if (!stream || cameraOwner !== 'employee') return toast.error('Ative a câmera')
+    const videoEl = employeeVideoRef.current
+    if (!videoEl) return toast.error('Câmera não disponível')
+    const ok = await ensureModelsUI()
+    if (!ok) {
+      setMeStep('pin')
+      return toast.error('Modelos faciais indisponíveis (use PIN)')
+    }
+
+    setLoading(true)
+    try {
+      const descriptor = await captureDescriptorStable(videoEl, 2, 220)
+      const meta = createRequestMeta()
+      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
+        '/api/ponto/me/punch',
+        { method: 'POST', body: { descriptor, ...meta }, headers: getDevEmployeeActorHeaders() }
+      )
+      toast.success(`Ponto registrado (${res.data.type})`)
+      setMePunchOpen(false)
+      setMeStep('face')
+      await stopCameraUI()
+      await meRefresh()
+      await meLoadRecords()
+    } catch (e: any) {
+      const details = e?.details as any
+      const code = String(details?.error || details?.code || '')
+      if (code === 'COOLDOWN') {
+        toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else if (code === 'FACE_NOT_RECOGNIZED' || code === 'FACE_NOT_ENROLLED') {
+        toast.error('Rosto não reconhecido. Use PIN.')
+        setMeStep('pin')
+        await stopCameraUI()
+      } else {
+        toast.error(e?.message || String(e))
+        setMeStep('pin')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function mePunchPin() {
+    if (!me || !('linked' in me) || !me.linked) return toast.error('Usuário não vinculado a funcionário')
+    const pin = mePin.trim()
+    if (!pin) return toast.error('Informe o PIN')
+    setLoading(true)
+    try {
+      const meta = createRequestMeta()
+      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
+        '/api/ponto/me/punch',
+        { method: 'POST', body: { pin, ...meta }, headers: getDevEmployeeActorHeaders() }
+      )
+      setMePin('')
+      toast.success(`Ponto registrado (${res.data.type})`)
+      setMePunchOpen(false)
+      setMeStep('face')
+      await meRefresh()
+      await meLoadRecords()
+    } catch (e: any) {
+      const details = e?.details as any
+      const code = String(details?.error || details?.code || '')
+      if (code === 'PIN_INVALID') {
+        toast.error('PIN inválido')
+      } else if (code === 'PIN_NOT_SET') {
+        toast.error('PIN não configurado para este funcionário')
+      } else if (code === 'COOLDOWN') {
+        toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function deviceConnect() {
@@ -415,6 +603,20 @@ export function PontoModule() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (tab !== 'employee') return
+    void meRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'employee') return
+    if (!me || !('linked' in me) || !me.linked) return
+    if (!meRecordsFrom || !meRecordsTo) return
+    void meLoadRecords()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, me, meRecordsFrom, meRecordsTo])
 
   useEffect(() => {
     if (tab !== 'device') return
@@ -552,6 +754,25 @@ export function PontoModule() {
       await adminRefreshAll()
       setSelectedEmployeeId(res.data.id)
       toast.success('Funcionário criado')
+    } catch (e: any) {
+      toast.error(e?.message || String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function adminSaveLoginEmail() {
+    if (!adminToken.trim()) return toast.error('Informe o token de admin')
+    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+    setLoading(true)
+    try {
+      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
+        adminToken,
+        method: 'PATCH',
+        body: { loginEmail: selectedEmployeeLoginEmail.trim() }
+      })
+      await adminRefreshAll()
+      toast.success('Vínculo atualizado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
     } finally {
@@ -745,9 +966,180 @@ export function PontoModule() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>
-          <TabsTrigger value="device">Dispositivo (relógio)</TabsTrigger>
+          <TabsTrigger value="employee">Funcionário</TabsTrigger>
+          <TabsTrigger value="device">Kiosk</TabsTrigger>
           <TabsTrigger value="admin">Admin</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="employee" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Meu ponto</CardTitle>
+              <CardDescription>Bata ponto direto no CRM (fallback Face → PIN).</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                {meLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                {me && 'linked' in me && me.linked ? (
+                  <>
+                    <Badge>Funcionário: {me.employee?.name || '-'}</Badge>
+                    <Badge variant="outline">Face: {me.hasFace ? 'OK' : '—'}</Badge>
+                    <Badge variant="outline">PIN: {me.pinSet ? 'OK' : '—'}</Badge>
+                    {me.cooldown?.active ? (
+                      <Badge variant="secondary">Cooldown: {me.cooldown.secondsRemaining ?? '?'}s</Badge>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+
+              {me && 'linked' in me && me.linked ? (
+                <div className="text-sm text-muted-foreground">
+                  Última batida: {me.lastPunch ? `${fmtDate(me.lastPunch.at)} • ${me.lastPunch.type} • ${me.lastPunch.method || '-'}` : '—'}
+                </div>
+              ) : me && 'linked' in me && !me.linked ? (
+                <div className="rounded-md border p-3 text-sm">
+                  <div className="font-medium">Usuário não vinculado</div>
+                  <div className="text-muted-foreground">{me.hint || 'Peça ao admin para vincular seu email a um funcionário.'}</div>
+                </div>
+              ) : meError ? (
+                <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
+                  <div className="font-medium">Falha ao carregar</div>
+                  <div className="opacity-80">{meError?.message || 'Erro desconhecido'}</div>
+                </div>
+              ) : null}
+
+              {(import.meta as any).env?.DEV ? (
+                <div className="rounded-md border p-3 text-sm space-y-2">
+                  <div className="font-medium">Dev: actor email (para testar local sem Pages proxy)</div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="md:col-span-2 space-y-2">
+                      <Label>Email</Label>
+                      <Input value={devActorEmail} onChange={(e) => setDevActorEmail(e.target.value)} placeholder="ex: funcionario@empresa.com" />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <Button variant="outline" onClick={meRefresh} disabled={meLoading}>Recarregar</Button>
+                      <Button variant="secondary" onClick={() => setDevActorEmail('')} disabled={meLoading}>Limpar</Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => {
+                    if (me && 'linked' in me && me.linked) setMeStep(me.hasFace ? 'face' : 'pin')
+                    else setMeStep('pin')
+                    setMePunchOpen(true)
+                  }}
+                  disabled={meLoading || !(me && 'linked' in me && me.linked)}
+                >
+                  Bater ponto
+                </Button>
+                <Button variant="outline" onClick={meRefresh} disabled={meLoading}>Atualizar status</Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Dialog
+            open={mePunchOpen}
+            onOpenChange={(open) => {
+              setMePunchOpen(open)
+              if (!open) void stopCameraUI({ silent: true })
+            }}
+          >
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Bater ponto</DialogTitle>
+                <DialogDescription>Prioridade: Face → PIN. O próximo método aparece só se o anterior falhar/indisponível.</DialogDescription>
+              </DialogHeader>
+
+              {meStep === 'face' ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => startCameraFor('employee')} disabled={loading}>Ativar câmera</Button>
+                    <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
+                    <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
+                    <Button onClick={mePunchFace} disabled={loading || !stream}>Registrar por Face</Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => { setMeStep('pin'); void stopCameraUI({ silent: true }) }}
+                      disabled={loading}
+                    >
+                      Usar PIN
+                    </Button>
+                  </div>
+                  <div className="rounded-xl overflow-hidden border bg-black">
+                    <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+                  </div>
+                  {modelsError ? <div className="text-sm text-red-600">{modelsError}</div> : null}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>PIN</Label>
+                    <Input value={mePin} onChange={(e) => setMePin(e.target.value)} inputMode="numeric" placeholder="••••" />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={mePunchPin} disabled={loading}>Registrar por PIN</Button>
+                    {me && 'linked' in me && me.linked && me.hasFace ? (
+                      <Button variant="outline" onClick={() => setMeStep('face')} disabled={loading}>Tentar Face</Button>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Meu histórico</CardTitle>
+              <CardDescription>Últimos registros (com correções, se existirem).</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label>De</Label>
+                  <Input type="datetime-local" value={meRecordsFrom} onChange={(e) => setMeRecordsFrom(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Até</Label>
+                  <Input type="datetime-local" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
+                </div>
+                <div className="flex items-end">
+                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked)}>Buscar</Button>
+                </div>
+              </div>
+
+              <div className="border rounded-xl overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Quando</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Unidade</TableHead>
+                      <TableHead>Método</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {meRecords.map(r => (
+                      <TableRow key={r.id}>
+                        <TableCell className="text-sm">{fmtDate(r.at)}</TableCell>
+                        <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
+                        <TableCell className="text-sm">{r.unit || '-'}</TableCell>
+                        <TableCell className="text-sm">{r.method || '-'}</TableCell>
+                      </TableRow>
+                    ))}
+                    {!meRecords.length ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="device" className="space-y-6">
           <Card>
@@ -817,7 +1209,7 @@ export function PontoModule() {
 
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
-                  <Button variant="outline" onClick={stopCameraUI} disabled={loading || !stream}>Desligar</Button>
+                  <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
                   <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
                   <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
                     Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
@@ -939,6 +1331,20 @@ export function PontoModule() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-2">
+                    <Label>Email (vínculo login)</Label>
+                    <Input
+                      value={selectedEmployeeLoginEmail}
+                      onChange={(e) => setSelectedEmployeeLoginEmail(e.target.value)}
+                      placeholder="ex: funcionario@empresa.com"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={adminSaveLoginEmail} disabled={loading || !adminToken.trim() || !selectedEmployeeId}>Salvar vínculo</Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-2">
                     <Label>Novo PIN (min. 4)</Label>
                     <Input value={pinAdminValue} onChange={(e) => setPinAdminValue(e.target.value)} inputMode="numeric" placeholder="••••" />
                   </div>
@@ -993,7 +1399,7 @@ export function PontoModule() {
                   </label>
 
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={stopCameraUI} disabled={loading || !stream}>Desligar</Button>
+                    <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
                     <Button onClick={adminEnrollFace} disabled={loading || !adminToken.trim() || !selectedEmployeeId}>
                       Capturar & salvar biometria
                     </Button>
@@ -1005,6 +1411,7 @@ export function PontoModule() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Nome</TableHead>
+                        <TableHead>Login</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Face</TableHead>
                         <TableHead>PIN</TableHead>
@@ -1015,6 +1422,7 @@ export function PontoModule() {
                       {adminEmployees.map(e => (
                         <TableRow key={e.id} className={e.id === selectedEmployeeId ? 'bg-muted/40' : ''}>
                           <TableCell className="font-medium">{e.name}</TableCell>
+                          <TableCell className="text-sm">{e.loginEmail || '-'}</TableCell>
                           <TableCell>{e.active === false ? <Badge variant="secondary">Inativo</Badge> : <Badge>Ativo</Badge>}</TableCell>
                           <TableCell><Badge variant="outline">{e.faceDescriptorsCount || 0}</Badge></TableCell>
                           <TableCell>{e.pinSet ? <Badge variant="outline">OK</Badge> : <Badge variant="secondary">—</Badge>}</TableCell>
@@ -1023,7 +1431,7 @@ export function PontoModule() {
                       ))}
                       {!adminEmployees.length ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-sm text-muted-foreground">Nenhum funcionário.</TableCell>
+                          <TableCell colSpan={6} className="text-sm text-muted-foreground">Nenhum funcionário.</TableCell>
                         </TableRow>
                       ) : null}
                     </TableBody>

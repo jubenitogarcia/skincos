@@ -20,6 +20,14 @@ function safeText(value, maxLen) {
   return s.length > maxLen ? s.slice(0, maxLen) : s
 }
 
+function normalizeEmail(value) {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (!raw) return ''
+  if (raw.length > 180) return ''
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) return ''
+  return raw
+}
+
 function getClientIp(req) {
   const xf = String(req.headers['x-forwarded-for'] || '').trim()
   if (xf) return xf.split(',')[0].trim()
@@ -31,6 +39,13 @@ function safeEqual(a, b) {
   const bb = Buffer.from(String(b || ''))
   if (aa.length !== bb.length) return false
   return crypto.timingSafeEqual(aa, bb)
+}
+
+function b64UrlToUtf8(b64url) {
+  const s = String(b64url || '').trim()
+  if (!s) return ''
+  const padded = s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=')
+  return Buffer.from(padded, 'base64').toString('utf-8')
 }
 
 function sha256Hex(input) {
@@ -161,6 +176,11 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   const templatesKey = tryParseKey(process.env.PONTO_TEMPLATES_KEY)
   const auditHmacKey = tryParseKey(process.env.PONTO_AUDIT_HMAC_KEY)
 
+  // Optional hardening for /api/ponto/me (Cloudflare Pages proxy -> backend).
+  const proxyToken = String(process.env.PONTO_PROXY_TOKEN || '').trim()
+  const actorHmacKey = String(process.env.PONTO_ACTOR_HMAC_KEY || proxyToken).trim()
+  const actorSkewMs = clampInt(process.env.PONTO_ACTOR_SKEW_MS, 5_000, 60 * 60 * 1000, 5 * 60 * 1000)
+
   const maxDescriptors = clampInt(process.env.PONTO_MAX_DESCRIPTORS, 1, 30, 10)
   const faceThresholdDefault = clampFloat(process.env.PONTO_FACE_THRESHOLD, 0.2, 1.5, 0.52)
   const punchCooldownSeconds = clampInt(process.env.PONTO_PUNCH_COOLDOWN_SECONDS, 0, 3600, 10)
@@ -236,6 +256,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       id: employee.id,
       code: employee.code || '',
       name: employee.name,
+      loginEmail: employee.loginEmail || '',
       active: employee.active !== false,
       createdAt: employee.createdAt,
       updatedAt: employee.updatedAt,
@@ -315,6 +336,84 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     return { device, actor: actorFromReq(req, { kind: 'device', id: device.id, label: device.label, unit: device.unit }) }
   }
 
+  function verifyActor(req) {
+    const actorB64 = String(req.headers['x-skincos-actor'] || '').trim()
+    const tsRaw = String(req.headers['x-skincos-actor-ts'] || '').trim()
+    const sig = String(req.headers['x-skincos-actor-sig'] || '').trim()
+
+    if (!actorB64 || !tsRaw) return { ok: false, code: 'ACTOR_MISSING' }
+    const ts = Number(tsRaw)
+    if (!Number.isFinite(ts) || ts <= 0) return { ok: false, code: 'ACTOR_TS_INVALID' }
+    if (Math.abs(Date.now() - ts) > actorSkewMs) return { ok: false, code: 'ACTOR_TS_SKEW' }
+
+    const actorJson = b64UrlToUtf8(actorB64)
+    let actor = null
+    try { actor = JSON.parse(actorJson) } catch { actor = null }
+    if (!actor || typeof actor !== 'object') return { ok: false, code: 'ACTOR_INVALID' }
+
+    const isDev = String(process.env.NODE_ENV || '').toLowerCase() === 'development'
+    const sigRequired = !isDev || !!actorHmacKey
+    if (sigRequired) {
+      if (!actorHmacKey) return { ok: false, code: 'ACTOR_KEY_MISSING' }
+      if (!sig) return { ok: false, code: 'ACTOR_SIG_MISSING' }
+      const expected = crypto.createHmac('sha256', actorHmacKey).update(`${tsRaw}.${actorB64}`).digest('base64url')
+      if (!safeEqual(sig, expected)) return { ok: false, code: 'ACTOR_SIG_INVALID' }
+    }
+
+    const email = normalizeEmail(actor.email)
+    if (!email) return { ok: false, code: 'ACTOR_EMAIL_MISSING' }
+    return { ok: true, actor: { ...actor, email } }
+  }
+
+  function requireEmployee(req, res) {
+    if (proxyToken) {
+      const token = String(req.headers['x-ponto-proxy-token'] || '').trim()
+      if (!token || token !== proxyToken) {
+        res.status(401).json({ ok: false, error: 'UNAUTHORIZED', code: 'PROXY_TOKEN_INVALID' })
+        return null
+      }
+    }
+
+    const verified = verifyActor(req)
+    if (!verified.ok) {
+      res.status(401).json({
+        ok: false,
+        error: 'UNAUTHORIZED',
+        code: verified.code,
+        hint: 'Missing/invalid actor headers. Requests must come from the CRM Pages proxy.'
+      })
+      return null
+    }
+
+    const email = verified.actor.email
+    return actorFromReq(req, { kind: 'employee', id: email, label: email })
+  }
+
+  function findEmployeeByLoginEmail(email) {
+    const needle = normalizeEmail(email)
+    if (!needle) return null
+    for (const e of state.employees) {
+      if (!e || e.deletedAt || e.active === false) continue
+      if (normalizeEmail(e.loginEmail) === needle) return e
+    }
+    return null
+  }
+
+  function matchEmployeeDescriptor(employeeId, descriptor, opts = {}) {
+    const threshold = clampFloat(opts.threshold ?? faceThresholdDefault, 0.2, 1.5, faceThresholdDefault)
+    const templates = faceCache.get(employeeId) || []
+    if (!templates.length) return { ok: false, code: 'FACE_NOT_ENROLLED', threshold }
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const tpl of templates) {
+      if (!isNumberArray(tpl, descriptor.length, descriptor.length)) continue
+      const dist = l2(descriptor, tpl)
+      if (dist < bestDistance) bestDistance = dist
+    }
+    if (!Number.isFinite(bestDistance)) return { ok: false, code: 'FACE_NOT_ENROLLED', threshold }
+    if (bestDistance > threshold) return { ok: false, code: 'FACE_NOT_RECOGNIZED', threshold, bestDistance }
+    return { ok: true, threshold, bestDistance }
+  }
+
   function migrateFromV1(loaded) {
     const employees = Array.isArray(loaded?.employees) ? loaded.employees.filter(Boolean) : []
     const records = Array.isArray(loaded?.records) ? loaded.records.filter(Boolean) : []
@@ -327,6 +426,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
         id,
         code: safeText(e.code, 40),
         name: safeText(e.name, 80) || 'Funcionario',
+        loginEmail: normalizeEmail(e.loginEmail || e.email || ''),
         active: e.active !== false,
         createdAt: e.createdAt || new Date().toISOString(),
         updatedAt: e.updatedAt || new Date().toISOString(),
@@ -506,6 +606,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     if (!actor) return
     const name = safeText(req.body?.name, 80)
     const code = safeText(req.body?.code, 40)
+    const loginEmail = normalizeEmail(req.body?.loginEmail)
     if (!name) return res.status(400).json({ ok: false, error: 'NAME_REQUIRED' })
 
     const now = new Date().toISOString()
@@ -513,6 +614,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       id: crypto.randomUUID(),
       code,
       name,
+      loginEmail: loginEmail || '',
       active: true,
       createdAt: now,
       updatedAt: now,
@@ -536,11 +638,30 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     if (!actor) return
     const employee = findEmployee(req.params.id)
     if (!employee || employee.deletedAt) return res.status(404).json({ ok: false, error: 'NOT_FOUND' })
-    const name = safeText(req.body?.name, 80)
-    const code = safeText(req.body?.code, 40)
     const activeRaw = req.body?.active
-    if (name) employee.name = name
-    if (code || code === '') employee.code = code
+    const nameRaw = req.body?.name
+    const codeRaw = req.body?.code
+    const loginEmailRaw = req.body?.loginEmail
+
+    if (nameRaw !== undefined) {
+      const name = safeText(nameRaw, 80)
+      if (name) employee.name = name
+    }
+
+    if (codeRaw !== undefined) {
+      const code = safeText(codeRaw, 40)
+      employee.code = code
+    }
+
+    if (loginEmailRaw !== undefined) {
+      const next = normalizeEmail(loginEmailRaw)
+      const prev = normalizeEmail(employee.loginEmail)
+      employee.loginEmail = next || ''
+      await enqueueWrite(() =>
+        writeAudit(next ? 'EMPLOYEE_LINK_LOGIN' : 'EMPLOYEE_UNLINK_LOGIN', { employeeId: employee.id, prev, next: next || '' }, actor)
+      )
+    }
+
     if (typeof activeRaw === 'boolean') employee.active = activeRaw
     employee.updatedAt = new Date().toISOString()
     schedulePersist()
@@ -885,6 +1006,144 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   })
 
   // -------------------------------------------------------------
+  // Employee APIs (self-service via Pages proxy actor headers)
+  // -------------------------------------------------------------
+  app.get('/api/ponto/me', async (req, res) => {
+    const actor = requireEmployee(req, res)
+    if (!actor) return
+    const email = actor.label
+    const employee = findEmployeeByLoginEmail(email)
+    if (!employee) {
+      return res.json({
+        ok: true,
+        linked: false,
+        actorEmail: email,
+        hint: 'Seu usuário ainda não está vinculado a um funcionário. Peça ao admin para definir o email no cadastro do funcionário.'
+      })
+    }
+    const lastPunch = findLastEmployeePunch(employee.id)
+    const cooldown = enforceCooldown(employee.id)
+    const hasFace = (faceCache.get(employee.id) || []).length > 0
+    return res.json({
+      ok: true,
+      linked: true,
+      actorEmail: email,
+      employee: publicEmployee(employee),
+      hasFace,
+      pinSet: !!employee.pinHash,
+      lastPunch: lastPunch || null,
+      cooldown: cooldown.ok ? { active: false } : { active: true, secondsRemaining: cooldown.secondsRemaining, last: cooldown.last },
+      suggestedNextMethod: hasFace ? 'FACE' : 'PIN'
+    })
+  })
+
+  app.get('/api/ponto/me/records', async (req, res) => {
+    const actor = requireEmployee(req, res)
+    if (!actor) return
+    const email = actor.label
+    const employee = findEmployeeByLoginEmail(email)
+    if (!employee) return res.status(404).json({ ok: false, error: 'EMPLOYEE_NOT_LINKED' })
+    const from = safeText(req.query?.from, 30)
+    const to = safeText(req.query?.to, 30)
+    const limit = clampInt(req.query?.limit, 1, 2000, 200)
+    const includeCorrections = String(req.query?.includeCorrections || '1') !== '0'
+
+    const fromMs = from ? new Date(from).getTime() : null
+    const toMs = to ? new Date(to).getTime() : null
+
+    const punches = []
+    const corrections = []
+    for (let i = state.records.length - 1; i >= 0; i--) {
+      const r = state.records[i]
+      if (!r) continue
+      if (r.employeeId !== employee.id && r.kind !== 'CORRECTION') continue
+      if (r.kind === 'CORRECTION' && r.employeeId !== employee.id) continue
+      const ms = new Date(r.at || r.createdAt).getTime()
+      if (fromMs != null && Number.isFinite(fromMs) && ms < fromMs) continue
+      if (toMs != null && Number.isFinite(toMs) && ms > toMs) continue
+      if (r.kind === 'CORRECTION') corrections.push(r)
+      if (r.kind === 'PUNCH') punches.push(r)
+      if (punches.length >= limit && corrections.length >= limit) break
+    }
+    const out = includeCorrections ? applyCorrections(punches, corrections) : punches
+    res.json({ ok: true, data: out, correctionsCount: includeCorrections ? corrections.length : 0 })
+  })
+
+  app.post('/api/ponto/me/punch', async (req, res) => {
+    const actor = requireEmployee(req, res)
+    if (!actor) return
+    const email = actor.label
+    const employee = findEmployeeByLoginEmail(email)
+    if (!employee) return res.status(404).json({ ok: false, error: 'EMPLOYEE_NOT_LINKED' })
+
+    const idempotencyKey = getIdempotencyKey(req)
+    const existing = findExistingByIdempotency({ deviceId: null, employeeId: employee.id, idempotencyKey })
+    if (existing) return res.json({ ok: true, data: existing, employee: publicEmployee(employee), idempotent: true })
+
+    const cooldown = enforceCooldown(employee.id)
+    if (!cooldown.ok) return res.status(409).json({ ok: false, error: 'COOLDOWN', secondsRemaining: cooldown.secondsRemaining, last: cooldown.last })
+
+    const descriptor = req.body?.descriptor
+    const pin = safeText(req.body?.pin, 20)
+    const hasFace = (faceCache.get(employee.id) || []).length > 0
+
+    let method = null
+    let matchDistance = null
+
+    if (descriptor !== undefined) {
+      if (!isNumberArray(descriptor, 64, 1024)) return res.status(400).json({ ok: false, error: 'DESCRIPTOR_INVALID' })
+      if (hasFace) {
+        const match = matchEmployeeDescriptor(employee.id, descriptor, { threshold: req.body?.threshold })
+        if (!match.ok) return res.status(401).json({ ok: false, error: match.code, next: 'PIN', threshold: match.threshold, bestDistance: match.bestDistance ?? null })
+        method = 'FACE'
+        matchDistance = match.bestDistance
+      }
+    }
+
+    if (!method && pin) {
+      if (!employee.pinHash) return res.status(400).json({ ok: false, error: 'PIN_NOT_SET' })
+      if (!verifyPin(pin, employee.pinHash)) return res.status(401).json({ ok: false, error: 'PIN_INVALID' })
+      method = 'PIN'
+    }
+
+    if (!method) {
+      return res.status(400).json({ ok: false, error: 'NEXT_METHOD_REQUIRED', next: hasFace ? 'FACE' : 'PIN' })
+    }
+
+    const type = computePunchType(req.body?.type, employee.id)
+    const unit = safeText(req.body?.unit, 80) || null
+    const note = safeText(req.body?.note, 240) || null
+    const now = new Date().toISOString()
+
+    const record = {
+      id: crypto.randomUUID(),
+      kind: 'PUNCH',
+      employeeId: employee.id,
+      employeeName: employee.name,
+      type,
+      at: now,
+      client: getClientTimeMeta(req),
+      unit,
+      deviceId: null,
+      deviceLabel: null,
+      ip: getClientIp(req),
+      userAgent: safeText(req.headers['user-agent'], 220) || null,
+      matchDistance,
+      method,
+      geo: null,
+      liveness: null,
+      note,
+      idempotencyKey: idempotencyKey || null,
+      createdAt: now
+    }
+
+    state.records.push(record)
+    schedulePersist()
+    await enqueueWrite(() => writeAudit(method === 'FACE' ? 'PUNCH_FACE' : 'PUNCH_PIN', { recordId: record.id, employeeId: employee.id, type, unit }, actor))
+    res.json({ ok: true, data: record, employee: publicEmployee(employee) })
+  })
+
+  // -------------------------------------------------------------
   // Device APIs
   // -------------------------------------------------------------
   app.get('/api/ponto/device/employees', async (req, res) => {
@@ -1024,4 +1283,3 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     res.json({ ok: true, data: record, employee: publicEmployee(employee) })
   })
 }
-
