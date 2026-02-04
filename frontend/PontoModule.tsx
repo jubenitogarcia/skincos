@@ -1253,9 +1253,6 @@ export function PontoModule() {
                   <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
                     Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
                   </Button>
-                  <Button variant="outline" onClick={() => setDevicePinOpen(true)} disabled={loading}>
-                    Usar PIN
-                  </Button>
                 </div>
 
                 <div className="rounded-xl overflow-hidden border bg-black">
