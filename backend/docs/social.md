@@ -31,6 +31,25 @@ Endpoints usados pelo checklist:
 - `GET /api/social/setup/status` (retorna status de R2/prefix, criptografia, policy de admin e defaults)
 - `GET /api/social/metrics/last-jobs-run` (lê `social/metrics/last_jobs_run.json` no R2)
 
+## Bloqueio de abas por onboarding (Planner obrigatório)
+Por padrão, as abas **Instagram/Facebook/Threads** ficam **visíveis porém bloqueadas** até o usuário finalizar o Planner.
+
+Critério de liberação (para o escopo selecionado no Planner):
+- Login Insumos OK (`/api/social/setup/status` não pode retornar 401)
+- R2 configurado (`setup.r2.bucketConfigured === true`)
+- Se criptografia for obrigatória, secret configurado (`setup.encryption.required === true` ⇒ `setup.encryption.configured === true`)
+- Permissão Admin Social OK (via role/email allowlist, ou token validado)
+- Contas configuradas para todas combinações `(unidade × plataforma)` do escopo (sem `missingAccounts`)
+
+Preferências/persistência no browser (localStorage):
+- `social.onboarding.scopeUnits` (CSV, ex.: `BSS,NH`)
+- `social.onboarding.scopePlatforms` (CSV, ex.: `instagram,facebook,threads`)
+- `social.onboarding.completed` (`"true"` quando o usuário clica “Finalizar e liberar abas”)
+- `social.onboarding.completedAt` (ISO timestamp)
+
+Reset (re-onboarding):
+- Limpar os itens acima do `localStorage` (ou “Limpar dados do site” no browser).
+
 ## Unidades (personalização)
 O módulo Social usa chaves curtas de unidade (hoje: `BSS` e `NH`). Para personalização, a UI tenta mapear unidades vindas do Insumos:
 - `barra-shopping-sul` → `BSS`
