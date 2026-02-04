@@ -1416,9 +1416,36 @@ export default {
             }
         }
 
-        const sessionSecret = String(env.SESSION_SECRET || '').trim();
+        const resolveSessionSecret = async () => {
+            const fromEnv = String(env.SESSION_SECRET || '').trim();
+            if (fromEnv) return { secret: fromEnv, source: 'env' };
+            if (!env?.DB) return { secret: '', source: 'missing-db' };
+            try {
+                await env.DB.prepare(
+                    `CREATE TABLE IF NOT EXISTS app_kv (
+                        id TEXT PRIMARY KEY,
+                        value TEXT,
+                        updated_at TEXT
+                    )`
+                ).run();
+                const row = await env.DB.prepare(`SELECT value FROM app_kv WHERE id = 'session_secret' LIMIT 1`).first();
+                if (row?.value) return { secret: String(row.value), source: 'd1' };
+                const generated = `${crypto.randomUUID()}-${crypto.randomUUID()}`;
+                await env.DB.prepare(`INSERT INTO app_kv (id, value, updated_at) VALUES ('session_secret', ?, ?)`)
+                    .bind(generated, new Date().toISOString())
+                    .run();
+                return { secret: generated, source: 'generated' };
+            } catch {
+                return { secret: '', source: 'error' };
+            }
+        };
+
+        const { secret: sessionSecret, source: sessionSecretSource } = await resolveSessionSecret();
         if (!sessionSecret) {
             return withCORS(JSON.stringify({ error: "SESSION_SECRET not configured" }), { status: 500 }, appOrigin);
+        }
+        if (sessionSecretSource !== 'env') {
+            console.warn(`SESSION_SECRET missing; using ${sessionSecretSource} fallback`);
         }
 
         const issueAuthCookies = async (sessionPayload) => {
