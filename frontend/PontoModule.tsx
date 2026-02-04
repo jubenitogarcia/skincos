@@ -82,7 +82,7 @@ function b64UrlEncodeString(input: string): string {
 }
 
 function getDevEmployeeActorHeaders(): Record<string, string> {
-  if (!(import.meta as any).env?.DEV) return {}
+  if (!import.meta.env.DEV) return {}
   let email = ''
   try { email = String(localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '').trim().toLowerCase() } catch { email = '' }
   if (!email) return {}
@@ -346,7 +346,7 @@ export function PontoModule() {
     setMeRecordsTo(toDateTimeLocalValue(now))
   }, [meRecordsFrom, meRecordsTo])
 
-  const isDev = Boolean((import.meta as any).env?.DEV)
+  const isDev = import.meta.env.DEV
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
   const canAdmin = crmRole === 'ADMIN' || crmRole === 'GESTOR' || crmRole === 'GERENTE'
   const showAdminTab = canAdmin || isDev
@@ -1047,7 +1047,7 @@ export function PontoModule() {
                 </div>
               ) : null}
 
-              {(import.meta as any).env?.DEV ? (
+              {import.meta.env.DEV ? (
                 <div className="rounded-md border p-3 text-sm space-y-2">
                   <div className="font-medium">Dev: actor email (para testar local sem Pages proxy)</div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1332,15 +1332,6 @@ export function PontoModule() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={adminRefreshAll} disabled={loading || !canAdminActions}>Atualizar</Button>
-                {isDev ? (
-                  <div className="flex items-end gap-2">
-                    <div className="space-y-2">
-                      <Label>Token Admin (dev)</Label>
-                      <Input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} placeholder="Admin token..." />
-                    </div>
-                    <Button variant="outline" onClick={() => setAdminToken('')} disabled={loading}>Limpar</Button>
-                  </div>
-                ) : null}
               </div>
             </CardContent>
           </Card>
