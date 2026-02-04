@@ -24,6 +24,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Config (env, recomendado): `R2_KEY_PREFIX` (ex: `preview/`) para isolar dados de R2 entre ambientes (preview ≠ production).
 - Config (env, opcional): `SOCIAL_MEDIA_MAX_AGE_DAYS` e `SHARE_MAX_AGE_DAYS` (se definidos, links públicos antigos passam a retornar 404).
 - Config (env, opcional): `SOCIAL_ADMIN_EMAIL_ALLOWLIST` (lista de emails, separados por vírgula, exigidos para ações de admin Social).
+- Config (env, opcional): `SOCIAL_ADMIN_ROLE_ALLOWLIST` (lista de roles, separados por vírgula, permitindo admin Social sem token).
 - Publicação manual agora **enfileira job** em `social/jobs/*` e o Worker `social-publisher` processa (habilite `SOCIAL_JOBS_ENABLED=true`).
 - Endpoint de status de job: `GET /api/social/job-status?jobId=...` (retorna `pending|done|unknown`).
 

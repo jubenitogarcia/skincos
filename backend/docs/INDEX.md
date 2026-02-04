@@ -50,6 +50,10 @@ Ver `backend/docs/NODE_PACKAGE_MANAGEMENT.md`.
 - Visão geral: `backend/docs/deploy.md`
 - Mapa completo (Cloudflare + serviços): `backend/docs/DEPLOYMENT_MAP.md`
 
+## Módulos (docs)
+- Social (Redes Sociais): `backend/docs/social.md`
+- Insumos: `backend/docs/insumos.md`
+
 ## Testes
 - Unit tests (pytest): `python3 -m pytest backend/tests/unit`
 - Scripts manuais (smoke, podem chamar APIs reais): `backend/tests/manual/*`

@@ -119,6 +119,7 @@ const UnitMonitor = lazy(() => import('@/UnitMonitor').then(m => ({ default: m.U
 const InsumosModule = lazy(() => import('@/InsumosModule').then(m => ({ default: m.InsumosModule })))
 const UsersModule = lazy(() => import('@/UsersModule').then(m => ({ default: m.UsersModule })))
 const SystemStatusModule = lazy(() => import('@/SystemStatusModule').then(m => ({ default: m.SystemStatusModule })))
+const PontoModule = lazy(() => import('@/PontoModule').then(m => ({ default: m.PontoModule })))
 
 // TODO: Add remaining modules if needed
 
@@ -173,6 +174,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'assets', label: 'Ativos', icon: '📦', component: <AssetManagement /> },
     { key: 'manufacturing', label: 'Fabricação', icon: '🏭', component: <ManufacturingModule /> },
     { key: 'hr', label: 'RH', icon: '👥', component: <HRModule /> },
+    { key: 'ponto', label: 'Ponto', icon: '⏱️', component: <PontoModule /> },
     { key: 'procurement', label: 'Compras', icon: '🛒', component: <ProcurementModule /> },
     { key: 'accounting', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, component: <Financeiro /> },
     { key: 'products', label: 'Produtos', icon: '📂', component: <ProductCatalog /> },
@@ -244,7 +246,7 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio', 'ponto']), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
