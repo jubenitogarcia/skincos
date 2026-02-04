@@ -1,0 +1,20 @@
+title = "skincos gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore legacy/vendor/docs artifacts that trip default rules (e.g., curl examples, rule catalogs)."
+paths = [
+  '''^agent-zero-module/''',
+  '''^attached_assets/''',
+  '''^backend/apps/automations/sprinta/legacy/''',
+  '''^backend/apps/instagram/instagrapi/''',
+  '''^backend/apps/insumos/\.dev\.vars\.example$''',
+  '''^backend/apps/whatsapp/gateway/agent_zero_webhook_server\.py$''',
+  '''^comprehensive-crm-so/''',
+  '''^frontend/CameraDiscovery\.tsx$''',
+  '''^whatsapp-official-module/''',
+  '''^\.config/\.semgrep/''',
+]
+
