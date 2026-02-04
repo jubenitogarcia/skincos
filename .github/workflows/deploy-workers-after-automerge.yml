@@ -1,0 +1,139 @@
+name: Deploy Cloudflare Workers (API + Insumos) after automerge
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to deploy (uses merge commit SHA)"
+        required: true
+
+concurrency:
+  group: deploy-workers-after-automerge-${{ github.event.pull_request.base.ref || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Resolve PR context
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = (() => {
+              const n = context.payload?.pull_request?.number;
+              if (n) return n;
+              const input = context.payload?.inputs?.pr_number;
+              const parsed = Number(String(input || '').trim());
+              if (!Number.isFinite(parsed) || parsed <= 0) {
+                core.warning(`Invalid or missing workflow_dispatch input pr_number: ${input}`);
+                return null;
+              }
+              return parsed;
+            })();
+
+            if (!prNumber) {
+              core.setOutput('eligible', 'false');
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const eligible =
+              pr.merged === true &&
+              pr.base?.ref === 'main' &&
+              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              String(pr.head?.ref || '').startsWith('codex/') &&
+              pr.user?.login === 'jubenitogarcia';
+
+            core.info(`PR #${prNumber} merged=${pr.merged} base=${pr.base?.ref} head=${pr.head?.ref} eligible=${eligible}`);
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('merge_commit_sha', pr.merge_commit_sha || '');
+            core.setOutput('eligible', eligible ? 'true' : 'false');
+
+      - name: Detect worker changes
+        if: ${{ steps.pr.outputs.eligible == 'true' }}
+        id: changes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number('${{ steps.pr.outputs.pr_number }}'),
+              per_page: 100,
+            });
+            const changed = files.some((f) => {
+              const name = String(f.filename || '');
+              return (
+                name.startsWith('backend/apps/api/') ||
+                name.startsWith('backend/apps/insumos/') ||
+                name === 'backend/scripts/cloudflare-workers.sh' ||
+                name === 'backend/pnpm-lock.yaml' ||
+                name === 'backend/pnpm-workspace.yaml' ||
+                name === '.github/workflows/deploy-insumos-worker.yml' ||
+                name === '.github/workflows/deploy-workers-after-automerge.yml' ||
+                name === '.github/workflows/deploy-workers-reconcile.yml'
+              );
+            });
+            core.setOutput('workers_changed', changed ? 'true' : 'false');
+
+      - name: Guard Cloudflare deploy secrets
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' }}
+        id: guard
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Cloudflare deploy secrets not configured; skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout merge commit
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.merge_commit_sha }}
+
+      - name: Setup Node
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Setup pnpm (corepack)
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install backend workspace deps
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        run: pnpm -C backend install --frozen-lockfile
+
+      - name: Deploy Workers (deploy-all)
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          bash backend/scripts/cloudflare-workers.sh deploy-all
+
