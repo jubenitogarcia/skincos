@@ -1,5 +1,5 @@
 import { requireCsrfForMutations } from '../../_lib/csrf'
-import { requireInsumosUser } from '../../_lib/insumosAuth'
+import { requireCrmUser } from '../../_lib/crmAuth'
 import { getShareBucket } from '../../_lib/r2'
 import { requestAuditMeta, writeAuditEvent } from '../../_lib/audit'
 import { shareIndexDayKeyUtc, shareIndexKey } from '../../_lib/shareIndex'
@@ -22,7 +22,7 @@ const sanitizeName = (name: string) => {
 }
 
 export async function onRequestPost(context: { request: Request; env?: Record<string, unknown> }): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
   const csrfRes = requireCsrfForMutations(context)

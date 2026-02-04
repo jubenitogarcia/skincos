@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../../_lib/insumosAuth'
+import { requireCrmUser } from '../../../_lib/crmAuth'
 import { getShareBucketInfo } from '../../../_lib/r2'
 import { getIntegrationsEncryptionSecret, integrationsEncryptionSecretRequired } from '../../../_lib/integrationsEncryption'
 
@@ -16,29 +16,17 @@ const parseCsv = (raw: any): string[] => {
   return [...new Set(parts)]
 }
 
-const parseCsvLower = (raw: any): Set<string> => new Set(parseCsv(raw).map((s) => s.toLowerCase()))
-const parseCsvUpper = (raw: any): Set<string> => new Set(parseCsv(raw).map((s) => s.toUpperCase()))
-
 export async function onRequestGet(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
   const { bucketConfigured, effectiveKeyPrefix } = getShareBucketInfo(context)
   const secret = getIntegrationsEncryptionSecret(context)
   const encryptionRequired = integrationsEncryptionSecretRequired(context)
 
-  const roleAllowlist = parseCsvUpper(context?.env?.SOCIAL_ADMIN_ROLE_ALLOWLIST)
-  const emailAllowlist = parseCsvLower(context?.env?.SOCIAL_ADMIN_EMAIL_ALLOWLIST)
-  const tokenConfigured = !!String(context?.env?.SOCIAL_ADMIN_TOKEN || '').trim()
-
-  const roleAllowlistConfigured = roleAllowlist.size > 0
-  const emailAllowlistConfigured = emailAllowlist.size > 0
-
-  const role = String((userOrRes as any)?.role || '').trim().toUpperCase()
-  const userCanAdminWithoutToken = roleAllowlistConfigured && !!role && roleAllowlist.has(role)
-  const tokenRequiredForThisUser = !userCanAdminWithoutToken && tokenConfigured
-
   const defaultUnitsFromEnv = parseCsv(context?.env?.SOCIAL_DEFAULT_UNITS)
+  const role = String((userOrRes as any)?.role || '').trim()
+  const isAdmin = role.toUpperCase() === 'ADMIN'
 
   return json(200, {
     ok: true,
@@ -51,14 +39,7 @@ export async function onRequestGet(context: any): Promise<Response> {
     },
     r2: { bucketConfigured, effectiveKeyPrefix },
     encryption: { required: encryptionRequired, configured: !!secret },
-    adminPolicy: {
-      roleAllowlistConfigured,
-      emailAllowlistConfigured,
-      tokenConfigured,
-      userCanAdminWithoutToken,
-      tokenRequiredForThisUser,
-    },
+    admin: { isAdmin, role: role || undefined },
     socialDefaults: { defaultUnitsFromEnv },
   })
 }
-

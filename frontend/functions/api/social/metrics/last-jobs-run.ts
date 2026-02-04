@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../../_lib/insumosAuth'
+import { requireCrmUser } from '../../../_lib/crmAuth'
 import { getShareBucket, getJson } from '../../../_lib/r2'
 
 const json = (status: number, body: any) =>
@@ -8,7 +8,7 @@ const json = (status: number, body: any) =>
   })
 
 export async function onRequestGet(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
   const bucket = getShareBucket(context)
@@ -25,4 +25,3 @@ export async function onRequestGet(context: any): Promise<Response> {
 
   return json(200, { ok: true, metrics })
 }
-

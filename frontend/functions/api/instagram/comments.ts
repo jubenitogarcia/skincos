@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../_lib/insumosAuth'
+import { requireCrmUser } from '../../_lib/crmAuth'
 import { getShareBucket } from '../../_lib/r2'
 import { graphGet } from '../../_lib/instagramGraph'
 import { readConnectionDecrypted } from '../../_lib/instagramStore'
@@ -11,7 +11,7 @@ const json = (status: number, body: any) =>
   })
 
 export async function onRequestGet(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
   const bucket = getShareBucket(context)

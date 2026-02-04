@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../../_lib/insumosAuth'
+import { requireCrmUser } from '../../../_lib/crmAuth'
 import { getShareBucket, getJson } from '../../../_lib/r2'
 import { isPublished } from '../../../_lib/socialQueue'
 import { socialQueueGroupKey } from '../../../_lib/socialKeys'
@@ -26,7 +26,7 @@ async function listAll(bucket: R2Bucket, opts: { prefix: string; delimiter?: str
 }
 
 export async function onRequestGet(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
   const bucket = getShareBucket(context)
@@ -67,4 +67,3 @@ export async function onRequestGet(context: any): Promise<Response> {
   groups.sort((a, b) => String(a.group.scheduledAt).localeCompare(String(b.group.scheduledAt)))
   return json(200, { ok: true, dateKey, groups })
 }
-

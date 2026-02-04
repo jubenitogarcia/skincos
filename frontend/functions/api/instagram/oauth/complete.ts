@@ -1,4 +1,4 @@
-import { requireInsumosUser } from '../../../_lib/insumosAuth'
+import { requireCrmUser } from '../../../_lib/crmAuth'
 import { getShareBucket } from '../../../_lib/r2'
 import { deletePending, readPendingDecrypted, writeConnection } from '../../../_lib/instagramStore'
 import { requireCsrfForMutations } from '../../../_lib/csrf'
@@ -12,7 +12,7 @@ const json = (status: number, body: any) =>
   })
 
 export async function onRequestPost(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
   const csrfRes = requireCsrfForMutations(context)
   if (csrfRes) return csrfRes

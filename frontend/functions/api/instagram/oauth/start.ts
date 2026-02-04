@@ -1,8 +1,8 @@
-import { requireInsumosUser } from '../../../_lib/insumosAuth'
+import { requireCrmUser } from '../../../_lib/crmAuth'
 import { signState } from '../../../_lib/oauthState'
 
 export async function onRequestGet(context: any): Promise<Response> {
-  const userOrRes = await requireInsumosUser(context)
+  const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
   const appId = String(context?.env?.META_APP_ID || '').trim()
@@ -35,4 +35,3 @@ export async function onRequestGet(context: any): Promise<Response> {
 
   return Response.redirect(`https://www.facebook.com/v20.0/dialog/oauth?${qs.toString()}`, 302)
 }
-
