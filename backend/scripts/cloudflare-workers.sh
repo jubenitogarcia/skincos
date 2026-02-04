@@ -72,7 +72,8 @@ deploy_insumos() {
   (
     cd "$BACKEND_DIR"
     # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
-    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" --config wrangler.toml "${ENV_FLAG[@]}" || true
+    # IMPORTANT: CI should apply migrations to the remote D1 (not the local .wrangler state).
+    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" --remote --config wrangler.toml "${ENV_FLAG[@]}"
   )
   echo "[workers] Deploying skincos-insumos..."
   (
