@@ -180,27 +180,43 @@ export async function handleAuthRoutes({
             return cleaned.slice(0, 40);
         };
 
-        const suggestUsername = (name, email) => {
-            const local = String(email || '').split('@')[0] || '';
-            const base = slugifyUsername(local) || slugifyUsername(name) || 'user';
-            return base.length >= 3 ? base : `${base}${Math.floor(100 + Math.random() * 900)}`;
-        };
+		        function randomInt(min, max) {
+		            const lo = Math.ceil(Number(min) || 0);
+		            const hi = Math.floor(Number(max) || 0);
+		            if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return lo;
+		            const range = hi - lo + 1;
+		            // Rejection sampling to avoid modulo bias.
+		            const u32 = new Uint32Array(1);
+		            const maxUint = 0xffffffff;
+		            const limit = maxUint - (maxUint % range);
+		            while (true) {
+		                crypto.getRandomValues(u32);
+		                const x = u32[0];
+		                if (x < limit) return lo + (x % range);
+		            }
+		        }
 
-	        const ensureUniqueUsername = async (base) => {
-	            const b = String(base || '').trim();
-	            if (!b) return null;
-	            // 1) try base
-	            const taken0 = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(b).first();
-	            if (!taken0) return b;
-	            // 2) add numeric suffixes
-	            for (let i = 0; i < 20; i++) {
-	                const suffix = String(Math.floor(10 + Math.random() * 90));
-	                const candidate = `${b.slice(0, Math.max(0, 40 - (suffix.length + 1)))}-${suffix}`.slice(0, 40);
-	                const taken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(candidate).first();
-	                if (!taken) return candidate;
-	            }
-	            return null;
-	        };
+		        const suggestUsername = (name, email) => {
+		            const local = String(email || '').split('@')[0] || '';
+		            const base = slugifyUsername(local) || slugifyUsername(name) || 'user';
+		            return base.length >= 3 ? base : `${base}${randomInt(100, 999)}`;
+		        };
+
+		        const ensureUniqueUsername = async (base) => {
+		            const b = String(base || '').trim();
+		            if (!b) return null;
+		            // 1) try base
+		            const taken0 = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(b).first();
+		            if (!taken0) return b;
+		            // 2) add numeric suffixes
+		            for (let i = 0; i < 20; i++) {
+		                const suffix = String(randomInt(10, 99));
+		                const candidate = `${b.slice(0, Math.max(0, 40 - (suffix.length + 1)))}-${suffix}`.slice(0, 40);
+		                const taken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(candidate).first();
+		                if (!taken) return candidate;
+		            }
+		            return null;
+		        };
 
         // GET /auth/me
         if (url.pathname === "/auth/me") {
