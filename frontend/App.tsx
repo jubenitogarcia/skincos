@@ -32,7 +32,7 @@ type ApiError = {
 
 type InsumosMeResponse = {
     success?: boolean
-    user?: { username?: string; displayName?: string; email?: string; role?: string }
+    user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[]; allowedModules?: string[] }
     csrfToken?: string
 }
 
@@ -47,7 +47,8 @@ async function insumosApiJson<T>(
     const method = opts.method || 'GET'
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (opts.body !== undefined) headers['content-type'] = 'application/json'
-    const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
+    const raw = path.startsWith('/auth') ? (path.slice('/auth'.length) || '/') : path
+    const url = path.startsWith('/api/auth') ? path : `/api/auth${raw.startsWith('/') ? '' : '/'}${raw}`
     const res = await fetch(url, {
         method,
         headers,
@@ -191,6 +192,22 @@ export default function AppFunctionalNeatlab() {
     const { isAuthenticated, user, signOut, initializing, initProgress } = useAuth()
 
     const DEFAULT_MODULE_KEY = 'insumos'
+
+    const allowedModulesKey = Array.isArray(user?.allowedModules) ? user.allowedModules.join('|') : ''
+    const roleKey = String(user?.role || '').trim().toUpperCase()
+    const hasModuleAccess = React.useCallback(
+        (moduleKey: string) => {
+            const key = String(moduleKey || '').trim()
+            if (!key) return false
+            if (roleKey === 'ADMIN') return true
+            const allowed = Array.isArray(user?.allowedModules)
+                ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
+                : []
+            if (!allowed.length) return true // compat: vazio/ausente => ALL
+            return allowed.includes(key)
+        },
+        [allowedModulesKey, roleKey]
+    )
 
 	    const [profileOpen, setProfileOpen] = useState(false)
 	    const [profileLoading, setProfileLoading] = useState(false)
@@ -466,15 +483,37 @@ export default function AppFunctionalNeatlab() {
         })
     }, [UNLOCKED_MODULE_KEYS])
 
-		    const filteredModules = useMemo(() => modulesSorted.filter(m =>
-		        m.label.toLowerCase().includes(search.toLowerCase()) ||
-		        m.key.includes(search.toLowerCase())
-		    ), [modulesSorted, search])
+    const permittedModulesSorted = useMemo(() => modulesSorted.filter((m) => hasModuleAccess(m.key)), [hasModuleAccess, modulesSorted])
+
+    const permittedUnlockedModules = useMemo(
+        () => permittedModulesSorted.filter((m) => UNLOCKED_MODULE_KEYS.has(m.key)),
+        [UNLOCKED_MODULE_KEYS, permittedModulesSorted]
+    )
+
+    React.useEffect(() => {
+        if (!hasModuleAccess(active)) {
+            const next = permittedUnlockedModules[0]?.key || null
+            if (next && next !== active) setActive(next)
+        }
+    }, [active, hasModuleAccess, permittedUnlockedModules])
+
+    const filteredModules = useMemo(
+        () =>
+            permittedModulesSorted.filter(
+                (m) => m.label.toLowerCase().includes(search.toLowerCase()) || m.key.includes(search.toLowerCase())
+            ),
+        [permittedModulesSorted, search]
+    )
 
     // Resolve active module once for rendering content independently of sidebar filtering
     const activeModule = useMemo(
-        () => modules.find(m => m.key === active) || modules.find(m => m.key === DEFAULT_MODULE_KEY),
-        [DEFAULT_MODULE_KEY, active]
+        () =>
+            permittedModulesSorted.find((m) => m.key === active) ||
+            permittedModulesSorted.find((m) => m.key === DEFAULT_MODULE_KEY) ||
+            permittedUnlockedModules[0] ||
+            permittedModulesSorted[0] ||
+            modules.find((m) => m.key === DEFAULT_MODULE_KEY),
+        [DEFAULT_MODULE_KEY, active, permittedModulesSorted, permittedUnlockedModules]
     )
 
 	    if (initializing) {
@@ -495,13 +534,32 @@ export default function AppFunctionalNeatlab() {
 	        )
 	    }
 
-	    if (!isAuthenticated) {
-	        return <AuthScreen />
-	    }
+    if (!isAuthenticated) {
+        return <AuthScreen />
+    }
 
-	    function HeaderNotificationsButton({ onOpen }: { onOpen: () => void }) {
-	        const { unreadCount } = useNotifications()
-	        return (
+    if (!permittedUnlockedModules.length) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
+                <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl space-y-3">
+                    <div className="text-3xl">⛔</div>
+                    <div className="text-lg font-semibold">Sem módulos liberados</div>
+                    <div className="text-sm text-blue-100/70">
+                        Seu usuário não tem nenhum módulo liberado para acesso. Solicite ao administrador atualizar suas permissões.
+                    </div>
+                    <div className="pt-2">
+                        <Button variant="secondary" onClick={signOut}>
+                            Sair
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
+    function HeaderNotificationsButton({ onOpen }: { onOpen: () => void }) {
+        const { unreadCount } = useNotifications()
+        return (
 	            <Button
 	                variant="outline"
 	                className="relative bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
@@ -973,19 +1031,19 @@ export default function AppFunctionalNeatlab() {
 		                                            </Button>
 		                                        </div>
 		                                    ) : null}
-		                                    {UNLOCKED_MODULE_KEYS.has('notifications') ? (
-		                                        <HeaderNotificationsButton
-		                                            onOpen={() => {
-		                                                setSearch('')
-	                                                setActive('notifications')
+                                    {UNLOCKED_MODULE_KEYS.has('notifications') && hasModuleAccess('notifications') ? (
+                                        <HeaderNotificationsButton
+                                            onOpen={() => {
+                                                setSearch('')
+                                                setActive('notifications')
 	                                            }}
 	                                        />
 	                                    ) : null}
 
-	                                    {UNLOCKED_MODULE_KEYS.has('status') ? (
-	                                        <Button
-	                                            variant="outline"
-	                                            className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
+                                    {UNLOCKED_MODULE_KEYS.has('status') && hasModuleAccess('status') ? (
+                                        <Button
+                                            variant="outline"
+                                            className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
 	                                            onClick={() => {
 	                                                setSearch('')
 	                                                setActive('status')

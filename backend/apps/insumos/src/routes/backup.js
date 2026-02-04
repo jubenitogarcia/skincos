@@ -10,6 +10,20 @@ import {
     loadBackupSnapshot,
     persistBackupSnapshot,
 } from '../services/backup.js';
+import { resolveCrmTables } from '../d1Store.js';
+
+async function tableHasColumn(env, tableName, columnName) {
+    if (!env?.DB || !tableName || !columnName) return false;
+    const t = String(tableName);
+    if (!['crm_users', 'insumos_users'].includes(t)) return false;
+    try {
+        const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
+        const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
+        return cols.includes(String(columnName).toLowerCase());
+    } catch {
+        return false;
+    }
+}
 
 export async function handleBackupRoutes({
     request,
@@ -129,13 +143,14 @@ export async function handleBackupRoutes({
             const snap = await loadBackupSnapshot({ env, id });
             const p = snap?.payload;
             const hasSheets = !!(p?.sheets?.insumosValues && p?.sheets?.usersValues && p?.sheets?.movValues);
-            const hasD1Insumos = !!(
-                p?.d1 &&
-                (Array.isArray(p.d1.insumosItems) ||
-                    Array.isArray(p.d1.insumosUsers) ||
-                    Array.isArray(p.d1.insumosStocks) ||
-                    Array.isArray(p.d1.insumosMovements))
-            );
+	            const hasD1Insumos = !!(
+	                p?.d1 &&
+	                (Array.isArray(p.d1.insumosItems) ||
+	                    Array.isArray(p.d1.crmUsers) ||
+	                    Array.isArray(p.d1.insumosUsers) ||
+	                    Array.isArray(p.d1.insumosStocks) ||
+	                    Array.isArray(p.d1.insumosMovements))
+	            );
 
             if (!hasSheets && !hasD1Insumos) {
                 return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
@@ -168,34 +183,61 @@ export async function handleBackupRoutes({
                 await writeSheet(spreadsheetId, movimentacoesRange, p.sheets.movValues, accessToken, 'UPDATE');
             }
 
-            // Restore D1 (includes Insumos tables + snapshots; does not touch jobs/backups)
-            if (env?.DB && p?.d1) {
-                try {
-                    if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
-                    if (Array.isArray(p.d1.insumosMovements)) await env.DB.prepare('DELETE FROM insumos_movements').run();
-                    if (Array.isArray(p.d1.insumosItems)) await env.DB.prepare('DELETE FROM insumos_items').run();
-                    if (Array.isArray(p.d1.insumosUsers)) await env.DB.prepare('DELETE FROM insumos_users').run();
-                    if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
+	            // Restore D1 (includes Insumos tables + snapshots; does not touch jobs/backups)
+	            if (env?.DB && p?.d1) {
+	                try {
+	                    const { usersTable } = await resolveCrmTables(env);
+	                    const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+	                    const usersRows = Array.isArray(p.d1.crmUsers)
+	                        ? p.d1.crmUsers
+	                        : (Array.isArray(p.d1.insumosUsers) ? p.d1.insumosUsers : []);
 
-                    for (const row of (p.d1.insumosUsers || []).reverse()) {
-                        await env.DB.prepare(
-                            `INSERT INTO insumos_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                        )
-                            .bind(
-                                row.username || '',
-                                row.email || '',
-                                row.displayName || '',
-                                row.passwordHash || '',
-                                row.role || 'CONSULTOR',
-                                row.photoUrl || '',
-                                row.allowedUnitsJson || null,
-                                Number(row.ativo || 0) ? 1 : 0,
-                                row.createdAt || new Date().toISOString(),
-                                row.updatedAt || new Date().toISOString()
-                            )
-                            .run();
-                    }
+	                    if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
+	                    if (Array.isArray(p.d1.insumosMovements)) await env.DB.prepare('DELETE FROM insumos_movements').run();
+	                    if (Array.isArray(p.d1.insumosItems)) await env.DB.prepare('DELETE FROM insumos_items').run();
+	                    if (usersRows.length) await env.DB.prepare(`DELETE FROM ${usersTable}`).run();
+	                    if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
+
+	                    for (const row of (usersRows || []).reverse()) {
+	                        if (usersHasModules) {
+	                            await env.DB.prepare(
+	                                `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+	                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	                            )
+	                                .bind(
+	                                    row.username || '',
+	                                    row.email || '',
+	                                    row.displayName || '',
+	                                    row.passwordHash || '',
+	                                    row.role || 'CONSULTOR',
+	                                    row.photoUrl || '',
+	                                    row.allowedUnitsJson || null,
+	                                    row.allowedModulesJson || null,
+	                                    Number(row.ativo || 0) ? 1 : 0,
+	                                    row.createdAt || new Date().toISOString(),
+	                                    row.updatedAt || new Date().toISOString()
+	                                )
+	                                .run();
+	                        } else {
+	                            await env.DB.prepare(
+	                                `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+	                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	                            )
+	                                .bind(
+	                                    row.username || '',
+	                                    row.email || '',
+	                                    row.displayName || '',
+	                                    row.passwordHash || '',
+	                                    row.role || 'CONSULTOR',
+	                                    row.photoUrl || '',
+	                                    row.allowedUnitsJson || null,
+	                                    Number(row.ativo || 0) ? 1 : 0,
+	                                    row.createdAt || new Date().toISOString(),
+	                                    row.updatedAt || new Date().toISOString()
+	                                )
+	                                .run();
+	                        }
+	                    }
                     for (const row of (p.d1.insumosItems || []).reverse()) {
                         await env.DB.prepare(
                             `INSERT INTO insumos_items

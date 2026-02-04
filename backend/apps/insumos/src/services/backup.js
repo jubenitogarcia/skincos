@@ -1,6 +1,20 @@
 // @ts-nocheck
 import { readSheet } from '../../workers/sheets-api.js';
 import { safeJsonNoTruncate } from '../lib/json.js';
+import { resolveCrmTables } from '../d1Store.js';
+
+async function tableHasColumn(env, tableName, columnName) {
+    if (!env?.DB || !tableName || !columnName) return false;
+    const t = String(tableName);
+    if (!['crm_users', 'insumos_users'].includes(t)) return false;
+    try {
+        const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
+        const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
+        return cols.includes(String(columnName).toLowerCase());
+    } catch {
+        return false;
+    }
+}
 
 // -------------------------------------------------------------
 // Backups (Cloudflare-only)
@@ -34,6 +48,7 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
         notificationSnapshots: [],
         shareHistory: [],
         insumosUsers: [],
+        crmUsers: [],
         insumosItems: [],
         insumosStocks: [],
         insumosMovements: [],
@@ -74,11 +89,16 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
             // ignore
         }
         try {
+            const { usersTable } = await resolveCrmTables(env);
+            const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
             const u = await env.DB.prepare(
-                `SELECT username, email, display_name as displayName, password_hash as passwordHash, role, photo_url as photoUrl, allowed_units_json as allowedUnitsJson, ativo, created_at as createdAt, updated_at as updatedAt
-                 FROM insumos_users`
+                `SELECT username, email, display_name as displayName, password_hash as passwordHash, role, photo_url as photoUrl,
+                        allowed_units_json as allowedUnitsJson${hasModules ? ', allowed_modules_json as allowedModulesJson' : ''},
+                        ativo, created_at as createdAt, updated_at as updatedAt
+                 FROM ${usersTable}`
             ).all();
             d1Dump.insumosUsers = u?.results || [];
+            d1Dump.crmUsers = d1Dump.insumosUsers;
         } catch {
             // ignore
         }

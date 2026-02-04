@@ -1,4 +1,4 @@
-// Compat shim: historically this file was named "insumosAuth" because auth is backed by /insumos/auth/*,
+// Compat shim: historically this file was named "insumosAuth" because auth lived under /insumos/auth/*,
 // but these helpers represent CRM session auth for Pages Functions.
 import type { CrmAuthUser } from './crmAuth'
 import { getCrmUser, requireCrmUser } from './crmAuth'

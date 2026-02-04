@@ -1,5 +1,7 @@
 // @ts-nocheck
 
+import { resolveCrmTables } from '../d1Store.js';
+
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
 const ROLE_INVITES = ['ADMIN', 'GESTOR'];
 
@@ -39,6 +41,34 @@ function normalizeAllowedUnits(value) {
   return [];
 }
 
+function normalizeAllowedModules(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return [];
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
+    } catch { }
+    return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
+  }
+  return [];
+}
+
+async function tableHasColumn(env, tableName, columnName) {
+  if (!env?.DB || !tableName || !columnName) return false;
+  const t = String(tableName);
+  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
+  try {
+    const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
+    const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
+    return cols.includes(String(columnName).toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function publicUser(user) {
   if (!user) return null;
   return {
@@ -48,6 +78,7 @@ function publicUser(user) {
     role: normalizeRole(user.role || 'CONSULTOR'),
     photoUrl: user.photoUrl || '',
     allowedUnits: Array.isArray(user.allowedUnits) ? user.allowedUnits : [],
+    allowedModules: Array.isArray(user.allowedModules) ? user.allowedModules : [],
     ativo: !!user.ativo,
     createdAt: user.createdAt || null,
     updatedAt: user.updatedAt || null,
@@ -74,11 +105,13 @@ function safeJsonParse(raw, fallback) {
 function publicInvite(row) {
   if (!row) return null;
   const allowedUnits = normalizeAllowedUnits(row.allowed_units_json || row.allowedUnitsJson || '');
+  const allowedModules = normalizeAllowedModules(row.allowed_modules_json || row.allowedModulesJson || '');
   return {
     id: row.id,
     tokenHint: row.token_hint || row.tokenHint || '',
     role: normalizeRole(row.role || 'CONSULTOR'),
     allowedUnits,
+    allowedModules,
     maxUses: Number(row.max_uses ?? row.maxUses ?? 1) || 1,
     usesCount: Number(row.uses_count ?? row.usesCount ?? 0) || 0,
     expiresAt: row.expires_at ?? row.expiresAt ?? null,
@@ -137,6 +170,10 @@ export async function handleAdminRoutes({
   if (!env?.DB) {
     return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
   }
+
+  const { usersTable, invitesTable } = await resolveCrmTables(env);
+  const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+  const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
 
   // GET /admin/categories
   if (url.pathname === '/admin/categories' && request.method === 'GET') {
@@ -299,8 +336,8 @@ export async function handleAdminRoutes({
       const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
       const where = includeRevoked ? '' : 'WHERE revoked = 0';
       const rows = await env.DB.prepare(
-        `SELECT id, token_hint, role, allowed_units_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
-         FROM insumos_invites
+        `SELECT id, token_hint, role, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
+         FROM ${invitesTable}
          ${where}
          ORDER BY created_at DESC
          LIMIT ?`
@@ -323,6 +360,7 @@ export async function handleAdminRoutes({
       const body = await request.json().catch(() => ({}));
       const role = normalizeRole(body.role || 'OPERADOR');
       const allowedUnits = normalizeAllowedUnits(body.allowedUnits);
+      const allowedModules = normalizeAllowedModules(body.allowedModules ?? body.allowed_modules ?? body.modules ?? body.scopes);
       const maxUses = Math.max(1, Math.min(50, parseInt(String(body.maxUses ?? '1'), 10) || 1));
       const expiresInDays = body.expiresInDays === null || body.expiresInDays === undefined
         ? 30
@@ -340,24 +378,46 @@ export async function handleAdminRoutes({
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
 
-      await env.DB.prepare(
-        `INSERT INTO insumos_invites
-         (id, token_hash, token_hint, role, allowed_units_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`
-      )
-        .bind(
-          id,
-          tokenHash,
-          tokenHint,
-          role,
-          JSON.stringify(allowedUnits),
-          maxUses,
-          expiresAt,
-          note,
-          String(auth?.user?.username || ''),
-          createdAt
+      if (invitesHasModules) {
+        await env.DB.prepare(
+          `INSERT INTO ${invitesTable}
+           (id, token_hash, token_hint, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`
         )
-        .run();
+          .bind(
+            id,
+            tokenHash,
+            tokenHint,
+            role,
+            JSON.stringify(allowedUnits),
+            JSON.stringify(allowedModules),
+            maxUses,
+            expiresAt,
+            note,
+            String(auth?.user?.username || ''),
+            createdAt
+          )
+          .run();
+      } else {
+        await env.DB.prepare(
+          `INSERT INTO ${invitesTable}
+           (id, token_hash, token_hint, role, allowed_units_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`
+        )
+          .bind(
+            id,
+            tokenHash,
+            tokenHint,
+            role,
+            JSON.stringify(allowedUnits),
+            maxUses,
+            expiresAt,
+            note,
+            String(auth?.user?.username || ''),
+            createdAt
+          )
+          .run();
+      }
 
       try {
         await appendAuditLog?.({
@@ -374,7 +434,7 @@ export async function handleAdminRoutes({
           entityId: id,
           unidade: '',
           before: null,
-          after: { role, allowedUnits, maxUses, expiresAt, tokenHint, note }
+          after: { role, allowedUnits, allowedModules, maxUses, expiresAt, tokenHint, note }
         });
       } catch { }
 
@@ -383,6 +443,7 @@ export async function handleAdminRoutes({
         token_hint: tokenHint,
         role,
         allowed_units_json: JSON.stringify(allowedUnits),
+        allowed_modules_json: invitesHasModules ? JSON.stringify(allowedModules) : null,
         max_uses: maxUses,
         uses_count: 0,
         expires_at: expiresAt,
@@ -396,7 +457,7 @@ export async function handleAdminRoutes({
       return withCORS(JSON.stringify({ success: true, data: invite, token }), { status: 201 }, appOrigin);
     } catch (err) {
       const msg = String(err?.message || err);
-      if (/UNIQUE constraint failed: insumos_invites\.token_hash/i.test(msg)) {
+      if (/UNIQUE constraint failed: (?:insumos_invites|crm_invites)\.token_hash/i.test(msg)) {
         return withCORS(JSON.stringify({ success: false, error: 'TOKEN_COLLISION' }), { status: 409 }, appOrigin);
       }
       return withCORS(JSON.stringify({ success: false, error: msg }), { status: 500 }, appOrigin);
@@ -413,14 +474,14 @@ export async function handleAdminRoutes({
       if (!id) return withCORS(JSON.stringify({ success: false, error: 'ID_REQUIRED' }), { status: 400 }, appOrigin);
 
       const existing = await env.DB.prepare(
-        `SELECT id, role, token_hint, allowed_units_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
-         FROM insumos_invites WHERE id = ? LIMIT 1`
+        `SELECT id, role, token_hint, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
+         FROM ${invitesTable} WHERE id = ? LIMIT 1`
       )
         .bind(id)
         .first();
       if (!existing?.id) return withCORS(JSON.stringify({ success: false, error: 'NOT_FOUND' }), { status: 404 }, appOrigin);
 
-      await env.DB.prepare(`UPDATE insumos_invites SET revoked=1 WHERE id=?`).bind(id).run();
+      await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=?`).bind(id).run();
 
       try {
         await appendAuditLog?.({
@@ -462,13 +523,13 @@ export async function handleAdminRoutes({
         binds.push(`%${q}%`, `%${q}%`, `%${q}%`);
       }
       const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-      const totalRow = await env.DB.prepare(`SELECT COUNT(1) as total FROM insumos_users ${whereSql}`).bind(...binds).first();
+      const totalRow = await env.DB.prepare(`SELECT COUNT(1) as total FROM ${usersTable} ${whereSql}`).bind(...binds).first();
       const total = Number(totalRow?.total || 0);
 
       const rows = await env.DB.prepare(
-        `SELECT username, email, display_name as displayName, role, photo_url as photoUrl, allowed_units_json as allowedUnitsJson,
+        `SELECT username, email, display_name as displayName, role, photo_url as photoUrl, allowed_units_json as allowedUnitsJson${usersHasModules ? ', allowed_modules_json as allowedModulesJson' : ''},
                 ativo, created_at as createdAt, updated_at as updatedAt
-         FROM insumos_users
+         FROM ${usersTable}
          ${whereSql}
          ORDER BY LOWER(username) ASC
          LIMIT ? OFFSET ?`
@@ -483,6 +544,7 @@ export async function handleAdminRoutes({
         role: normalizeRole(r.role || 'CONSULTOR'),
         photoUrl: r.photoUrl || '',
         allowedUnits: normalizeAllowedUnits(r.allowedUnitsJson),
+        allowedModules: normalizeAllowedModules(r.allowedModulesJson),
         ativo: Number(r.ativo || 0) ? true : false,
         createdAt: r.createdAt || null,
         updatedAt: r.updatedAt || null,
@@ -502,6 +564,7 @@ export async function handleAdminRoutes({
       const email = String(body.email || '').trim();
       const role = normalizeRole(body.role || 'CONSULTOR');
       const allowedUnits = normalizeAllowedUnits(body.allowedUnits);
+      const allowedModules = normalizeAllowedModules(body.allowedModules ?? body.allowed_modules ?? body.modules ?? body.scopes);
       const ativo = body.ativo === false ? 0 : 1;
       const password = String(body.password || '').trim() || randomPassword();
 
@@ -512,33 +575,55 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_TOO_SHORT' }), { status: 400 }, appOrigin);
       }
 
-      const taken = await env.DB.prepare('SELECT 1 FROM insumos_users WHERE LOWER(username) = LOWER(?) LIMIT 1').bind(username).first();
+      const taken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username) = LOWER(?) LIMIT 1`).bind(username).first();
       if (taken) {
         return withCORS(JSON.stringify({ success: false, error: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
       }
 
       const now = new Date().toISOString();
       const hash = await bcrypt.hash(password, 10);
-      await env.DB.prepare(
-        `INSERT INTO insumos_users
-         (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          username,
-          email,
-          displayName,
-          hash,
-          role,
-          String(body.photoUrl || ''),
-          JSON.stringify(allowedUnits),
-          ativo,
-          now,
-          now
+      if (usersHasModules) {
+        await env.DB.prepare(
+          `INSERT INTO ${usersTable}
+           (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run();
+          .bind(
+            username,
+            email,
+            displayName,
+            hash,
+            role,
+            String(body.photoUrl || ''),
+            JSON.stringify(allowedUnits),
+            JSON.stringify(allowedModules),
+            ativo,
+            now,
+            now
+          )
+          .run();
+      } else {
+        await env.DB.prepare(
+          `INSERT INTO ${usersTable}
+           (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            username,
+            email,
+            displayName,
+            hash,
+            role,
+            String(body.photoUrl || ''),
+            JSON.stringify(allowedUnits),
+            ativo,
+            now,
+            now
+          )
+          .run();
+      }
 
-      const user = publicUser({ username, displayName, email, role, allowedUnits, ativo: !!ativo, createdAt: now, updatedAt: now, photoUrl: String(body.photoUrl || '') });
+      const user = publicUser({ username, displayName, email, role, allowedUnits, allowedModules, ativo: !!ativo, createdAt: now, updatedAt: now, photoUrl: String(body.photoUrl || '') });
       try {
         await appendAuditLog?.({
           env,
@@ -554,7 +639,7 @@ export async function handleAdminRoutes({
           entityId: username,
           unidade: '',
           before: null,
-          after: { username, email, displayName, role, allowedUnits, ativo: !!ativo }
+          after: { username, email, displayName, role, allowedUnits, allowedModules, ativo: !!ativo }
         });
       } catch { }
       return withCORS(JSON.stringify({ success: true, data: user, oneTimePassword: password }), { status: 201 }, appOrigin);
@@ -570,7 +655,7 @@ export async function handleAdminRoutes({
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);
       const body = await request.json().catch(() => ({}));
 
-      const exists = await env.DB.prepare('SELECT username FROM insumos_users WHERE LOWER(username) = LOWER(?) LIMIT 1').bind(target).first();
+      const exists = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(username) = LOWER(?) LIMIT 1`).bind(target).first();
       if (!exists?.username) return withCORS(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }), { status: 404 }, appOrigin);
 
       const email = body.email !== undefined ? String(body.email || '').trim() : null;
@@ -578,26 +663,39 @@ export async function handleAdminRoutes({
       const role = body.role !== undefined ? normalizeRole(body.role || 'CONSULTOR') : null;
       const photoUrl = body.photoUrl !== undefined ? String(body.photoUrl || '') : null;
       const allowedUnits = body.allowedUnits !== undefined ? JSON.stringify(normalizeAllowedUnits(body.allowedUnits)) : null;
+      const allowedModules = body.allowedModules !== undefined ? JSON.stringify(normalizeAllowedModules(body.allowedModules)) : null;
       const ativo = body.ativo === undefined ? null : (body.ativo ? 1 : 0);
       const now = new Date().toISOString();
 
-      await env.DB.prepare(
-        `UPDATE insumos_users
-         SET email = COALESCE(?, email),
-             display_name = COALESCE(?, display_name),
-             role = COALESCE(?, role),
-             photo_url = COALESCE(?, photo_url),
-             allowed_units_json = COALESCE(?, allowed_units_json),
-             ativo = COALESCE(?, ativo),
-             updated_at = ?
-         WHERE LOWER(username) = LOWER(?)`
-      )
-        .bind(email, displayName, role, photoUrl, allowedUnits, ativo, now, target)
-        .run();
+      const updateSql = usersHasModules
+        ? `UPDATE ${usersTable}
+           SET email = COALESCE(?, email),
+               display_name = COALESCE(?, display_name),
+               role = COALESCE(?, role),
+               photo_url = COALESCE(?, photo_url),
+               allowed_units_json = COALESCE(?, allowed_units_json),
+               allowed_modules_json = COALESCE(?, allowed_modules_json),
+               ativo = COALESCE(?, ativo),
+               updated_at = ?
+           WHERE LOWER(username) = LOWER(?)`
+        : `UPDATE ${usersTable}
+           SET email = COALESCE(?, email),
+               display_name = COALESCE(?, display_name),
+               role = COALESCE(?, role),
+               photo_url = COALESCE(?, photo_url),
+               allowed_units_json = COALESCE(?, allowed_units_json),
+               ativo = COALESCE(?, ativo),
+               updated_at = ?
+           WHERE LOWER(username) = LOWER(?)`;
+
+      const binds = usersHasModules
+        ? [email, displayName, role, photoUrl, allowedUnits, allowedModules, ativo, now, target]
+        : [email, displayName, role, photoUrl, allowedUnits, ativo, now, target];
+      await env.DB.prepare(updateSql).bind(...binds).run();
 
       const row = await env.DB.prepare(
-        `SELECT username, email, display_name as displayName, role, photo_url as photoUrl, allowed_units_json as allowedUnitsJson, ativo, created_at as createdAt, updated_at as updatedAt
-         FROM insumos_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+        `SELECT username, email, display_name as displayName, role, photo_url as photoUrl, allowed_units_json as allowedUnitsJson${usersHasModules ? ', allowed_modules_json as allowedModulesJson' : ''}, ativo, created_at as createdAt, updated_at as updatedAt
+         FROM ${usersTable} WHERE LOWER(username) = LOWER(?) LIMIT 1`
       )
         .bind(target)
         .first();
@@ -608,6 +706,7 @@ export async function handleAdminRoutes({
         role: normalizeRole(row.role || 'CONSULTOR'),
         photoUrl: row.photoUrl || '',
         allowedUnits: normalizeAllowedUnits(row.allowedUnitsJson),
+        allowedModules: normalizeAllowedModules(row.allowedModulesJson),
         ativo: Number(row.ativo || 0) ? true : false,
         createdAt: row.createdAt || null,
         updatedAt: row.updatedAt || null,
@@ -628,7 +727,7 @@ export async function handleAdminRoutes({
           entityId: out.username,
           unidade: '',
           before: null,
-          after: { username: out.username, email: out.email, displayName: out.displayName, role: out.role, allowedUnits: out.allowedUnits, ativo: out.ativo }
+          after: { username: out.username, email: out.email, displayName: out.displayName, role: out.role, allowedUnits: out.allowedUnits, allowedModules: out.allowedModules, ativo: out.ativo }
         });
       } catch { }
       return withCORS(JSON.stringify({ success: true, data: out }), { status: 200 }, appOrigin);
@@ -650,7 +749,7 @@ export async function handleAdminRoutes({
       const hash = await bcrypt.hash(password, 10);
       const now = new Date().toISOString();
       const r = await env.DB.prepare(
-        `UPDATE insumos_users SET password_hash=?, updated_at=? WHERE LOWER(username)=LOWER(?)`
+        `UPDATE ${usersTable} SET password_hash=?, updated_at=? WHERE LOWER(username)=LOWER(?)`
       )
         .bind(hash, now, target)
         .run();

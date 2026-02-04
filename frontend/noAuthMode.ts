@@ -36,8 +36,13 @@ export const isNoAuthMode = (): boolean => {
 // NO_AUTH MODE: Mock user for development and no-auth mode
 export const getMockUser = () => ({
   id: 'mock-user-dev',
+  username: 'mock-user-dev',
   name: 'Dev User (NO_AUTH)',
+  displayName: 'Dev User (NO_AUTH)',
   email: 'dev@noauth.local',
+  role: 'ADMIN',
+  allowedUnits: [],
+  allowedModules: [],
   createdAt: new Date().toISOString(),
   avatarUrl: undefined,
 })

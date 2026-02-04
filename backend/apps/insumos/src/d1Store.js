@@ -202,8 +202,48 @@ export async function d1HasInsumos(env) {
 export async function d1HasUsers(env) {
   if (!env?.DB) return false;
   try {
-    const row = await env.DB.prepare('SELECT COUNT(1) AS n FROM insumos_users').first();
+    const { usersTable } = await resolveCrmTables(env);
+    const row = await env.DB.prepare(`SELECT COUNT(1) AS n FROM ${usersTable}`).first();
     return (toInt(row?.n, 0) || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function sqliteObjectType(env, name) {
+  if (!env?.DB || !name) return null;
+  try {
+    const row = await env.DB.prepare(`SELECT type FROM sqlite_master WHERE name = ? LIMIT 1`).bind(String(name)).first();
+    return row?.type ? String(row.type) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveCrmTables(env) {
+  // Prefer crm_* tables (post-migration). Fall back to legacy insumos_* tables.
+  const usersType = await sqliteObjectType(env, 'crm_users');
+  const invitesType = await sqliteObjectType(env, 'crm_invites');
+  const resetsType = await sqliteObjectType(env, 'crm_password_resets');
+  const prefsType = await sqliteObjectType(env, 'crm_user_prefs');
+
+  return {
+    usersTable: usersType === 'table' ? 'crm_users' : 'insumos_users',
+    invitesTable: invitesType === 'table' ? 'crm_invites' : 'insumos_invites',
+    passwordResetsTable: resetsType === 'table' ? 'crm_password_resets' : 'insumos_password_resets',
+    userPrefsTable: prefsType === 'table' ? 'crm_user_prefs' : 'insumos_user_prefs',
+  };
+}
+
+async function tableHasColumn(env, tableName, columnName) {
+  if (!env?.DB || !tableName || !columnName) return false;
+  // PRAGMA does not support binding identifiers; tableName is from a fixed allowlist.
+  const t = String(tableName);
+  if (!['crm_users', 'insumos_users'].includes(t)) return false;
+  try {
+    const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
+    const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
+    return cols.includes(String(columnName).toLowerCase());
   } catch {
     return false;
   }
@@ -949,6 +989,21 @@ function normalizeAllowedUnits(value) {
   return [];
 }
 
+function normalizeAllowedModules(value) {
+  // Sem campo/vazio => "ALL" (represented by empty array)
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+  if (typeof value === 'string') {
+    const parsed = safeJsonParse(value, null);
+    if (Array.isArray(parsed)) return parsed.map(String).map((s) => s.trim()).filter(Boolean);
+    return value
+      .split(/[,;|]/g)
+      .map((s) => String(s || '').trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 export function d1UserRowToUser(row) {
   if (!row) return null;
   return {
@@ -959,6 +1014,7 @@ export function d1UserRowToUser(row) {
     role: row.role || 'CONSULTOR',
     photoUrl: row.photo_url || '',
     allowedUnits: normalizeAllowedUnits(row.allowed_units_json),
+    allowedModules: normalizeAllowedModules(row.allowed_modules_json),
     ativo: toInt(row.ativo, 1) ? true : false,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -970,9 +1026,12 @@ export async function d1GetUserByUsername(env, username) {
   if (!env?.DB) return null;
   const u = String(username || '').trim();
   if (!u) return null;
+  const { usersTable } = await resolveCrmTables(env);
+  const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+  const extra = hasModules ? ', allowed_modules_json' : '';
   const row = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at
-     FROM insumos_users
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at${extra}
+     FROM ${usersTable}
      WHERE LOWER(username) = LOWER(?)
      LIMIT 1`
   )
@@ -985,9 +1044,12 @@ export async function d1GetUserByIdentifier(env, identifier) {
   if (!env?.DB) return null;
   const id = String(identifier || '').trim();
   if (!id) return null;
+  const { usersTable } = await resolveCrmTables(env);
+  const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+  const extra = hasModules ? ', allowed_modules_json' : '';
   const row = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at
-     FROM insumos_users
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at${extra}
+     FROM ${usersTable}
      WHERE LOWER(username) = LOWER(?) OR (email IS NOT NULL AND email != '' AND LOWER(email) = LOWER(?))
      LIMIT 1`
   )
@@ -1001,9 +1063,12 @@ export async function d1UpdateUserProfile(env, username, updates) {
   const u = String(username || '').trim();
   if (!u) return { ok: false, status: 400, error: 'USERNAME_REQUIRED' };
 
+  const { usersTable } = await resolveCrmTables(env);
+  const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+  const extra = hasModules ? ', allowed_modules_json' : '';
   const existing = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at
-     FROM insumos_users
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at${extra}
+     FROM ${usersTable}
      WHERE LOWER(username) = LOWER(?)
      LIMIT 1`
   )
@@ -1020,32 +1085,53 @@ export async function d1UpdateUserProfile(env, username, updates) {
 
   if (nextUsername && nextUsername.toLowerCase() !== String(existing.username).toLowerCase()) {
     const taken = await env.DB.prepare(
-      `SELECT 1 FROM insumos_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+      `SELECT 1 FROM ${usersTable} WHERE LOWER(username) = LOWER(?) LIMIT 1`
     )
       .bind(nextUsername)
       .first();
     if (taken) return { ok: false, status: 409, error: 'USERNAME_TAKEN' };
 
     // Move user PK (best-effort) and keep references consistent.
-    await env.DB.prepare(
-      `INSERT INTO insumos_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        nextUsername,
-        nextEmail ?? existing.email ?? '',
-        nextDisplayName ?? existing.display_name ?? '',
-        nextPasswordHash ?? existing.password_hash ?? '',
-        existing.role ?? 'CONSULTOR',
-        nextPhotoUrl ?? existing.photo_url ?? '',
-        existing.allowed_units_json ?? null,
-        toInt(existing.ativo, 1),
-        existing.created_at || now,
-        now
+    if (hasModules) {
+      await env.DB.prepare(
+        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run();
+        .bind(
+          nextUsername,
+          nextEmail ?? existing.email ?? '',
+          nextDisplayName ?? existing.display_name ?? '',
+          nextPasswordHash ?? existing.password_hash ?? '',
+          existing.role ?? 'CONSULTOR',
+          nextPhotoUrl ?? existing.photo_url ?? '',
+          existing.allowed_units_json ?? null,
+          existing.allowed_modules_json ?? null,
+          toInt(existing.ativo, 1),
+          existing.created_at || now,
+          now
+        )
+        .run();
+    } else {
+      await env.DB.prepare(
+        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          nextUsername,
+          nextEmail ?? existing.email ?? '',
+          nextDisplayName ?? existing.display_name ?? '',
+          nextPasswordHash ?? existing.password_hash ?? '',
+          existing.role ?? 'CONSULTOR',
+          nextPhotoUrl ?? existing.photo_url ?? '',
+          existing.allowed_units_json ?? null,
+          toInt(existing.ativo, 1),
+          existing.created_at || now,
+          now
+        )
+        .run();
+    }
 
-    await env.DB.prepare(`DELETE FROM insumos_users WHERE LOWER(username) = LOWER(?)`).bind(u).run();
+    await env.DB.prepare(`DELETE FROM ${usersTable} WHERE LOWER(username) = LOWER(?)`).bind(u).run();
     // Best-effort propagate to other tables where we store username as text.
     try { await env.DB.prepare(`UPDATE insumos_movements SET usuario=? WHERE usuario=?`).bind(nextUsername, existing.username).run(); } catch { }
     try { await env.DB.prepare(`UPDATE share_history SET user=? WHERE user=?`).bind(nextUsername, existing.username).run(); } catch { }
@@ -1056,7 +1142,7 @@ export async function d1UpdateUserProfile(env, username, updates) {
   }
 
   await env.DB.prepare(
-    `UPDATE insumos_users
+    `UPDATE ${usersTable}
      SET email=COALESCE(?, email),
          display_name=COALESCE(?, display_name),
          photo_url=COALESCE(?, photo_url),

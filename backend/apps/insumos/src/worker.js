@@ -31,6 +31,7 @@ import {
     d1GetUserByUsername,
     d1GetUserByIdentifier,
     d1UpdateUserProfile,
+    resolveCrmTables,
 } from './d1Store.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
@@ -1490,6 +1491,67 @@ export default {
             return allowed.includes(unit);
         };
 
+        const getAllowedModules = (u) => {
+            const raw = Array.isArray(u?.allowedModules) ? u.allowedModules : [];
+            return raw.map(String).map((s) => s.trim()).filter(Boolean);
+        };
+
+        const hasModuleAccess = (u, moduleKey) => {
+            if (!u || !moduleKey) return false;
+            if (String(u.role || '').toUpperCase() === 'ADMIN') return true; // override
+            const allowed = getAllowedModules(u);
+            if (!allowed.length) return true; // compat: no list means "ALL"
+            return allowed.includes(String(moduleKey));
+        };
+
+        const requiredModulesForPath = (pathname) => {
+            const p = String(pathname || '');
+            if (!p) return null;
+
+            // Auth routes never require module permission.
+            if (p === '/auth' || p.startsWith('/auth/')) return null;
+
+            // Backup can be accessed by either module.
+            if (p === '/backup' || p.startsWith('/backup/')) return ['status', 'backup-recovery'];
+
+            // Admin routes
+            if (p === '/admin/users' || p.startsWith('/admin/users/')) return 'status';
+            if (p === '/admin/migrate/sheets-to-d1') return 'status';
+            if (p === '/admin/invites' || p.startsWith('/admin/invites/')) return 'users';
+
+            // Audit is exposed via the status/system module.
+            if (p === '/audit' || p.startsWith('/audit/')) return 'status';
+
+            // Everything else below is considered part of Insumos data/domain.
+            const insumosPrefixes = [
+                '/insumos',
+                '/movimentacoes',
+                '/relatorios',
+                '/alertas',
+                '/categorias',
+                '/quality',
+                '/exports',
+                '/prefs',
+                '/share',
+                '/admin/categories',
+            ];
+            if (insumosPrefixes.some((x) => p === x || p.startsWith(`${x}/`))) return 'insumos';
+
+            return null;
+        };
+
+        const enforceModuleOrResponse = (u) => {
+            const required = requiredModulesForPath(url.pathname);
+            if (!required) return null;
+            if (Array.isArray(required)) {
+                const ok = required.some((m) => hasModuleAccess(u, m));
+                if (ok) return null;
+                return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para módulo', code: 'RBAC_MODULE_DENIED', modules: required }), { status: 403 }, appOrigin);
+            }
+            if (hasModuleAccess(u, required)) return null;
+            return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para módulo', code: 'RBAC_MODULE_DENIED', module: required }), { status: 403 }, appOrigin);
+        };
+
         const requireRoles = async (allowedRoles) => {
             const u = await loadSessionUser();
             if (!u) {
@@ -1522,6 +1584,8 @@ export default {
                     )
                 };
             }
+            const moduleDenied = enforceModuleOrResponse(u);
+            if (moduleDenied) return { ok: false, response: moduleDenied };
             return { ok: true, user: u };
         };
 
@@ -1641,12 +1705,28 @@ export default {
                 const parsedUsers = parseUsers(usersValues);
                 const parsedMovs = parseMovimentacoes(movValues);
 
+                const tableHasColumn = async (tableName, columnName) => {
+                    if (!env?.DB || !tableName || !columnName) return false;
+                    const t = String(tableName);
+                    if (!['crm_users', 'insumos_users'].includes(t)) return false;
+                    try {
+                        const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
+                        const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
+                        return cols.includes(String(columnName).toLowerCase());
+                    } catch {
+                        return false;
+                    }
+                };
+
+                const { usersTable } = await resolveCrmTables(env);
+                const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
+
                 if (mode === 'replace' && !dryRun) {
                     // Order matters due to FK constraints
                     await env.DB.prepare('DELETE FROM insumos_stocks').run();
                     await env.DB.prepare('DELETE FROM insumos_movements').run();
                     await env.DB.prepare('DELETE FROM insumos_items').run();
-                    await env.DB.prepare('DELETE FROM insumos_users').run();
+                    await env.DB.prepare(`DELETE FROM ${usersTable}`).run();
                 }
 
                 const now = new Date().toISOString();
@@ -1661,24 +1741,46 @@ export default {
                         if (!username) continue;
                         const createdAt = u.createdAt ? String(u.createdAt) : now;
                         const updatedAt = u.updatedAt ? String(u.updatedAt) : now;
-                        await env.DB.prepare(
-                            `INSERT OR REPLACE INTO insumos_users
-                             (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                        )
-                            .bind(
-                                username,
-                                String(u.email || '').trim(),
-                                String(u.displayName || '').trim(),
-                                String(u.passwordHash || ''),
-                                normalizeRole(u.role || 'CONSULTOR'),
-                                String(u.photoUrl || ''),
-                                JSON.stringify(Array.isArray(u.allowedUnits) ? u.allowedUnits : []),
-                                u.ativo ? 1 : 0,
-                                createdAt,
-                                updatedAt
+                        if (usersHasModules) {
+                            await env.DB.prepare(
+                                `INSERT OR REPLACE INTO ${usersTable}
+                                 (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                             )
-                            .run();
+                                .bind(
+                                    username,
+                                    String(u.email || '').trim(),
+                                    String(u.displayName || '').trim(),
+                                    String(u.passwordHash || ''),
+                                    normalizeRole(u.role || 'CONSULTOR'),
+                                    String(u.photoUrl || ''),
+                                    JSON.stringify(Array.isArray(u.allowedUnits) ? u.allowedUnits : []),
+                                    null,
+                                    u.ativo ? 1 : 0,
+                                    createdAt,
+                                    updatedAt
+                                )
+                                .run();
+                        } else {
+                            await env.DB.prepare(
+                                `INSERT OR REPLACE INTO ${usersTable}
+                                 (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                            )
+                                .bind(
+                                    username,
+                                    String(u.email || '').trim(),
+                                    String(u.displayName || '').trim(),
+                                    String(u.passwordHash || ''),
+                                    normalizeRole(u.role || 'CONSULTOR'),
+                                    String(u.photoUrl || ''),
+                                    JSON.stringify(Array.isArray(u.allowedUnits) ? u.allowedUnits : []),
+                                    u.ativo ? 1 : 0,
+                                    createdAt,
+                                    updatedAt
+                                )
+                                .run();
+                        }
                         nUsers += 1;
                     }
 
@@ -1810,14 +1912,16 @@ export default {
                     appOrigin
                 );
             }
-            if (!hasUnitAccess(u, unidade)) {
-                return withCORS(
-                    JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits: u.allowedUnits || [] }),
-                    { status: 403 },
-                    appOrigin
-                );
-            }
-        }
+	            if (!hasUnitAccess(u, unidade)) {
+	                return withCORS(
+	                    JSON.stringify({ success: false, error: 'Sem permissão para unidade', code: 'RBAC_UNIT_DENIED', allowedUnits: u.allowedUnits || [] }),
+	                    { status: 403 },
+	                    appOrigin
+	                );
+	            }
+	            const moduleDenied = enforceModuleOrResponse(u);
+	            if (moduleDenied) return moduleDenied;
+	        }
 
         // Ensure optional columns exist for app features (Sheets only)
         if (!useD1) {

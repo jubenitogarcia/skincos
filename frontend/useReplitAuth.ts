@@ -44,10 +44,20 @@ export function useReplitAuth() {
       const insumosUser = me?.user || null;
       if (!insumosUser) return null;
 
+      const username = String(insumosUser.username || insumosUser.email || '').trim()
+      const displayName = String(insumosUser.displayName || insumosUser.name || insumosUser.username || insumosUser.email || '')
+      const allowedUnits = Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined
+      const allowedModules = Array.isArray(insumosUser.allowedModules) ? insumosUser.allowedModules : undefined
+
       const mapped = {
-        id: String(insumosUser.username || insumosUser.email || ''),
-        name: String(insumosUser.displayName || insumosUser.name || insumosUser.username || insumosUser.email || ''),
+        id: username,
+        username,
+        name: displayName,
+        displayName,
         email: String(insumosUser.email || ''),
+        role: insumosUser.role ? String(insumosUser.role) : undefined,
+        allowedUnits,
+        allowedModules,
         createdAt: String(insumosUser.createdAt || new Date().toISOString()),
         avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
       };
