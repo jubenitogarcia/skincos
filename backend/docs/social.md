@@ -77,7 +77,7 @@ Preferências locais no browser:
 - `internal/share/index/{yyyy-mm-dd}/*` (base para cleanup de shares)
 
 ## Admin (global)
-As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publish`) exigem usuário autenticado no CRM com role global `ADMIN`.
+As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publish`) exigem usuário autenticado no CRM com role global `ADMIN`, `GESTOR` ou `GERENTE`.
 
 ## Variáveis de ambiente (CRM/Pages)
 - `INTEGRATIONS_ENCRYPTION_SECRET` (recomendado)
@@ -114,7 +114,7 @@ As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publis
 
 ## Runbook (diagnóstico rápido)
 - **“ADMIN_REQUIRED”** em rotas admin:
-  - Confirme que o usuário logado no CRM tem role global `ADMIN`.
+  - Confirme que o usuário logado no CRM tem role global `ADMIN`, `GESTOR` ou `GERENTE`.
 - **Job pendente sem resultado**:
   - Confirme `SOCIAL_PUBLISHER_ENABLED=true` e cron ativo no Worker.
   - Consulte logs do Worker (wrangler tail / Cloudflare logs).
