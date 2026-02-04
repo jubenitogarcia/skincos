@@ -1,45 +1,78 @@
 name: Deploy CRM (Cloudflare Pages) after automerge
 
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to deploy (uses merge commit SHA)"
+        required: true
 
 concurrency:
-  group: deploy-crm-pages-after-automerge-${{ github.event.pull_request.base.ref }}
+  group: deploy-crm-pages-after-automerge-${{ github.event.pull_request.base.ref || 'manual' }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    if: >-
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.pull_request.head.ref, 'codex/') &&
-      github.event.pull_request.user.login == 'jubenitogarcia' &&
-      github.event.pull_request.merged_by.login == 'app/github-actions'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
 
     steps:
+      - name: Resolve PR context
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = (() => {
+              const n = context.payload?.pull_request?.number;
+              if (n) return n;
+              const input = core.getInput('pr_number');
+              const parsed = Number(String(input || '').trim());
+              if (!Number.isFinite(parsed) || parsed <= 0) {
+                throw new Error(`Invalid pr_number: ${input}`);
+              }
+              return parsed;
+            })();
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const eligible =
+              pr.merged === true &&
+              pr.base?.ref === 'main' &&
+              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              String(pr.head?.ref || '').startsWith('codex/') &&
+              pr.user?.login === 'jubenitogarcia';
+
+            core.info(`PR #${prNumber} merged=${pr.merged} base=${pr.base?.ref} head=${pr.head?.ref} eligible=${eligible}`);
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('merge_commit_sha', pr.merge_commit_sha || '');
+            core.setOutput('eligible', eligible ? 'true' : 'false');
+
       - name: Detect frontend changes
+        if: ${{ steps.pr.outputs.eligible == 'true' }}
         id: changes
         uses: actions/github-script@v7
         with:
           script: |
-            const pr = context.payload.pull_request;
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: pr.number,
+              pull_number: Number('${{ steps.pr.outputs.pr_number }}'),
               per_page: 100,
             });
             const changed = files.some((f) => String(f.filename || '').startsWith('frontend/'));
             core.setOutput('frontend_changed', changed ? 'true' : 'false');
 
       - name: Guard Cloudflare Pages deploy
-        if: ${{ steps.changes.outputs.frontend_changed == 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' }}
         id: guard
         env:
           ENABLE_PROD: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
@@ -65,13 +98,13 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout merge commit
-        if: ${{ steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ steps.pr.outputs.merge_commit_sha }}
 
       - name: Setup Node
-        if: ${{ steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -79,17 +112,17 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        if: ${{ steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         run: npm ci
         working-directory: frontend
 
       - name: Build frontend
-        if: ${{ steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         run: npm run build
         working-directory: frontend
 
       - name: Deploy to Cloudflare Pages (wrangler)
-        if: ${{ steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
