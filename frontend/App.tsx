@@ -22,6 +22,18 @@ const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
 const DEMO_DATA_ACTIVE = (import.meta as any)?.env?.VITE_DEMO_DATA !== 'false'
 
+function BuildCornerBadge() {
+    const buildShaRaw = String((import.meta as any)?.env?.VITE_BUILD_SHA || '').trim()
+    const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : ((import.meta as any)?.env?.DEV ? 'dev' : 'unknown')
+    return (
+        <div className="fixed bottom-3 right-3 z-50 pointer-events-none">
+            <Badge variant="outline" className="bg-black/40 text-white border-white/20 opacity-70 text-[10px]">
+                build:{buildSha}
+            </Badge>
+        </div>
+    )
+}
+
 type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
 
 type ApiError = {
@@ -577,7 +589,7 @@ export default function AppFunctionalNeatlab() {
 	        )
 	    }
 
-	    return (
+        return (
 	        <NotificationProvider>
             <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
                 <DialogContent className="max-w-xl">
@@ -645,7 +657,7 @@ export default function AppFunctionalNeatlab() {
             </Dialog>
 
             {/* Premium Background with animated gradient */}
-                <div className="min-h-screen relative overflow-hidden">
+            <div className="min-h-screen relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800">
                     <div className="absolute inset-0 bg-gradient-to-r from-brand-700/20 via-brand-600/10 to-brand-700/20"></div>
                     {/* Animated background patterns */}
@@ -1251,6 +1263,7 @@ export default function AppFunctionalNeatlab() {
                     </div>
                 </div>
             </div>
+            <BuildCornerBadge />
         </NotificationProvider>
     )
 }
