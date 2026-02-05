@@ -15,5 +15,11 @@ export async function requireSocialAdmin(context: any) {
   const role = String((userOrRes as any).role || '').trim().toUpperCase()
   if (ADMIN_ROLES.has(role)) return userOrRes
 
-  return json(403, { ok: false, error: 'FORBIDDEN', code: 'ADMIN_REQUIRED' })
+  return json(403, {
+    ok: false,
+    error: 'FORBIDDEN',
+    code: 'ADMIN_REQUIRED',
+    role,
+    hint: `Seu role atual é ${role || '(vazio)'}. Este módulo exige ADMIN/GESTOR/GERENTE.`,
+  })
 }
