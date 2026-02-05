@@ -101,6 +101,80 @@ function bytesToB64Url(bytes) {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
+function decodeKeyMaterial(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return new Uint8Array()
+  if (/^[0-9a-fA-F]{64}$/.test(s)) {
+    const out = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16)
+    return out
+  }
+  const maybeB64 = b64UrlToBytes(s)
+  if (maybeB64.length >= 16) return maybeB64
+  return new TextEncoder().encode(s)
+}
+
+let templatesKeyCache = { raw: '', key: null }
+
+async function getTemplatesAesKey(env) {
+  const raw = String(env?.PONTO_TEMPLATES_KEY || '').trim()
+  if (!raw) return null
+  if (templatesKeyCache.raw === raw && templatesKeyCache.key) return templatesKeyCache.key
+  let keyBytes = decodeKeyMaterial(raw)
+  if (keyBytes.length !== 32) {
+    const digest = await crypto.subtle.digest('SHA-256', keyBytes)
+    keyBytes = new Uint8Array(digest)
+  }
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+  templatesKeyCache = { raw, key }
+  return key
+}
+
+async function encryptTemplateJson(template, env) {
+  const key = await getTemplatesAesKey(env)
+  if (!key) return JSON.stringify(template)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const plaintext = new TextEncoder().encode(JSON.stringify(template))
+  const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext)
+  return JSON.stringify({ v: 1, alg: 'A256GCM', iv: bytesToB64Url(iv), ct: bytesToB64Url(new Uint8Array(ctBuf)) })
+}
+
+async function decodeTemplateJson(raw, env) {
+  try {
+    const parsed = safeJsonParse(raw)
+    if (isNumberArray(parsed, 64, 1024)) {
+      const key = await getTemplatesAesKey(env)
+      if (key) {
+        try {
+          const reencrypted = await encryptTemplateJson(parsed, env)
+          return { template: parsed, reencrypted }
+        } catch {
+          return { template: parsed, reencrypted: null }
+        }
+      }
+      return { template: parsed, reencrypted: null }
+    }
+    if (parsed && typeof parsed === 'object' && parsed.alg === 'A256GCM') {
+      const key = await getTemplatesAesKey(env)
+      if (!key) return { template: null, reencrypted: null }
+      const iv = b64UrlToBytes(parsed.iv)
+      const ct = b64UrlToBytes(parsed.ct)
+      if (!iv.length || !ct.length) return { template: null, reencrypted: null }
+      try {
+        const ptBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)
+        const tpl = safeJsonParse(new TextDecoder().decode(ptBuf))
+        if (!isNumberArray(tpl, 64, 1024)) return { template: null, reencrypted: null }
+        return { template: tpl, reencrypted: null }
+      } catch {
+        return { template: null, reencrypted: null }
+      }
+    }
+    return { template: null, reencrypted: null }
+  } catch {
+    return { template: null, reencrypted: null }
+  }
+}
+
 async function sha256HexUtf8(input) {
   const bytes = new TextEncoder().encode(String(input ?? ''))
   const digest = await crypto.subtle.digest('SHA-256', bytes)
@@ -234,6 +308,13 @@ function publicDevice(row) {
 }
 
 let pontoSchemaInitPromise = null
+let allTemplatesCache = null
+const employeeTemplatesCache = new Map()
+
+function invalidateTemplateCache() {
+  allTemplatesCache = null
+  employeeTemplatesCache.clear()
+}
 
 async function ensurePontoSchema(db) {
   if (pontoSchemaInitPromise) return pontoSchemaInitPromise
@@ -303,6 +384,14 @@ async function ensurePontoSchema(db) {
       `CREATE INDEX IF NOT EXISTS idx_ponto_records_employee_at ON ponto_records(employee_id, at)`,
       `CREATE INDEX IF NOT EXISTS idx_ponto_records_created_at ON ponto_records(created_at)`,
       `CREATE INDEX IF NOT EXISTS idx_ponto_records_idempotency ON ponto_records(idempotency_key)`,
+
+      `CREATE TABLE IF NOT EXISTS ponto_pin_failures (
+        employee_id TEXT PRIMARY KEY,
+        fail_count INTEGER NOT NULL,
+        locked_until TEXT,
+        last_failed_at TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_ponto_pin_failures_locked ON ponto_pin_failures(locked_until)`,
 
       `CREATE TABLE IF NOT EXISTS ponto_audit (
         id TEXT PRIMARY KEY,
@@ -452,6 +541,19 @@ async function findEmployeeByLoginEmail(db, email) {
   ).bind(needle).first()
 }
 
+async function findEmployeeByLoginEmailAny(db, email, excludeId) {
+  const needle = normalizeEmail(email)
+  if (!needle) return null
+  let sql = `SELECT id, name, login_email, deleted_at, active FROM ponto_employees WHERE lower(login_email) = lower(?) AND deleted_at IS NULL`
+  const binds = [needle]
+  if (excludeId) {
+    sql += ` AND id != ?`
+    binds.push(String(excludeId))
+  }
+  sql += ` LIMIT 1`
+  return await db.prepare(sql).bind(...binds).first()
+}
+
 async function findEmployeeById(db, id) {
   const employeeId = String(id || '').trim()
   if (!employeeId) return null
@@ -477,16 +579,67 @@ async function listEmployees(db) {
   return rows?.results || []
 }
 
-async function loadEmployeeTemplates(db, employeeId, maxDescriptors) {
+async function loadEmployeeTemplates(db, env, employeeId, maxDescriptors, cacheTtlMs) {
+  const key = String(employeeId)
+  if (cacheTtlMs > 0) {
+    const cached = employeeTemplatesCache.get(key)
+    if (cached && (Date.now() - cached.ts) < cacheTtlMs) return cached.templates
+  }
+
   const rows = await db.prepare(
-    `SELECT template_json FROM ponto_face_templates WHERE employee_id = ? ORDER BY created_at DESC LIMIT ?`
+    `SELECT id, template_json FROM ponto_face_templates WHERE employee_id = ? ORDER BY created_at DESC LIMIT ?`
   ).bind(String(employeeId), Number(maxDescriptors)).all()
   const out = []
+  const reencrypt = []
   for (const r of rows?.results || []) {
-    const tpl = safeJsonParse(r?.template_json)
-    if (isNumberArray(tpl, 64, 1024)) out.push(tpl)
+    const decoded = await decodeTemplateJson(r?.template_json, env)
+    if (decoded?.template && isNumberArray(decoded.template, 64, 1024)) out.push(decoded.template)
+    if (decoded?.reencrypted && r?.id) reencrypt.push({ id: r.id, value: decoded.reencrypted })
+  }
+  if (reencrypt.length) {
+    await withTxn(db, async () => {
+      for (const item of reencrypt) {
+        await db.prepare(`UPDATE ponto_face_templates SET template_json = ? WHERE id = ?`).bind(item.value, item.id).run()
+      }
+    })
+  }
+
+  if (cacheTtlMs > 0) {
+    employeeTemplatesCache.set(key, { ts: Date.now(), templates: out })
   }
   return out
+}
+
+async function loadAllTemplates(db, env, cacheTtlMs) {
+  if (cacheTtlMs > 0 && allTemplatesCache && (Date.now() - allTemplatesCache.ts) < cacheTtlMs) {
+    return allTemplatesCache.templates
+  }
+  const rows = await db.prepare(
+    `SELECT t.id, t.employee_id, e.name, t.template_json
+     FROM ponto_face_templates t
+     JOIN ponto_employees e ON e.id = t.employee_id
+     WHERE e.deleted_at IS NULL AND e.active = 1`
+  ).all()
+  const templates = []
+  const reencrypt = []
+  for (const r of rows?.results || []) {
+    const decoded = await decodeTemplateJson(r?.template_json, env)
+    if (decoded?.template && isNumberArray(decoded.template, 64, 1024)) {
+      templates.push({ employeeId: r.employee_id, name: r.name, template: decoded.template, templateId: r.id })
+    }
+    if (decoded?.reencrypted && r?.id) reencrypt.push({ id: r.id, value: decoded.reencrypted })
+  }
+  if (reencrypt.length) {
+    await withTxn(db, async () => {
+      for (const item of reencrypt) {
+        await db.prepare(`UPDATE ponto_face_templates SET template_json = ? WHERE id = ?`).bind(item.value, item.id).run()
+      }
+    })
+  }
+  if (cacheTtlMs > 0) {
+    allTemplatesCache = { ts: Date.now(), templates }
+  }
+  return templates
 }
 
 function computePunchType(requestedType, lastType) {
@@ -500,6 +653,52 @@ async function findLastEmployeePunch(db, employeeId) {
   return await db.prepare(
     `SELECT * FROM ponto_records WHERE kind = 'PUNCH' AND employee_id = ? ORDER BY at DESC LIMIT 1`
   ).bind(String(employeeId)).first()
+}
+
+async function getPinFailureState(db, employeeId) {
+  const row = await db.prepare(
+    `SELECT * FROM ponto_pin_failures WHERE employee_id = ? LIMIT 1`
+  ).bind(String(employeeId)).first()
+  if (!row) return { locked: false, failCount: 0, secondsRemaining: 0 }
+  const lockedUntil = row.locked_until ? Date.parse(row.locked_until) : null
+  if (lockedUntil && Number.isFinite(lockedUntil)) {
+    const remainingMs = lockedUntil - Date.now()
+    if (remainingMs > 0) {
+      return { locked: true, failCount: Number(row.fail_count || 0) || 0, secondsRemaining: Math.ceil(remainingMs / 1000) }
+    }
+  }
+  await db.prepare(`DELETE FROM ponto_pin_failures WHERE employee_id = ?`).bind(String(employeeId)).run()
+  return { locked: false, failCount: 0, secondsRemaining: 0 }
+}
+
+async function recordPinFailure(db, employeeId, maxFailures, lockoutSeconds) {
+  const current = await db.prepare(
+    `SELECT * FROM ponto_pin_failures WHERE employee_id = ? LIMIT 1`
+  ).bind(String(employeeId)).first()
+  const prev = Number(current?.fail_count || 0) || 0
+  const failCount = prev + 1
+  const now = new Date().toISOString()
+  let lockedUntil = null
+  if (failCount >= maxFailures) {
+    lockedUntil = new Date(Date.now() + lockoutSeconds * 1000).toISOString()
+  }
+  await db.prepare(
+    `INSERT INTO ponto_pin_failures (employee_id, fail_count, locked_until, last_failed_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(employee_id) DO UPDATE SET fail_count=excluded.fail_count, locked_until=excluded.locked_until, last_failed_at=excluded.last_failed_at`
+  ).bind(String(employeeId), failCount, lockedUntil, now).run()
+
+  const remaining = Math.max(0, maxFailures - failCount)
+  return {
+    locked: !!lockedUntil,
+    failCount,
+    remaining,
+    secondsRemaining: lockedUntil ? Math.ceil((Date.parse(lockedUntil) - Date.now()) / 1000) : 0
+  }
+}
+
+async function clearPinFailures(db, employeeId) {
+  await db.prepare(`DELETE FROM ponto_pin_failures WHERE employee_id = ?`).bind(String(employeeId)).run()
 }
 
 async function enforceCooldown(db, employeeId, punchCooldownSeconds) {
@@ -582,6 +781,9 @@ export async function handlePontoRoutes({
   const faceThresholdDefault = clampFloat(env?.PONTO_FACE_THRESHOLD, 0.2, 1.5, 0.52)
   const punchCooldownSeconds = clampInt(env?.PONTO_PUNCH_COOLDOWN_SECONDS, 0, 3600, 10)
   const actorSkewMs = clampInt(env?.PONTO_ACTOR_SKEW_MS, 5_000, 60 * 60 * 1000, 5 * 60 * 1000)
+  const pinMaxFailures = clampInt(env?.PONTO_PIN_MAX_FAILURES, 2, 20, 5)
+  const pinLockoutSeconds = clampInt(env?.PONTO_PIN_LOCKOUT_SECONDS, 10, 3600, 300)
+  const templatesCacheTtlMs = clampInt(env?.PONTO_TEMPLATES_CACHE_TTL_MS, 0, 60000, 5000)
 
   const json = (status, body, extraHeaders = {}) => withCORS(
     JSON.stringify(body),
@@ -644,6 +846,12 @@ export async function handlePontoRoutes({
     const code = safeText(body?.code, 40)
     const loginEmail = normalizeEmail(body?.loginEmail)
     if (!name) return json(400, { ok: false, error: 'NAME_REQUIRED' })
+    if (loginEmail) {
+      const existing = await findEmployeeByLoginEmailAny(db, loginEmail, null)
+      if (existing) {
+        return json(409, { ok: false, error: 'LOGIN_EMAIL_ALREADY_IN_USE', employeeId: existing.id, employeeName: existing.name })
+      }
+    }
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
     await withTxn(db, async () => {
@@ -673,6 +881,16 @@ export async function handlePontoRoutes({
     const codeRaw = body?.code
     const loginEmailRaw = body?.loginEmail
 
+    if (loginEmailRaw !== undefined) {
+      const nextEmail = normalizeEmail(loginEmailRaw)
+      if (nextEmail) {
+        const existing = await findEmployeeByLoginEmailAny(db, nextEmail, employeeId)
+        if (existing) {
+          return json(409, { ok: false, error: 'LOGIN_EMAIL_ALREADY_IN_USE', employeeId: existing.id, employeeName: existing.name })
+        }
+      }
+    }
+
     await withTxn(db, async () => {
       if (nameRaw !== undefined) {
         const next = safeText(nameRaw, 80)
@@ -700,6 +918,7 @@ export async function handlePontoRoutes({
       await writeAudit(db, env, 'EMPLOYEE_UPDATE', { employeeId }, auth.actor)
     })
 
+    invalidateTemplateCache()
     const out = await findEmployeeById(db, employeeId)
     return json(200, { ok: true, data: publicEmployee(out) })
   }
@@ -715,6 +934,7 @@ export async function handlePontoRoutes({
       await db.prepare(`UPDATE ponto_employees SET deleted_at=?, active=0, updated_at=? WHERE id=?`).bind(now, now, employeeId).run()
       await writeAudit(db, env, 'EMPLOYEE_DELETE', { employeeId }, auth.actor)
     })
+    invalidateTemplateCache()
     return json(200, { ok: true })
   }
 
@@ -766,9 +986,10 @@ export async function handlePontoRoutes({
         await db.prepare(`DELETE FROM ponto_face_templates WHERE employee_id = ?`).bind(employeeId).run()
       }
       for (const tpl of accepted) {
+        const encoded = await encryptTemplateJson(tpl, env)
         await db.prepare(
           `INSERT INTO ponto_face_templates (id, employee_id, created_at, template_json) VALUES (?, ?, ?, ?)`
-        ).bind(crypto.randomUUID(), employeeId, now, JSON.stringify(tpl)).run()
+        ).bind(crypto.randomUUID(), employeeId, now, encoded).run()
       }
       // Keep last N templates
       await db.prepare(
@@ -781,6 +1002,7 @@ export async function handlePontoRoutes({
       await db.prepare(`UPDATE ponto_employees SET last_enrolled_at=?, updated_at=? WHERE id=?`).bind(now, now, employeeId).run()
       await writeAudit(db, env, 'EMPLOYEE_ENROLL_FACE', { employeeId, replace, count: accepted.length }, auth.actor)
     })
+    invalidateTemplateCache()
     const out = await findEmployeeById(db, employeeId)
     return json(200, { ok: true, data: publicEmployee(out) })
   }
@@ -1091,7 +1313,7 @@ export async function handlePontoRoutes({
     if (descriptor !== undefined) {
       if (!isNumberArray(descriptor, 64, 1024)) return json(400, { ok: false, error: 'DESCRIPTOR_INVALID' })
       if (hasFace) {
-        const templates = await loadEmployeeTemplates(db, employee.id, maxDescriptors)
+        const templates = await loadEmployeeTemplates(db, env, employee.id, maxDescriptors, templatesCacheTtlMs)
         const threshold = clampFloat(body?.threshold ?? faceThresholdDefault, 0.2, 1.5, faceThresholdDefault)
         let bestDistance = Number.POSITIVE_INFINITY
         for (const tpl of templates) {
@@ -1107,9 +1329,18 @@ export async function handlePontoRoutes({
     }
 
     if (!method && pin) {
+      const lock = await getPinFailureState(db, employee.id)
+      if (lock.locked) return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: lock.secondsRemaining })
       if (!employee.pin_hash) return json(400, { ok: false, error: 'PIN_NOT_SET' })
       const okPin = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
-      if (!okPin) return json(401, { ok: false, error: 'PIN_INVALID' })
+      if (!okPin) {
+        const failure = await recordPinFailure(db, employee.id, pinMaxFailures, pinLockoutSeconds)
+        if (failure.locked) {
+          return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: failure.secondsRemaining })
+        }
+        return json(401, { ok: false, error: 'PIN_INVALID', remaining: failure.remaining })
+      }
+      await clearPinFailures(db, employee.id)
       method = 'PIN'
     }
 
@@ -1117,7 +1348,7 @@ export async function handlePontoRoutes({
 
     const last = await findLastEmployeePunch(db, employee.id)
     const type = computePunchType(body?.type, last?.type)
-    const unit = safeText(body?.unit, 80) || null
+    const unit = null
     const note = safeText(body?.note, 240) || null
     const now = new Date().toISOString()
     const client = getClientTimeMeta(body)
@@ -1214,23 +1445,18 @@ export async function handlePontoRoutes({
     if (!isNumberArray(descriptor, 64, 1024)) return json(400, { ok: false, error: 'DESCRIPTOR_INVALID' })
     const threshold = clampFloat(body?.threshold ?? faceThresholdDefault, 0.2, 1.5, faceThresholdDefault)
 
-    const rows = await db.prepare(
-      `SELECT t.employee_id, e.name, t.template_json
-       FROM ponto_face_templates t
-       JOIN ponto_employees e ON e.id = t.employee_id
-       WHERE e.deleted_at IS NULL AND e.active = 1`
-    ).all()
     let best = null
     let bestDistance = Number.POSITIVE_INFINITY
     const candidates = []
-    for (const r of rows?.results || []) {
-      const tpl = safeJsonParse(r.template_json)
+    const templates = await loadAllTemplates(db, env, templatesCacheTtlMs)
+    for (const r of templates || []) {
+      const tpl = r.template
       if (!isNumberArray(tpl, descriptor.length, descriptor.length)) continue
       const dist = l2(descriptor, tpl)
-      candidates.push({ employeeId: r.employee_id, name: r.name, distance: dist })
+      candidates.push({ employeeId: r.employeeId, name: r.name, distance: dist })
       if (dist < bestDistance) {
         bestDistance = dist
-        best = { employeeId: r.employee_id, name: r.name, distance: dist }
+        best = { employeeId: r.employeeId, name: r.name, distance: dist }
       }
     }
     candidates.sort((a, b) => a.distance - b.distance)
@@ -1254,25 +1480,19 @@ export async function handlePontoRoutes({
     if (!isNumberArray(descriptor, 64, 1024)) return json(400, { ok: false, error: 'DESCRIPTOR_INVALID' })
 
     const threshold = clampFloat(body?.threshold ?? faceThresholdDefault, 0.2, 1.5, faceThresholdDefault)
-    const rows = await db.prepare(
-      `SELECT t.employee_id, e.name, t.template_json
-       FROM ponto_face_templates t
-       JOIN ponto_employees e ON e.id = t.employee_id
-       WHERE e.deleted_at IS NULL AND e.active = 1`
-    ).all()
-
     let best = null
     let bestDistance = Number.POSITIVE_INFINITY
     const top = []
-    for (const r of rows?.results || []) {
-      const tpl = safeJsonParse(r.template_json)
+    const templates = await loadAllTemplates(db, env, templatesCacheTtlMs)
+    for (const r of templates || []) {
+      const tpl = r.template
       if (!isNumberArray(tpl, descriptor.length, descriptor.length)) continue
       const dist = l2(descriptor, tpl)
       if (dist < bestDistance) {
         bestDistance = dist
-        best = { employeeId: r.employee_id, name: r.name, distance: dist }
+        best = { employeeId: r.employeeId, name: r.name, distance: dist }
       }
-      top.push({ employeeId: r.employee_id, name: r.name, distance: dist })
+      top.push({ employeeId: r.employeeId, name: r.name, distance: dist })
     }
     top.sort((a, b) => a.distance - b.distance)
     const top5 = top.slice(0, 5)
@@ -1362,8 +1582,17 @@ export async function handlePontoRoutes({
     const employee = await findEmployeeById(db, employeeId)
     if (!employee || employee.deleted_at || !employee.active) return json(404, { ok: false, error: 'EMPLOYEE_NOT_FOUND' })
     if (!employee.pin_hash) return json(400, { ok: false, error: 'PIN_NOT_SET' })
+    const lock = await getPinFailureState(db, employee.id)
+    if (lock.locked) return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: lock.secondsRemaining })
     const okPin = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
-    if (!okPin) return json(401, { ok: false, error: 'PIN_INVALID' })
+    if (!okPin) {
+      const failure = await recordPinFailure(db, employee.id, pinMaxFailures, pinLockoutSeconds)
+      if (failure.locked) {
+        return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: failure.secondsRemaining })
+      }
+      return json(401, { ok: false, error: 'PIN_INVALID', remaining: failure.remaining })
+    }
+    await clearPinFailures(db, employee.id)
 
     const cooldown = await enforceCooldown(db, employee.id, punchCooldownSeconds)
     if (!cooldown.ok) return json(409, { ok: false, error: 'COOLDOWN', secondsRemaining: cooldown.secondsRemaining, last: cooldown.last })

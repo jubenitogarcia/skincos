@@ -70,6 +70,27 @@ type PontoMeResponse =
 const LS_DEVICE_TOKEN = 'skincos.ponto.deviceToken.v1'
 const LS_DEV_ACTOR_EMAIL = 'skincos.ponto.devActorEmail.v1'
 
+function errorMetaString(meta: { code?: string; requestId?: string; cfRay?: string }) {
+  const parts: string[] = []
+  if (meta.code) parts.push(`code:${meta.code}`)
+  if (meta.requestId) parts.push(`req:${meta.requestId}`)
+  if (meta.cfRay) parts.push(`cf:${meta.cfRay}`)
+  return parts.length ? parts.join(' • ') : ''
+}
+
+function extractErrorMeta(err: any) {
+  const code = String(err?.details?.error || err?.details?.code || err?.code || '').trim()
+  const requestId = String(err?.requestId || '').trim()
+  const cfRay = String(err?.cfRay || '').trim()
+  return { code, requestId, cfRay }
+}
+
+function toastErrorMeta(err: any) {
+  const meta = extractErrorMeta(err)
+  const text = errorMetaString(meta)
+  if (text) toast.message(text)
+}
+
 function b64UrlEncodeBytes(bytes: ArrayBuffer): string {
   const bin = String.fromCharCode(...new Uint8Array(bytes))
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
@@ -133,6 +154,8 @@ async function apiJson<T>(
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: opts.signal
   })
+  const requestId = String(res.headers.get('x-request-id') || '').trim()
+  const cfRay = String(res.headers.get('cf-ray') || '').trim()
   const text = await res.text()
   let json: unknown = null
   try {
@@ -142,11 +165,16 @@ async function apiJson<T>(
   }
   if (res.ok) return json as T
   const err = (json || {}) as ApiError
+  const code = String(err.error || err.code || '').trim()
   const hint = typeof err.hint === 'string' ? err.hint.trim() : ''
   const base = err.error || err.message || `HTTP ${res.status}`
-  const e = new Error([base, hint].filter(Boolean).join(' • '))
+  const meta = errorMetaString({ code, requestId, cfRay })
+  const e = new Error([base, hint, meta].filter(Boolean).join(' • '))
   ;(e as any).details = json
   ;(e as any).status = res.status
+  ;(e as any).requestId = requestId
+  ;(e as any).cfRay = cfRay
+  ;(e as any).code = code
   throw e
 }
 
@@ -155,12 +183,19 @@ async function apiBlob(path: string, opts: { adminToken?: string; signal?: Abort
   if (opts.adminToken) headers.authorization = `Admin ${opts.adminToken}`
   const res = await fetch(path, { headers, signal: opts.signal })
   if (!res.ok) {
+    const requestId = String(res.headers.get('x-request-id') || '').trim()
+    const cfRay = String(res.headers.get('cf-ray') || '').trim()
     let msg = `HTTP ${res.status}`
     try {
       const json = (await res.json()) as ApiError
       msg = json.error || json.message || msg
     } catch { /* ignore */ }
-    throw new Error(msg)
+    const meta = errorMetaString({ requestId, cfRay })
+    const e = new Error([msg, meta].filter(Boolean).join(' • '))
+    ;(e as any).status = res.status
+    ;(e as any).requestId = requestId
+    ;(e as any).cfRay = cfRay
+    throw e
   }
   return await res.blob()
 }
@@ -521,7 +556,13 @@ export function PontoModule() {
       setCameraOwner(owner)
       toast.success('Câmera ativa')
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const details = e?.details as any
+      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
+        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -579,6 +620,7 @@ export function PontoModule() {
       setMeRecords(res.data || [])
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setMeLoading(false)
     }
@@ -623,6 +665,7 @@ export function PontoModule() {
         toast.error(e?.message || String(e))
         setMeStep('pin')
       }
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -652,11 +695,14 @@ export function PontoModule() {
         toast.error('PIN inválido')
       } else if (code === 'PIN_NOT_SET') {
         toast.error('PIN não configurado para este funcionário')
+      } else if (code === 'PIN_LOCKED') {
+        toast.error(`PIN bloqueado. Aguarde ${details?.secondsRemaining || '?'}s e tente novamente.`)
       } else if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
       } else {
         toast.error(e?.message || String(e))
       }
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -680,6 +726,7 @@ export function PontoModule() {
       setDeviceEmployees([])
       setDeviceConfig(null)
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -772,6 +819,7 @@ export function PontoModule() {
       } else {
         toast.error(e?.message || String(e))
       }
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -803,6 +851,7 @@ export function PontoModule() {
       } else {
         toast.error(e?.message || String(e))
       }
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -822,6 +871,7 @@ export function PontoModule() {
       toast.success('Dados atualizados')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -844,6 +894,7 @@ export function PontoModule() {
       toast.success('Funcionário criado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -862,6 +913,7 @@ export function PontoModule() {
       toast.success('Vínculo atualizado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -883,6 +935,7 @@ export function PontoModule() {
       toast.success('PIN atualizado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -938,6 +991,7 @@ export function PontoModule() {
       toast.success('Dispositivo criado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -952,6 +1006,7 @@ export function PontoModule() {
       toast.success('Dispositivo revogado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -975,6 +1030,7 @@ export function PontoModule() {
       setAdminPunchNote('')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -997,6 +1053,7 @@ export function PontoModule() {
       toast.success('Registros carregados')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
@@ -1022,6 +1079,7 @@ export function PontoModule() {
       toast.success('CSV gerado')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+      toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
