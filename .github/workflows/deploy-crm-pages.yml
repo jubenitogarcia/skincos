@@ -100,3 +100,47 @@ jobs:
             npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
           fi
         working-directory: frontend
+
+      - name: Smoke check Ponto (production)
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' }}
+        env:
+          BASE_URL: https://crm.skincos.com.br
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, sys, time, urllib.request
+
+          base = os.environ.get("BASE_URL", "").rstrip("/")
+          if not base:
+            raise SystemExit("BASE_URL not set")
+
+          def fetch_json(path: str):
+            url = f"{base}{path}"
+            with urllib.request.urlopen(url, timeout=15) as resp:
+              data = resp.read().decode("utf-8", "ignore")
+              return json.loads(data)
+
+          def check():
+            proxy = fetch_json("/api/ponto/_proxy-status")
+            if not proxy.get("ok"):
+              raise SystemExit("proxy-status ok=false")
+            if not proxy.get("targetConfigured"):
+              raise SystemExit("proxy-status targetConfigured=false")
+            if not proxy.get("adminTokenConfigured"):
+              raise SystemExit("proxy-status adminTokenConfigured=false")
+            health = fetch_json("/api/ponto/health")
+            if not health.get("ok"):
+              raise SystemExit("health ok=false")
+            return True
+
+          for i in range(1, 6):
+            try:
+              check()
+              print("Ponto smoke check OK")
+              sys.exit(0)
+            except Exception as exc:
+              print(f"Attempt {i} failed: {exc}")
+              if i >= 5:
+                raise
+              time.sleep(6)
+          PY
