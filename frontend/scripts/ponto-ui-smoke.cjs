@@ -133,8 +133,21 @@ async function main() {
       await adminTab.click({ timeout: 30_000 })
       await page.waitForTimeout(1500)
       await page.screenshot({ path: shot('admin'), fullPage: FULL_PAGE })
-      const tokenPromptVisible = await page.locator('text=/token.*admin/i').first().isVisible().catch(() => false)
-      if (tokenPromptVisible) throw new Error('Admin tab still prompts for admin token (expected role-based).')
+      // Avoid false positives: other tabs contain "token" strings (device token), and tab panels can remain in the DOM.
+      // We only fail if there's an *actual* admin-token prompt (text or an input hinting admin token).
+      const adminTokenTextVisible = await page
+        .locator('text=/admin\\s*token|token\\s*(do|de)?\\s*admin/i')
+        .first()
+        .isVisible()
+        .catch(() => false)
+      const adminTokenInputVisible = await page
+        .locator('input[placeholder*="admin" i], input[aria-label*="admin" i]')
+        .first()
+        .isVisible()
+        .catch(() => false)
+      if (adminTokenTextVisible || adminTokenInputVisible) {
+        throw new Error('Admin tab still prompts for admin token (expected role-based).')
+      }
     }
 
     fs.writeFileSync(path.join(ARTIFACT_DIR, `ponto-ui-${stamp}-console.txt`), consoleLines.join('\n'))
