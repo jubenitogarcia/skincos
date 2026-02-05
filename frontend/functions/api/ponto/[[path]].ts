@@ -79,35 +79,43 @@ export async function onRequest(context: any): Promise<Response> {
   const prefix = '/api/ponto'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
+  const env = context.env || {}
+  const targetOriginExplicit = String((env?.PONTO_API_TARGET as string | undefined) || '').trim()
+  const targetOriginFallback = String((env?.INSUMOS_API_TARGET as string | undefined) || '').trim()
+  const targetOrigin = targetOriginExplicit || targetOriginFallback
+  const targetFrom = targetOriginExplicit ? 'PONTO_API_TARGET' : (targetOriginFallback ? 'INSUMOS_API_TARGET' : 'NONE')
+
   if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
-    const targetOrigin = (context.env?.PONTO_API_TARGET as string | undefined) || ''
-    const proxyToken = (context.env?.PONTO_PROXY_TOKEN as string | undefined) || ''
-    const actorKey = (context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || ''
-    const adminToken = (context.env?.PONTO_ADMIN_TOKEN as string | undefined) || ''
+    const proxyToken = (env?.PONTO_PROXY_TOKEN as string | undefined) || ''
+    const actorKey = (env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || ''
+    const adminToken = (env?.PONTO_ADMIN_TOKEN as string | undefined) || ''
     return json(
       200,
       {
         ok: true,
-        targetConfigured: !!targetOrigin,
+        targetConfigured: !!targetOriginExplicit,
+        effectiveTargetConfigured: !!targetOrigin,
+        targetFrom,
+        targetOrigin: targetOrigin || undefined,
         proxyTokenConfigured: !!proxyToken,
         actorKeyConfigured: !!String(actorKey || '').trim(),
         adminTokenConfigured: !!String(adminToken || '').trim(),
         hint: !targetOrigin
-          ? 'Configure PONTO_API_TARGET no Cloudflare Pages/Functions para apontar para o backend do Ponto.'
-          : undefined,
+          ? 'Configure PONTO_API_TARGET (ou INSUMOS_API_TARGET) no Cloudflare Pages/Functions para apontar para o backend.'
+          : (!targetOriginExplicit ? 'PONTO_API_TARGET não está definido; usando INSUMOS_API_TARGET como fallback.' : undefined),
+        recommended: !targetOriginExplicit ? 'Defina PONTO_API_TARGET explicitamente para evitar divergências entre ambientes.' : undefined,
       },
       { 'x-request-id': requestId },
     )
   }
 
-  const targetOrigin = (context.env?.PONTO_API_TARGET as string | undefined) || ''
   if (!targetOrigin) {
     return json(
       503,
       {
         ok: false,
         error: 'PONTO_API_TARGET nao configurado',
-        hint: 'Defina PONTO_API_TARGET (ex: https://crm-api.seudominio.com) no Cloudflare Pages/Functions.',
+        hint: 'Defina PONTO_API_TARGET (ou INSUMOS_API_TARGET) no Cloudflare Pages/Functions.',
       },
       { 'x-request-id': requestId },
     )
@@ -120,9 +128,9 @@ export async function onRequest(context: any): Promise<Response> {
   let actorTs = ''
   let actorSig = ''
 
-  const proxyToken = (context.env?.PONTO_PROXY_TOKEN as string | undefined) || ''
-  const actorKey = String((context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || '').trim()
-  const adminToken = String((context.env?.PONTO_ADMIN_TOKEN as string | undefined) || '').trim()
+  const proxyToken = (env?.PONTO_PROXY_TOKEN as string | undefined) || ''
+  const actorKey = String((env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || '').trim()
+  const adminToken = String((env?.PONTO_ADMIN_TOKEN as string | undefined) || '').trim()
   let isAdminUser = false
 
   if (isEmployeeRoute || isAdminRoute) {

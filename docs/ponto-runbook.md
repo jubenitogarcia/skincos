@@ -12,7 +12,8 @@ Este documento descreve **como validar, diagnosticar e operar** o módulo **Pont
 ## 2) Variáveis e secrets (produção)
 
 ### Cloudflare Pages (CRM)
-- `PONTO_API_TARGET` → URL do backend (ex.: `https://api.skincos.com.br`)
+- `PONTO_API_TARGET` → URL do backend (ex.: `https://api.skincos.com.br`) (**recomendado**)
+- `INSUMOS_API_TARGET` → fallback de target caso `PONTO_API_TARGET` não exista (mesmo target usado por `/api/auth/*` e `/api/insumos/*`)
 - `PONTO_PROXY_TOKEN` → secret de autenticação do proxy
 - `PONTO_ACTOR_HMAC_KEY` → **obrigatório**: secret para assinatura do actor (employee) (não há fallback para `PONTO_PROXY_TOKEN`)
 - `PONTO_ADMIN_TOKEN` → secret para rotas admin (injeção no proxy)
@@ -34,8 +35,10 @@ GET https://crm.skincos.com.br/api/ponto/_proxy-status
 ```
 Esperado:
 - `ok: true`
-- `targetConfigured: true`
+- `effectiveTargetConfigured: true`
 - `adminTokenConfigured: true`
+Observação:
+- `targetConfigured: true` indica `PONTO_API_TARGET` explícito; se `false`, o proxy pode estar usando `INSUMOS_API_TARGET` como fallback.
 
 ### 3.2 Worker
 ```
