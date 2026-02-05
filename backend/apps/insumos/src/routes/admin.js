@@ -89,8 +89,50 @@ function randomPassword() {
   // human-friendly enough + avoids ambiguous chars; returned only once
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
   let out = '';
-  for (let i = 0; i < 14; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  const randomIndex = (maxExclusive) => {
+    const max = Math.max(1, Math.floor(Number(maxExclusive) || 1));
+    const range = max;
+    const u32 = new Uint32Array(1);
+    const maxUint = 0xffffffff;
+    const limit = maxUint - (maxUint % range);
+    while (true) {
+      crypto.getRandomValues(u32);
+      const x = u32[0];
+      if (x < limit) return x % range;
+    }
+  };
+  for (let i = 0; i < 14; i++) out += alphabet[randomIndex(alphabet.length)];
   return out;
+}
+
+function bytesToB64Url(bytes) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function hashPasswordPBKDF2(env, password) {
+  const toInt = (value, fallback) => {
+    const n = parseInt(String(value ?? ''), 10);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const iters = Math.max(50_000, Math.min(600_000, toInt(env?.AUTH_PBKDF2_ITERS, 150_000)));
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(String(password || '')),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iters },
+    key,
+    256,
+  );
+  const dk = new Uint8Array(bits);
+  return `pbkdf2_sha256$${iters}$${bytesToB64Url(salt)}$${bytesToB64Url(dk)}`;
 }
 
 function safeJsonParse(raw, fallback) {
@@ -126,7 +168,19 @@ function randomInviteToken() {
   // 24 chars, human-friendly alphabet; good enough entropy for invites
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
   let out = '';
-  for (let i = 0; i < 24; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  const randomIndex = (maxExclusive) => {
+    const max = Math.max(1, Math.floor(Number(maxExclusive) || 1));
+    const range = max;
+    const u32 = new Uint32Array(1);
+    const maxUint = 0xffffffff;
+    const limit = maxUint - (maxUint % range);
+    while (true) {
+      crypto.getRandomValues(u32);
+      const x = u32[0];
+      if (x < limit) return x % range;
+    }
+  };
+  for (let i = 0; i < 24; i++) out += alphabet[randomIndex(alphabet.length)];
   return out;
 }
 
@@ -581,7 +635,7 @@ export async function handleAdminRoutes({
       }
 
       const now = new Date().toISOString();
-      const hash = await bcrypt.hash(password, 10);
+      const hash = await hashPasswordPBKDF2(env, password);
       if (usersHasModules) {
         await env.DB.prepare(
           `INSERT INTO ${usersTable}
@@ -746,7 +800,7 @@ export async function handleAdminRoutes({
       if (password.length < 6) {
         return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_TOO_SHORT' }), { status: 400 }, appOrigin);
       }
-      const hash = await bcrypt.hash(password, 10);
+      const hash = await hashPasswordPBKDF2(env, password);
       const now = new Date().toISOString();
       const r = await env.DB.prepare(
         `UPDATE ${usersTable} SET password_hash=?, updated_at=? WHERE LOWER(username)=LOWER(?)`
