@@ -20,6 +20,7 @@ jobs:
           PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           PONTO_PROXY_TOKEN: ${{ secrets.PONTO_PROXY_TOKEN }}
           PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
+          PONTO_ADMIN_TOKEN: ${{ secrets.PONTO_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "${TOKEN:-}" || -z "${ACCOUNT_ID:-}" ]]; then
@@ -27,8 +28,8 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ -z "${PONTO_PROXY_TOKEN:-}" || -z "${PONTO_ACTOR_HMAC_KEY:-}" ]]; then
-            echo "Missing GitHub secrets PONTO_PROXY_TOKEN/PONTO_ACTOR_HMAC_KEY; cannot sync."
+          if [[ -z "${PONTO_PROXY_TOKEN:-}" || -z "${PONTO_ACTOR_HMAC_KEY:-}" || -z "${PONTO_ADMIN_TOKEN:-}" ]]; then
+            echo "Missing GitHub secrets PONTO_PROXY_TOKEN/PONTO_ACTOR_HMAC_KEY/PONTO_ADMIN_TOKEN; cannot sync."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -58,6 +59,7 @@ jobs:
           PONTO_API_TARGET: "https://api.skincos.com.br"
           PONTO_PROXY_TOKEN: ${{ secrets.PONTO_PROXY_TOKEN }}
           PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
+          PONTO_ADMIN_TOKEN: ${{ secrets.PONTO_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -73,7 +75,8 @@ jobs:
           target=os.environ.get("PONTO_API_TARGET","").strip()
           proxy=os.environ.get("PONTO_PROXY_TOKEN","").strip()
           actor=os.environ.get("PONTO_ACTOR_HMAC_KEY","").strip()
-          if not target or not proxy or not actor:
+          admin=os.environ.get("PONTO_ADMIN_TOKEN","").strip()
+          if not target or not proxy or not actor or not admin:
             raise SystemExit("Missing required envs for patch")
           for env_name in ("production","preview"):
             env_cfg=cfg.get(env_name) or {}
@@ -82,12 +85,13 @@ jobs:
             env_vars["PONTO_API_TARGET"]={"value": target, "type":"secret_text"}
             env_vars["PONTO_PROXY_TOKEN"]={"value": proxy, "type":"secret_text"}
             env_vars["PONTO_ACTOR_HMAC_KEY"]={"value": actor, "type":"secret_text"}
+            env_vars["PONTO_ADMIN_TOKEN"]={"value": admin, "type":"secret_text"}
             env_cfg["env_vars"]=env_vars
             cfg[env_name]=env_cfg
           patch={"deployment_configs": cfg}
           with open("pages_patch.json","w",encoding="utf-8") as f:
             json.dump(patch,f)
-          print("Prepared patch for env vars: PONTO_API_TARGET, PONTO_PROXY_TOKEN, PONTO_ACTOR_HMAC_KEY")
+          print("Prepared patch for env vars: PONTO_API_TARGET, PONTO_PROXY_TOKEN, PONTO_ACTOR_HMAC_KEY, PONTO_ADMIN_TOKEN")
           PY
 
           curl -sS -X PATCH \
@@ -106,5 +110,11 @@ jobs:
           cfg=(data.get("result") or {}).get("deployment_configs") or {}
           for env_name in ("production","preview"):
             keys=sorted(((cfg.get(env_name) or {}).get("env_vars") or {}).keys())
-            print(f"{env_name} env var keys now include Ponto:", "PONTO_API_TARGET" in keys, "PONTO_PROXY_TOKEN" in keys, "PONTO_ACTOR_HMAC_KEY" in keys)
+            print(
+              f"{env_name} env var keys now include Ponto:",
+              "PONTO_API_TARGET" in keys,
+              "PONTO_PROXY_TOKEN" in keys,
+              "PONTO_ACTOR_HMAC_KEY" in keys,
+              "PONTO_ADMIN_TOKEN" in keys,
+            )
           PY

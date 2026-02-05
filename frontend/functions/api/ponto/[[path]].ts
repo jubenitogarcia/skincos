@@ -14,7 +14,10 @@ function newRequestId(): string {
   try {
     return crypto.randomUUID()
   } catch {
-    return `${Date.now()}_${Math.random().toString(16).slice(2)}`
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('')
+    return `${Date.now()}_${hex}`
   }
 }
 
@@ -80,6 +83,7 @@ export async function onRequest(context: any): Promise<Response> {
     const targetOrigin = (context.env?.PONTO_API_TARGET as string | undefined) || ''
     const proxyToken = (context.env?.PONTO_PROXY_TOKEN as string | undefined) || ''
     const actorKey = (context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || proxyToken || ''
+    const adminToken = (context.env?.PONTO_ADMIN_TOKEN as string | undefined) || ''
     return json(
       200,
       {
@@ -87,6 +91,7 @@ export async function onRequest(context: any): Promise<Response> {
         targetConfigured: !!targetOrigin,
         proxyTokenConfigured: !!proxyToken,
         actorKeyConfigured: !!actorKey,
+        adminTokenConfigured: !!String(adminToken || '').trim(),
         hint: !targetOrigin
           ? 'Configure PONTO_API_TARGET no Cloudflare Pages/Functions para apontar para o backend do Ponto.'
           : undefined,
