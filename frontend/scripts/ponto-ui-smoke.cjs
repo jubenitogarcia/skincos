@@ -27,6 +27,9 @@ fs.mkdirSync(ARTIFACT_DIR, { recursive: true })
 const URL = process.env.CRM_URL || 'https://crm.skincos.com.br'
 const HEADED = process.env.HEADED === '1' || process.env.HEADED === 'true'
 const LOGIN_WAIT_MS = Math.max(5_000, parseInt(String(process.env.LOGIN_WAIT_MS || ''), 10) || 10 * 60_000)
+const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
+const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
+const CHANNEL = String(process.env.CHANNEL || '').trim()
 
 const { chromium } = require('playwright')
 
@@ -43,53 +46,70 @@ async function main() {
 
   const context = await chromium.launchPersistentContext(path.join(ARTIFACT_DIR, 'profile-crm'), {
     headless: !HEADED,
-    viewport: { width: 1365, height: 900 },
+    viewport: { width: 1365, height: 860 },
+    ...(CHANNEL ? { channel: CHANNEL } : {}),
   })
   const page = await context.newPage()
 
-  await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
+  // Tracing is extremely useful when debugging failures, but it can slow down the browser significantly.
+  // Keep it opt-in for routine smoke runs.
+  if (TRACE) await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
 
   const consoleLines = []
   page.on('console', (msg) => consoleLines.push(`[${msg.type()}] ${msg.text()}`))
   page.on('pageerror', (err) => consoleLines.push(`[pageerror] ${String((err && err.stack) || err)}`))
 
   try {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('home'), fullPage: true })
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          animation-duration: 0.001s !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001s !important;
+          scroll-behavior: auto !important;
+        }
+      `,
+    }).catch(() => {})
+    await page.screenshot({ path: shot('home'), fullPage: FULL_PAGE })
 
-    const authEmail = page.locator('#auth-email')
-    const loggedInPontoLink = page.locator('text=Ponto').first()
-
-    const authVisible = await authEmail.isVisible().catch(() => false)
-    if (authVisible) {
+    const loginMarker = page.locator('text=Acessar Plataforma').first()
+    const isLogin = await loginMarker.isVisible().catch(() => false)
+    if (isLogin) {
       console.log('[ponto-ui-smoke] Not authenticated yet.')
       console.log('[ponto-ui-smoke] If running headed (HEADED=1), complete login in the opened window.')
       console.log(`[ponto-ui-smoke] Waiting up to ${Math.ceil(LOGIN_WAIT_MS / 1000)}s for login...`)
     }
 
-    await page.waitForFunction(
-      () => {
-        const auth = document.querySelector('#auth-email')
-        if (auth) return false
-        return document.body && document.body.innerText && document.body.innerText.includes('Ponto')
-      },
-      null,
-      { timeout: LOGIN_WAIT_MS }
-    )
+    if (isLogin) {
+      await loginMarker.waitFor({ state: 'hidden', timeout: LOGIN_WAIT_MS })
+    }
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('after-auth'), fullPage: true })
+    await page.screenshot({ path: shot('after-auth'), fullPage: FULL_PAGE })
 
-    await loggedInPontoLink.click({ timeout: 30_000 })
-    await page.waitForTimeout(2000)
-    await page.screenshot({ path: shot('ponto-open'), fullPage: true })
+    // Go directly to the Ponto module to avoid loading heavy default modules and to reduce flakiness in sidebar selectors.
+    await page
+      .evaluate(() => {
+        try {
+          localStorage.setItem('app.activeModule', 'ponto')
+        } catch {}
+      })
+      .catch(() => {})
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await page.waitForTimeout(1500)
 
-    await page.locator('text=/Build:\\s*[a-f0-9]{7,}|Build:\\s*unknown/i').first().waitFor({ timeout: 30_000 })
+    await page
+      .locator('text=/Build:\\s*[a-f0-9]{7,}|Build:\\s*unknown|build:\\s*[a-f0-9]{7,}|build:\\s*unknown/i')
+      .first()
+      .waitFor({ timeout: 30_000 })
+    await page.screenshot({ path: shot('ponto-open'), fullPage: FULL_PAGE })
 
     const diagButton = page.locator('button:has-text("Diagnóstico")').first()
     await diagButton.click({ timeout: 30_000 })
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('diagnostics'), fullPage: true })
+    await page.screenshot({ path: shot('diagnostics'), fullPage: FULL_PAGE })
 
     await page.locator('text=GET /api/ponto/_proxy-status').first().waitFor({ timeout: 30_000 })
     await page.locator('text=GET /api/ponto/health').first().waitFor({ timeout: 30_000 })
@@ -99,7 +119,7 @@ async function main() {
 
     await page.locator('button:has-text("Kiosk")').first().click({ timeout: 30_000 })
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('kiosk'), fullPage: true })
+    await page.screenshot({ path: shot('kiosk'), fullPage: FULL_PAGE })
     {
       const visible = await page.locator('text=Fallback por PIN').first().isVisible().catch(() => false)
       if (visible) throw new Error('Kiosk PIN fallback is visible by default (expected hidden).')
@@ -110,7 +130,7 @@ async function main() {
     if (hasAdminTab) {
       await adminTab.click({ timeout: 30_000 })
       await page.waitForTimeout(1500)
-      await page.screenshot({ path: shot('admin'), fullPage: true })
+      await page.screenshot({ path: shot('admin'), fullPage: FULL_PAGE })
       const tokenPromptVisible = await page.locator('text=/token.*admin/i').first().isVisible().catch(() => false)
       if (tokenPromptVisible) throw new Error('Admin tab still prompts for admin token (expected role-based).')
     }
@@ -118,7 +138,7 @@ async function main() {
     fs.writeFileSync(path.join(ARTIFACT_DIR, `ponto-ui-${stamp}-console.txt`), consoleLines.join('\n'))
     console.log('OK')
   } finally {
-    await context.tracing.stop({ path: tracePath }).catch(() => {})
+    if (TRACE) await context.tracing.stop({ path: tracePath }).catch(() => {})
     await context.close().catch(() => {})
   }
 }
@@ -127,4 +147,3 @@ main().catch((err) => {
   console.error('FAIL:', err && err.stack ? err.stack : err)
   process.exitCode = 1
 })
-
