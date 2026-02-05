@@ -31,6 +31,7 @@ const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
 const CHANNEL = String(process.env.CHANNEL || '').trim()
 const PERSISTENT = process.env.PERSISTENT === '1' || process.env.PERSISTENT === 'true'
+const EXPECT_BUILD_SHA = String(process.env.EXPECT_BUILD_SHA || '').trim().toLowerCase()
 
 const { chromium } = require('playwright')
 
@@ -127,10 +128,17 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
     await page.waitForTimeout(1500)
 
-    await page
+    const buildBadge = page
       .locator('text=/Build:\\s*[a-f0-9]{7,}|Build:\\s*unknown|build:\\s*[a-f0-9]{7,}|build:\\s*unknown/i')
       .first()
-      .waitFor({ timeout: 30_000 })
+    await buildBadge.waitFor({ timeout: 30_000 })
+    if (EXPECT_BUILD_SHA) {
+      const expectedShort = EXPECT_BUILD_SHA.slice(0, 7)
+      const badgeText = String((await buildBadge.textContent().catch(() => '')) || '').toLowerCase()
+      if (!badgeText.includes(expectedShort)) {
+        throw new Error(`Build badge mismatch (expected ${expectedShort}). Got: ${badgeText || '(empty)'}`)
+      }
+    }
     await page.screenshot({ path: shot('ponto-open'), fullPage: FULL_PAGE })
 
     const diagButton = page.locator('button:has-text("Diagnóstico")').first()
