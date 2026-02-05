@@ -40,6 +40,77 @@ export async function handleAuthRoutes({
     const authUserAgent = String(userAgent || '').trim();
     const normalizeIdentifier = (value) => String(value || '').trim().toLowerCase();
 
+    const textEncoder = new TextEncoder();
+    const bytesToB64Url = (bytes) => {
+        let bin = '';
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    };
+    const b64UrlToBytes = (b64url) => {
+        const s = String(b64url || '').trim();
+        if (!s) return new Uint8Array();
+        const padded = s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=');
+        const bin = atob(padded);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    };
+    const safeEqualBytes = (a, b) => {
+        const aa = a instanceof Uint8Array ? a : new Uint8Array(a || []);
+        const bb = b instanceof Uint8Array ? b : new Uint8Array(b || []);
+        if (aa.length !== bb.length) return false;
+        let out = 0;
+        for (let i = 0; i < aa.length; i++) out |= aa[i] ^ bb[i];
+        return out === 0;
+    };
+
+    // Avoid bcryptjs hashing in Workers (can exceed CPU and trigger CF 1101).
+    // Keep bcrypt verification for legacy hashes and opportunistically upgrade on successful login.
+    const PBKDF2_ITERS = Math.max(50_000, Math.min(600_000, toInt(env?.AUTH_PBKDF2_ITERS, 150_000)));
+    const hashPassword = async (password) => {
+        const salt = new Uint8Array(16);
+        crypto.getRandomValues(salt);
+        const key = await crypto.subtle.importKey('raw', textEncoder.encode(String(password || '')), 'PBKDF2', false, ['deriveBits']);
+        const bits = await crypto.subtle.deriveBits(
+            { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERS },
+            key,
+            256
+        );
+        const dk = new Uint8Array(bits);
+        return `pbkdf2_sha256$${PBKDF2_ITERS}$${bytesToB64Url(salt)}$${bytesToB64Url(dk)}`;
+    };
+    const verifyPassword = async (password, storedHash) => {
+        const s = String(storedHash || '').trim();
+        if (!s) return { ok: false, upgradedHash: null };
+
+        if (s.startsWith('pbkdf2_sha256$')) {
+            const parts = s.split('$');
+            if (parts.length !== 4) return { ok: false, upgradedHash: null };
+            const iters = Math.max(1, parseInt(parts[1], 10) || 0);
+            const salt = b64UrlToBytes(parts[2]);
+            const expected = b64UrlToBytes(parts[3]);
+            if (!iters || !salt.length || !expected.length) return { ok: false, upgradedHash: null };
+            const key = await crypto.subtle.importKey('raw', textEncoder.encode(String(password || '')), 'PBKDF2', false, ['deriveBits']);
+            const bits = await crypto.subtle.deriveBits(
+                { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iters },
+                key,
+                expected.length * 8
+            );
+            const got = new Uint8Array(bits);
+            const ok = safeEqualBytes(got, expected);
+            const needsUpgrade = ok && iters < PBKDF2_ITERS;
+            return { ok, upgradedHash: needsUpgrade ? await hashPassword(password) : null };
+        }
+
+        const isBcrypt = /^\$2[aby]\$/.test(s) || /^\$2y\$/.test(s);
+        if (isBcrypt) {
+            const ok = await bcrypt.compare(String(password || ''), s);
+            return { ok, upgradedHash: ok ? await hashPassword(password) : null };
+        }
+
+        return { ok: false, upgradedHash: null };
+    };
+
     const getAuthLockout = async (identifier) => {
         if (!env?.DB || !identifier) return null;
         try {
@@ -321,11 +392,23 @@ export async function handleAuthRoutes({
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'PASSWORD_NOT_SET', username: userDb.username } });
                     return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
                 }
-                const ok = await bcrypt.compare(password, userDb.passwordHash);
-                if (!ok) {
+                const verified = await verifyPassword(password, userDb.passwordHash);
+                if (!verified.ok) {
                     await recordAuthFailure(identifier, 'INVALID_CREDENTIALS');
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'INVALID_CREDENTIALS', username: userDb.username } });
                     return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
+                }
+                if (verified.upgradedHash && env?.DB && usersTable) {
+                    try {
+                        const now = new Date().toISOString();
+                        await env.DB.prepare(
+                            `UPDATE ${usersTable} SET password_hash = ?, updated_at = ? WHERE username = ?`
+                        )
+                            .bind(String(verified.upgradedHash), now, String(userDb.username))
+                            .run();
+                    } catch {
+                        // ignore upgrade failures
+                    }
                 }
 	                const user = {
 	                    name: userDb.displayName || userDb.username,
@@ -418,7 +501,7 @@ export async function handleAuthRoutes({
                 const role = normalizeRole(invite.role || 'CONSULTOR');
                 const allowedUnits = normalizeAllowedUnits(invite.allowed_units_json || '');
                 const allowedModules = invitesHasModules ? normalizeAllowedModules(invite.allowed_modules_json || '') : [];
-                const hash = await bcrypt.hash(password, 10);
+                const hash = await hashPassword(password);
 
                 if (usersHasModules) {
                     await env.DB.prepare(
@@ -567,8 +650,8 @@ export async function handleAuthRoutes({
                 if (!exp || Date.now() > exp) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXPIRED" }), { status: 400 }, appOrigin);
 	                }
-	                const hash = await bcrypt.hash(newPassword, 10);
-	                const updated = await d1.updateUserProfile(env, row.username, { passwordHash: hash });
+                const hash = await hashPassword(newPassword);
+                const updated = await d1.updateUserProfile(env, row.username, { passwordHash: hash });
 	                if (!updated?.ok) {
 	                    return withCORS(JSON.stringify({ success: false, error: updated?.error || 'PASSWORD_RESET_FAILED' }), { status: updated?.status || 500 }, appOrigin);
 	                }
@@ -627,7 +710,7 @@ export async function handleAuthRoutes({
                     if (!currentPassword) {
                         return withCORS(JSON.stringify({ error: "Current password required" }), { status: 400 }, appOrigin);
                     }
-                    const ok = await bcrypt.compare(currentPassword, userDb.passwordHash || '');
+                    const ok = (await verifyPassword(currentPassword, userDb.passwordHash || '')).ok;
                     if (!ok) {
                         return withCORS(JSON.stringify({ error: "Invalid current password" }), { status: 401 }, appOrigin);
                     }
@@ -640,7 +723,7 @@ export async function handleAuthRoutes({
                 }
 
                 if (newPassword && newPassword.trim()) {
-                    passwordHash = await bcrypt.hash(newPassword, 10);
+                    passwordHash = await hashPassword(newPassword);
                 }
 
                 const updated = await d1.updateUserProfile(env, sessionUsername, {
@@ -810,7 +893,7 @@ export async function handleAuthRoutes({
                 return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
             }
 
-            const ok = await bcrypt.compare(password, userDb.passwordHash);
+            const ok = (await verifyPassword(password, userDb.passwordHash)).ok;
             if (!ok) {
                 await recordAuthFailure(identifier, 'INVALID_CREDENTIALS');
                 await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'INVALID_CREDENTIALS', username: userDb.username } });
@@ -914,7 +997,7 @@ export async function handleAuthRoutes({
                 if (!currentPassword) {
                     return withCORS(JSON.stringify({ error: "Current password required" }), { status: 400 }, appOrigin);
                 }
-                const ok = await bcrypt.compare(currentPassword, currentHash);
+                const ok = (await verifyPassword(currentPassword, currentHash)).ok;
                 if (!ok) {
                     return withCORS(JSON.stringify({ error: "Invalid current password" }), { status: 401 }, appOrigin);
                 }
@@ -948,7 +1031,7 @@ export async function handleAuthRoutes({
             if (updatedAtCol !== undefined) currentRow[updatedAtCol] = new Date().toISOString();
 
             if (newPassword && passwordHashCol !== undefined) {
-                currentRow[passwordHashCol] = await bcrypt.hash(newPassword, 10);
+                currentRow[passwordHashCol] = await hashPassword(newPassword);
             }
 
             const sheetName = userRange.split('!')[0] || 'Usuarios';
