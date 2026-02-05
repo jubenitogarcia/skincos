@@ -752,6 +752,7 @@ export function InsumosModule() {
 
   const [insumos, setInsumos] = React.useState<Insumo[]>([])
   const [insumosLoading, setInsumosLoading] = React.useState(false)
+  const [insumosLoadError, setInsumosLoadError] = React.useState<{ message: string; status: number; code?: string } | null>(null)
   const [insumosQuery, setInsumosQuery] = React.useState('')
   const [insumosPagina, setInsumosPagina] = React.useState(1)
   const [insumosLimite, setInsumosLimite] = React.useState(200)
@@ -817,6 +818,7 @@ export function InsumosModule() {
 
   const [movimentacoes, setMovimentacoes] = React.useState<Movimentacao[]>([])
   const [movLoading, setMovLoading] = React.useState(false)
+  const [movLoadError, setMovLoadError] = React.useState<{ message: string; status: number; code?: string } | null>(null)
   const [movTipo, setMovTipo] = React.useState<'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'>('TODOS')
   const movGroupTransfers = true
   const [movDe, setMovDe] = React.useState('')
@@ -1871,6 +1873,25 @@ export function InsumosModule() {
   }, [allowedUnits.join('|'), unidade])
 
   React.useEffect(() => {
+    const allowed = allUnidades || []
+    if (!allowed.length) return
+    if (allowed.includes(unidade)) return
+    const next = allowed[0]
+    if (!next) return
+    setUnidade(next)
+    try {
+      window.localStorage.setItem(INSUMOS_UNIT_KEY, next)
+    } catch {
+      // ignore
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: next } }))
+    } catch {
+      // ignore
+    }
+  }, [INSUMOS_UNIT_KEY, allUnidades.join('|'), unidade])
+
+  React.useEffect(() => {
     setTransferFrom(unidade)
     setTransferTo((prev) => {
       const candidates = unidadeOptions.filter((u) => u !== unidade)
@@ -2317,9 +2338,15 @@ export function InsumosModule() {
         setInsumosHasMore(totalOut != null ? mergedCount < totalOut : items.length >= limite)
         setInsumosPagina(pagina)
         setInsumosLimite(limite)
+        setInsumosLoadError(null)
         return totalOut
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e))
+        setInsumosLoadError({
+          message: e instanceof Error ? e.message : String(e),
+          status: Number((e as any)?.status || 0) || 0,
+          code: (e as any)?.code ? String((e as any).code) : undefined
+        })
         setInsumos([])
         setInsumosTotal(null)
         setInsumosHasMore(false)
@@ -2432,8 +2459,14 @@ export function InsumosModule() {
       setMovPagina(pagina)
       setMovLimite(limite)
       setMovHasMore(totalOut != null ? merged.length < totalOut : items.length >= limite)
+      setMovLoadError(null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
+      setMovLoadError({
+        message: e instanceof Error ? e.message : String(e),
+        status: Number((e as any)?.status || 0) || 0,
+        code: (e as any)?.code ? String((e as any).code) : undefined
+      })
       setMovimentacoes([])
       setMovTotal(null)
       setMovHasMore(false)
@@ -4397,7 +4430,14 @@ export function InsumosModule() {
                   {!filteredInsumos.length ? (
                     <tr>
                       <td className="p-3 text-blue-100/70" colSpan={8}>
-                        {renderListPlaceholder(insumosLoading, 'Sem itens.')}
+                        {insumosLoadError && !insumosLoading && isAuthed ? (
+                          <span className="text-red-200">
+                            Erro ao carregar insumos ({insumosLoadError.status || 'erro'}
+                            {insumosLoadError.code ? `/${insumosLoadError.code}` : ''}): {insumosLoadError.message}
+                          </span>
+                        ) : (
+                          renderListPlaceholder(insumosLoading, 'Sem itens.')
+                        )}
                       </td>
                     </tr>
                   ) : null}
@@ -6911,7 +6951,14 @@ export function InsumosModule() {
               {!filteredInsumos.length ? (
                 <tr>
                   <td className="p-3 text-blue-100/70" colSpan={8}>
-                    {renderListPlaceholder(insumosLoading, 'Sem itens.')}
+                    {insumosLoadError && !insumosLoading && isAuthed ? (
+                      <span className="text-red-200">
+                        Erro ao carregar insumos ({insumosLoadError.status || 'erro'}
+                        {insumosLoadError.code ? `/${insumosLoadError.code}` : ''}): {insumosLoadError.message}
+                      </span>
+                    ) : (
+                      renderListPlaceholder(insumosLoading, 'Sem itens.')
+                    )}
                   </td>
                 </tr>
               ) : null}
@@ -7326,7 +7373,14 @@ export function InsumosModule() {
 	              {!movimentacoesView.length ? (
 	                <tr>
 	                  <td className="p-3 text-blue-100/70 text-center" colSpan={9}>
-	                    {renderListPlaceholder(movLoading, 'Sem movimentações.')}
+	                    {movLoadError && !movLoading && isAuthed ? (
+                        <span className="text-red-200">
+                          Erro ao carregar movimentações ({movLoadError.status || 'erro'}
+                          {movLoadError.code ? `/${movLoadError.code}` : ''}): {movLoadError.message}
+                        </span>
+                      ) : (
+                        renderListPlaceholder(movLoading, 'Sem movimentações.')
+                      )}
 	                  </td>
 	                </tr>
 	              ) : null}
