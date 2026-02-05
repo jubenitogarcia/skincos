@@ -441,66 +441,75 @@ async function processJobs(env: Env) {
   const bucket = env.SHARE_BUCKET
   const maxJobs = parsePositiveInt(env.SOCIAL_JOBS_MAX_PER_RUN) ?? 50
   const startedAt = Date.now()
+  let discovered = 0
   let processed = 0
   let okCount = 0
   let failCount = 0
+  let error: string | undefined
 
-  const { objects } = await listAll(bucket, { prefix: 'social/jobs/' })
-  const keys = (objects || []).map((o) => String(o.key || '')).filter(Boolean).slice(0, maxJobs)
-  for (const key of keys) {
-    const job = await getJsonObj<SocialPublishJob>(bucket, key).catch(() => null)
-    if (!job?.dateKey || !job?.groupKey || !job?.jobId) {
-      await deleteKeys(bucket, [key]).catch(() => null)
-      continue
-    }
+  try {
+    const { objects } = await listAll(bucket, { prefix: 'social/jobs/' })
+    const keys = (objects || []).map((o) => String(o.key || '')).filter(Boolean).slice(0, maxJobs)
+    discovered = keys.length
 
-    const group = await getJsonObj<SocialQueueGroup>(bucket, socialQueueGroupKey(job.dateKey, job.groupKey)).catch(() => null)
-    if (!group) {
+    for (const key of keys) {
+      const job = await getJsonObj<SocialPublishJob>(bucket, key).catch(() => null)
+      if (!job?.dateKey || !job?.groupKey || !job?.jobId) {
+        await deleteKeys(bucket, [key]).catch(() => null)
+        continue
+      }
+
+      const group = await getJsonObj<SocialQueueGroup>(bucket, socialQueueGroupKey(job.dateKey, job.groupKey)).catch(() => null)
+      if (!group) {
+        await putJsonObj(bucket, `social/job-results/${job.jobId}.json`, {
+          ok: false,
+          error: 'GROUP_NOT_FOUND',
+          jobId: job.jobId,
+          dateKey: job.dateKey,
+          groupKey: job.groupKey,
+          at: new Date().toISOString(),
+        }).catch(() => null)
+        await deleteKeys(bucket, [key]).catch(() => null)
+        processed += 1
+        failCount += 1
+        continue
+      }
+
+      const out = await publishGroup(env, group, { force: !!job.force }).catch((e) => ({
+        okCount: 0,
+        failCount: 1,
+        results: [],
+        error: e?.message || 'PUBLISH_FAILED',
+      }))
+
       await putJsonObj(bucket, `social/job-results/${job.jobId}.json`, {
-        ok: false,
-        error: 'GROUP_NOT_FOUND',
+        ok: !out?.error,
+        error: out?.error,
         jobId: job.jobId,
         dateKey: job.dateKey,
         groupKey: job.groupKey,
+        requestedAt: job.requestedAt,
+        requestedBy: job.requestedBy,
+        okCount: out?.okCount || 0,
+        failCount: out?.failCount || 0,
         at: new Date().toISOString(),
       }).catch(() => null)
+
       await deleteKeys(bucket, [key]).catch(() => null)
       processed += 1
-      failCount += 1
-      continue
+      okCount += out?.okCount || 0
+      failCount += out?.failCount || 0
     }
-
-    const out = await publishGroup(env, group, { force: !!job.force }).catch((e) => ({
-      okCount: 0,
-      failCount: 1,
-      results: [],
-      error: e?.message || 'PUBLISH_FAILED',
-    }))
-
-    await putJsonObj(bucket, `social/job-results/${job.jobId}.json`, {
-      ok: !out?.error,
-      error: out?.error,
-      jobId: job.jobId,
-      dateKey: job.dateKey,
-      groupKey: job.groupKey,
-      requestedAt: job.requestedAt,
-      requestedBy: job.requestedBy,
-      okCount: out?.okCount || 0,
-      failCount: out?.failCount || 0,
-      at: new Date().toISOString(),
-    }).catch(() => null)
-
-    await deleteKeys(bucket, [key]).catch(() => null)
-    processed += 1
-    okCount += out?.okCount || 0
-    failCount += out?.failCount || 0
-  }
-
-  if (processed > 0) {
+  } catch (e: any) {
+    error = e?.message || 'JOBS_RUN_FAILED'
+  } finally {
     await putJsonObj(bucket, 'social/metrics/last_jobs_run.json', {
+      discovered,
+      maxJobs,
       processed,
       okCount,
       failCount,
+      error,
       startedAt: new Date(startedAt).toISOString(),
       finishedAt: new Date().toISOString(),
     }).catch(() => null)
