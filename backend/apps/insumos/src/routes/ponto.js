@@ -215,19 +215,54 @@ function safeEqualStr(a, b) {
 }
 
 async function pbkdf2Sha256(pin, saltBytes, iterations, outLen = 32) {
-  const baseKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(pin ?? '')), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations },
-    baseKey,
-    outLen * 8,
-  )
-  return new Uint8Array(bits)
+  const iters = clampInt(iterations, 1, 1_000_000, null)
+  if (!iters) throw new Error('PBKDF2_ITERS_INVALID')
+  const outBytes = clampInt(outLen, 1, 1024, 32)
+  const pwdBytes = new TextEncoder().encode(String(pin ?? ''))
+
+  // Cloudflare Workers WebCrypto PBKDF2 has a hard cap (currently 100k iters).
+  const PBKDF2_MAX_WEBCRYPTO_ITERS = 100_000
+
+  if (iters <= PBKDF2_MAX_WEBCRYPTO_ITERS) {
+    try {
+      const baseKey = await crypto.subtle.importKey('raw', pwdBytes, 'PBKDF2', false, ['deriveBits'])
+      const bits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: iters },
+        baseKey,
+        outBytes * 8,
+      )
+      return new Uint8Array(bits)
+    } catch {
+      // fall through to manual impl
+    }
+  }
+
+  // Manual PBKDF2-HMAC-SHA256 (1 block is enough for 32 bytes) for legacy iters > 100k.
+  const PBKDF2_FALLBACK_MAX_ITERS = 250_000
+  if (iters > PBKDF2_FALLBACK_MAX_ITERS) throw new Error(`PBKDF2_ITERS_TOO_HIGH:${iters}`)
+
+  const hmacKey = await crypto.subtle.importKey('raw', pwdBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const saltPlusIndex = new Uint8Array(saltBytes.length + 4)
+  saltPlusIndex.set(saltBytes, 0)
+  saltPlusIndex[saltBytes.length + 0] = 0
+  saltPlusIndex[saltBytes.length + 1] = 0
+  saltPlusIndex[saltBytes.length + 2] = 0
+  saltPlusIndex[saltBytes.length + 3] = 1
+
+  let u = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, saltPlusIndex))
+  const t = new Uint8Array(u)
+  for (let i = 2; i <= iters; i++) {
+    u = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, u))
+    for (let b = 0; b < t.length; b++) t[b] ^= u[b]
+  }
+  return t.slice(0, outBytes)
 }
 
 async function hashPin(pin, opts = {}) {
   const p = String(pin ?? '')
   if (!p) return null
-  const iterations = clampInt(opts.iterations ?? 120_000, 20_000, 600_000, 120_000)
+  // Keep <=100k to stay compatible with Cloudflare Workers WebCrypto PBKDF2.
+  const iterations = clampInt(opts.iterations ?? 100_000, 20_000, 100_000, 100_000)
   const salt = opts.saltBytes instanceof Uint8Array && opts.saltBytes.length ? opts.saltBytes : crypto.getRandomValues(new Uint8Array(16))
   const dk = await pbkdf2Sha256(p, salt, iterations, 32)
   return {
@@ -238,17 +273,21 @@ async function hashPin(pin, opts = {}) {
   }
 }
 
-async function verifyPin(pin, stored) {
-  if (!stored || stored.alg !== 'pbkdf2-sha256') return false
+async function verifyPin(pin, stored, opts = {}) {
+  if (!stored || stored.alg !== 'pbkdf2-sha256') return { ok: false, upgraded: null }
   const salt = b64UrlToBytes(stored.saltB64)
   const expected = b64UrlToBytes(stored.hashB64)
   const iters = clampInt(stored.iters, 10_000, 800_000, null)
-  if (!salt.length || !expected.length || !iters) return false
+  if (!salt.length || !expected.length || !iters) return { ok: false, upgraded: null }
   const dk = await pbkdf2Sha256(pin, salt, iters, expected.length)
-  if (dk.length !== expected.length) return false
+  if (dk.length !== expected.length) return { ok: false, upgraded: null }
   let out = 0
   for (let i = 0; i < dk.length; i++) out |= dk[i] ^ expected[i]
-  return out === 0
+  const ok = out === 0
+
+  const targetIters = clampInt(opts.targetIters ?? 100_000, 20_000, 100_000, 100_000)
+  const needsUpgrade = ok && iters !== targetIters
+  return { ok, upgraded: needsUpgrade ? await hashPin(pin, { iterations: targetIters }) : null, prevIters: iters, nextIters: targetIters }
 }
 
 function getIdempotencyKey(request, body) {
@@ -1333,8 +1372,8 @@ export async function handlePontoRoutes({
       const lock = await getPinFailureState(db, employee.id)
       if (lock.locked) return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: lock.secondsRemaining })
       if (!employee.pin_hash) return json(400, { ok: false, error: 'PIN_NOT_SET' })
-      const okPin = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
-      if (!okPin) {
+      const pinCheck = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
+      if (!pinCheck.ok) {
         const failure = await recordPinFailure(db, employee.id, pinMaxFailures, pinLockoutSeconds)
         await writeAudit(
           db,
@@ -1347,6 +1386,15 @@ export async function handlePontoRoutes({
           return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: failure.secondsRemaining })
         }
         return json(401, { ok: false, error: 'PIN_INVALID', remaining: failure.remaining })
+      }
+      if (pinCheck.upgraded) {
+        const now = new Date().toISOString()
+        await withTxn(db, async () => {
+          await db.prepare(
+            `UPDATE ponto_employees SET pin_alg=?, pin_salt=?, pin_hash=?, pin_iters=?, updated_at=? WHERE id=?`
+          ).bind(pinCheck.upgraded.alg, pinCheck.upgraded.saltB64, pinCheck.upgraded.hashB64, pinCheck.upgraded.iters, now, employee.id).run()
+          await writeAudit(db, env, 'EMPLOYEE_UPGRADE_PIN_HASH', { employeeId: employee.id, prevIters: pinCheck.prevIters, nextIters: pinCheck.nextIters }, auth.actor)
+        })
       }
       await clearPinFailures(db, employee.id)
       method = 'PIN'
@@ -1592,8 +1640,8 @@ export async function handlePontoRoutes({
     if (!employee.pin_hash) return json(400, { ok: false, error: 'PIN_NOT_SET' })
     const lock = await getPinFailureState(db, employee.id)
     if (lock.locked) return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: lock.secondsRemaining })
-    const okPin = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
-    if (!okPin) {
+    const pinCheck = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
+    if (!pinCheck.ok) {
       const failure = await recordPinFailure(db, employee.id, pinMaxFailures, pinLockoutSeconds)
       await writeAudit(
         db,
@@ -1606,6 +1654,15 @@ export async function handlePontoRoutes({
         return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: failure.secondsRemaining })
       }
       return json(401, { ok: false, error: 'PIN_INVALID', remaining: failure.remaining })
+    }
+    if (pinCheck.upgraded) {
+      const now = new Date().toISOString()
+      await withTxn(db, async () => {
+        await db.prepare(
+          `UPDATE ponto_employees SET pin_alg=?, pin_salt=?, pin_hash=?, pin_iters=?, updated_at=? WHERE id=?`
+        ).bind(pinCheck.upgraded.alg, pinCheck.upgraded.saltB64, pinCheck.upgraded.hashB64, pinCheck.upgraded.iters, now, employee.id).run()
+        await writeAudit(db, env, 'EMPLOYEE_UPGRADE_PIN_HASH', { employeeId: employee.id, prevIters: pinCheck.prevIters, nextIters: pinCheck.nextIters }, auth.actor)
+      })
     }
     await clearPinFailures(db, employee.id)
 

@@ -66,18 +66,67 @@ export async function handleAuthRoutes({
 
     // Avoid bcryptjs hashing in Workers (can exceed CPU and trigger CF 1101).
     // Keep bcrypt verification for legacy hashes and opportunistically upgrade on successful login.
-    const PBKDF2_ITERS = Math.max(50_000, Math.min(600_000, toInt(env?.AUTH_PBKDF2_ITERS, 150_000)));
+    //
+    // Cloudflare Workers WebCrypto PBKDF2 has a hard cap (currently 100k iters). If we try to derive above
+    // that, login breaks with: "iteration counts above 100000 are not supported".
+    const PBKDF2_MAX_WEBCRYPTO_ITERS = 100_000;
+    const PBKDF2_TARGET_ITERS = Math.max(50_000, Math.min(PBKDF2_MAX_WEBCRYPTO_ITERS, toInt(env?.AUTH_PBKDF2_ITERS, PBKDF2_MAX_WEBCRYPTO_ITERS)));
+    const PBKDF2_FALLBACK_MAX_ITERS = 250_000;
+
+    const derivePbkdf2Sha256 = async (password, salt, iters, outBytesLen) => {
+        const p = String(password || '');
+        const s = salt instanceof Uint8Array ? salt : new Uint8Array(salt || []);
+        const iterations = Math.max(1, parseInt(String(iters || 0), 10) || 0);
+        const outLen = Math.max(1, parseInt(String(outBytesLen || 32), 10) || 32);
+        const pwdBytes = textEncoder.encode(p);
+
+        // Use native PBKDF2 when supported (fast path).
+        if (iterations <= PBKDF2_MAX_WEBCRYPTO_ITERS) {
+            try {
+                const key = await crypto.subtle.importKey('raw', pwdBytes, 'PBKDF2', false, ['deriveBits']);
+                const bits = await crypto.subtle.deriveBits(
+                    { name: 'PBKDF2', hash: 'SHA-256', salt: s, iterations: iterations },
+                    key,
+                    outLen * 8
+                );
+                return new Uint8Array(bits);
+            } catch {
+                // Fall through to manual implementation below.
+            }
+        }
+
+        // Manual PBKDF2-HMAC-SHA256 (1 block is enough for 32 bytes) for legacy hashes with iters > 100k.
+        if (iterations > PBKDF2_FALLBACK_MAX_ITERS) {
+            throw new Error(`PBKDF2_ITERS_TOO_HIGH:${iterations}`);
+        }
+        const hmacKey = await crypto.subtle.importKey(
+            'raw',
+            pwdBytes,
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const saltPlusIndex = new Uint8Array(s.length + 4);
+        saltPlusIndex.set(s, 0);
+        saltPlusIndex[s.length + 0] = 0;
+        saltPlusIndex[s.length + 1] = 0;
+        saltPlusIndex[s.length + 2] = 0;
+        saltPlusIndex[s.length + 3] = 1;
+
+        let u = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, saltPlusIndex));
+        const t = new Uint8Array(u);
+        for (let i = 2; i <= iterations; i++) {
+            u = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, u));
+            for (let b = 0; b < t.length; b++) t[b] ^= u[b];
+        }
+        return t.slice(0, outLen);
+    };
+
     const hashPassword = async (password) => {
         const salt = new Uint8Array(16);
         crypto.getRandomValues(salt);
-        const key = await crypto.subtle.importKey('raw', textEncoder.encode(String(password || '')), 'PBKDF2', false, ['deriveBits']);
-        const bits = await crypto.subtle.deriveBits(
-            { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERS },
-            key,
-            256
-        );
-        const dk = new Uint8Array(bits);
-        return `pbkdf2_sha256$${PBKDF2_ITERS}$${bytesToB64Url(salt)}$${bytesToB64Url(dk)}`;
+        const dk = await derivePbkdf2Sha256(password, salt, PBKDF2_TARGET_ITERS, 32);
+        return `pbkdf2_sha256$${PBKDF2_TARGET_ITERS}$${bytesToB64Url(salt)}$${bytesToB64Url(dk)}`;
     };
     const verifyPassword = async (password, storedHash) => {
         const s = String(storedHash || '').trim();
@@ -90,15 +139,9 @@ export async function handleAuthRoutes({
             const salt = b64UrlToBytes(parts[2]);
             const expected = b64UrlToBytes(parts[3]);
             if (!iters || !salt.length || !expected.length) return { ok: false, upgradedHash: null };
-            const key = await crypto.subtle.importKey('raw', textEncoder.encode(String(password || '')), 'PBKDF2', false, ['deriveBits']);
-            const bits = await crypto.subtle.deriveBits(
-                { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iters },
-                key,
-                expected.length * 8
-            );
-            const got = new Uint8Array(bits);
+            const got = await derivePbkdf2Sha256(password, salt, iters, expected.length);
             const ok = safeEqualBytes(got, expected);
-            const needsUpgrade = ok && iters < PBKDF2_ITERS;
+            const needsUpgrade = ok && iters !== PBKDF2_TARGET_ITERS;
             return { ok, upgradedHash: needsUpgrade ? await hashPassword(password) : null };
         }
 
