@@ -1322,7 +1322,10 @@ export default {
                 read: { limit: 240 },
                 write: { limit: 60 }
             }[kind] || { limit: 120 };
-            const id = env.RATE_LIMITER.idFromName(ip);
+            const ipKey = String(ip || '').trim();
+            const uaKey = String(userAgent || '').trim().slice(0, 80);
+            const idName = ipKey && ipKey !== '0.0.0.0' ? ipKey : `ua:${uaKey || 'unknown'}`;
+            const id = env.RATE_LIMITER.idFromName(idName);
             const stub = env.RATE_LIMITER.get(id);
             const res = await stub.fetch(`https://rl/?key=${encodeURIComponent(kind)}&limit=${cfg.limit}&window=${windowSec}`);
             const data = await res.json().catch(() => ({}));
@@ -1380,9 +1383,16 @@ export default {
 
         // Basic rate limiting (Durable Object)
         try {
-            const isAuth = url.pathname.startsWith('/auth/');
             const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
-            const kind = isAuth ? 'auth' : (isMutating ? 'write' : 'read');
+            const authSensitive = [
+                '/auth/login',
+                '/auth/register',
+                '/auth/signup',
+                '/auth/password/request',
+                '/auth/password/reset',
+            ];
+            const isAuthSensitive = authSensitive.includes(url.pathname);
+            const kind = isAuthSensitive ? 'auth' : (isMutating ? 'write' : 'read');
             const rl = await enforceRateLimit(kind);
             if (!rl.allowed) {
                 return withCORS(JSON.stringify({ success: false, error: 'Rate limit excedido', code: 'RATE_LIMITED' }), { status: 429 }, appOrigin);
