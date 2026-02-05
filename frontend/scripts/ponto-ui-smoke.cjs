@@ -30,6 +30,7 @@ const LOGIN_WAIT_MS = Math.max(5_000, parseInt(String(process.env.LOGIN_WAIT_MS 
 const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
 const CHANNEL = String(process.env.CHANNEL || '').trim()
+const PERSISTENT = process.env.PERSISTENT === '1' || process.env.PERSISTENT === 'true'
 
 const { chromium } = require('playwright')
 
@@ -43,12 +44,36 @@ async function main() {
   const stamp = nowStamp()
   const tracePath = path.join(ARTIFACT_DIR, `ponto-ui-trace-${stamp}.zip`)
   const shot = (name) => path.join(ARTIFACT_DIR, `ponto-ui-${stamp}-${name}.png`)
+  const storageStatePath = path.join(ARTIFACT_DIR, 'storage-crm.json')
 
-  const context = await chromium.launchPersistentContext(path.join(ARTIFACT_DIR, 'profile-crm'), {
+  const viewport = { width: 1365, height: 860 }
+  const launchOpts = {
     headless: !HEADED,
-    viewport: { width: 1365, height: 860 },
     ...(CHANNEL ? { channel: CHANNEL } : {}),
-  })
+    args: [
+      // Reduce background overhead and keep CI stable.
+      '--disable-extensions',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
+    ],
+  }
+
+  let browser = null
+  let context = null
+  if (PERSISTENT) {
+    // Persistent profile is handy for manual debugging, but can be noticeably slower.
+    context = await chromium.launchPersistentContext(path.join(ARTIFACT_DIR, 'profile-crm'), {
+      ...launchOpts,
+      viewport,
+    })
+  } else {
+    browser = await chromium.launch(launchOpts)
+    context = await browser.newContext({
+      viewport,
+      ...(fs.existsSync(storageStatePath) ? { storageState: storageStatePath } : {}),
+    })
+  }
   const page = await context.newPage()
 
   // Tracing is extremely useful when debugging failures, but it can slow down the browser significantly.
@@ -86,6 +111,8 @@ async function main() {
     if (isLogin) {
       await loginMarker.waitFor({ state: 'hidden', timeout: LOGIN_WAIT_MS })
     }
+    // Persist auth for the next run without needing a persistent profile.
+    await context.storageState({ path: storageStatePath }).catch(() => {})
     await page.waitForTimeout(1500)
     await page.screenshot({ path: shot('after-auth'), fullPage: FULL_PAGE })
 
@@ -155,6 +182,7 @@ async function main() {
   } finally {
     if (TRACE) await context.tracing.stop({ path: tracePath }).catch(() => {})
     await context.close().catch(() => {})
+    if (browser) await browser.close().catch(() => {})
   }
 }
 

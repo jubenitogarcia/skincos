@@ -455,6 +455,32 @@ async function ensurePontoSchema(db) {
     for (const sql of stmts) {
       await db.prepare(sql).run()
     }
+
+    // Best-effort uniqueness for login_email (prevents ambiguous /me resolution).
+    // Do not fail schema init if existing data violates the constraint.
+    try {
+      const dup = await db
+        .prepare(
+          `SELECT lower(login_email) AS email, COUNT(*) AS n
+           FROM ponto_employees
+           WHERE deleted_at IS NULL AND active = 1 AND login_email IS NOT NULL AND login_email != ''
+           GROUP BY lower(login_email)
+           HAVING n > 1
+           LIMIT 1`
+        )
+        .first()
+      if (!dup) {
+        await db
+          .prepare(
+            `CREATE UNIQUE INDEX IF NOT EXISTS uniq_ponto_employees_login_email_active
+             ON ponto_employees(lower(login_email))
+             WHERE deleted_at IS NULL AND active = 1 AND login_email IS NOT NULL AND login_email != ''`
+          )
+          .run()
+      }
+    } catch {
+      // ignore
+    }
   })()
   return pontoSchemaInitPromise
 }
