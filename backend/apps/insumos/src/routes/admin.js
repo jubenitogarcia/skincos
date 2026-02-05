@@ -116,7 +116,8 @@ async function hashPasswordPBKDF2(env, password) {
     const n = parseInt(String(value ?? ''), 10);
     return Number.isFinite(n) ? n : fallback;
   };
-  const iters = Math.max(50_000, Math.min(600_000, toInt(env?.AUTH_PBKDF2_ITERS, 150_000)));
+  // Cloudflare Workers PBKDF2 max iters is 100k; higher values break auth.
+  const iters = Math.max(50_000, Math.min(100_000, toInt(env?.AUTH_PBKDF2_ITERS, 100_000)));
   const salt = new Uint8Array(16);
   crypto.getRandomValues(salt);
   const key = await crypto.subtle.importKey(
