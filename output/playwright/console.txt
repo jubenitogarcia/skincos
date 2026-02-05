@@ -1,7 +1,0 @@
-[log] [BootGate] 🚀 Starting deterministic preflight checks...
-[log] [BootGate] 🔍 Tentando health check: /api/health
-[log] [BootGate] ✅ Health check OK em /api/health: healthy
-[log] [BootGate] ✅ Backend health check PASSOU - sistema pode inicializar
-[log] [BootGate] ✅ All preflight checks completed successfully
-[log] [BootGate] ✅ Ready signal set - downstream providers can mount safely
-[error] Failed to load resource: the server responded with a status of 401 ()
