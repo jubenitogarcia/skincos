@@ -111,7 +111,7 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
         run: |
           set -euo pipefail
-          curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/api/health >/dev/null
+          curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/insumos/health >/dev/null
           curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/api/ponto/health >/dev/null
 
       - name: Mark deployed SHA
@@ -127,4 +127,3 @@ jobs:
         with:
           key: core-workers-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/deployed_sha.txt
-
