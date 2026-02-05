@@ -68,6 +68,5 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
-          curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/api/health >/dev/null
+          curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/insumos/health >/dev/null
           curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/api/ponto/health >/dev/null
-
