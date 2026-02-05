@@ -53,6 +53,17 @@ Esperado:
 3) Clicar em **Diagnóstico**  
 4) Confirmar JSON de `_proxy-status` e `health`
 
+### 4.1 Smoke automatizado (UI) com Playwright (sem credenciais no script)
+Rodar (do root do repo):
+```
+NODE_PATH=frontend/node_modules node frontend/scripts/ponto-ui-smoke.cjs
+```
+Se precisar logar manualmente (recomendado por segurança), rode em modo visível:
+```
+HEADED=1 LOGIN_WAIT_MS=600000 NODE_PATH=frontend/node_modules node frontend/scripts/ponto-ui-smoke.cjs
+```
+Artefatos: `output/playwright/` (screenshots + trace).
+
 ---
 
 ## 5) Fluxo mínimo (Admin → Funcionário → Audit)
