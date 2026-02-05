@@ -13,6 +13,8 @@ export async function onRequest(context: any): Promise<Response> {
     targetUrl.search = url.search
 
     const headers = new Headers(request.headers)
+    const clientIp = headers.get('cf-connecting-ip') || headers.get('x-forwarded-for')?.split(',')?.[0]?.trim()
+    if (clientIp) headers.set('x-skincos-client-ip', clientIp)
     headers.delete('host')
     headers.delete('content-length')
     headers.delete('content-encoding')
