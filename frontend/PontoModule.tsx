@@ -165,6 +165,32 @@ async function apiBlob(path: string, opts: { adminToken?: string; signal?: Abort
   return await res.blob()
 }
 
+async function fetchJsonWithMeta(
+  path: string,
+  opts: { method?: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> } = {}
+): Promise<{ ok: boolean; status: number; requestId: string; json: any; text: string }> {
+  const method = (opts.method || 'GET').toUpperCase()
+  const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers || {}) }
+  if (opts.body !== undefined) headers['content-type'] = 'application/json'
+
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    signal: opts.signal
+  })
+
+  const requestId = String(res.headers.get('x-request-id') || '').trim()
+  const text = await res.text()
+  let json: any = null
+  try {
+    json = text ? JSON.parse(text) : null
+  } catch {
+    json = null
+  }
+  return { ok: res.ok, status: res.status, requestId, json, text }
+}
+
 let faceLibPromise: Promise<any> | null = null
 let faceInitPromise: Promise<void> | null = null
 
@@ -245,6 +271,12 @@ export function PontoModule() {
 
   const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
   const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
+
+  const [diagOpen, setDiagOpen] = useState(false)
+  const [diagLoading, setDiagLoading] = useState(false)
+  const [diagError, setDiagError] = useState<string | null>(null)
+  const [diagProxy, setDiagProxy] = useState<{ ok: boolean; status: number; requestId: string; json: any; text: string } | null>(null)
+  const [diagHealth, setDiagHealth] = useState<{ ok: boolean; status: number; requestId: string; json: any; text: string } | null>(null)
 
   const [deviceToken, setDeviceToken] = useState(() => {
     try { return localStorage.getItem(LS_DEVICE_TOKEN) || '' } catch { return '' }
@@ -500,6 +532,23 @@ export function PontoModule() {
     setStream(null)
     setCameraOwner(null)
     if (!opts.silent) toast.message('Câmera desligada')
+  }
+
+  async function loadDiagnostics() {
+    setDiagLoading(true)
+    setDiagError(null)
+    try {
+      const [proxy, health] = await Promise.all([
+        fetchJsonWithMeta('/api/ponto/_proxy-status'),
+        fetchJsonWithMeta('/api/ponto/health'),
+      ])
+      setDiagProxy(proxy)
+      setDiagHealth(health)
+    } catch (e: any) {
+      setDiagError(e?.message || String(e))
+    } finally {
+      setDiagLoading(false)
+    }
   }
 
   async function meRefresh() {
@@ -986,20 +1035,91 @@ export function PontoModule() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-bold">Ponto</h2>
-          <p className="text-sm text-muted-foreground">
-            Registro por identificação facial (com fallback por PIN) e trilha de auditoria.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Ponto</h2>
+            <p className="text-sm text-muted-foreground">
+              Registro por identificação facial (com fallback por PIN) e trilha de auditoria.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" title={buildShaRaw || undefined}>Build: {buildSha}</Badge>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDiagOpen(true)
+                void loadDiagnostics()
+              }}
+              disabled={loading}
+            >
+              Diagnóstico
+            </Button>
+            {loading ? <Badge variant="secondary">Processando…</Badge> : null}
+            {modelsReady === 'ready' ? <Badge variant="outline">Face OK</Badge> : null}
+            {modelsReady === 'error' ? <Badge variant="destructive">Face indisponível</Badge> : null}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" title={buildShaRaw || undefined}>Build: {buildSha}</Badge>
-          {loading ? <Badge variant="secondary">Processando…</Badge> : null}
-          {modelsReady === 'ready' ? <Badge variant="outline">Face OK</Badge> : null}
-          {modelsReady === 'error' ? <Badge variant="destructive">Face indisponível</Badge> : null}
-        </div>
-      </div>
+
+      <Dialog open={diagOpen} onOpenChange={setDiagOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Diagnóstico do Ponto</DialogTitle>
+            <DialogDescription>Verifique rapidamente versão e conectividade (CRM → Proxy → Worker).</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" title={buildShaRaw || undefined}>Build: {buildSha}</Badge>
+              {diagLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+              {diagError ? <Badge variant="destructive">Erro</Badge> : null}
+              <Button variant="secondary" onClick={loadDiagnostics} disabled={diagLoading}>Atualizar</Button>
+            </div>
+
+            {diagError ? (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
+                <div className="font-medium">Falha ao carregar diagnóstico</div>
+                <div className="opacity-80">{diagError}</div>
+              </div>
+            ) : null}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Proxy status</CardTitle>
+                  <CardDescription className="break-words">
+                    <span className="font-mono">GET /api/ponto/_proxy-status</span>
+                    {diagProxy?.requestId ? <> • request: <span className="font-mono">{diagProxy.requestId}</span></> : null}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <pre className="text-xs whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3">
+                    {diagProxy
+                      ? JSON.stringify(diagProxy.json ?? { ok: diagProxy.ok, status: diagProxy.status, nonJson: true }, null, 2)
+                      : '—'}
+                  </pre>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Health</CardTitle>
+                  <CardDescription className="break-words">
+                    <span className="font-mono">GET /api/ponto/health</span>
+                    {diagHealth?.requestId ? <> • request: <span className="font-mono">{diagHealth.requestId}</span></> : null}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <pre className="text-xs whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3">
+                    {diagHealth
+                      ? JSON.stringify(diagHealth.json ?? { ok: diagHealth.ok, status: diagHealth.status, nonJson: true }, null, 2)
+                      : '—'}
+                  </pre>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>
