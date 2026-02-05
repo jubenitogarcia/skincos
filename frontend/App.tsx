@@ -23,8 +23,8 @@ const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
 const DEMO_DATA_ACTIVE = (import.meta as any)?.env?.VITE_DEMO_DATA !== 'false'
 
 function BuildCornerBadge() {
-    const buildShaRaw = String((import.meta as any)?.env?.VITE_BUILD_SHA || '').trim()
-    const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : ((import.meta as any)?.env?.DEV ? 'dev' : 'unknown')
+    const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
+    const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
     return (
         <div className="fixed bottom-3 right-3 z-50 pointer-events-none">
             <Badge variant="outline" className="bg-black/40 text-white border-white/20 opacity-70 text-[10px]">
