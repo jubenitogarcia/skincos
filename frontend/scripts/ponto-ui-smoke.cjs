@@ -121,7 +121,9 @@ async function main() {
     await page.waitForTimeout(1500)
     await page.screenshot({ path: shot('kiosk'), fullPage: FULL_PAGE })
     {
-      const visible = await page.locator('text=Fallback por PIN').first().isVisible().catch(() => false)
+      // Avoid false positives: the module description contains "fallback por PIN" text even when the fallback card is closed.
+      // The actual fallback UI uses CardTitle with data-slot="card-title".
+      const visible = await page.locator('[data-slot="card-title"]', { hasText: 'Fallback por PIN' }).first().isVisible().catch(() => false)
       if (visible) throw new Error('Kiosk PIN fallback is visible by default (expected hidden).')
     }
 
