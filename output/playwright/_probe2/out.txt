@@ -1,5 +1,0 @@
-### Page
-- Page URL: https://example.com/
-- Page Title: Example Domain
-### Snapshot
-- [Snapshot](../../../.playwright-cli/page-2026-02-05T17-03-50-415Z.yml)

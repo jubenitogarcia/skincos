@@ -1,1 +1,0 @@
-{"ok":true,"version":2,"storage":"d1","cryptoAuditHmac":true,"cryptoTemplates":true,"employees":0,"devices":0,"records":0,"auditEvents":0}

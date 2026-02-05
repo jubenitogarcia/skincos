@@ -1,1 +1,0 @@
-{"ok":true,"targetConfigured":true,"proxyTokenConfigured":true,"actorKeyConfigured":true,"adminTokenConfigured":true}

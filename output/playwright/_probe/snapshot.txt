@@ -1,3 +1,0 @@
-The session is already configured. To change session options, run:
-
-  playwright-cli --session=probe config 

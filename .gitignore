@@ -185,3 +185,7 @@ backend/apps/actual-server/.yarn/install-state.gz
 # Tools: Xiaomi token extractor (downloaded artifacts)
 backend/tools/xiaomi/*.zip
 backend/tools/xiaomi/token_extractor_docker/
+
+# Playwright artifacts (never commit)
+.playwright-cli/
+output/
