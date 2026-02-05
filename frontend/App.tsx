@@ -533,42 +533,53 @@ export default function AppFunctionalNeatlab() {
 
 	    if (initializing) {
 	        return (
-	            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
-	                <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl">
-	                    <div className="text-3xl mb-4">⏳</div>
-	                    <div className="text-lg font-semibold">Carregando sessão…</div>
-	                    <div className="text-sm text-blue-100/70 mt-1">Aguarde enquanto verificamos sua sessão.</div>
-	                    <div className="mt-6 flex items-center justify-center">
-	                        <Button variant="secondary" size="lg" disabled className="gap-2">
-	                            <span className="animate-pulse">🔄</span>
-	                            {`Carregando ${Math.max(0, Math.min(100, Number.isFinite(initProgress as any) ? (initProgress as any) : 0))}%`}
-	                        </Button>
+	            <>
+	                <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
+	                    <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl">
+	                        <div className="text-3xl mb-4">⏳</div>
+	                        <div className="text-lg font-semibold">Carregando sessão…</div>
+	                        <div className="text-sm text-blue-100/70 mt-1">Aguarde enquanto verificamos sua sessão.</div>
+	                        <div className="mt-6 flex items-center justify-center">
+	                            <Button variant="secondary" size="lg" disabled className="gap-2">
+	                                <span className="animate-pulse">🔄</span>
+	                                {`Carregando ${Math.max(0, Math.min(100, Number.isFinite(initProgress as any) ? (initProgress as any) : 0))}%`}
+	                            </Button>
+	                        </div>
 	                    </div>
 	                </div>
-	            </div>
+	                <BuildCornerBadge />
+	            </>
 	        )
 	    }
 
     if (!isAuthenticated) {
-        return <AuthScreen />
+        return (
+            <>
+                <AuthScreen />
+                <BuildCornerBadge />
+            </>
+        )
     }
 
     if (!permittedUnlockedModules.length) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
-                <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl space-y-3">
-                    <div className="text-3xl">⛔</div>
-                    <div className="text-lg font-semibold">Sem módulos liberados</div>
-                    <div className="text-sm text-blue-100/70">
-                        Seu usuário não tem nenhum módulo liberado para acesso. Solicite ao administrador atualizar suas permissões.
-                    </div>
-                    <div className="pt-2">
-                        <Button variant="secondary" onClick={signOut}>
-                            Sair
-                        </Button>
+            <>
+                <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
+                    <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl space-y-3">
+                        <div className="text-3xl">⛔</div>
+                        <div className="text-lg font-semibold">Sem módulos liberados</div>
+                        <div className="text-sm text-blue-100/70">
+                            Seu usuário não tem nenhum módulo liberado para acesso. Solicite ao administrador atualizar suas permissões.
+                        </div>
+                        <div className="pt-2">
+                            <Button variant="secondary" onClick={signOut}>
+                                Sair
+                            </Button>
+                        </div>
                     </div>
                 </div>
-            </div>
+                <BuildCornerBadge />
+            </>
         )
     }
 
