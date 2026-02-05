@@ -318,7 +318,13 @@ export function SocialNetworksStudio() {
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) {
         if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') {
-          throw new Error('Permissão insuficiente: somente ADMIN pode configurar este módulo.')
+          throw new Error(data?.hint || 'Permissão insuficiente: este módulo exige ADMIN/GESTOR/GERENTE.')
+        }
+        if (res.status === 403 && data?.code === 'CSRF_INVALID') {
+          throw new Error('Sessão inválida: recarregue a página e faça login novamente.')
+        }
+        if (res.status === 403 && data?.code === 'ORIGIN_INVALID') {
+          throw new Error('Requisição bloqueada (ORIGIN). Recarregue a página e tente novamente.')
         }
         throw new Error(data?.error || `HTTP ${res.status}`)
       }
@@ -465,7 +471,12 @@ export function SocialNetworksStudio() {
         }),
       })
       const data = (await res.json().catch(() => null)) as any
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: ADMIN/GESTOR/GERENTE.')
+        if (res.status === 403 && data?.code === 'CSRF_INVALID') throw new Error('Sessão inválida: recarregue e faça login novamente.')
+        if (res.status === 403 && data?.code === 'ORIGIN_INVALID') throw new Error('Requisição bloqueada (ORIGIN). Recarregue e tente novamente.')
+        throw new Error(data?.hint || data?.error || `HTTP ${res.status}`)
+      }
       toast.success('Conta salva')
       setAccountId('')
       setAccountToken('')
@@ -485,7 +496,12 @@ export function SocialNetworksStudio() {
         headers,
       })
       const data = (await res.json().catch(() => null)) as any
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: ADMIN/GESTOR/GERENTE.')
+        if (res.status === 403 && data?.code === 'CSRF_INVALID') throw new Error('Sessão inválida: recarregue e faça login novamente.')
+        if (res.status === 403 && data?.code === 'ORIGIN_INVALID') throw new Error('Requisição bloqueada (ORIGIN). Recarregue e tente novamente.')
+        throw new Error(data?.hint || data?.error || `HTTP ${res.status}`)
+      }
       toast.success('Conta removida')
       await refreshAccounts({ silent: true })
     } catch (e: any) {
@@ -512,7 +528,12 @@ export function SocialNetworksStudio() {
         body: JSON.stringify({ dateKey: g.group.dateKey, groupKey: g.group.groupKey, force }),
       })
       const data = (await res.json().catch(() => null)) as any
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: ADMIN/GESTOR/GERENTE.')
+        if (res.status === 403 && data?.code === 'CSRF_INVALID') throw new Error('Sessão inválida: recarregue e faça login novamente.')
+        if (res.status === 403 && data?.code === 'ORIGIN_INVALID') throw new Error('Requisição bloqueada (ORIGIN). Recarregue e tente novamente.')
+        throw new Error(data?.hint || data?.error || `HTTP ${res.status}`)
+      }
       if (data?.jobId) {
         const key = `${g.group.dateKey}:${g.group.groupKey}`
         setQueueJobIds((prev) => ({ ...prev, [key]: data.jobId }))
