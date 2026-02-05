@@ -1,0 +1,36 @@
+- generic [ref=e11]:
+  - generic [ref=e12]:
+    - img [ref=e16]
+    - generic [ref=e18]:
+      - generic [ref=e19]:
+        - img "Espaço Facial"
+      - generic [ref=e20]: CRM
+      - paragraph [ref=e21]: Plataforma unificada de relacionamento e crescimento empresarial
+      - generic [ref=e24]: Sistema Online
+  - generic [ref=e25]:
+    - generic [ref=e27]:
+      - generic [ref=e28]:
+        - generic [ref=e29]: Acessar Plataforma
+        - generic [ref=e30]: Entre com suas credenciais empresariais
+      - generic [ref=e31]:
+        - button "Entrar" [ref=e32] [cursor=pointer]
+        - button "Criar Conta" [ref=e33] [cursor=pointer]
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: Email Empresarial
+          - textbox "Email Empresarial" [active] [ref=e39]:
+            - /placeholder: seu.email@empresa.com
+        - generic [ref=e40]:
+          - generic [ref=e41]: Senha
+          - generic [ref=e42]:
+            - textbox "Senha" [ref=e43]:
+              - /placeholder: ••••••••
+            - button "Mostrar senha" [ref=e44] [cursor=pointer]: Mostrar
+        - button "Acessar Plataforma" [disabled]
+      - paragraph [ref=e46]:
+        - text: Acesso seguro através de provedores confiáveis
+        - text: Login com Google, GitHub, Apple ou Email
+  - generic [ref=e48]:
+    - generic [ref=e49]: © 2024 Espaço Facial CRM
+    - generic [ref=e51]: Enterprise Solution
