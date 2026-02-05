@@ -513,7 +513,7 @@ async function requireEmployee({ request, env, withCORS, appOrigin, actorSkewMs 
     return { ok: false, response: withCORS(JSON.stringify({ ok: false, error: 'UNAUTHORIZED', code: 'ACTOR_EMAIL_MISSING' }), { status: 401 }, appOrigin) }
   }
 
-  const actorHmacKey = String(env?.PONTO_ACTOR_HMAC_KEY || env?.PONTO_PROXY_TOKEN || '').trim()
+  const actorHmacKey = String(env?.PONTO_ACTOR_HMAC_KEY || '').trim()
   if (!actorHmacKey) {
     return { ok: false, response: withCORS(JSON.stringify({ ok: false, error: 'UNAUTHORIZED', code: 'ACTOR_KEY_MISSING' }), { status: 401 }, appOrigin) }
   }
@@ -1335,6 +1335,13 @@ export async function handlePontoRoutes({
       const okPin = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
       if (!okPin) {
         const failure = await recordPinFailure(db, employee.id, pinMaxFailures, pinLockoutSeconds)
+        await writeAudit(
+          db,
+          env,
+          failure.locked ? 'PIN_LOCKED' : 'PIN_FAILURE',
+          { employeeId: employee.id, kind: 'employee', remaining: failure.remaining, secondsRemaining: failure.secondsRemaining || 0 },
+          auth.actor
+        )
         if (failure.locked) {
           return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: failure.secondsRemaining })
         }
@@ -1587,6 +1594,13 @@ export async function handlePontoRoutes({
     const okPin = await verifyPin(pin, { alg: employee.pin_alg, saltB64: employee.pin_salt, hashB64: employee.pin_hash, iters: employee.pin_iters })
     if (!okPin) {
       const failure = await recordPinFailure(db, employee.id, pinMaxFailures, pinLockoutSeconds)
+      await writeAudit(
+        db,
+        env,
+        failure.locked ? 'PIN_LOCKED' : 'PIN_FAILURE',
+        { employeeId: employee.id, kind: 'device', deviceId: auth.device.id, unit: auth.device.unit, remaining: failure.remaining, secondsRemaining: failure.secondsRemaining || 0 },
+        auth.actor
+      )
       if (failure.locked) {
         return json(409, { ok: false, error: 'PIN_LOCKED', secondsRemaining: failure.secondsRemaining })
       }

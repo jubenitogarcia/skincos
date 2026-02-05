@@ -82,7 +82,7 @@ export async function onRequest(context: any): Promise<Response> {
   if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
     const targetOrigin = (context.env?.PONTO_API_TARGET as string | undefined) || ''
     const proxyToken = (context.env?.PONTO_PROXY_TOKEN as string | undefined) || ''
-    const actorKey = (context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || proxyToken || ''
+    const actorKey = (context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || ''
     const adminToken = (context.env?.PONTO_ADMIN_TOKEN as string | undefined) || ''
     return json(
       200,
@@ -90,7 +90,7 @@ export async function onRequest(context: any): Promise<Response> {
         ok: true,
         targetConfigured: !!targetOrigin,
         proxyTokenConfigured: !!proxyToken,
-        actorKeyConfigured: !!actorKey,
+        actorKeyConfigured: !!String(actorKey || '').trim(),
         adminTokenConfigured: !!String(adminToken || '').trim(),
         hint: !targetOrigin
           ? 'Configure PONTO_API_TARGET no Cloudflare Pages/Functions para apontar para o backend do Ponto.'
@@ -121,7 +121,7 @@ export async function onRequest(context: any): Promise<Response> {
   let actorSig = ''
 
   const proxyToken = (context.env?.PONTO_PROXY_TOKEN as string | undefined) || ''
-  const actorKey = String((context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || proxyToken || '').trim()
+  const actorKey = String((context.env?.PONTO_ACTOR_HMAC_KEY as string | undefined) || '').trim()
   const adminToken = String((context.env?.PONTO_ADMIN_TOKEN as string | undefined) || '').trim()
   let isAdminUser = false
 
@@ -135,6 +135,13 @@ export async function onRequest(context: any): Promise<Response> {
       )
     }
     if (isEmployeeRoute) {
+      if (!actorKey) {
+        return json(
+          503,
+          { ok: false, error: 'ACTOR_KEY_NOT_CONFIGURED', hint: 'Configure PONTO_ACTOR_HMAC_KEY nas variáveis do Pages.' },
+          { 'x-request-id': requestId },
+        )
+      }
       const actor = {
         id: String(user.id || ''),
         email: user.email ? String(user.email) : undefined,
@@ -142,9 +149,7 @@ export async function onRequest(context: any): Promise<Response> {
       }
       actorB64 = b64UrlEncodeString(JSON.stringify(actor))
       actorTs = String(Date.now())
-      if (actorKey) {
-        actorSig = await signHmacSha256B64Url(actorKey, `${actorTs}.${actorB64}`)
-      }
+      actorSig = await signHmacSha256B64Url(actorKey, `${actorTs}.${actorB64}`)
     }
     if (isAdminRoute) {
       const role = String(user.role || '').toUpperCase()

@@ -14,7 +14,7 @@ Este documento descreve **como validar, diagnosticar e operar** o módulo **Pont
 ### Cloudflare Pages (CRM)
 - `PONTO_API_TARGET` → URL do backend (ex.: `https://api.skincos.com.br`)
 - `PONTO_PROXY_TOKEN` → secret de autenticação do proxy
-- `PONTO_ACTOR_HMAC_KEY` → secret para assinatura do actor (employee)
+- `PONTO_ACTOR_HMAC_KEY` → **obrigatório**: secret para assinatura do actor (employee) (não há fallback para `PONTO_PROXY_TOKEN`)
 - `PONTO_ADMIN_TOKEN` → secret para rotas admin (injeção no proxy)
 
 ### Cloudflare Workers (API/Insumos)
