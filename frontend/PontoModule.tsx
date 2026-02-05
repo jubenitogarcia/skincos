@@ -243,6 +243,9 @@ async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, w
 export function PontoModule() {
   const [tab, setTab] = useState<'employee' | 'device' | 'admin'>('employee')
 
+  const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
+  const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
+
   const [deviceToken, setDeviceToken] = useState(() => {
     try { return localStorage.getItem(LS_DEVICE_TOKEN) || '' } catch { return '' }
   })
@@ -991,6 +994,7 @@ export function PontoModule() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Badge variant="outline" title={buildShaRaw || undefined}>Build: {buildSha}</Badge>
           {loading ? <Badge variant="secondary">Processando…</Badge> : null}
           {modelsReady === 'ready' ? <Badge variant="outline">Face OK</Badge> : null}
           {modelsReady === 'error' ? <Badge variant="destructive">Face indisponível</Badge> : null}
