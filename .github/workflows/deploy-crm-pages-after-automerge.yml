@@ -124,6 +124,8 @@ jobs:
 
       - name: Build frontend
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        env:
+          VITE_BUILD_SHA: ${{ steps.pr.outputs.merge_commit_sha }}
         run: npm run build
         working-directory: frontend
 

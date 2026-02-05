@@ -87,6 +87,8 @@ jobs:
 
       - name: Build frontend
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
+        env:
+          VITE_BUILD_SHA: ${{ steps.sha.outputs.sha }}
         run: npm run build
         working-directory: frontend
 
