@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import * as QRCode from 'qrcode'
 
-type ApiError = { ok?: boolean; error?: string; message?: string; code?: string }
+type ApiError = { ok?: boolean; error?: string; message?: string; code?: string; hint?: string }
 
 type PontoEmployeePublic = {
   id: string
@@ -68,7 +68,6 @@ type PontoMeResponse =
   }
 
 const LS_DEVICE_TOKEN = 'skincos.ponto.deviceToken.v1'
-const LS_ADMIN_TOKEN = 'skincos.ponto.adminToken.v1'
 const LS_DEV_ACTOR_EMAIL = 'skincos.ponto.devActorEmail.v1'
 
 function b64UrlEncodeBytes(bytes: ArrayBuffer): string {
@@ -143,7 +142,9 @@ async function apiJson<T>(
   }
   if (res.ok) return json as T
   const err = (json || {}) as ApiError
-  const e = new Error(err.error || err.message || `HTTP ${res.status}`)
+  const hint = typeof err.hint === 'string' ? err.hint.trim() : ''
+  const base = err.error || err.message || `HTTP ${res.status}`
+  const e = new Error([base, hint].filter(Boolean).join(' • '))
   ;(e as any).details = json
   ;(e as any).status = res.status
   throw e
@@ -245,9 +246,6 @@ export function PontoModule() {
   const [deviceToken, setDeviceToken] = useState(() => {
     try { return localStorage.getItem(LS_DEVICE_TOKEN) || '' } catch { return '' }
   })
-  const [adminToken, setAdminToken] = useState(() => {
-    try { return localStorage.getItem(LS_ADMIN_TOKEN) || '' } catch { return '' }
-  })
   const [devActorEmail, setDevActorEmail] = useState(() => {
     try { return localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '' } catch { return '' }
   })
@@ -256,6 +254,7 @@ export function PontoModule() {
   const deviceVideoRef = useRef<HTMLVideoElement | null>(null)
   const adminVideoRef = useRef<HTMLVideoElement | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const [cameraOwner, setCameraOwner] = useState<'employee' | 'device' | 'admin' | null>(null)
 
   const [modelsReady, setModelsReady] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -326,9 +325,6 @@ export function PontoModule() {
   useEffect(() => {
     try { localStorage.setItem(LS_DEVICE_TOKEN, deviceToken) } catch { /* ignore */ }
   }, [deviceToken])
-  useEffect(() => {
-    try { localStorage.setItem(LS_ADMIN_TOKEN, adminToken) } catch { /* ignore */ }
-  }, [adminToken])
 
   useEffect(() => {
     try { localStorage.setItem(LS_DEV_ACTOR_EMAIL, devActorEmail) } catch { /* ignore */ }
@@ -350,8 +346,7 @@ export function PontoModule() {
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
   const canAdmin = crmRole === 'ADMIN' || crmRole === 'GESTOR' || crmRole === 'GERENTE'
   const showAdminTab = canAdmin || isDev
-  const adminAuth = isDev && adminToken.trim() ? { adminToken } : {}
-  const canAdminActions = canAdmin || (isDev && adminToken.trim())
+  const canAdminActions = canAdmin || isDev
 
   const loadCrmMe = React.useCallback(async () => {
     setCrmMeLoading(true)
@@ -375,12 +370,14 @@ export function PontoModule() {
   }, [showAdminTab, tab])
 
   useEffect(() => {
-    return () => {
-      stopCamera(stream)
-      setStream(null)
-      setCameraOwner(null)
-    }
+    streamRef.current = stream
   }, [stream])
+
+  useEffect(() => {
+    return () => {
+      stopCamera(streamRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -414,7 +411,7 @@ export function PontoModule() {
       return
     }
 
-    stopCamera(stream)
+    stopCamera(streamRef.current)
     setStream(null)
     setCameraOwner(null)
 
@@ -483,7 +480,7 @@ export function PontoModule() {
     if (!videoEl) return toast.error('Vídeo não disponível')
     setLoading(true)
     try {
-      stopCamera(stream)
+      stopCamera(streamRef.current)
       const s = await startUserCamera(videoEl)
       setStream(s)
       setCameraOwner(owner)
@@ -496,7 +493,7 @@ export function PontoModule() {
   }
 
   async function stopCameraUI(opts: { silent?: boolean } = {}) {
-    stopCamera(stream)
+    stopCamera(streamRef.current)
     setStream(null)
     setCameraOwner(null)
     if (!opts.silent) toast.message('Câmera desligada')
@@ -764,8 +761,8 @@ export function PontoModule() {
     setLoading(true)
     try {
       const [emps, devs] = await Promise.all([
-        apiJson<{ ok: boolean; data: PontoEmployeePublic[] }>('/api/ponto/admin/employees', adminAuth),
-        apiJson<{ ok: boolean; data: PontoDevicePublic[] }>('/api/ponto/admin/devices', adminAuth)
+        apiJson<{ ok: boolean; data: PontoEmployeePublic[] }>('/api/ponto/admin/employees'),
+        apiJson<{ ok: boolean; data: PontoDevicePublic[] }>('/api/ponto/admin/devices')
       ])
       setAdminEmployees(emps.data || [])
       setAdminDevices(devs.data || [])
@@ -786,7 +783,7 @@ export function PontoModule() {
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
         '/api/ponto/admin/employees',
-        { ...adminAuth, method: 'POST', body: { name, code: newEmployeeCode.trim() } }
+        { method: 'POST', body: { name, code: newEmployeeCode.trim() } }
       )
       setNewEmployeeName('')
       setNewEmployeeCode('')
@@ -806,7 +803,6 @@ export function PontoModule() {
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
-        ...adminAuth,
         method: 'PATCH',
         body: { loginEmail: selectedEmployeeLoginEmail.trim() }
       })
@@ -827,7 +823,6 @@ export function PontoModule() {
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/pin', {
-        ...adminAuth,
         method: 'POST',
         body: { pin }
       })
@@ -864,7 +859,6 @@ export function PontoModule() {
         await new Promise(r => setTimeout(r, 650))
       }
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/enroll', {
-        ...adminAuth,
         method: 'POST',
         body: { descriptors, replace: enrollReplace, consentConfirmed: true }
       })
@@ -884,7 +878,7 @@ export function PontoModule() {
     try {
       const res = await apiJson<{ ok: boolean; data: PontoDevicePublic; tokenOnce: string }>(
         '/api/ponto/admin/devices',
-        { ...adminAuth, method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
+        { method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
       )
       setNewDeviceTokenOnce(res.tokenOnce)
       setNewDeviceLabel('')
@@ -901,7 +895,7 @@ export function PontoModule() {
     if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     setLoading(true)
     try {
-      await apiJson('/api/ponto/admin/devices/' + deviceId + '/revoke', { ...adminAuth, method: 'POST' })
+      await apiJson('/api/ponto/admin/devices/' + deviceId + '/revoke', { method: 'POST' })
       await adminRefreshAll()
       toast.success('Dispositivo revogado')
     } catch (e: any) {
@@ -923,7 +917,7 @@ export function PontoModule() {
       if (adminPunchNote.trim()) body.note = adminPunchNote.trim()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/admin/punch',
-        { ...adminAuth, method: 'POST', body }
+        { method: 'POST', body }
       )
       toast.success(`Ponto manual: ${res.data.employeeName} (${res.data.type})`)
       setAdminPunchNote('')
@@ -945,7 +939,7 @@ export function PontoModule() {
       qs.set('limit', '500')
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
         '/api/ponto/admin/records?' + qs.toString(),
-        adminAuth
+        {}
       )
       setRecords(res.data || [])
       toast.success('Registros carregados')
@@ -964,7 +958,7 @@ export function PontoModule() {
       if (recordsFrom) qs.set('from', new Date(recordsFrom).toISOString())
       if (recordsTo) qs.set('to', new Date(recordsTo).toISOString())
       if (selectedEmployeeId) qs.set('employeeId', selectedEmployeeId)
-      const blob = await apiBlob('/api/ponto/admin/records.csv?' + qs.toString(), adminAuth)
+      const blob = await apiBlob('/api/ponto/admin/records.csv?' + qs.toString())
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -1099,13 +1093,6 @@ export function PontoModule() {
                     <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
                     <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
                     <Button onClick={mePunchFace} disabled={loading || !stream}>Registrar por Face</Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => { setMeStep('pin'); void stopCameraUI({ silent: true }) }}
-                      disabled={loading}
-                    >
-                      Usar PIN
-                    </Button>
                   </div>
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
