@@ -223,6 +223,9 @@ export function SocialNetworksStudio() {
   const [accountApiVersion, setAccountApiVersion] = useState('v20.0')
 
   const unitOptions = useMemo(() => ['BSS', 'NH'], [])
+  const detectedRole = String(setup?.admin?.role || setup?.user?.role || '')
+    .trim()
+    .toUpperCase()
 
   const refreshSetup = async (opts: { silent?: boolean } = {}) => {
     setSetupLoading(true)
@@ -854,9 +857,13 @@ export function SocialNetworksStudio() {
                 {setupAuthed !== true ? (
                   <div className="text-sm text-blue-200/70">Faça login para validar permissões.</div>
                 ) : adminReady ? (
-                  <div className="text-sm text-blue-200/80">Você é ADMIN.</div>
+                  <div className="text-sm text-blue-200/80">
+                    Permissão OK{detectedRole ? ` (role: ${detectedRole})` : ''}.
+                  </div>
                 ) : (
-                  <div className="text-sm text-red-200">Somente ADMIN/GESTOR/GERENTE podem configurar/publicar neste módulo.</div>
+                  <div className="text-sm text-red-200">
+                    Somente ADMIN/GESTOR/GERENTE podem configurar/publicar neste módulo{detectedRole ? ` (seu role: ${detectedRole})` : ''}.
+                  </div>
                 )}
               </div>
 
