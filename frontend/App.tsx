@@ -322,20 +322,24 @@ export default function AppFunctionalNeatlab() {
 	        setActive(DEFAULT_MODULE_KEY)
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
 	    const [search, setSearch] = useState('')
-			    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
-		        online: boolean | null
-		        authed: boolean | null
-		        integrated: boolean | null
-		        unidades: string[]
-		        allowedUnits: string[]
-		    } | null>(null)
-			    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
-			    const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
-			    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value), [unitOptions])
-			    const insumosUnitsForHeaderSelect = useMemo(() => {
-			        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
-			        const out = [...new Set(fromApi)].filter((u) => String(u) !== 'custom')
-			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
+			        online: boolean | null
+			        authed: boolean | null
+			        integrated: boolean | null
+			        unidades: string[]
+			        allowedUnits: string[]
+			    } | null>(null)
+				    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
+				    const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
+				    const effectiveUnitRef = React.useRef(effectiveUnit)
+				    React.useEffect(() => {
+				        effectiveUnitRef.current = effectiveUnit
+				    }, [effectiveUnit])
+				    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value), [unitOptions])
+				    const insumosUnitsForHeaderSelect = useMemo(() => {
+				        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
+				        const out = [...new Set(fromApi)].filter((u) => String(u) !== 'custom')
+				        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
 			        return out
 			    }, [canonicalUnitValues, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
 			    const unitMonitorUnitsForHeaderSelect = useMemo(() => {
@@ -455,24 +459,23 @@ export default function AppFunctionalNeatlab() {
 	                    : candidateUnits
 	                const options = filteredUnits.length ? filteredUnits : candidateUnits
 
-	                let nextUnit = effectiveUnit
-	                try {
-	                    const saved = localStorage.getItem(INSUMOS_UNIT_KEY)
-	                    if (saved) nextUnit = saved
-	                } catch { /* ignore */ }
-	                if (!options.includes(nextUnit)) nextUnit = options[0]
-	                setSelectedUnit(nextUnit)
-	                try { localStorage.setItem(INSUMOS_UNIT_KEY, nextUnit) } catch { /* ignore */ }
-	                try { window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: nextUnit } })) } catch { /* ignore */ }
+		                const currentUnit = effectiveUnitRef.current
+		                let nextUnit = currentUnit
+		                try {
+		                    const saved = localStorage.getItem(INSUMOS_UNIT_KEY)
+		                    if (saved) nextUnit = saved
+		                } catch { /* ignore */ }
+		                if (!options.includes(nextUnit)) nextUnit = options[0]
+		                if (nextUnit && nextUnit !== currentUnit) setSelectedUnit(nextUnit)
 
-	                setInsumosHeaderStatus({ online, authed, integrated, unidades: options, allowedUnits })
-	            } catch {
-	                setInsumosHeaderStatus({ online: false, authed: false, integrated: null, unidades: [], allowedUnits: [] })
-	            }
+		                setInsumosHeaderStatus({ online, authed, integrated, unidades: options, allowedUnits })
+		            } catch {
+		                setInsumosHeaderStatus({ online: false, authed: false, integrated: null, unidades: [], allowedUnits: [] })
+		            }
 	        })()
 
 			        return () => ac.abort()
-				    }, [active, effectiveUnit, isAuthenticated, setSelectedUnit])
+					    }, [active, isAuthenticated, setSelectedUnit])
 
 		    React.useEffect(() => {
 		        if (active !== 'insumos') return
