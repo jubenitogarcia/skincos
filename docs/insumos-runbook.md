@@ -12,6 +12,9 @@ Este documento descreve como validar, diagnosticar e operar o módulo **Insumos*
 - Modo de armazenamento: **D1-only**.
 - `zero demo` por padrão: dados simulados só com flag explícita.
 - Auto-sync resiliente: pausa temporária após falhas repetidas de API.
+- Overview/Insights com endpoints agregados:
+  - `/api/insumos/analytics/overview`
+  - `/api/insumos/analytics/insights`
 
 ## 3) Checklist rápido de saúde
 
@@ -73,8 +76,17 @@ Critérios:
 - Zero-demo por padrão.
 - Breaker ativo sob falhas repetidas.
 
-## 6) Regras de deploy e colaboração
+## 6) Alertas de produção (5xx/latência)
+- Workflow: `.github/workflows/insumos-api-slo.yml`
+- Script: `backend/scripts/insumos-api-slo.sh`
+- Frequência: a cada 10 minutos.
+- Alvo: endpoints autenticados `/api/insumos/*` (inclui overview/insights agregados).
+- Critério de falha:
+  - status fora de `2xx`
+  - latência acima do orçamento (`INSUMOS_SLO_MAX_LATENCY_MS`)
+
+## 7) Regras de deploy e colaboração
 - Sempre via PR curto e focado.
 - Habilitar auto-merge só com checks obrigatórios verdes.
 - Evitar editar em paralelo os mesmos arquivos grandes (`InsumosModule.tsx`, `App.tsx`) sem sincronizar `origin/main`.
-
+- CI guard anti-demo: `backend/scripts/ci-no-demo-guard.sh` (executado em `.github/workflows/ci-smoke.yml`).

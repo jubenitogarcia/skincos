@@ -1,0 +1,44 @@
+name: insumos-api-slo
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard Insumos SLO credentials
+        id: guard
+        env:
+          INSUMOS_SLO_USERNAME: ${{ secrets.INSUMOS_SLO_USERNAME }}
+          INSUMOS_SLO_PASSWORD: ${{ secrets.INSUMOS_SLO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${INSUMOS_SLO_USERNAME:-}" || -z "${INSUMOS_SLO_PASSWORD:-}" ]]; then
+            echo "::warning::Missing INSUMOS_SLO_USERNAME/INSUMOS_SLO_PASSWORD secrets. Skipping monitor."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Run Insumos API SLO monitor
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          INSUMOS_SLO_BASE_URL: ${{ vars.INSUMOS_SLO_BASE_URL != '' && vars.INSUMOS_SLO_BASE_URL || 'https://crm.skincos.com.br' }}
+          INSUMOS_SLO_UNIDADE: ${{ vars.INSUMOS_SLO_UNIDADE != '' && vars.INSUMOS_SLO_UNIDADE || 'novo-hamburgo' }}
+          INSUMOS_SLO_MAX_LATENCY_MS: ${{ vars.INSUMOS_SLO_MAX_LATENCY_MS != '' && vars.INSUMOS_SLO_MAX_LATENCY_MS || '1500' }}
+          INSUMOS_SLO_TIMEOUT_SEC: ${{ vars.INSUMOS_SLO_TIMEOUT_SEC != '' && vars.INSUMOS_SLO_TIMEOUT_SEC || '15' }}
+          INSUMOS_SLO_USERNAME: ${{ secrets.INSUMOS_SLO_USERNAME }}
+          INSUMOS_SLO_PASSWORD: ${{ secrets.INSUMOS_SLO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bash backend/scripts/insumos-api-slo.sh

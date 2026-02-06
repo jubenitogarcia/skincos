@@ -29,6 +29,11 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --recursive
 
+      - name: Guard zero-demo invariants
+        run: |
+          set -euo pipefail
+          bash backend/scripts/ci-no-demo-guard.sh
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

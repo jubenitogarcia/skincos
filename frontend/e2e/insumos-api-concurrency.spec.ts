@@ -6,12 +6,8 @@ test.describe('insumos', () => {
     let trackedMax = 0
 
     const trackedPrefixes = [
-      '/api/insumos/relatorios/',
-      '/api/insumos/notifications/',
-      '/api/insumos/analytics/',
-      '/api/insumos/quality/',
-      '/api/insumos/movimentacoes',
-      '/api/insumos/alertas/',
+      '/api/insumos/analytics/overview',
+      '/api/insumos/analytics/insights',
     ]
 
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -30,6 +26,22 @@ test.describe('insumos', () => {
         if (shouldTrack) await delay(200)
 
         const json = (() => {
+          if (path.startsWith('/api/insumos/analytics/overview')) {
+            return {
+              success: true,
+              data: {
+                resumo: {},
+                itens: [],
+                notifications: {},
+                actionables: {},
+                roi: {},
+                quality: {},
+                movResumo: {},
+                movSeries: []
+              }
+            }
+          }
+          if (path.startsWith('/api/insumos/analytics/insights')) return { success: true, data: { alertas: [], trends: {}, turnover: { saida: {}, entrada: {} } } }
           if (path.startsWith('/api/insumos/relatorios/estoque')) return { success: true, data: { resumo: {}, itens: [] } }
           if (path.startsWith('/api/insumos/notifications/summary')) return { success: true, data: {} }
           if (path.startsWith('/api/insumos/analytics/')) return { success: true, data: {} }
@@ -64,4 +76,3 @@ test.describe('insumos', () => {
     expect(trackedMax).toBeLessThanOrEqual(4)
   })
 })
-

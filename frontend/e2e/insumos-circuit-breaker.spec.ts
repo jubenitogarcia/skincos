@@ -5,11 +5,8 @@ test.describe('insumos', () => {
     let overviewRequests = 0
 
     const unstablePrefixes = [
-      '/api/insumos/relatorios/',
-      '/api/insumos/notifications/',
-      '/api/insumos/analytics/',
-      '/api/insumos/quality/',
-      '/api/insumos/alertas/',
+      '/api/insumos/analytics/overview',
+      '/api/insumos/analytics/insights',
     ]
 
     await page.route('**/api/insumos/**', async (route) => {
@@ -45,7 +42,7 @@ test.describe('insumos', () => {
         return
       }
 
-      if (path.startsWith('/api/insumos/relatorios/estoque')) {
+      if (path.startsWith('/api/insumos/analytics/overview')) {
         overviewRequests += 1
       }
 
