@@ -90,44 +90,10 @@ jobs:
           set -euo pipefail
           echo "Already deployed sha=${{ steps.sha.outputs.sha }}; skipping."
 
-      - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend deps
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
-        run: npm ci
-        working-directory: frontend
-
-      - name: Build frontend
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
-        env:
-          VITE_BUILD_SHA: ${{ steps.sha.outputs.sha }}
-        run: npm run build
-        working-directory: frontend
-
-      - name: Deploy to Cloudflare Pages (wrangler)
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PAGES_PROJECT: ${{ steps.guard.outputs.project }}
-          BRANCH_NAME: main
-          GIT_SHA: ${{ steps.sha.outputs.sha }}
-          GIT_MESSAGE: ${{ steps.sha.outputs.message }}
-        run: |
-          set -euo pipefail
-          PROJECT="${PAGES_PROJECT:-skincos}"
-          echo "Reconciling Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME sha=$GIT_SHA"
-          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
-        working-directory: frontend
-
-      - name: Smoke check Ponto (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+      - name: Smoke check Ponto (production, pre-flight)
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true' && steps.flags.outputs.force != 'true' }}
+        id: ponto_smoke_pre
+        continue-on-error: true
         env:
           BASE_URL: https://crm.skincos.com.br
         run: |
@@ -154,6 +120,110 @@ jobs:
               raise SystemExit(f"proxy-status effectiveTargetConfigured=false: {proxy}")
             if not proxy.get("adminTokenConfigured"):
               raise SystemExit(f"proxy-status adminTokenConfigured=false: {proxy}")
+            if not proxy.get("proxyTokenConfigured"):
+              raise SystemExit(f"proxy-status proxyTokenConfigured=false: {proxy}")
+            if not proxy.get("actorKeyConfigured"):
+              raise SystemExit(f"proxy-status actorKeyConfigured=false: {proxy}")
+            health = fetch_json("/api/ponto/health")
+            if not health.get("ok"):
+              raise SystemExit(f"health ok=false: {health}")
+            return True
+
+          # When the SHA is already deployed, this check is primarily for env drift (Pages vars/secrets changed).
+          # Keep it short to avoid wasting cycles; if it fails we'll force a redeploy.
+          for i in range(1, 6):
+            try:
+              check()
+              print("Ponto pre-flight OK")
+              sys.exit(0)
+            except Exception as exc:
+              print(f"Attempt {i} failed: {exc}")
+              if i >= 5:
+                raise
+              time.sleep(5)
+          PY
+
+      - name: Decide redeploy (env drift)
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true' && steps.flags.outputs.force != 'true' }}
+        id: redeploy
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.ponto_smoke_pre.outcome }}" == "success" ]]; then
+            echo "need=false" >> "$GITHUB_OUTPUT"
+            echo "Ponto pre-flight succeeded; no redeploy needed."
+          else
+            echo "need=true" >> "$GITHUB_OUTPUT"
+            echo "Ponto pre-flight failed; forcing redeploy to pick up env changes."
+          fi
+
+      - name: Setup Node
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        env:
+          VITE_BUILD_SHA: ${{ steps.sha.outputs.sha }}
+        run: npm run build
+        working-directory: frontend
+
+      - name: Deploy to Cloudflare Pages (wrangler)
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT: ${{ steps.guard.outputs.project }}
+          BRANCH_NAME: main
+          GIT_SHA: ${{ steps.sha.outputs.sha }}
+          GIT_MESSAGE: ${{ steps.sha.outputs.message }}
+        run: |
+          set -euo pipefail
+          PROJECT="${PAGES_PROJECT:-skincos}"
+          echo "Reconciling Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME sha=$GIT_SHA"
+          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
+        working-directory: frontend
+
+      - name: Smoke check Ponto (production)
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        env:
+          BASE_URL: https://crm.skincos.com.br
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, sys, time, urllib.request
+
+          base = os.environ.get("BASE_URL", "").rstrip("/")
+          if not base:
+            raise SystemExit("BASE_URL not set")
+
+          def fetch_json(path: str):
+            url = f"{base}{path}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+              data = resp.read().decode("utf-8", "ignore")
+              return json.loads(data)
+
+          def check():
+            proxy = fetch_json("/api/ponto/_proxy-status")
+            if not proxy.get("ok"):
+              raise SystemExit(f"proxy-status ok=false: {proxy}")
+            if not proxy.get("effectiveTargetConfigured"):
+              raise SystemExit(f"proxy-status effectiveTargetConfigured=false: {proxy}")
+            if not proxy.get("adminTokenConfigured"):
+              raise SystemExit(f"proxy-status adminTokenConfigured=false: {proxy}")
+            if not proxy.get("proxyTokenConfigured"):
+              raise SystemExit(f"proxy-status proxyTokenConfigured=false: {proxy}")
+            if not proxy.get("actorKeyConfigured"):
+              raise SystemExit(f"proxy-status actorKeyConfigured=false: {proxy}")
             health = fetch_json("/api/ponto/health")
             if not health.get("ok"):
               raise SystemExit(f"health ok=false: {health}")
@@ -174,19 +244,19 @@ jobs:
           PY
 
       - name: Cache Playwright browsers (UI smoke)
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-chromium
 
       - name: Install Playwright Chromium (UI smoke)
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
         run: npx --yes playwright install --with-deps chromium
         working-directory: frontend
 
       - name: Ponto UI smoke (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
         env:
           CRM_URL: https://crm.skincos.com.br
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
