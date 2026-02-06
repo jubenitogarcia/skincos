@@ -429,17 +429,17 @@ export default function AppFunctionalNeatlab() {
 	                    fetch('/api/auth/me', { credentials: 'include', signal: ac.signal }).catch(() => null),
 	                ])
 
-	                let online: boolean | null = null
-	                let integrated: boolean | null = null
-	                let unidades: string[] = []
-	                if (healthRes?.ok) {
-	                    const h: any = await healthRes.json().catch(() => null)
-	                    online = Boolean(h?.ok)
-	                    integrated = typeof h?.sheetsConfigured === 'boolean' ? Boolean(h.sheetsConfigured) : null
-	                    unidades = Array.isArray(h?.unidades) ? h.unidades.filter(Boolean).map((x: any) => String(x)) : []
-	                } else if (healthRes) {
-	                    online = false
-	                }
+		                let online: boolean | null = null
+		                let integrated: boolean | null = null
+		                let unidades: string[] = []
+		                if (healthRes?.ok) {
+		                    const h: any = await healthRes.json().catch(() => null)
+		                    online = Boolean(h?.ok)
+		                    integrated = typeof h?.dbConfigured === 'boolean' ? Boolean(h.dbConfigured) : null
+		                    unidades = Array.isArray(h?.unidades) ? h.unidades.filter(Boolean).map((x: any) => String(x)) : []
+		                } else if (healthRes) {
+		                    online = false
+		                }
 
 	                let authed: boolean | null = null
 	                let allowedUnits: string[] = []

@@ -1,5 +1,4 @@
 // @ts-nocheck
-import { readSheet } from '../../workers/sheets-api.js';
 import { safeJsonNoTruncate } from '../lib/json.js';
 import { resolveCrmTables } from '../d1Store.js';
 
@@ -21,27 +20,7 @@ async function tableHasColumn(env, tableName, columnName) {
 // - Prefer storing large payloads in R2 when BACKUP_BUCKET exists.
 // - Fallback: store payload_json directly in D1.
 // -------------------------------------------------------------
-export async function clearSheetRange(spreadsheetId, range, accessToken) {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:clear`;
-    const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
-    });
-    if (!res.ok) {
-        const t = await res.text().catch(() => '');
-        throw new Error(`Sheets clear failed: ${res.status} ${t}`.trim());
-    }
-}
-
-export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRange, userRange, movimentacoesRange, env }) {
-    const includeSheets = !!(spreadsheetId && accessToken && sheetRange && userRange && movimentacoesRange);
-    const insumosValues = includeSheets ? await readSheet(spreadsheetId, sheetRange, accessToken) : null;
-    const usersValues = includeSheets ? await readSheet(spreadsheetId, userRange, accessToken) : null;
-    const movValues = includeSheets ? await readSheet(spreadsheetId, movimentacoesRange, accessToken) : null;
+export async function buildBackupPayload({ env }) {
 
     const d1Dump = {
         auditLog: [],
@@ -138,17 +117,6 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
         version: 1,
         createdAt: new Date().toISOString(),
         sources: {
-            sheets: includeSheets
-                ? {
-                    enabled: true,
-                    sheetRange,
-                    userRange,
-                    movimentacoesRange,
-                    insumosRows: (insumosValues?.length || 0) - 1,
-                    usersRows: (usersValues?.length || 0) - 1,
-                    movRows: (movValues?.length || 0) - 1,
-                }
-                : { enabled: false },
             d1: {
                 enabled: !!env?.DB,
                 auditLogCount: d1Dump.auditLog.length,
@@ -160,13 +128,6 @@ export async function buildBackupPayload({ spreadsheetId, accessToken, sheetRang
                 insumosMovementsCount: d1Dump.insumosMovements.length,
             },
         },
-        sheets: includeSheets
-            ? {
-                insumosValues,
-                usersValues,
-                movValues,
-            }
-            : null,
         d1: d1Dump,
     };
 }
@@ -180,13 +141,6 @@ export async function persistBackupSnapshot({ env, actor, role, unidade, kind, p
     const metadata = {
         kind: kind || 'FULL',
         sizes: {
-            sheets: payload?.sources?.sheets?.enabled
-                ? {
-                    insumosRows: payload?.sources?.sheets?.insumosRows ?? ((payload?.sheets?.insumosValues?.length || 0) - 1),
-                    usersRows: payload?.sources?.sheets?.usersRows ?? ((payload?.sheets?.usersValues?.length || 0) - 1),
-                    movRows: payload?.sources?.sheets?.movRows ?? ((payload?.sheets?.movValues?.length || 0) - 1),
-                }
-                : null,
             d1: payload?.sources?.d1 || { enabled: false },
         },
     };
