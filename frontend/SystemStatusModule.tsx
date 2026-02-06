@@ -199,14 +199,23 @@ export function SystemStatusModule() {
       const next: ServiceRow[] = []
 
       if (insHealth.status === 'fulfilled') {
-        const online = insHealth.value.ok && Boolean(insHealth.value.json?.ok)
-        const storage = String(insHealth.value.json?.storage || '').toLowerCase() || '—'
+        const healthJson = (insHealth.value.json || {}) as any
+        const online = Boolean(insHealth.value.ok)
+        const storage = String(healthJson?.storage || '').toLowerCase() || '—'
         const lockedToD1 = storage === 'd1'
+        const ready =
+          typeof healthJson?.ready === 'boolean'
+            ? healthJson.ready
+            : (typeof healthJson?.dbConfigured === 'boolean' ? healthJson.dbConfigured : Boolean(healthJson?.ok))
+        const status = online ? (ready ? (lockedToD1 ? 'ok' : 'warn') : 'warn') : 'error'
+        const subtitle = online
+          ? (ready ? `Online • ${storage.toUpperCase()}` : `Online • ${storage.toUpperCase()} • Indisponível`)
+          : 'Offline'
         next.push({
           key: 'insumos-api',
           title: 'Insumos',
-          status: online ? (lockedToD1 ? 'ok' : 'warn') : 'error',
-          subtitle: online ? `Online • ${storage.toUpperCase()}` : 'Offline'
+          status,
+          subtitle
         })
       } else {
         next.push({ key: 'insumos-api', title: 'Insumos', status: 'error', subtitle: 'Erro ao consultar' })

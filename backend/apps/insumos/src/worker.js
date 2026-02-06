@@ -1040,9 +1040,11 @@ export default {
 
         // Public endpoints
         if (url.pathname === "/health") {
+            const ready = d1Enabled;
             return withCORS(
                 JSON.stringify({
-                    ok: true,
+                    ok: ready,
+                    ready,
                     service: "insumos",
                     runtime: "cloudflare-workers",
                     storage: "d1",
