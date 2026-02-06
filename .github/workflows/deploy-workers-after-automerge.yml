@@ -1,7 +1,7 @@
 name: Deploy Cloudflare Workers (API + Insumos) after automerge
 
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
   workflow_dispatch:
     inputs:
