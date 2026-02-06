@@ -51,6 +51,18 @@ Esperado:
 - `ok: true`
 - `storage: "d1"`
 - `templatesCacheTtlMs` coerente com a configuração esperada (ex.: `30000`)
+- `templatesCache` com contadores (`hits/misses`) e `ageMs` (útil para confirmar cache aquecido)
+
+### 3.3 Validar cache do Kiosk (headers)
+Para confirmar que o Kiosk está realmente usando cache de templates (e não refazendo query completa no D1 a cada chamada), use um token de dispositivo válido e faça 2 chamadas seguidas:
+```
+POST https://crm.skincos.com.br/api/ponto/device/identify
+```
+Verifique os headers:
+- `x-ponto-templates-cache: hit|miss`
+- `x-ponto-templates-cache-age-ms`
+- `x-ponto-templates-cache-ttl-ms`
+- `x-ponto-templates-cache-size`
 
 ---
 
