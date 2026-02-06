@@ -20,7 +20,7 @@ const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
 const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
-const DEMO_DATA_ACTIVE = (import.meta as any)?.env?.VITE_DEMO_DATA === 'true'
+// Demo banners are not allowed. Keep the UI strictly real-data oriented.
 
 function BuildCornerBadge() {
     const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
@@ -331,10 +331,15 @@ export default function AppFunctionalNeatlab() {
 			    } | null>(null)
 				    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
 				    const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
+				    const setSelectedUnitRef = React.useRef(setSelectedUnit)
+				    React.useEffect(() => {
+				        setSelectedUnitRef.current = setSelectedUnit
+				    }, [setSelectedUnit])
 				    const effectiveUnitRef = React.useRef(effectiveUnit)
 				    React.useEffect(() => {
 				        effectiveUnitRef.current = effectiveUnit
 				    }, [effectiveUnit])
+				    const insumosHeaderFetchRef = React.useRef<{ lastAt: number; inflight: boolean }>({ lastAt: 0, inflight: false })
 				    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value), [unitOptions])
 				    const insumosUnitsForHeaderSelect = useMemo(() => {
 				        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
@@ -414,24 +419,26 @@ export default function AppFunctionalNeatlab() {
 	        try { localStorage.setItem('app.activeModule', active) } catch { /* ignore */ }
 	    }, [active])
 
-			    React.useEffect(() => {
-			        if (active !== 'insumos' || !isAuthenticated) {
-			            setInsumosHeaderStatus(null)
-			            return
-			        }
+				    React.useEffect(() => {
+				        if (active !== 'insumos' || !isAuthenticated) {
+				            setInsumosHeaderStatus(null)
+				            return
+				        }
 
-	        const ac = new AbortController()
+		        const ac = new AbortController()
+		        const now = Date.now()
+		        if (insumosHeaderFetchRef.current.inflight) return () => ac.abort()
+		        if (now - insumosHeaderFetchRef.current.lastAt < 2500) return () => ac.abort()
+		        insumosHeaderFetchRef.current.inflight = true
+		        insumosHeaderFetchRef.current.lastAt = now
 
-	        ;(async () => {
-	            try {
-	                const [healthRes, meRes] = await Promise.all([
-	                    fetch('/api/insumos/health', { credentials: 'include', signal: ac.signal }).catch(() => null),
-	                    fetch('/api/auth/me', { credentials: 'include', signal: ac.signal }).catch(() => null),
-	                ])
+		        ;(async () => {
+		            try {
+		                const healthRes = await fetch('/api/insumos/health', { credentials: 'include', signal: ac.signal }).catch(() => null)
 
-		                let online: boolean | null = null
-		                let integrated: boolean | null = null
-		                let unidades: string[] = []
+			                let online: boolean | null = null
+			                let integrated: boolean | null = null
+			                let unidades: string[] = []
 		                if (healthRes?.ok) {
 		                    const h: any = await healthRes.json().catch(() => null)
 		                    online = Boolean(h?.ok)
@@ -441,17 +448,10 @@ export default function AppFunctionalNeatlab() {
 		                    online = false
 		                }
 
-	                let authed: boolean | null = null
-	                let allowedUnits: string[] = []
-	                if (meRes?.ok) {
-	                    const m: any = await meRes.json().catch(() => null)
-	                    authed = Boolean(m?.user?.username)
-	                    allowedUnits = Array.isArray(m?.user?.allowedUnits)
-	                        ? m.user.allowedUnits.filter(Boolean).map((x: any) => String(x))
-	                        : []
-	                } else if (meRes) {
-	                    authed = false
-	                }
+		                const authed: boolean | null = Boolean(user?.username)
+		                const allowedUnits: string[] = Array.isArray(user?.allowedUnits)
+		                    ? user.allowedUnits.filter(Boolean).map((x: any) => String(x))
+		                    : []
 
 	                const candidateUnits = unidades.length ? unidades : ['novo-hamburgo', 'barra-shopping-sul']
 	                const filteredUnits = allowedUnits.length
@@ -465,17 +465,19 @@ export default function AppFunctionalNeatlab() {
 		                    const saved = localStorage.getItem(INSUMOS_UNIT_KEY)
 		                    if (saved) nextUnit = saved
 		                } catch { /* ignore */ }
-		                if (!options.includes(nextUnit)) nextUnit = options[0]
-		                if (nextUnit && nextUnit !== currentUnit) setSelectedUnit(nextUnit)
+			                if (!options.includes(nextUnit)) nextUnit = options[0]
+			                if (nextUnit && nextUnit !== currentUnit) setSelectedUnitRef.current(nextUnit)
 
-		                setInsumosHeaderStatus({ online, authed, integrated, unidades: options, allowedUnits })
-		            } catch {
-		                setInsumosHeaderStatus({ online: false, authed: false, integrated: null, unidades: [], allowedUnits: [] })
-		            }
-	        })()
+			                setInsumosHeaderStatus({ online, authed, integrated, unidades: options, allowedUnits })
+			            } catch {
+			                setInsumosHeaderStatus({ online: false, authed: false, integrated: null, unidades: [], allowedUnits: [] })
+			            } finally {
+			                insumosHeaderFetchRef.current.inflight = false
+			            }
+		        })()
 
-			        return () => ac.abort()
-					    }, [active, isAuthenticated, setSelectedUnit])
+				        return () => ac.abort()
+						    }, [active, isAuthenticated, user?.allowedUnits?.join('|'), user?.username])
 
 		    React.useEffect(() => {
 		        if (active !== 'insumos') return
@@ -1220,25 +1222,6 @@ export default function AppFunctionalNeatlab() {
                                     <div className="ml-auto">
                                         <Badge className="bg-red-500/20 text-red-100 border-red-400/30 text-xs">
                                             DEVELOPMENT ONLY
-                                        </Badge>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                        {DEMO_DATA_ACTIVE && (
-                            <div className="bg-gradient-to-r from-amber-600/80 via-yellow-600/70 to-amber-600/80 border-b border-amber-500/30 px-8 py-3">
-                                <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">⚠️</span>
-                                        <span className="font-bold text-white text-sm">DADOS SIMULADOS</span>
-                                    </div>
-                                    <div className="w-px h-4 bg-white/30"></div>
-                                    <div className="text-xs text-white/90">
-                                        Alguns módulos exibem dados de demonstração. Configure integrações para dados reais.
-                                    </div>
-                                    <div className="ml-auto">
-                                        <Badge className="bg-amber-500/20 text-amber-100 border-amber-400/30 text-xs">
-                                            DEMO
                                         </Badge>
                                     </div>
                                 </div>

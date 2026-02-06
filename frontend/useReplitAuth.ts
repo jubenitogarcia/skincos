@@ -66,8 +66,10 @@ export function useReplitAuth() {
       return mapped;
     },
     retry: false, // Don't retry on 401
-    staleTime: 0,
+    staleTime: 30 * 1000,
     refetchOnMount: 'always',
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
     enabled: !noAuth && !!queryClient, // In NO_AUTH mode we bypass /me entirely
   });
 
