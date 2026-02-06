@@ -767,6 +767,8 @@ export function InsumosModule() {
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
   const overviewAbortRef = React.useRef<AbortController | null>(null)
   const insightsAbortRef = React.useRef<AbortController | null>(null)
+  const apiFailureTimestampsRef = React.useRef<number[]>([])
+  const [autoSyncSuspendedUntil, setAutoSyncSuspendedUntil] = React.useState<number>(0)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -1009,8 +1011,40 @@ export function InsumosModule() {
   const canUseApi = !!health?.ok
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
+  const autoSyncSuspended = autoSyncSuspendedUntil > Date.now()
+  const autoSyncRemainingSeconds = autoSyncSuspended ? Math.max(1, Math.ceil((autoSyncSuspendedUntil - Date.now()) / 1000)) : 0
 
   const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
+
+  const markAutoSyncFailure = React.useCallback(
+    (error: unknown) => {
+      const status = Number((error as any)?.status || 0)
+      const rawMessage = String((error as any)?.message || '')
+      const message = rawMessage.toLowerCase()
+      const isNetworkError =
+        status <= 0 ||
+        String((error as any)?.name || '') === 'TypeError' ||
+        message.includes('network') ||
+        message.includes('failed to fetch') ||
+        message.includes('conex')
+      const isRecoverableServerFailure = status >= 500 || status === 429 || isNetworkError
+      if (!isRecoverableServerFailure) return
+
+      const now = Date.now()
+      const failureWindowMs = 30_000
+      const cooldownMs = 60_000
+
+      apiFailureTimestampsRef.current = apiFailureTimestampsRef.current.filter((ts) => now - ts <= failureWindowMs)
+      apiFailureTimestampsRef.current.push(now)
+
+      if (apiFailureTimestampsRef.current.length < 5) return
+      if (autoSyncSuspendedUntil > now) return
+
+      setAutoSyncSuspendedUntil(now + cooldownMs)
+      toast.warning('API instável: sincronização automática reduzida por 60 segundos.')
+    },
+    [autoSyncSuspendedUntil]
+  )
 
   React.useEffect(() => {
     if (!isAuthed || !canUseApi) {
@@ -1020,6 +1054,21 @@ export function InsumosModule() {
       setInsightsLoaded(false)
     }
   }, [isAuthed, canUseApi])
+
+  React.useEffect(() => {
+    if (!autoSyncSuspendedUntil) return
+    const remainingMs = autoSyncSuspendedUntil - Date.now()
+    if (remainingMs <= 0) {
+      apiFailureTimestampsRef.current = []
+      setAutoSyncSuspendedUntil(0)
+      return
+    }
+    const timeoutId = window.setTimeout(() => {
+      apiFailureTimestampsRef.current = []
+      setAutoSyncSuspendedUntil(0)
+    }, remainingMs + 20)
+    return () => window.clearTimeout(timeoutId)
+  }, [autoSyncSuspendedUntil])
 
   const dashboardProgress = React.useMemo(() => {
     const steps = [
@@ -2562,8 +2611,9 @@ export function InsumosModule() {
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
-	  const loadOverview = React.useCallback(async () => {
+	  const loadOverview = React.useCallback(async (opts?: { force?: boolean }) => {
 	    if (!canUseApi || !isAuthed) return
+	    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
 	    try {
 	      overviewAbortRef.current?.abort()
 	    } catch {
@@ -2666,6 +2716,7 @@ export function InsumosModule() {
 	    } catch (e) {
 	      if ((e as any)?.name === 'AbortError') return
 	      if (overviewAbortRef.current !== ac) return
+	      markAutoSyncFailure(e)
 	      toast.error(e instanceof Error ? e.message : String(e))
 	      setOverviewResumo(null)
 	      setOverviewNotifications(null)
@@ -2681,7 +2732,7 @@ export function InsumosModule() {
 	        overviewAbortRef.current = null
 	      }
 	    }
-	  }, [canUseApi, isAuthed, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
+	  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
 
   const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
@@ -2699,7 +2750,7 @@ export function InsumosModule() {
       })
       toast.success('Lote/validade atualizados.')
       setLotDialogOpen(false)
-      await Promise.allSettled([refreshInsumos(), loadOverview()])
+      await Promise.allSettled([refreshInsumos(), loadOverview({ force: true })])
     } catch (e) {
       if (policyErrorToast(e)) return
       toast.error(e instanceof Error ? e.message : String(e))
@@ -2783,7 +2834,7 @@ export function InsumosModule() {
       })
       toast.success('Insumo atualizado')
       setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
     } catch (e) {
       if (policyErrorToast(e)) return
       toast.error(e instanceof Error ? e.message : String(e))
@@ -2834,7 +2885,7 @@ export function InsumosModule() {
       })
       toast.success('Insumo excluído')
       setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -2842,8 +2893,9 @@ export function InsumosModule() {
     }
   }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
 
-	  const loadInsights = React.useCallback(async () => {
+	  const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
 	    if (!canUseApi || !isAuthed) return
+	    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
 	    try {
 	      insightsAbortRef.current?.abort()
 	    } catch {
@@ -2902,6 +2954,7 @@ export function InsumosModule() {
 	    } catch (e) {
 	      if ((e as any)?.name === 'AbortError') return
 	      if (insightsAbortRef.current !== ac) return
+	      markAutoSyncFailure(e)
 	      toast.error(e instanceof Error ? e.message : String(e))
 	      setInsightsAlertas([])
 	      setInsightsTrends(null)
@@ -2913,19 +2966,20 @@ export function InsumosModule() {
 	        insightsAbortRef.current = null
 	      }
 	    }
-	  }, [canUseApi, isAuthed, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
+	  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
   const postMutationRefreshTimerRef = React.useRef<number | null>(null)
-  const schedulePostMutationRefresh = React.useCallback(
-    (opts?: { overview?: boolean; insights?: boolean }) => {
-      const wantsOverview = opts?.overview !== false
-      const wantsInsights = opts?.insights !== false
-      if (!wantsOverview && !wantsInsights) return
+	  const schedulePostMutationRefresh = React.useCallback(
+	    (opts?: { overview?: boolean; insights?: boolean }) => {
+	      const wantsOverview = opts?.overview !== false
+	      const wantsInsights = opts?.insights !== false
+	      if (!wantsOverview && !wantsInsights) return
+	      if (autoSyncSuspendedUntil > Date.now()) return
 
-      if (postMutationRefreshTimerRef.current) {
-        window.clearTimeout(postMutationRefreshTimerRef.current)
-        postMutationRefreshTimerRef.current = null
-      }
+	      if (postMutationRefreshTimerRef.current) {
+	        window.clearTimeout(postMutationRefreshTimerRef.current)
+	        postMutationRefreshTimerRef.current = null
+	      }
 
       postMutationRefreshTimerRef.current = window.setTimeout(() => {
         const isOverviewVisible = (() => {
@@ -2946,11 +3000,11 @@ export function InsumosModule() {
         const tasks: Promise<any>[] = []
         if (wantsOverview && overviewLoaded && isOverviewVisible) tasks.push(Promise.resolve(loadOverview()))
         if (wantsInsights && insightsLoaded && isOverviewVisible) tasks.push(Promise.resolve(loadInsights()))
-        if (tasks.length) void Promise.allSettled(tasks)
-      }, 2500)
-    },
-    [insightsLoaded, loadInsights, loadOverview, overviewLoaded]
-  )
+	        if (tasks.length) void Promise.allSettled(tasks)
+	      }, 2500)
+	    },
+	    [autoSyncSuspendedUntil, insightsLoaded, loadInsights, loadOverview, overviewLoaded]
+	  )
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
@@ -3182,12 +3236,12 @@ export function InsumosModule() {
       const e = event as CustomEvent<{ action?: 'reload'; period?: '7d' | '30d' | '1y' | 'custom'; from?: string; to?: string }>
       const nextPeriod = e.detail?.period
       if (nextPeriod) setOverviewPeriod(nextPeriod)
-      if (typeof e.detail?.from === 'string') setOverviewCustomFrom(e.detail.from)
-      if (typeof e.detail?.to === 'string') setOverviewCustomTo(e.detail.to)
-      if (e.detail?.action === 'reload') {
-        void Promise.allSettled([loadOverview(), loadInsights(), refreshInsumos()])
-      }
-    }
+	      if (typeof e.detail?.from === 'string') setOverviewCustomFrom(e.detail.from)
+	      if (typeof e.detail?.to === 'string') setOverviewCustomTo(e.detail.to)
+	      if (e.detail?.action === 'reload') {
+	        void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
+	      }
+	    }
     window.addEventListener('skincos:insumos:overview', onOverview as EventListener)
     return () => window.removeEventListener('skincos:insumos:overview', onOverview as EventListener)
   }, [loadInsights, loadOverview, refreshInsumos])
@@ -4133,6 +4187,35 @@ export function InsumosModule() {
 
   return (
     <div ref={rootRef} className="p-6 space-y-6">
+      {autoSyncSuspended ? (
+        <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-amber-100 flex flex-wrap items-center gap-3">
+          <div className="text-sm">
+            API instável detectada. Sincronização automática de Overview/Insights pausada por {autoSyncRemainingSeconds}s.
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="border-amber-300/50 text-amber-100 hover:bg-amber-500/20"
+              onClick={() => {
+                apiFailureTimestampsRef.current = []
+                setAutoSyncSuspendedUntil(0)
+              }}
+            >
+              Retomar auto-sync
+            </Button>
+            <Button
+              className="!bg-amber-600 hover:!bg-amber-700 !text-white"
+              onClick={() => {
+                apiFailureTimestampsRef.current = []
+                setAutoSyncSuspendedUntil(0)
+                void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
+              }}
+            >
+              Atualizar agora
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <DragDropContext onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
         <DialogContent className="max-w-6xl">
@@ -4426,7 +4509,7 @@ export function InsumosModule() {
                         })
                         toast.success('Insumo cadastrado.')
                         setCreateOpen(false)
-                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview()])
+                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
                       } catch (e) {
                         if (policyErrorToast(e)) return
                         toast.error(e instanceof Error ? e.message : String(e))
