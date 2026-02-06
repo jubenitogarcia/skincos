@@ -389,14 +389,31 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     return actorFromReq(req, { kind: 'employee', id: email, label: email })
   }
 
-  function findEmployeeByLoginEmail(email) {
+  function findEmployeesByLoginEmail(email) {
     const needle = normalizeEmail(email)
-    if (!needle) return null
+    if (!needle) return []
+    const out = []
     for (const e of state.employees) {
       if (!e || e.deletedAt || e.active === false) continue
-      if (normalizeEmail(e.loginEmail) === needle) return e
+      if (normalizeEmail(e.loginEmail) === needle) out.push(e)
     }
-    return null
+    return out
+  }
+
+  function resolveEmployeeByLoginEmail(email) {
+    const matches = findEmployeesByLoginEmail(email)
+    if (!matches.length) return { employee: null, conflict: null }
+    if (matches.length > 1) {
+      return {
+        employee: null,
+        conflict: {
+          error: 'LOGIN_EMAIL_AMBIGUOUS',
+          hint: 'Existe mais de um funcionário ativo vinculado a este email.',
+          matches: matches.map((e) => ({ id: e.id, name: e.name, code: e.code || '' }))
+        }
+      }
+    }
+    return { employee: matches[0], conflict: null }
   }
 
   function matchEmployeeDescriptor(employeeId, descriptor, opts = {}) {
@@ -608,6 +625,17 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const code = safeText(req.body?.code, 40)
     const loginEmail = normalizeEmail(req.body?.loginEmail)
     if (!name) return res.status(400).json({ ok: false, error: 'NAME_REQUIRED' })
+    if (loginEmail) {
+      const [takenBy] = findEmployeesByLoginEmail(loginEmail)
+      if (takenBy) {
+        return res.status(409).json({
+          ok: false,
+          error: 'LOGIN_EMAIL_ALREADY_IN_USE',
+          employeeId: takenBy.id,
+          employeeName: takenBy.name
+        })
+      }
+    }
 
     const now = new Date().toISOString()
     const employee = {
@@ -656,6 +684,17 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     if (loginEmailRaw !== undefined) {
       const next = normalizeEmail(loginEmailRaw)
       const prev = normalizeEmail(employee.loginEmail)
+      if (next) {
+        const takenBy = findEmployeesByLoginEmail(next).find((e) => e.id !== employee.id)
+        if (takenBy) {
+          return res.status(409).json({
+            ok: false,
+            error: 'LOGIN_EMAIL_ALREADY_IN_USE',
+            employeeId: takenBy.id,
+            employeeName: takenBy.name
+          })
+        }
+      }
       employee.loginEmail = next || ''
       await enqueueWrite(() =>
         writeAudit(next ? 'EMPLOYEE_LINK_LOGIN' : 'EMPLOYEE_UNLINK_LOGIN', { employeeId: employee.id, prev, next: next || '' }, actor)
@@ -1012,7 +1051,11 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const actor = requireEmployee(req, res)
     if (!actor) return
     const email = actor.label
-    const employee = findEmployeeByLoginEmail(email)
+    const resolved = resolveEmployeeByLoginEmail(email)
+    if (resolved.conflict) {
+      return res.status(409).json({ ok: false, ...resolved.conflict, actorEmail: email })
+    }
+    const employee = resolved.employee
     if (!employee) {
       return res.json({
         ok: true,
@@ -1041,7 +1084,9 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const actor = requireEmployee(req, res)
     if (!actor) return
     const email = actor.label
-    const employee = findEmployeeByLoginEmail(email)
+    const resolved = resolveEmployeeByLoginEmail(email)
+    if (resolved.conflict) return res.status(409).json({ ok: false, ...resolved.conflict, actorEmail: email })
+    const employee = resolved.employee
     if (!employee) return res.status(404).json({ ok: false, error: 'EMPLOYEE_NOT_LINKED' })
     const from = safeText(req.query?.from, 30)
     const to = safeText(req.query?.to, 30)
@@ -1073,7 +1118,9 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const actor = requireEmployee(req, res)
     if (!actor) return
     const email = actor.label
-    const employee = findEmployeeByLoginEmail(email)
+    const resolved = resolveEmployeeByLoginEmail(email)
+    if (resolved.conflict) return res.status(409).json({ ok: false, ...resolved.conflict, actorEmail: email })
+    const employee = resolved.employee
     if (!employee) return res.status(404).json({ ok: false, error: 'EMPLOYEE_NOT_LINKED' })
 
     const idempotencyKey = getIdempotencyKey(req)
