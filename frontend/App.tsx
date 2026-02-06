@@ -20,7 +20,7 @@ const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
 const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
-const DEMO_DATA_ACTIVE = false
+// Demo banners are not allowed. Keep the UI strictly real-data oriented.
 
 function BuildCornerBadge() {
     const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
@@ -1222,25 +1222,6 @@ export default function AppFunctionalNeatlab() {
                                     <div className="ml-auto">
                                         <Badge className="bg-red-500/20 text-red-100 border-red-400/30 text-xs">
                                             DEVELOPMENT ONLY
-                                        </Badge>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                        {DEMO_DATA_ACTIVE && (
-                            <div className="bg-gradient-to-r from-amber-600/80 via-yellow-600/70 to-amber-600/80 border-b border-amber-500/30 px-8 py-3">
-                                <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">⚠️</span>
-                                        <span className="font-bold text-white text-sm">DADOS SIMULADOS</span>
-                                    </div>
-                                    <div className="w-px h-4 bg-white/30"></div>
-                                    <div className="text-xs text-white/90">
-                                        Alguns módulos exibem dados de demonstração. Configure integrações para dados reais.
-                                    </div>
-                                    <div className="ml-auto">
-                                        <Badge className="bg-amber-500/20 text-amber-100 border-amber-400/30 text-xs">
-                                            DEMO
                                         </Badge>
                                     </div>
                                 </div>
