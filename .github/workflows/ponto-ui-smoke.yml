@@ -82,6 +82,7 @@ jobs:
           NO_SCREENSHOTS: "1"
           MUTATE_ADMIN: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
           MUTATE_EMPLOYEE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
+          MUTATE_PUNCH: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
           NODE_PATH: frontend/node_modules
         run: |
           set -euo pipefail
@@ -100,6 +101,7 @@ jobs:
           FULL_PAGE: "1"
           MUTATE_ADMIN: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
           MUTATE_EMPLOYEE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
+          MUTATE_PUNCH: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
           NODE_PATH: frontend/node_modules
         run: |
           set -euo pipefail
