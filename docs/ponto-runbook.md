@@ -24,6 +24,7 @@ Este documento descreve **como validar, diagnosticar e operar** o módulo **Pont
 - `PONTO_ACTOR_HMAC_KEY`
 - `PONTO_AUDIT_HMAC_KEY` (opcional, mas recomendado)
 - `PONTO_TEMPLATES_KEY` (opcional; necessário se criptografar biometria)
+- `PONTO_TEMPLATES_CACHE_TTL_MS` (opcional; TTL do cache de templates faciais no Kiosk; default 30000)
 
 ---
 
@@ -49,6 +50,7 @@ GET https://crm.skincos.com.br/api/ponto/health
 Esperado:
 - `ok: true`
 - `storage: "d1"`
+- `templatesCacheTtlMs` coerente com a configuração esperada (ex.: `30000`)
 
 ---
 

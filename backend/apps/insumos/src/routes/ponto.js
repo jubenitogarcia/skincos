@@ -909,6 +909,7 @@ export async function handlePontoRoutes({
         storage: 'd1',
         cryptoAuditHmac: !!String(env?.PONTO_AUDIT_HMAC_KEY || '').trim(),
         cryptoTemplates: !!String(env?.PONTO_TEMPLATES_KEY || '').trim(),
+        templatesCacheTtlMs,
         employees: Number(row?.n || 0) || 0,
         devices: Number(devices?.n || 0) || 0,
         records: Number(records?.n || 0) || 0,
