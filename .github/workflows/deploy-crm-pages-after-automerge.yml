@@ -1,5 +1,5 @@
 name: Deploy CRM (Cloudflare Pages) after automerge
-run-name: CRM Pages after-automerge PR #${{ github.event.pull_request.number || github.event.inputs.pr_number || 'manual' }}
+run-name: CRM Pages after-automerge PR #${{ github.event.pull_request.number || github.event.inputs.pr_number || inputs.pr_number || 'manual' }}
 
 on:
   pull_request_target:
