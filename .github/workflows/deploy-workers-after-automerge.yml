@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "Pull Request number to deploy (uses merge commit SHA)"
+        description: "Pull request number to deploy (uses merge commit SHA)"
         required: true
 
 concurrency:
