@@ -15,7 +15,7 @@ fail_if_found() {
   local pattern="$1"
   local description="$2"
   local output
-  output="$(grep -R --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git -n "${pattern}" "${FRONTEND_DIR}" || true)"
+  output="$(grep -R --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=e2e --exclude-dir=test-results --exclude-dir=.playwright-output -n "${pattern}" "${FRONTEND_DIR}" || true)"
   if [[ -n "${output}" ]]; then
     echo "[no-demo-guard] ERROR: ${description}" >&2
     echo "${output}" >&2
@@ -23,21 +23,16 @@ fail_if_found() {
   fi
 }
 
-ensure_present() {
-  local pattern="$1"
-  local file="$2"
-  local description="$3"
-  if ! grep -q "${pattern}" "${file}"; then
-    echo "[no-demo-guard] ERROR: ${description}" >&2
-    failures=$((failures + 1))
-  fi
-}
-
 fail_if_found "Mock WebSocket send" "Mock WebSocket log reintroduced in frontend source."
 fail_if_found "demoNotifications" "Demo notification seed found in frontend source."
+fail_if_found "VITE_DEMO_DATA" "Demo-data env flag must not be referenced in frontend source."
+fail_if_found "DEMO_DATA_ACTIVE" "Demo-data toggle must not exist in frontend source."
 
-ensure_present "enabled = import.meta.env.DEV" "${FRONTEND_DIR}/useWebSocket.ts" "WebSocket must stay disabled by default in production."
-ensure_present "const DEMO_DATA_ACTIVE = (import.meta as any)?.env?.VITE_DEMO_DATA === 'true'" "${FRONTEND_DIR}/App.tsx" "DEMO_DATA_ACTIVE must only activate via explicit env flag."
+# Keep WebSocket disabled by default in production.
+if ! grep -q "enabled = import.meta.env.DEV" "${FRONTEND_DIR}/useWebSocket.ts"; then
+  echo "[no-demo-guard] ERROR: WebSocket must stay disabled by default in production." >&2
+  failures=$((failures + 1))
+fi
 
 if [[ "${failures}" -gt 0 ]]; then
   echo "[no-demo-guard] FAILED with ${failures} issue(s)." >&2

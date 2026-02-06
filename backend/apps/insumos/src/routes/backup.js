@@ -133,26 +133,17 @@ export async function handleBackupRoutes({
 
             const snap = await loadBackupSnapshot({ env, id });
             const p = snap?.payload;
-            const hasSheets = !!(p?.sheets?.insumosValues && p?.sheets?.usersValues && p?.sheets?.movValues);
-	            const hasD1Insumos = !!(
-	                p?.d1 &&
-	                (Array.isArray(p.d1.insumosItems) ||
-	                    Array.isArray(p.d1.crmUsers) ||
-	                    Array.isArray(p.d1.insumosUsers) ||
-	                    Array.isArray(p.d1.insumosStocks) ||
-	                    Array.isArray(p.d1.insumosMovements))
-	            );
+            const hasD1Insumos = !!(
+                p?.d1 &&
+                (Array.isArray(p.d1.insumosItems) ||
+                    Array.isArray(p.d1.crmUsers) ||
+                    Array.isArray(p.d1.insumosUsers) ||
+                    Array.isArray(p.d1.insumosStocks) ||
+                    Array.isArray(p.d1.insumosMovements))
+            );
 
-            if (!hasSheets && !hasD1Insumos) {
+            if (!hasD1Insumos) {
                 return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
-            }
-
-            if (hasSheets && !hasD1Insumos) {
-                return withCORS(
-                    JSON.stringify({ success: false, error: 'Backup legado (Sheets) não é suportado. Gere um novo backup a partir do D1.' }),
-                    { status: 400 },
-                    appOrigin
-                );
             }
 
             // Restore D1 (includes Insumos tables + snapshots; does not touch jobs/backups)

@@ -22,10 +22,7 @@ Garantir que segredos cr√≠ticos (GitHub, Cloudflare, backend) tenham **escopo m√
 - `SESSION_SECRET`
 - `MIGRATION_TOKEN`
 - `INTEGRATIONS_ENCRYPTION_SECRET`
-- `GOOGLE_PRIVATE_KEY`
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-- `SPREADSHEET_ID`
-- `SHEET_ID`
+NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 
 ### CRM API / Infra
 - Chaves SSH do deploy (mesmas de GitHub)
