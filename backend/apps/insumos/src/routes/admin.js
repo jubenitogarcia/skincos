@@ -209,8 +209,6 @@ export async function handleAdminRoutes({
   withCORS,
   requireRoles,
   appendAuditLog,
-  spreadsheetId,
-  accessToken,
   ip,
   userAgent,
   idempotencyKey,
@@ -309,8 +307,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,
@@ -359,8 +355,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,
@@ -477,8 +471,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,
@@ -541,8 +533,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,
@@ -682,8 +672,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,
@@ -770,8 +758,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,
@@ -814,8 +800,6 @@ export async function handleAdminRoutes({
       try {
         await appendAuditLog?.({
           env,
-          spreadsheetId,
-          accessToken,
           actor: auth.user.username,
           role: auth.user.role,
           ip,

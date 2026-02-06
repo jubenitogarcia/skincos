@@ -27,6 +27,7 @@ fail_if_found "Mock WebSocket send" "Mock WebSocket log reintroduced in frontend
 fail_if_found "demoNotifications" "Demo notification seed found in frontend source."
 fail_if_found "VITE_DEMO_DATA" "Demo-data env flag must not be referenced in frontend source."
 fail_if_found "DEMO_DATA_ACTIVE" "Demo-data toggle must not exist in frontend source."
+fail_if_found "VITE_NO_AUTH" "NO_AUTH mode must not be wired into production frontend."
 
 # Keep WebSocket disabled by default in production.
 if ! grep -q "enabled = import.meta.env.DEV" "${FRONTEND_DIR}/useWebSocket.ts"; then
