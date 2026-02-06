@@ -132,6 +132,14 @@ GET /api/ponto/admin/audit/verify
 **Sinal:** erro `ADMIN_TOKEN_NOT_CONFIGURED`.  
 **Ação:** validar secrets do Pages em `_proxy-status`.
 
+### Vínculo de login não salva
+**Sinal:** erro `LOGIN_EMAIL_ALREADY_IN_USE`.  
+**Ação:** o email já está vinculado a outro funcionário ativo; revise no Admin e mantenha email único por funcionário.
+
+### Funcionário não consegue carregar `/me`
+**Sinal:** erro `LOGIN_EMAIL_AMBIGUOUS`.  
+**Ação:** há mais de um funcionário ativo com o mesmo email; corrija os cadastros duplicados antes de retestar.
+
 ### `_proxy-status` diz que secrets não estão configurados, mesmo após sync
 **Sinal:** `proxyTokenConfigured=false` / `actorKeyConfigured=false` / `adminTokenConfigured=false`, mas o workflow de sync está “success”.  
 **Causa provável:** em Cloudflare Pages, alterações de env vars podem exigir um novo deploy para entrarem em vigor no runtime.  
@@ -142,7 +150,11 @@ GET /api/ponto/admin/audit/verify
 **Sinal:** erro `NOT_RECOGNIZED`.  
 **Ação:** confirmar `face-models` carregados e biometria cadastrada.
 
+### Retorno HTML com Cloudflare 1101
+**Sinal:** erro com `UPSTREAM_WORKER_EXCEPTION` (ou tela “Worker threw exception”).  
+**Ação:** usar `x-request-id` + `cf-ray` no Cloudflare Logs para identificar a exceção do Worker upstream.
+
 ---
 
 ## 7) Logs e rastreio
-- Use o **x-request-id** exibido no diagnóstico ou nos erros para buscar no Cloudflare.
+- Use o **x-request-id** e **cf-ray** exibidos no diagnóstico/erros para buscar no Cloudflare.
