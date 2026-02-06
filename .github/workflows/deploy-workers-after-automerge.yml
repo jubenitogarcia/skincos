@@ -1,5 +1,5 @@
 name: Deploy Cloudflare Workers (API + Insumos) after automerge
-run-name: Workers after-automerge PR #${{ github.event.pull_request.number || github.event.inputs.pr_number || 'manual' }}
+run-name: Workers after-automerge PR #${{ github.event.pull_request.number || github.event.inputs.pr_number || inputs.pr_number || 'manual' }}
 
 on:
   pull_request_target:
