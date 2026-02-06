@@ -138,17 +138,7 @@ export async function handleInsightsRoutes({
     env,
     appOrigin,
     withCORS,
-    spreadsheetId,
-    accessToken,
-    sheetRange,
-    movimentacoesRange,
-    movimentacoesSheetName,
     unidade,
-    ensureHeaderColumns,
-    readSheet,
-    parseInsumos,
-    normalizeInsumos,
-    parseMovimentacoes,
     buildActionables,
     buildRoi,
     buildQualityReport,
@@ -157,49 +147,38 @@ export async function handleInsightsRoutes({
     d1,
 }) {
     const listInsumos = async (unidadeQ) => {
-        if (d1?.enabled) return d1.listInsumos({ unidade: unidadeQ });
-        const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-        return normalizeInsumos(parseInsumos(rows), unidadeQ);
+        if (!d1?.enabled) throw new Error('D1_ONLY');
+        return d1.listInsumos({ unidade: unidadeQ });
     };
 
     const listMovimentos = async ({ unidadeQ, fromIso, toIso }) => {
-        if (d1?.enabled) {
-            if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
-            const where = [];
-            const binds = [];
-            if (unidadeQ) {
-                where.push('unidade = ?');
-                binds.push(String(unidadeQ));
-            }
-            if (fromIso) {
-                where.push('data_hora >= ?');
-                binds.push(String(fromIso));
-            }
-            if (toIso) {
-                where.push('data_hora <= ?');
-                binds.push(String(toIso));
-            }
-            const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-            const r = await env.DB.prepare(
-                `SELECT data_hora as dataHora, tipo, codigo_barras as codigoBarras, produto, quantidade, unidade, usuario
-                 FROM insumos_movements
-                 ${whereSql}
-                 ORDER BY data_hora ASC
-                 LIMIT 100000`
-            )
-                .bind(...binds)
-                .all();
-            return r?.results || [];
+        if (!d1?.enabled) throw new Error('D1_ONLY');
+        if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
+        const where = [];
+        const binds = [];
+        if (unidadeQ) {
+            where.push('unidade = ?');
+            binds.push(String(unidadeQ));
         }
-
-        await ensureHeaderColumns({
-            spreadsheetId,
-            sheetName: movimentacoesSheetName,
-            accessToken,
-            requiredHeaders: ['UNIDADE']
-        });
-        const movRaw = await readSheet(spreadsheetId, movimentacoesRange, accessToken);
-        return parseMovimentacoes(movRaw);
+        if (fromIso) {
+            where.push('data_hora >= ?');
+            binds.push(String(fromIso));
+        }
+        if (toIso) {
+            where.push('data_hora <= ?');
+            binds.push(String(toIso));
+        }
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        const r = await env.DB.prepare(
+            `SELECT data_hora as dataHora, tipo, codigo_barras as codigoBarras, produto, quantidade, unidade, usuario
+             FROM insumos_movements
+             ${whereSql}
+             ORDER BY data_hora ASC
+             LIMIT 100000`
+        )
+            .bind(...binds)
+            .all();
+        return r?.results || [];
     };
     // Stub analytics / relatorios / alertas / movimentacoes endpoints expected by frontend
     if (url.pathname === "/analytics/actionables" && request.method === "GET") {

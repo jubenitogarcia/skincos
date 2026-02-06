@@ -33,10 +33,6 @@ bucket_name = "skincos-backups"
 
 [vars]
 APP_ORIGIN = "https://crm.skincos.com.br"
-INSUMOS_STORAGE = "d1"
-SHEET_RANGE = "Insumos!A:AZ"
-USER_SHEET_RANGE = "Usuarios!A:AZ"
-MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
 
 [env.staging]
 name = "skincos-insumos-staging"
@@ -53,24 +49,13 @@ bucket_name = "skincos-backups-staging"
 
 [env.staging.vars]
 APP_ORIGIN = "https://crm-staging.skincos.com.br"
-INSUMOS_STORAGE = "d1"
-SHEET_RANGE = "Insumos!A:AZ"
-USER_SHEET_RANGE = "Usuarios!A:AZ"
-MOVIMENTACOES_RANGE = "Movimentacoes!A:AZ"
 
 # Optional:
 # UNIDADES = "novo-hamburgo,barra-shopping-sul"
 # UNIDADES_HEADERS_JSON = "{\"barra-shopping-sul\":\"barrashoppingsul\",\"novo-hamburgo\":\"novo hamburgo\"}"
 
 # IMPORTANT:
-# Insumos roda em D1 (INSUMOS_STORAGE=d1).
-# Sheets é opcional (apenas para migração/restore legado) e pode ficar desabilitado em produção.
+# Insumos é D1-only e requer binding `DB`.
 #
 # Secrets (set via `wrangler secret put`):
 # - SESSION_SECRET (required)
-# - MIGRATION_TOKEN (optional, one-time)  # permite chamar POST /admin/migrate/sheets-to-d1 sem sessão/CSRF
-#
-# Optional legacy (Sheets):
-# - SPREADSHEET_ID
-# - GOOGLE_SERVICE_ACCOUNT_EMAIL
-# - GOOGLE_PRIVATE_KEY (secret)

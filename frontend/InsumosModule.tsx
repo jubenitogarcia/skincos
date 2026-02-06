@@ -15,16 +15,9 @@ type InsumosHealth = {
   ok?: boolean
   service?: string
   runtime?: string
+  storage?: string
   dbConfigured?: boolean
-  sheetsConfigured?: boolean
   unidades?: string[]
-  sheets?: {
-    spreadsheetIdPresent?: boolean
-    serviceAccountEmailPresent?: boolean
-    privateKeyPresent?: boolean
-    missing?: string[]
-    hint?: string
-  }
 }
 
 type InsumosUser = {

@@ -249,23 +249,7 @@ async function tableHasColumn(env, tableName, columnName) {
   }
 }
 
-export function resolveStorageMode(env) {
-  const raw = String(env?.INSUMOS_STORAGE || 'auto').trim().toLowerCase();
-  if (raw === 'd1' || raw === 'sheets') return raw;
-  return 'auto';
-}
-
-export async function shouldUseD1(env) {
-  const mode = resolveStorageMode(env);
-  if (mode === 'd1') return true;
-  if (mode === 'sheets') return false;
-  // auto
-  const has = await d1HasInsumos(env);
-  if (has) return true;
-  // If Sheets are not configured, fall back to D1 even if empty (so we can bootstrap)
-  const sheetsOk = !!env?.SPREADSHEET_ID && !!env?.GOOGLE_SERVICE_ACCOUNT_EMAIL && !!env?.GOOGLE_PRIVATE_KEY;
-  return !sheetsOk;
-}
+// D1-only: legacy Sheets storage mode is removed.
 
 export async function d1ListInsumos({ env, unidades, unidade }) {
   const itemsRes = await env.DB.prepare(
