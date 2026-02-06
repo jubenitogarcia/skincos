@@ -1037,19 +1037,17 @@ export default {
         }
 
         const d1Enabled = !!env?.DB;
-        const storageMode = String(env?.INSUMOS_STORAGE || 'd1').trim().toLowerCase() || 'd1';
-        const storageOk = storageMode === 'd1';
 
         // Public endpoints
         if (url.pathname === "/health") {
-            const ready = d1Enabled && storageOk;
+            const ready = d1Enabled;
             return withCORS(
                 JSON.stringify({
                     ok: ready,
                     ready,
                     service: "insumos",
                     runtime: "cloudflare-workers",
-                    storage: storageMode,
+                    storage: "d1",
                     dbConfigured: d1Enabled,
                     unidades: UNIDADES,
                 }),
@@ -1059,15 +1057,6 @@ export default {
         }
         if (url.pathname === "/api/metrics" || url.pathname === "/metrics") {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
-        }
-
-        // D1-only: reject any non-d1 storage mode explicitly.
-        if (!storageOk) {
-            return withCORS(
-                JSON.stringify({ success: false, error: 'STORAGE_NOT_SUPPORTED', code: 'STORAGE_NOT_SUPPORTED' }),
-                { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } },
-                appOrigin
-            );
         }
 
         // D1-only: if DB is not configured, fail fast (no legacy Sheets fallback).
