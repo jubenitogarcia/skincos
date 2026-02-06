@@ -32,6 +32,7 @@ const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'tr
 const CHANNEL = String(process.env.CHANNEL || '').trim()
 const PERSISTENT = process.env.PERSISTENT === '1' || process.env.PERSISTENT === 'true'
 const EXPECT_BUILD_SHA = String(process.env.EXPECT_BUILD_SHA || '').trim().toLowerCase()
+const MUTATE_ADMIN = process.env.MUTATE_ADMIN === '1' || process.env.MUTATE_ADMIN === 'true'
 
 const { chromium } = require('playwright')
 
@@ -182,6 +183,51 @@ async function main() {
         .catch(() => false)
       if (adminTokenTextVisible || adminTokenInputVisible) {
         throw new Error('Admin tab still prompts for admin token (expected role-based).')
+      }
+
+      if (MUTATE_ADMIN) {
+        const created = await page.evaluate(async () => {
+          const stamp = Date.now()
+          const name = `Smoke Test ${stamp}`
+          const code = `smoke-${stamp}`
+          const createRes = await fetch('/api/ponto/admin/employees', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ name, code }),
+          })
+          const createText = await createRes.text()
+          let createJson = null
+          try { createJson = createText ? JSON.parse(createText) : null } catch {}
+          if (!createRes.ok || !createJson?.ok || !createJson?.data?.id) {
+            throw new Error(`admin create failed: HTTP ${createRes.status} body=${createText.slice(0, 400)}`)
+          }
+          const id = String(createJson.data.id)
+
+          const listRes = await fetch('/api/ponto/admin/employees', { credentials: 'include' })
+          const listText = await listRes.text()
+          let listJson = null
+          try { listJson = listText ? JSON.parse(listText) : null } catch {}
+          if (!listRes.ok || !listJson?.ok || !Array.isArray(listJson?.data)) {
+            throw new Error(`admin list failed: HTTP ${listRes.status} body=${listText.slice(0, 400)}`)
+          }
+          const found = listJson.data.some((e) => String(e.id) === id)
+          if (!found) throw new Error(`created employee not found in list (id=${id})`)
+
+          const delRes = await fetch(`/api/ponto/admin/employees/${encodeURIComponent(id)}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const delText = await delRes.text()
+          let delJson = null
+          try { delJson = delText ? JSON.parse(delText) : null } catch {}
+          if (!delRes.ok || !delJson?.ok) {
+            throw new Error(`admin delete failed: HTTP ${delRes.status} body=${delText.slice(0, 400)}`)
+          }
+
+          return { id, name, code }
+        })
+        console.log(`[ponto-ui-smoke] Admin create/list/delete OK (employeeId=${created.id})`)
       }
     }
 

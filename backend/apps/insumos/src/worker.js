@@ -1305,13 +1305,23 @@ export default {
 
         // Ponto routes must not depend on Insumos session cookies/config (SESSION_SECRET, CSRF, etc).
         // They have their own auth model (proxy token + signed actor headers / admin token / device token).
-        const pontoEarlyResp = await handlePontoRoutes({
-            request,
-            url,
-            env,
-            appOrigin,
-            withCORS,
-        });
+        let pontoEarlyResp = null;
+        try {
+            pontoEarlyResp = await handlePontoRoutes({
+                request,
+                url,
+                env,
+                appOrigin,
+                withCORS,
+            });
+        } catch (err) {
+            const message = String((err && err.message) || err || 'unknown');
+            console.error(JSON.stringify({ level: 'error', request_id: requestId, scope: 'ponto', error: message }));
+            return withCORS(
+                JSON.stringify({ ok: false, error: 'PONTO_WORKER_EXCEPTION', requestId, detail: message }),
+                { status: 500, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }
+            );
+        }
         if (pontoEarlyResp) return pontoEarlyResp;
 
         const enforceRateLimit = async (kind) => {
