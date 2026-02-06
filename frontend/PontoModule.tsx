@@ -164,17 +164,22 @@ async function apiJson<T>(
     json = null
   }
   if (res.ok) return json as T
-  const err = (json || {}) as ApiError
-  const code = String(err.error || err.code || '').trim()
-  const hint = typeof err.hint === 'string' ? err.hint.trim() : ''
+  const nonJsonText = String(text || '')
+  const htmlWorkerCrash = !json && (nonJsonText.includes('Worker threw exception') || nonJsonText.includes('Cloudflare Ray ID'))
+  const err = ((json || {}) as ApiError)
+  const inferredCode = htmlWorkerCrash ? 'UPSTREAM_WORKER_EXCEPTION' : ''
+  const code = String(err.error || err.code || inferredCode || '').trim()
+  const hintFromHtml = htmlWorkerCrash ? 'Falha no Worker upstream (Cloudflare 1101). Verifique logs com o request-id/cf-ray.' : ''
+  const hint = typeof err.hint === 'string' ? err.hint.trim() : hintFromHtml
   const base = err.error || err.message || `HTTP ${res.status}`
   const meta = errorMetaString({ code, requestId, cfRay })
   const e = new Error([base, hint, meta].filter(Boolean).join(' • '))
-  ;(e as any).details = json
+  ;(e as any).details = json || (code ? { error: code } : null)
   ;(e as any).status = res.status
   ;(e as any).requestId = requestId
   ;(e as any).cfRay = cfRay
   ;(e as any).code = code
+  ;(e as any).rawText = nonJsonText.slice(0, 240)
   throw e
 }
 
@@ -203,7 +208,7 @@ async function apiBlob(path: string, opts: { adminToken?: string; signal?: Abort
 async function fetchJsonWithMeta(
   path: string,
   opts: { method?: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> } = {}
-): Promise<{ ok: boolean; status: number; requestId: string; json: any; text: string }> {
+): Promise<{ ok: boolean; status: number; requestId: string; cfRay: string; json: any; text: string }> {
   const method = (opts.method || 'GET').toUpperCase()
   const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers || {}) }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
@@ -216,6 +221,7 @@ async function fetchJsonWithMeta(
   })
 
   const requestId = String(res.headers.get('x-request-id') || '').trim()
+  const cfRay = String(res.headers.get('cf-ray') || '').trim()
   const text = await res.text()
   let json: any = null
   try {
@@ -223,7 +229,7 @@ async function fetchJsonWithMeta(
   } catch {
     json = null
   }
-  return { ok: res.ok, status: res.status, requestId, json, text }
+  return { ok: res.ok, status: res.status, requestId, cfRay, json, text }
 }
 
 let faceLibPromise: Promise<any> | null = null
@@ -310,8 +316,8 @@ export function PontoModule() {
   const [diagOpen, setDiagOpen] = useState(false)
   const [diagLoading, setDiagLoading] = useState(false)
   const [diagError, setDiagError] = useState<string | null>(null)
-  const [diagProxy, setDiagProxy] = useState<{ ok: boolean; status: number; requestId: string; json: any; text: string } | null>(null)
-  const [diagHealth, setDiagHealth] = useState<{ ok: boolean; status: number; requestId: string; json: any; text: string } | null>(null)
+  const [diagProxy, setDiagProxy] = useState<{ ok: boolean; status: number; requestId: string; cfRay: string; json: any; text: string } | null>(null)
+  const [diagHealth, setDiagHealth] = useState<{ ok: boolean; status: number; requestId: string; cfRay: string; json: any; text: string } | null>(null)
 
   const [deviceToken, setDeviceToken] = useState(() => {
     try { return localStorage.getItem(LS_DEVICE_TOKEN) || '' } catch { return '' }
@@ -556,9 +562,13 @@ export function PontoModule() {
       setCameraOwner(owner)
       toast.success('Câmera ativa')
     } catch (e: any) {
-      const details = e?.details as any
-      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
-        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      const errName = String(e?.name || '')
+      if (errName === 'NotAllowedError') {
+        toast.error('Permissão de câmera negada. Libere a câmera no navegador e tente novamente.')
+      } else if (errName === 'NotReadableError') {
+        toast.error('Não foi possível acessar a câmera. Feche outros apps que estejam usando a câmera e tente novamente.')
+      } else if (errName === 'NotFoundError') {
+        toast.error('Nenhuma câmera foi encontrada neste dispositivo.')
       } else {
         toast.error(e?.message || String(e))
       }
@@ -619,7 +629,12 @@ export function PontoModule() {
       )
       setMeRecords(res.data || [])
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const details = e?.details as any
+      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
+        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
       toastErrorMeta(e)
     } finally {
       setMeLoading(false)
@@ -1163,6 +1178,7 @@ export function PontoModule() {
                   <CardDescription className="break-words">
                     <span className="font-mono">GET /api/ponto/_proxy-status</span>
                     {diagProxy?.requestId ? <> • request: <span className="font-mono">{diagProxy.requestId}</span></> : null}
+                    {diagProxy?.cfRay ? <> • cf-ray: <span className="font-mono">{diagProxy.cfRay}</span></> : null}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1180,6 +1196,7 @@ export function PontoModule() {
                   <CardDescription className="break-words">
                     <span className="font-mono">GET /api/ponto/health</span>
                     {diagHealth?.requestId ? <> • request: <span className="font-mono">{diagHealth.requestId}</span></> : null}
+                    {diagHealth?.cfRay ? <> • cf-ray: <span className="font-mono">{diagHealth.cfRay}</span></> : null}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
