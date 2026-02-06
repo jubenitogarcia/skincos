@@ -78,6 +78,7 @@ jobs:
           AUTO_LOGIN: "1"
           SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          LOGIN_WAIT_MS: "120000"
           NO_SCREENSHOTS: "1"
           MUTATE_ADMIN: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
           MUTATE_EMPLOYEE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
@@ -94,6 +95,7 @@ jobs:
           AUTO_LOGIN: "1"
           SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          LOGIN_WAIT_MS: "120000"
           TRACE: "1"
           FULL_PAGE: "1"
           MUTATE_ADMIN: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
