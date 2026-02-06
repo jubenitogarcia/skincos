@@ -20,7 +20,7 @@ const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
 const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
-const DEMO_DATA_ACTIVE = (import.meta as any)?.env?.VITE_DEMO_DATA !== 'false'
+const DEMO_DATA_ACTIVE = (import.meta as any)?.env?.VITE_DEMO_DATA === 'true'
 
 function BuildCornerBadge() {
     const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
