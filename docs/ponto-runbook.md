@@ -102,7 +102,7 @@ NODE_PATH=frontend/node_modules node frontend/scripts/bootstrap-ponto-smoke-admi
 Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/storage-crm.json` (você cria isso rodando o `ponto-ui-smoke.cjs` em `HEADED=1` e logando manualmente).
 
 **O que ele valida**
-- Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
+- Build badge existe. Observação: a assercao de SHA so e aplicada quando o smoke e executado junto ao deploy (after-automerge) ou quando voce fornece um `expect_sha` no `workflow_dispatch`.
 - Diagnóstico carrega (`/_proxy-status` e `/health`).
 - Invariantes de UI (admin sem campo de token; PIN fallback do Kiosk oculto por padrão).
 - (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, e limpa em seguida.
