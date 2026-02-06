@@ -71,6 +71,8 @@ Artefatos: `output/playwright/` (screenshots + trace).
 Workflow: `.github/workflows/ponto-ui-smoke.yml`
 
 **Requisitos**
+- Habilitar o agendamento (repo → Settings → Secrets and variables → Actions → Variables):
+  - `ENABLE_PONTO_UI_SMOKE=true`
 - Criar um usuário dedicado “smoke bot” no CRM (evite usar credenciais pessoais).
 - Configurar os secrets no GitHub (repo → Settings → Secrets and variables → Actions):
   - `PONTO_SMOKE_EMAIL`

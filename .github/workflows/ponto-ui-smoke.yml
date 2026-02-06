@@ -23,6 +23,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Guard (enabled)
+        env:
+          ENABLE_PONTO_UI_SMOKE: ${{ vars.ENABLE_PONTO_UI_SMOKE }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME:-}" == "workflow_dispatch" ]]; then
+            echo "Manual run: proceeding regardless of ENABLE_PONTO_UI_SMOKE."
+            exit 0
+          fi
+          if [[ "${ENABLE_PONTO_UI_SMOKE:-}" != "true" ]]; then
+            echo "Ponto UI smoke is disabled (set repo variable ENABLE_PONTO_UI_SMOKE=true to enable scheduled runs)."
+            exit 0
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
