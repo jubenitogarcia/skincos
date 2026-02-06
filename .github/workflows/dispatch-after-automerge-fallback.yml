@@ -4,11 +4,9 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
-
 concurrency:
   group: dispatch-after-automerge-fallback
   cancel-in-progress: true
-
 permissions:
   actions: write
   pull-requests: read
