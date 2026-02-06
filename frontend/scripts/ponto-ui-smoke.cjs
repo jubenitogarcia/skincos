@@ -118,14 +118,40 @@ async function main() {
       throw new Error('AUTO_LOGIN is enabled but SMOKE_EMAIL/SMOKE_PASSWORD were not provided.')
     }
 
+    // Prefer API login to avoid flakiness from hydration/handlers not attached yet in CI.
+    // This also tends to be faster than driving the UI.
+    const api = await page.evaluate(async ({ email, password }) => {
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        })
+        const text = await res.text()
+        let json = null
+        try { json = text ? JSON.parse(text) : null } catch { json = null }
+        return { ok: res.ok, status: res.status, json, text: String(text || '').slice(0, 240) }
+      } catch (e) {
+        return { ok: false, status: 0, json: null, text: String(e && e.message ? e.message : e).slice(0, 240) }
+      }
+    }, { email: SMOKE_EMAIL, password: SMOKE_PASSWORD })
+
+    if (api.ok) return true
+
+    // Fallback: attempt UI login (useful if the API path changes).
+    // Keep this as a best-effort; final auth state is verified via /api/auth/me.
     const emailInput = page.locator('input[type="email"], input[autocomplete="email"], input[placeholder*="@empresa" i]').first()
     const passInput = page.locator('input[type="password"], input[autocomplete="current-password"]').first()
-    const submitButton = page.locator('button:has-text("Acessar Plataforma"), button:has-text("Entrar"), button:has-text("Acessar")').first()
+    const submitButton = page.locator('button:has-text("Acessar Plataforma"), button:has-text("Entrar"), button:has-text("Acessar"), [role="button"]:has-text("Acessar Plataforma")').first()
 
     await emailInput.waitFor({ timeout: 30_000 })
     await emailInput.fill(SMOKE_EMAIL)
     await passInput.fill(SMOKE_PASSWORD)
     await submitButton.click({ timeout: 30_000 })
+
+    // Expose the API failure as context (no credentials included).
+    console.log(`[ponto-ui-smoke] API login failed: HTTP ${api.status}${api.text ? ` • ${api.text}` : ''}`)
     return true
   }
 
