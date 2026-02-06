@@ -435,17 +435,21 @@ export default function AppFunctionalNeatlab() {
 		            try {
 		                const healthRes = await fetch('/api/insumos/health', { credentials: 'include', signal: ac.signal }).catch(() => null)
 
-			                let online: boolean | null = null
-			                let integrated: boolean | null = null
-			                let unidades: string[] = []
-		                if (healthRes?.ok) {
-		                    const h: any = await healthRes.json().catch(() => null)
-		                    online = Boolean(h?.ok)
-		                    integrated = typeof h?.dbConfigured === 'boolean' ? Boolean(h.dbConfigured) : null
-		                    unidades = Array.isArray(h?.unidades) ? h.unidades.filter(Boolean).map((x: any) => String(x)) : []
-		                } else if (healthRes) {
-		                    online = false
-		                }
+                let online: boolean | null = null
+                let integrated: boolean | null = null
+                let unidades: string[] = []
+                if (healthRes?.ok) {
+                    const h: any = await healthRes.json().catch(() => null)
+                    const ready =
+                        typeof h?.ready === 'boolean'
+                            ? h.ready
+                            : (typeof h?.dbConfigured === 'boolean' ? h.dbConfigured : Boolean(h?.ok))
+                    online = true
+                    integrated = typeof ready === 'boolean' ? Boolean(ready) : null
+                    unidades = Array.isArray(h?.unidades) ? h.unidades.filter(Boolean).map((x: any) => String(x)) : []
+                } else if (healthRes) {
+                    online = false
+                }
 
 		                const authed: boolean | null = Boolean(user?.username)
 		                const allowedUnits: string[] = Array.isArray(user?.allowedUnits)

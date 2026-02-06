@@ -13,6 +13,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieCh
 
 type InsumosHealth = {
   ok?: boolean
+  ready?: boolean
   service?: string
   runtime?: string
   storage?: string
@@ -1034,7 +1035,11 @@ export function InsumosModule() {
     }
   })
 
-  const canUseApi = !!health?.ok
+  const canUseApi = Boolean(
+    typeof health?.ready === 'boolean'
+      ? health.ready
+      : (typeof health?.dbConfigured === 'boolean' ? health.dbConfigured : health?.ok)
+  )
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
   const autoSyncSuspended = autoSyncSuspendedUntil > Date.now()

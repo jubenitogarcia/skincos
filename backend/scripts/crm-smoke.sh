@@ -34,6 +34,23 @@ req200_json() {
   fi
 }
 
+assert_body_has() {
+  local pattern="$1"
+  local description="$2"
+  if ! grep -qE "$pattern" "$TMP_BODY"; then
+    echo "[crm-smoke] FAIL (missing: $description)" >&2
+    echo "[crm-smoke] Body:" >&2
+    cat "$TMP_BODY" >&2 || true
+    exit 1
+  fi
+}
+
+assert_insumos_health_payload() {
+  assert_body_has "\"storage\"\\s*:\\s*\"d1\"" "storage=d1"
+  assert_body_has "\"dbConfigured\"\\s*:\\s*(true|false)" "dbConfigured boolean"
+  assert_body_has "\"ready\"\\s*:\\s*(true|false)" "ready boolean"
+}
+
 echo "[crm-smoke] CRM_URL=$CRM_URL"
 echo "[crm-smoke] API_URL=$API_URL"
 
@@ -42,9 +59,10 @@ req200_json "$CRM_URL/api/health"
 
 # Same-origin proxy sanity
 req200_json "$CRM_URL/api/insumos/health"
+assert_insumos_health_payload
 
 # Worker direct sanity
 req200_json "$API_URL/insumos/health"
+assert_insumos_health_payload
 
 echo "[crm-smoke] OK"
-
