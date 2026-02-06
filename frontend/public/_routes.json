@@ -3,6 +3,7 @@
     "include": [
         "/api/health",
         "/api/auth/*",
+        "/api/crm/*",
         "/api/insumos/*",
         "/api/placeholder/*",
         "/api/share/*",

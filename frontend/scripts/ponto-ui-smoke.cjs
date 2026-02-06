@@ -30,6 +30,7 @@ const LOGIN_WAIT_MS = Math.max(5_000, parseInt(String(process.env.LOGIN_WAIT_MS 
 const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
 const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
+const IS_CI = !!process.env.CI
 const AUTO_LOGIN = process.env.AUTO_LOGIN === '1' || process.env.AUTO_LOGIN === 'true'
 const SMOKE_EMAIL = String(process.env.SMOKE_EMAIL || '').trim()
 const SMOKE_PASSWORD = String(process.env.SMOKE_PASSWORD || '').trim()
@@ -55,6 +56,7 @@ async function main() {
   const storageStatePath = path.join(ARTIFACT_DIR, 'storage-crm.json')
 
   const viewport = { width: 1365, height: 860 }
+  const disableGpu = IS_CI || !HEADED
   const launchOpts = {
     headless: !HEADED,
     ...(CHANNEL ? { channel: CHANNEL } : {}),
@@ -64,8 +66,8 @@ async function main() {
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling',
-      '--disable-gpu',
       '--mute-audio',
+      ...(disableGpu ? ['--disable-gpu'] : []),
     ],
   }
 
@@ -84,6 +86,16 @@ async function main() {
       ...(fs.existsSync(storageStatePath) ? { storageState: storageStatePath } : {}),
     })
   }
+
+  // Speed up automation runs: UI text assertions don't need images/media/fonts.
+  if (!HEADED) {
+    await context.route('**/*', async (route) => {
+      const type = route.request().resourceType()
+      if (type === 'image' || type === 'media' || type === 'font') return route.abort()
+      return route.continue()
+    })
+  }
+
   await context.addInitScript(() => {
     try {
       // Prefer going straight into the Ponto module to avoid heavy default dashboards.
@@ -194,6 +206,40 @@ async function main() {
 
     await page.locator('text=GET /api/ponto/_proxy-status').first().waitFor({ timeout: 30_000 })
     await page.locator('text=GET /api/ponto/health').first().waitFor({ timeout: 30_000 })
+
+    const diag = await page.evaluate(async () => {
+      const out = { proxy: null, health: null, proxyStatus: 0, healthStatus: 0, proxyText: '', healthText: '' }
+      try {
+        const res = await fetch('/api/ponto/_proxy-status', { credentials: 'include' })
+        out.proxyStatus = res.status
+        out.proxyText = await res.text()
+        try { out.proxy = out.proxyText ? JSON.parse(out.proxyText) : null } catch { out.proxy = null }
+      } catch (e) {
+        out.proxyText = String(e && e.message ? e.message : e)
+      }
+      try {
+        const res = await fetch('/api/ponto/health', { credentials: 'include' })
+        out.healthStatus = res.status
+        out.healthText = await res.text()
+        try { out.health = out.healthText ? JSON.parse(out.healthText) : null } catch { out.health = null }
+      } catch (e) {
+        out.healthText = String(e && e.message ? e.message : e)
+      }
+      return out
+    })
+
+    if (!diag.proxy || diag.proxy.ok !== true) {
+      throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
+    }
+    if (!diag.proxy.effectiveTargetConfigured) throw new Error('Proxy status: effectiveTargetConfigured=false')
+    if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false (PONTO_API_TARGET missing)')
+    if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
+    if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
+    if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
+
+    if (!diag.health || diag.health.ok !== true) {
+      throw new Error(`Health failed: HTTP ${diag.healthStatus} body=${String(diag.healthText || '').slice(0, 260)}`)
+    }
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(500)
