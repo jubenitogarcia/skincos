@@ -216,7 +216,6 @@ export function useWebSocket(config: WebSocketConfig = {}) {
 
       const fullMessage: WebSocketMessage = { ...message, timestamp: toISODateString(new Date()) }
       if (import.meta.env.DEV && String(message.type || '').toLowerCase() === 'ping') {
-        // eslint-disable-next-line no-console
         console.debug('[ws] ping')
       }
       wsRef.current.send(JSON.stringify(fullMessage))
@@ -236,18 +235,6 @@ export function useWebSocket(config: WebSocketConfig = {}) {
     connect()
     return () => disconnect()
   }, [connect, disconnect])
-
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    if (!enabled) return
-    const interval = setInterval(() => {
-      if (Math.random() < 0.05 && state.isConnected) {
-        console.log('Simulating connection issue...')
-        handleClose()
-      }
-    }, 30000)
-    return () => clearInterval(interval)
-  }, [enabled, handleClose, state.isConnected])
 
   return { ...state, connect, disconnect, send, subscribe }
 }

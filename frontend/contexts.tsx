@@ -613,47 +613,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   })
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return
-    if (notifications.length === 0) {
-      const demoNotifications: Notification[] = [
-        {
-          id: '1',
-          title: 'Nova oportunidade qualificada',
-          message: 'Lead TechCorp passou para etapa de qualificação com score IA: 92%',
-          type: 'success',
-          priority: 'high',
-          timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-          read: false,
-          category: 'sales',
-          relatedId: '1',
-          relatedType: 'opportunity'
-        },
-        {
-          id: '2',
-          title: 'Cliente em risco de churn',
-          message: 'DataFlow Corp não interage há 30 dias. Ação recomendada: campanha reativação',
-          type: 'warning',
-          priority: 'high',
-          timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-          read: false,
-          category: 'retention'
-        },
-        {
-          id: '3',
-          title: 'Meta mensal atingida',
-          message: 'Parabéns! Você atingiu 105% da meta de vendas deste mês',
-          type: 'success',
-          priority: 'medium',
-          timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-          read: true,
-          category: 'achievement'
-        }
-      ]
-      setNotifications(demoNotifications)
-    }
-  }, [notifications.length, setNotifications])
-
-  useEffect(() => {
     const unsubscribe = webSocket.subscribe('notification', (data) => {
       const notification: Notification = {
         id: data.id || Date.now().toString(),
@@ -678,60 +637,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     return unsubscribe
   }, [webSocket, setNotifications])
-
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    if (!webSocket.isConnected) return
-
-    const simulateNotifications = () => {
-      const notificationTypes = [
-        {
-          title: 'Nova mensagem WhatsApp',
-          message: 'Cliente Tech Solutions enviou uma mensagem',
-          type: 'info' as const,
-          priority: 'medium' as const,
-          category: 'communication'
-        },
-        {
-          title: 'Oportunidade movida',
-          message: 'Oportunidade CloudCorp movida para "Negociação"',
-          type: 'info' as const,
-          priority: 'low' as const,
-          category: 'pipeline'
-        },
-        {
-          title: 'Tarefa vencida',
-          message: 'Follow-up com NextGen está atrasado em 2 dias',
-          type: 'warning' as const,
-          priority: 'high' as const,
-          category: 'tasks'
-        },
-        {
-          title: 'Novo lead qualificado',
-          message: 'IA identificou lead de alta qualidade: InnovateX',
-          type: 'success' as const,
-          priority: 'high' as const,
-          category: 'leads'
-        }
-      ]
-
-      if (Math.random() < 0.2) {
-        const randomNotification = notificationTypes[Math.floor(Math.random() * notificationTypes.length)]
-
-        const notification: Notification = {
-          id: Date.now().toString(),
-          ...randomNotification,
-          timestamp: new Date().toISOString(),
-          read: false
-        }
-
-        setNotifications(prev => [notification, ...prev.slice(0, 49)])
-      }
-    }
-
-    const interval = setInterval(simulateNotifications, 60000)
-    return () => clearInterval(interval)
-  }, [webSocket.isConnected, setNotifications])
 
   const addNotification = (notificationData: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
     const notification: Notification = {
