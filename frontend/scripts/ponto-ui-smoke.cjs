@@ -30,6 +30,9 @@ const LOGIN_WAIT_MS = Math.max(5_000, parseInt(String(process.env.LOGIN_WAIT_MS 
 const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
 const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
+const AUTO_LOGIN = process.env.AUTO_LOGIN === '1' || process.env.AUTO_LOGIN === 'true'
+const SMOKE_EMAIL = String(process.env.SMOKE_EMAIL || '').trim()
+const SMOKE_PASSWORD = String(process.env.SMOKE_PASSWORD || '').trim()
 const CHANNEL = String(process.env.CHANNEL || '').trim()
 const PERSISTENT = process.env.PERSISTENT === '1' || process.env.PERSISTENT === 'true'
 const EXPECT_BUILD_SHA = String(process.env.EXPECT_BUILD_SHA || '').trim().toLowerCase()
@@ -94,6 +97,23 @@ async function main() {
     await page.screenshot({ path: shot(name), fullPage: FULL_PAGE })
   }
 
+  async function tryAutoLogin() {
+    if (!AUTO_LOGIN) return false
+    if (!SMOKE_EMAIL || !SMOKE_PASSWORD) {
+      throw new Error('AUTO_LOGIN is enabled but SMOKE_EMAIL/SMOKE_PASSWORD were not provided.')
+    }
+
+    const emailInput = page.locator('input[type="email"], input[autocomplete="email"], input[placeholder*="@empresa" i]').first()
+    const passInput = page.locator('input[type="password"], input[autocomplete="current-password"]').first()
+    const submitButton = page.locator('button:has-text("Acessar Plataforma"), button:has-text("Entrar"), button:has-text("Acessar")').first()
+
+    await emailInput.waitFor({ timeout: 30_000 })
+    await emailInput.fill(SMOKE_EMAIL)
+    await passInput.fill(SMOKE_PASSWORD)
+    await submitButton.click({ timeout: 30_000 })
+    return true
+  }
+
   // Tracing is extremely useful when debugging failures, but it can slow down the browser significantly.
   // Keep it opt-in for routine smoke runs.
   if (TRACE) await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
@@ -122,11 +142,15 @@ async function main() {
     const isLogin = await loginMarker.isVisible().catch(() => false)
     if (isLogin) {
       console.log('[ponto-ui-smoke] Not authenticated yet.')
-      console.log('[ponto-ui-smoke] If running headed (HEADED=1), complete login in the opened window.')
+      if (AUTO_LOGIN) console.log('[ponto-ui-smoke] AUTO_LOGIN enabled: attempting login.')
+      else console.log('[ponto-ui-smoke] If running headed (HEADED=1), complete login in the opened window.')
       console.log(`[ponto-ui-smoke] Waiting up to ${Math.ceil(LOGIN_WAIT_MS / 1000)}s for login...`)
     }
 
     if (isLogin) {
+      if (AUTO_LOGIN) {
+        await tryAutoLogin()
+      }
       await loginMarker.waitFor({ state: 'hidden', timeout: LOGIN_WAIT_MS })
     }
     // Persist auth for the next run without needing a persistent profile.
@@ -147,9 +171,18 @@ async function main() {
     await buildBadge.waitFor({ timeout: 30_000 })
     if (EXPECT_BUILD_SHA) {
       const expectedShort = EXPECT_BUILD_SHA.slice(0, 7)
-      const badgeText = String((await buildBadge.textContent().catch(() => '')) || '').toLowerCase()
-      if (!badgeText.includes(expectedShort)) {
-        throw new Error(`Build badge mismatch (expected ${expectedShort}). Got: ${badgeText || '(empty)'}`)
+      let lastText = ''
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        const badgeText = String((await buildBadge.textContent().catch(() => '')) || '').toLowerCase()
+        lastText = badgeText
+        if (badgeText.includes(expectedShort)) break
+        if (attempt >= 4) {
+          throw new Error(`Build badge mismatch (expected ${expectedShort}). Got: ${lastText || '(empty)'}`)
+        }
+        // Sometimes Pages env + new deployment propagation can lag a little.
+        await page.waitForTimeout(3000)
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
+        await page.waitForTimeout(1200)
       }
     }
     await maybeScreenshot('ponto-open')
@@ -327,7 +360,8 @@ async function main() {
 
           return { actorEmail, employeeId, punch }
         }, { doPunch: MUTATE_PUNCH })
-        console.log(`[ponto-ui-smoke] Employee link + PIN OK (employeeId=${out.employeeId} actor=${out.actorEmail})${out.punch ? ' + punch' : ''}`)
+        // Do not print actorEmail (can leak PII in CI logs).
+        console.log(`[ponto-ui-smoke] Employee link + PIN OK (employeeId=${out.employeeId})${out.punch ? ' + punch' : ''}`)
       }
     }
 

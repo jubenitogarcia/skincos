@@ -1,0 +1,114 @@
+name: Ponto UI Smoke (prod)
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      mutate:
+        description: "Perform admin+employee create/link+delete (more coverage, writes data briefly)."
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ponto-ui-smoke-prod
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: frontend
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-chromium
+
+      - name: Install Playwright Chromium (with deps)
+        run: npx --yes playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Resolve expected SHA
+        id: sha
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check required secrets
+        env:
+          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SMOKE_EMAIL:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
+            echo "Missing GitHub Actions secrets: PONTO_SMOKE_EMAIL / PONTO_SMOKE_PASSWORD"
+            echo "Configure them in the repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Run UI smoke (fast)
+        id: smoke
+        continue-on-error: true
+        env:
+          CRM_URL: https://crm.skincos.com.br
+          EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
+          AUTO_LOGIN: "1"
+          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          NO_SCREENSHOTS: "1"
+          MUTATE_ADMIN: ${{ (github.event_name != 'workflow_dispatch') || (github.event.inputs.mutate == true) || (github.event.inputs.mutate == 'true') }}
+          MUTATE_EMPLOYEE: ${{ (github.event_name != 'workflow_dispatch') || (github.event.inputs.mutate == true) || (github.event.inputs.mutate == 'true') }}
+          NODE_PATH: frontend/node_modules
+        run: |
+          set -euo pipefail
+          node frontend/scripts/ponto-ui-smoke.cjs
+
+      - name: Re-run UI smoke with trace (on failure)
+        if: ${{ steps.smoke.outcome != 'success' }}
+        env:
+          CRM_URL: https://crm.skincos.com.br
+          EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
+          AUTO_LOGIN: "1"
+          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          TRACE: "1"
+          FULL_PAGE: "1"
+          MUTATE_ADMIN: ${{ (github.event_name != 'workflow_dispatch') || (github.event.inputs.mutate == true) || (github.event.inputs.mutate == 'true') }}
+          MUTATE_EMPLOYEE: ${{ (github.event_name != 'workflow_dispatch') || (github.event.inputs.mutate == true) || (github.event.inputs.mutate == 'true') }}
+          NODE_PATH: frontend/node_modules
+        run: |
+          set -euo pipefail
+          node frontend/scripts/ponto-ui-smoke.cjs
+
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponto-ui-smoke-artifacts
+          path: output/playwright/
+
+      - name: Fail if fast smoke failed
+        if: ${{ steps.smoke.outcome != 'success' }}
+        run: exit 1
