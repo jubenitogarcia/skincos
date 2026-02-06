@@ -34,11 +34,6 @@ export async function handleBackupRoutes({
     appendAuditLog,
     enqueueNotificationsRefresh,
     unidade,
-    spreadsheetId,
-    accessToken,
-    sheetRange,
-    userRange,
-    movimentacoesRange,
     ip,
     userAgent,
     idempotencyKey,
@@ -84,8 +79,6 @@ export async function handleBackupRoutes({
 
             await appendAuditLog({
                 env,
-                spreadsheetId,
-                accessToken,
                 actor: auth.user.username,
                 role: auth.user.role,
                 ip,
@@ -337,8 +330,6 @@ export async function handleBackupRoutes({
 
             await appendAuditLog({
                 env,
-                spreadsheetId,
-                accessToken,
                 actor: auth.user.username,
                 role: auth.user.role,
                 ip,

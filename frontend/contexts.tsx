@@ -3,7 +3,6 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useReplitAuth } from '@/useReplitAuth'
 import { logContextEvent } from '@/ContextDebugger'
 import { createAuthHook } from '@/createRequiredContextHook'
-import { isNoAuthMode, logNoAuthMode } from '@/noAuthMode'
 import { fetchInstagramAccountMetrics } from '@/instagramIntegration'
 import { useWebSocket } from '@/useWebSocket'
 import { useKV } from '@/spark-mock'
@@ -61,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const user = replitAuth?.user || null
   const isLoading = replitAuth?.isLoading || false
   const isAuthenticated = replitAuth?.isAuthenticated || false
-  const shouldShowLoadingOverlay = isLoading && !isNoAuthMode()
+  const shouldShowLoadingOverlay = isLoading
   const [actionLoading, setActionLoading] = useState(false)
   const [initProgress, setInitProgress] = useState(0)
   const initStartedAtRef = React.useRef<number | null>(null)
@@ -144,10 +143,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signIn = async (email: string, password: string) => {
-    if (isNoAuthMode()) {
-      logNoAuthMode('AuthContext.signIn', 'Bypassing login redirect - already authenticated in NO_AUTH mode')
-      return Promise.resolve()
-    }
     setActionLoading(true)
     try {
       const res = await fetchWithTimeout(
@@ -188,10 +183,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signUp = async (name: string, email: string, password: string, inviteToken: string) => {
-    if (isNoAuthMode()) {
-      logNoAuthMode('AuthContext.signUp', 'Bypassing signup redirect - already authenticated in NO_AUTH mode')
-      return Promise.resolve()
-    }
     setActionLoading(true)
     try {
       const res = await fetchWithTimeout(
@@ -229,10 +220,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = () => {
-    if (isNoAuthMode()) {
-      logNoAuthMode('AuthContext.signOut', 'Bypassing logout redirect - staying authenticated in NO_AUTH mode')
-      return
-    }
     fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
       .catch(() => null)
       .finally(() => { window.location.href = '/' })

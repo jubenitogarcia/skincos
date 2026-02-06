@@ -11,7 +11,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
 import { BrDatePickerInput } from '@/br-date-picker'
-import { isNoAuthMode } from '@/noAuthMode'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useKV } from '@/spark-mock'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
@@ -1206,27 +1205,6 @@ export default function AppFunctionalNeatlab() {
 	                                </div>
 	                            ) : null}
                         </header>
-
-                        {/* NO_AUTH DEBUG BANNER */}
-                        {isNoAuthMode() && (
-                            <div className="bg-gradient-to-r from-orange-600 via-red-600 to-pink-600 border-b border-red-500/30 px-8 py-3 animate-pulse">
-                                <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">🔓</span>
-                                        <span className="font-bold text-white text-sm">NO_AUTH MODE ATIVO</span>
-                                    </div>
-                                    <div className="w-px h-4 bg-white/30"></div>
-                                    <div className="text-xs text-white/90">
-                                        Autenticação desabilitada para desenvolvimento • Não usar em produção
-                                    </div>
-                                    <div className="ml-auto">
-                                        <Badge className="bg-red-500/20 text-red-100 border-red-400/30 text-xs">
-                                            DEVELOPMENT ONLY
-                                        </Badge>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
 
                         {/* Premium Main Content */}
                         <main className="flex-1 overflow-auto p-8 relative">
