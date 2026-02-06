@@ -5,6 +5,11 @@ on:
     - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
+      expect_sha:
+        description: "Optional: assert the Ponto build badge matches this commit SHA (first 7 chars). Leave empty to skip."
+        required: false
+        default: ""
+        type: string
       mutate:
         description: "Perform admin+employee create/link+delete (more coverage, writes data briefly)."
         required: false
@@ -55,7 +60,17 @@ jobs:
         id: sha
         run: |
           set -euo pipefail
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          INPUT_SHA="${{ github.event.inputs.expect_sha }}"
+          INPUT_SHA="$(echo "${INPUT_SHA:-}" | tr -d '[:space:]')"
+          if [[ -n "${INPUT_SHA:-}" ]]; then
+            echo "sha=${INPUT_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check required secrets
         env:

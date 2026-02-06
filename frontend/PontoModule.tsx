@@ -356,7 +356,8 @@ export function PontoModule() {
     bestDistance: number | null
     threshold: number
   } | null>(null)
-  const [autoIdentify, setAutoIdentify] = useState(true)
+  // Avoid burning CPU in automated browser sessions (Playwright sets navigator.webdriver).
+  const [autoIdentify, setAutoIdentify] = useState(() => !(typeof navigator !== 'undefined' && (navigator as any).webdriver))
   const [devicePinOpen, setDevicePinOpen] = useState(false)
 
   const [pinEmployeeId, setPinEmployeeId] = useState<string>('')
@@ -764,10 +765,17 @@ export function PontoModule() {
   useEffect(() => {
     if (tab !== 'device') return
     setDevicePinOpen(false)
+    setIdentifyResult(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'device') return
     if (!autoIdentify) return
+    if (devicePinOpen) return
     if (!stream || cameraOwner !== 'device') return
     if (!deviceToken.trim()) return
-    const intervalMs = 3000
+    const intervalMs = identifyResult?.match ? 8000 : 3000
     let alive = true
     let inFlight = false
     let timeout: any = null
@@ -813,7 +821,7 @@ export function PontoModule() {
       alive = false
       if (timeout) clearTimeout(timeout)
     }
-  }, [autoIdentify, cameraOwner, deviceConfig, deviceToken, stream, tab])
+  }, [autoIdentify, cameraOwner, deviceConfig, deviceToken, devicePinOpen, identifyResult?.match, stream, tab])
 
   async function devicePunchFace() {
     if (!deviceToken.trim()) return toast.error('Informe o token do dispositivo')
