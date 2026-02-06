@@ -752,35 +752,51 @@ export function PontoModule() {
     if (!autoIdentify) return
     if (!stream || cameraOwner !== 'device') return
     if (!deviceToken.trim()) return
+    const intervalMs = 3000
     let alive = true
-    const interval = setInterval(() => {
-      void (async () => {
-        if (!alive) return
+    let inFlight = false
+    let timeout: any = null
+
+    const tick = async () => {
+      if (!alive) return
+      if (document.visibilityState !== 'visible') return
+      if (inFlight) return
+      inFlight = true
+      try {
         const videoEl = deviceVideoRef.current
         if (!videoEl) return
         const ok = await ensureModelsUI()
         if (!ok) return
-        try {
-          const descriptor = await captureDescriptor(videoEl)
-          const res = await apiJson<{
-            ok: boolean
-            match: { employeeId: string; name: string; distance: number } | null
-            bestDistance: number | null
-            threshold: number
-          }>('/api/ponto/device/identify', {
-            deviceToken,
-            method: 'POST',
-            body: { descriptor, threshold: deviceConfig?.faceThresholdDefault ?? 0.52 }
-          })
-          setIdentifyResult({ match: res.match, bestDistance: res.bestDistance, threshold: res.threshold })
-        } catch {
-          // ignore noisy frames
-        }
-      })()
-    }, 1800)
+        const descriptor = await captureDescriptor(videoEl)
+        const res = await apiJson<{
+          ok: boolean
+          match: { employeeId: string; name: string; distance: number } | null
+          bestDistance: number | null
+          threshold: number
+        }>('/api/ponto/device/identify', {
+          deviceToken,
+          method: 'POST',
+          body: { descriptor, threshold: deviceConfig?.faceThresholdDefault ?? 0.52 }
+        })
+        setIdentifyResult({ match: res.match, bestDistance: res.bestDistance, threshold: res.threshold })
+      } catch {
+        // ignore noisy frames
+      } finally {
+        inFlight = false
+      }
+    }
+
+    const schedule = () => {
+      if (!alive) return
+      timeout = setTimeout(() => {
+        void tick().finally(schedule)
+      }, intervalMs)
+    }
+
+    schedule()
     return () => {
       alive = false
-      clearInterval(interval)
+      if (timeout) clearTimeout(timeout)
     }
   }, [autoIdentify, cameraOwner, deviceConfig, deviceToken, stream, tab])
 
