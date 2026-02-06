@@ -49,6 +49,10 @@ function stableStringify(value) {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
+}
+
 function toCsvCell(value) {
   const s = String(value ?? '')
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
@@ -486,46 +490,64 @@ async function ensurePontoSchema(db) {
 }
 
 async function withTxn(db, fn) {
-  await db.prepare('BEGIN').run()
   try {
-    const out = await fn()
-    await db.prepare('COMMIT').run()
-    return out
+    // Cloudflare D1 does not allow explicit BEGIN/COMMIT statements.
+    // We keep this helper for call-site readability, but it is *not* a DB transaction.
+    // Atomicity is handled where needed (ex: audit chain) via optimistic CAS.
+    return await fn()
   } catch (e) {
-    try { await db.prepare('ROLLBACK').run() } catch { /* ignore */ }
     throw e
   }
 }
 
 async function getAuditLastHash(db) {
   const row = await db.prepare(`SELECT value FROM ponto_meta WHERE key = ? LIMIT 1`).bind('audit_last_hash').first()
-  return row?.value ? String(row.value) : null
+  const v = row?.value ? String(row.value) : ''
+  return v ? v : null
 }
 
-async function setAuditLastHash(db, hash) {
-  await db.prepare(
-    `INSERT INTO ponto_meta (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).bind('audit_last_hash', String(hash || '')).run()
+async function ensureAuditLastHashRow(db) {
+  await db.prepare(`INSERT OR IGNORE INTO ponto_meta (key, value) VALUES (?, ?)`).bind('audit_last_hash', '').run()
+}
+
+async function casSetAuditLastHash(db, expectedPrevHash, nextHash) {
+  const expected = expectedPrevHash || ''
+  const res = await db
+    .prepare(`UPDATE ponto_meta SET value=? WHERE key=? AND value=?`)
+    .bind(String(nextHash || ''), 'audit_last_hash', expected)
+    .run()
+  return Number(res?.meta?.changes || 0) === 1
 }
 
 async function writeAudit(db, env, type, data, actor) {
   const now = new Date().toISOString()
-  const id = crypto.randomUUID()
-  const prevHash = await getAuditLastHash(db)
-  const payload = { v: 1, id, type, at: now, actor, data, prevHash }
-  const hashInput = (prevHash || '') + '\n' + stableStringify(payload)
-  const hash = await sha256HexUtf8(hashInput)
   const auditKey = String(env?.PONTO_AUDIT_HMAC_KEY || '').trim()
-  const hmac = auditKey ? await hmacSha256Hex(auditKey, hashInput) : null
-  await db.prepare(
-    `INSERT INTO ponto_audit (id, v, type, at, actor_json, data_json, prev_hash, hash, hmac, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(id, 1, type, now, JSON.stringify(actor || {}), JSON.stringify(data || {}), prevHash, hash, hmac, now)
-    .run()
-  await setAuditLastHash(db, hash)
-  return { ...payload, hash, hmac }
+  await ensureAuditLastHashRow(db)
+
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    const id = crypto.randomUUID()
+    const prevHash = await getAuditLastHash(db)
+    const payload = { v: 1, id, type, at: now, actor, data, prevHash }
+    const hashInput = (prevHash || '') + '\n' + stableStringify(payload)
+    const hash = await sha256HexUtf8(hashInput)
+    const hmac = auditKey ? await hmacSha256Hex(auditKey, hashInput) : null
+
+    await db.prepare(
+      `INSERT INTO ponto_audit (id, v, type, at, actor_json, data_json, prev_hash, hash, hmac, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(id, 1, type, now, JSON.stringify(actor || {}), JSON.stringify(data || {}), prevHash, hash, hmac, now)
+      .run()
+
+    const ok = await casSetAuditLastHash(db, prevHash, hash)
+    if (ok) return { ...payload, hash, hmac }
+
+    // Another writer advanced the chain; delete the orphaned row and retry.
+    try { await db.prepare(`DELETE FROM ponto_audit WHERE id = ?`).bind(id).run() } catch { /* ignore */ }
+    await sleep(10 + attempt * 20)
+  }
+
+  throw new Error('AUDIT_CAS_FAILED')
 }
 
 async function requireAdmin({ request, env, withCORS, appOrigin }) {
