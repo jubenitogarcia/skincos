@@ -307,7 +307,10 @@ async function main() {
       throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
     }
     if (!diag.proxy.effectiveTargetConfigured) throw new Error('Proxy status: effectiveTargetConfigured=false')
-    if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false (PONTO_API_TARGET missing)')
+    if (!diag.proxy.targetConfigured) {
+      // Not a hard failure: the proxy can fall back to INSUMOS_API_TARGET. We still require an effective target above.
+      console.log('[ponto-ui-smoke] WARN: Proxy status: targetConfigured=false (PONTO_API_TARGET missing; using fallback target)')
+    }
     if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
     if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
     if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
@@ -466,6 +469,15 @@ async function main() {
               throw new Error(`me punch failed: HTTP ${punchRes.status} body=${punchText.slice(0, 400)}`)
             }
             punch = punchJson?.data || null
+
+            // Verify audit chain is still consistent after a punch write.
+            const auditRes = await fetch('/api/ponto/admin/audit/verify', { credentials: 'include' })
+            const auditText = await auditRes.text()
+            let auditJson = null
+            try { auditJson = auditText ? JSON.parse(auditText) : null } catch {}
+            if (!auditRes.ok || !auditJson?.ok) {
+              throw new Error(`audit verify failed: HTTP ${auditRes.status} body=${auditText.slice(0, 400)}`)
+            }
           }
 
           const delRes = await fetch(`/api/ponto/admin/employees/${encodeURIComponent(employeeId)}`, {
