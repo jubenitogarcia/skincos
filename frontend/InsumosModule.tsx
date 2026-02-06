@@ -629,47 +629,94 @@ async function apiJson<T>(
     retryOnCsrf?: () => Promise<string | null>
   } = {}
 ): Promise<T> {
-  const method = opts.method || 'GET'
+  const method = String(opts.method || 'GET').toUpperCase()
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
   if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey
 
   const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`
-  const res = await fetch(url, {
-    method,
-    headers,
-    credentials: 'include',
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: opts.signal
-  })
 
-  const text = await res.text()
-  let json: unknown = null
-  try {
-    json = text ? JSON.parse(text) : null
-  } catch {
-    json = null
+  // Prevent browser "network storms" by:
+  // - limiting concurrent in-flight requests (Overview/Insights fan-out is heavy)
+  // - coalescing identical GETs (best-effort) to avoid duplicate loads on mount/refresh
+  const MAX_CONCURRENCY = 4
+  ;(globalThis as any).__insumosApiGate ??= { active: 0, queue: [] as Array<() => void>, inflight: new Map<string, Promise<any>>() }
+  const gate = (globalThis as any).__insumosApiGate as {
+    active: number
+    queue: Array<() => void>
+    inflight: Map<string, Promise<any>>
   }
 
-  if (res.ok) return json as T
-
-  const err = (json || {}) as ApiError
-  const message = err.error || err.message || `HTTP ${res.status}`
-
-  if (res.status === 403 && String(err.code || '').toUpperCase() === 'CSRF_INVALID' && opts.retryOnCsrf) {
-    const nextCsrf = await opts.retryOnCsrf()
-    if (nextCsrf) {
-      return apiJson<T>(path, { ...opts, csrfToken: nextCsrf, retryOnCsrf: undefined })
+  const withSlot = async <R,>(fn: () => Promise<R>): Promise<R> => {
+    if (gate.active >= MAX_CONCURRENCY) await new Promise<void>((resolve) => gate.queue.push(resolve))
+    gate.active++
+    try {
+      return await fn()
+    } finally {
+      gate.active = Math.max(0, gate.active - 1)
+      const next = gate.queue.shift()
+      if (next) next()
     }
   }
 
-  const ex = new Error(message) as any
-  ex.status = res.status
-  ex.code = err.code
-  ex.registros = Array.isArray(err.registros) ? err.registros : []
-  ex.candidates = Array.isArray((err as any).candidates) ? (err as any).candidates : []
-  throw ex
+  const doFetch = () =>
+    withSlot(async () => {
+      const res = await fetch(url, {
+        method,
+        headers,
+        credentials: 'include',
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        signal: opts.signal
+      })
+
+      const requestId = res.headers.get('x-request-id') || res.headers.get('X-Request-Id')
+
+      const text = await res.text()
+      let json: unknown = null
+      try {
+        json = text ? JSON.parse(text) : null
+      } catch {
+        json = null
+      }
+
+      if (res.ok) return json as T
+
+      const err = (json || {}) as ApiError
+      const message = err.error || err.message || `HTTP ${res.status}`
+
+      if (res.status === 403 && String(err.code || '').toUpperCase() === 'CSRF_INVALID' && opts.retryOnCsrf) {
+        const nextCsrf = await opts.retryOnCsrf()
+        if (nextCsrf) {
+          return apiJson<T>(path, { ...opts, csrfToken: nextCsrf, retryOnCsrf: undefined })
+        }
+      }
+
+      const ex = new Error(requestId ? `${message} • req ${requestId}` : message) as any
+      ex.status = res.status
+      ex.code = err.code
+      ex.requestId = requestId || null
+      ex.registros = Array.isArray(err.registros) ? err.registros : []
+      ex.candidates = Array.isArray((err as any).candidates) ? (err as any).candidates : []
+      throw ex
+    })
+
+  const shouldDedupe = method === 'GET' && !opts.signal
+  if (!shouldDedupe) return doFetch()
+
+  const key = `${method} ${url}`
+  const existing = gate.inflight.get(key)
+  if (existing) return existing as Promise<T>
+
+  const p = doFetch().finally(() => {
+    try {
+      gate.inflight.delete(key)
+    } catch {
+      // ignore
+    }
+  })
+  gate.inflight.set(key, p)
+  return p
 }
 
 export function InsumosModule() {
@@ -718,6 +765,8 @@ export function InsumosModule() {
   const quickLookupTokenRef = React.useRef(0)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const overviewAbortRef = React.useRef<AbortController | null>(null)
+  const insightsAbortRef = React.useRef<AbortController | null>(null)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -2513,10 +2562,17 @@ export function InsumosModule() {
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
-  const loadOverview = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setOverviewLoading(true)
-    try {
+	  const loadOverview = React.useCallback(async () => {
+	    if (!canUseApi || !isAuthed) return
+	    try {
+	      overviewAbortRef.current?.abort()
+	    } catch {
+	      // ignore
+	    }
+	    const ac = new AbortController()
+	    overviewAbortRef.current = ac
+	    setOverviewLoading(true)
+	    try {
       const now = new Date()
       const yyyyMmDd = (d: Date) => d.toISOString().slice(0, 10)
       let de = ''
@@ -2539,26 +2595,28 @@ export function InsumosModule() {
         de = yyyyMmDd(start)
       }
 
-	      const params = `unidade=${encodeURIComponent(unidade)}`
-	      const [estoque, notif, act, roi, quality, movs] = await Promise.all([
-	        apiJson<{ success?: boolean; data?: { resumo?: EstoqueResumo; itens?: Insumo[] } }>(`/relatorios/estoque?${params}`),
-	        apiJson<{ success?: boolean; data?: NotificationsSummary }>(`/notifications/summary?${params}`),
-	        apiJson<{ success?: boolean; data?: Actionables }>(`/analytics/actionables?${params}`),
-	        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${params}`),
-	        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '120' }).toString()}`),
-	        apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(
-          `/movimentacoes?${new URLSearchParams({
-            unidade,
-            limite: '400',
-            de,
-            ate
-          }).toString()}`
-        )
-      ])
-	      setOverviewResumo(estoque?.data?.resumo || null)
-	      setOverviewInsumos(Array.isArray(estoque?.data?.itens) ? (estoque!.data!.itens as any) : null)
-	      setOverviewNotifications(notif?.data || null)
-	      setOverviewActionables(act?.data || null)
+		      const params = `unidade=${encodeURIComponent(unidade)}`
+		      const [estoque, notif, act, roi, quality, movs] = await Promise.all([
+		        apiJson<{ success?: boolean; data?: { resumo?: EstoqueResumo; itens?: Insumo[] } }>(`/relatorios/estoque?${params}`, { signal: ac.signal }),
+		        apiJson<{ success?: boolean; data?: NotificationsSummary }>(`/notifications/summary?${params}`, { signal: ac.signal }),
+		        apiJson<{ success?: boolean; data?: Actionables }>(`/analytics/actionables?${params}`, { signal: ac.signal }),
+		        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${params}`, { signal: ac.signal }),
+		        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '120' }).toString()}`, { signal: ac.signal }),
+		        apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(
+	          `/movimentacoes?${new URLSearchParams({
+	            unidade,
+	            limite: '400',
+	            de,
+	            ate
+	          }).toString()}`,
+	          { signal: ac.signal }
+	        )
+	      ])
+		      if (overviewAbortRef.current !== ac) return
+		      setOverviewResumo(estoque?.data?.resumo || null)
+		      setOverviewInsumos(Array.isArray(estoque?.data?.itens) ? (estoque!.data!.itens as any) : null)
+		      setOverviewNotifications(notif?.data || null)
+		      setOverviewActionables(act?.data || null)
 
       setOverviewRoi(roi?.data || null)
       setOverviewQuality(quality?.data || null)
@@ -2605,20 +2663,25 @@ export function InsumosModule() {
       }
       const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
       setOverviewMovSeries(Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)).slice(-limit))
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-      setOverviewResumo(null)
-      setOverviewNotifications(null)
-      setOverviewActionables(null)
-      setOverviewRoi(null)
-      setOverviewQuality(null)
-      setOverviewMovResumo(null)
-      setOverviewMovSeries([])
-    } finally {
-      setOverviewLoaded(true)
-      setOverviewLoading(false)
-    }
-  }, [canUseApi, isAuthed, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
+	    } catch (e) {
+	      if ((e as any)?.name === 'AbortError') return
+	      if (overviewAbortRef.current !== ac) return
+	      toast.error(e instanceof Error ? e.message : String(e))
+	      setOverviewResumo(null)
+	      setOverviewNotifications(null)
+	      setOverviewActionables(null)
+	      setOverviewRoi(null)
+	      setOverviewQuality(null)
+	      setOverviewMovResumo(null)
+	      setOverviewMovSeries([])
+	    } finally {
+	      if (overviewAbortRef.current === ac) {
+	        setOverviewLoaded(true)
+	        setOverviewLoading(false)
+	        overviewAbortRef.current = null
+	      }
+	    }
+	  }, [canUseApi, isAuthed, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
 
   const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
@@ -2781,6 +2844,13 @@ export function InsumosModule() {
 
 	  const loadInsights = React.useCallback(async () => {
 	    if (!canUseApi || !isAuthed) return
+	    try {
+	      insightsAbortRef.current?.abort()
+	    } catch {
+	      // ignore
+	    }
+	    const ac = new AbortController()
+	    insightsAbortRef.current = ac
 	    setInsightsLoading(true)
 	    try {
 	      const base = new URLSearchParams()
@@ -2816,11 +2886,12 @@ export function InsumosModule() {
 	      turnoverEntradaParams.set('mode', 'entrada')
 
 	      const [alertas, trends, turnoverSaida, turnoverEntrada] = await Promise.all([
-	        apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`),
-	        apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`),
-	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverSaidaParams.toString()}`),
-	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverEntradaParams.toString()}`)
+	        apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`, { signal: ac.signal }),
+	        apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`, { signal: ac.signal }),
+	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverSaidaParams.toString()}`, { signal: ac.signal }),
+	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverEntradaParams.toString()}`, { signal: ac.signal })
 	      ])
+	      if (insightsAbortRef.current !== ac) return
 
 	      setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
 	      setInsightsTrends(trends?.data || null)
@@ -2829,13 +2900,18 @@ export function InsumosModule() {
 	        entrada: turnoverEntrada?.data || null
 	      })
 	    } catch (e) {
+	      if ((e as any)?.name === 'AbortError') return
+	      if (insightsAbortRef.current !== ac) return
 	      toast.error(e instanceof Error ? e.message : String(e))
 	      setInsightsAlertas([])
 	      setInsightsTrends(null)
 	      setInsightsTurnover(null)
 	    } finally {
-	      setInsightsLoaded(true)
-	      setInsightsLoading(false)
+	      if (insightsAbortRef.current === ac) {
+	        setInsightsLoaded(true)
+	        setInsightsLoading(false)
+	        insightsAbortRef.current = null
+	      }
 	    }
 	  }, [canUseApi, isAuthed, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
