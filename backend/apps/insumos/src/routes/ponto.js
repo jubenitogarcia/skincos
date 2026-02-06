@@ -352,10 +352,12 @@ function publicDevice(row) {
 
 let pontoSchemaInitPromise = null
 let allTemplatesCache = null
+let allTemplatesCacheStats = { hits: 0, misses: 0, lastLoadMs: 0, lastSize: 0 }
 const employeeTemplatesCache = new Map()
 
 function invalidateTemplateCache() {
   allTemplatesCache = null
+  allTemplatesCacheStats = { hits: 0, misses: 0, lastLoadMs: 0, lastSize: 0 }
   employeeTemplatesCache.clear()
 }
 
@@ -698,9 +700,21 @@ async function loadEmployeeTemplates(db, env, employeeId, maxDescriptors, cacheT
 }
 
 async function loadAllTemplates(db, env, cacheTtlMs) {
-  if (cacheTtlMs > 0 && allTemplatesCache && (Date.now() - allTemplatesCache.ts) < cacheTtlMs) {
-    return allTemplatesCache.templates
+  const now = Date.now()
+  if (cacheTtlMs > 0 && allTemplatesCache && (now - allTemplatesCache.ts) < cacheTtlMs) {
+    allTemplatesCacheStats.hits += 1
+    return {
+      templates: allTemplatesCache.templates,
+      cache: {
+        hit: true,
+        ttlMs: cacheTtlMs,
+        ageMs: now - allTemplatesCache.ts,
+        size: Array.isArray(allTemplatesCache.templates) ? allTemplatesCache.templates.length : 0,
+      }
+    }
   }
+  allTemplatesCacheStats.misses += 1
+  const start = Date.now()
   const rows = await db.prepare(
     `SELECT t.id, t.employee_id, e.name, t.template_json
      FROM ponto_face_templates t
@@ -724,9 +738,19 @@ async function loadAllTemplates(db, env, cacheTtlMs) {
     })
   }
   if (cacheTtlMs > 0) {
-    allTemplatesCache = { ts: Date.now(), templates }
+    allTemplatesCache = { ts: now, templates }
+    allTemplatesCacheStats.lastLoadMs = Math.max(0, Date.now() - start)
+    allTemplatesCacheStats.lastSize = templates.length
   }
-  return templates
+  return {
+    templates,
+    cache: {
+      hit: false,
+      ttlMs: cacheTtlMs,
+      ageMs: 0,
+      size: templates.length,
+    }
+  }
 }
 
 function computePunchType(requestedType, lastType) {
@@ -903,6 +927,7 @@ export async function handlePontoRoutes({
       const devices = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_devices WHERE revoked_at IS NULL`).first()
       const records = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_records`).first()
       const audit = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_audit`).first()
+      const cacheAgeMs = allTemplatesCache?.ts ? Math.max(0, Date.now() - allTemplatesCache.ts) : null
       return json(200, {
         ok: true,
         version: 2,
@@ -910,6 +935,14 @@ export async function handlePontoRoutes({
         cryptoAuditHmac: !!String(env?.PONTO_AUDIT_HMAC_KEY || '').trim(),
         cryptoTemplates: !!String(env?.PONTO_TEMPLATES_KEY || '').trim(),
         templatesCacheTtlMs,
+        templatesCache: {
+          warmed: !!allTemplatesCache,
+          ageMs: cacheAgeMs,
+          size: Array.isArray(allTemplatesCache?.templates) ? allTemplatesCache.templates.length : 0,
+          hits: Number(allTemplatesCacheStats?.hits || 0) || 0,
+          misses: Number(allTemplatesCacheStats?.misses || 0) || 0,
+          lastLoadMs: Number(allTemplatesCacheStats?.lastLoadMs || 0) || 0,
+        },
         employees: Number(row?.n || 0) || 0,
         devices: Number(devices?.n || 0) || 0,
         records: Number(records?.n || 0) || 0,
@@ -1556,8 +1589,17 @@ export async function handlePontoRoutes({
     let best = null
     let bestDistance = Number.POSITIVE_INFINITY
     const candidates = []
-    const templates = await loadAllTemplates(db, env, templatesCacheTtlMs)
-    for (const r of templates || []) {
+    const loaded = await loadAllTemplates(db, env, templatesCacheTtlMs)
+    const templates = loaded?.templates || []
+    const cacheHeaders = loaded?.cache
+      ? {
+        'x-ponto-templates-cache': loaded.cache.hit ? 'hit' : 'miss',
+        'x-ponto-templates-cache-age-ms': String(loaded.cache.ageMs ?? ''),
+        'x-ponto-templates-cache-ttl-ms': String(loaded.cache.ttlMs ?? ''),
+        'x-ponto-templates-cache-size': String(loaded.cache.size ?? ''),
+      }
+      : {}
+    for (const r of templates) {
       const tpl = r.template
       if (!isNumberArray(tpl, descriptor.length, descriptor.length)) continue
       const dist = l2(descriptor, tpl)
@@ -1571,9 +1613,9 @@ export async function handlePontoRoutes({
     const topK = clampInt(body?.topK ?? 5, 1, 25, 5)
     const top = candidates.slice(0, topK)
     if (!best || !Number.isFinite(bestDistance) || bestDistance > threshold) {
-      return json(200, { ok: true, match: null, bestDistance: Number.isFinite(bestDistance) ? bestDistance : null, threshold, top })
+      return json(200, { ok: true, match: null, bestDistance: Number.isFinite(bestDistance) ? bestDistance : null, threshold, top }, cacheHeaders)
     }
-    return json(200, { ok: true, match: best, bestDistance, threshold, top })
+    return json(200, { ok: true, match: best, bestDistance, threshold, top }, cacheHeaders)
   }
 
   if (sub === '/device/punch/face' && request.method === 'POST') {
@@ -1591,8 +1633,17 @@ export async function handlePontoRoutes({
     let best = null
     let bestDistance = Number.POSITIVE_INFINITY
     const top = []
-    const templates = await loadAllTemplates(db, env, templatesCacheTtlMs)
-    for (const r of templates || []) {
+    const loaded = await loadAllTemplates(db, env, templatesCacheTtlMs)
+    const templates = loaded?.templates || []
+    const cacheHeaders = loaded?.cache
+      ? {
+        'x-ponto-templates-cache': loaded.cache.hit ? 'hit' : 'miss',
+        'x-ponto-templates-cache-age-ms': String(loaded.cache.ageMs ?? ''),
+        'x-ponto-templates-cache-ttl-ms': String(loaded.cache.ttlMs ?? ''),
+        'x-ponto-templates-cache-size': String(loaded.cache.size ?? ''),
+      }
+      : {}
+    for (const r of templates) {
       const tpl = r.template
       if (!isNumberArray(tpl, descriptor.length, descriptor.length)) continue
       const dist = l2(descriptor, tpl)
@@ -1605,14 +1656,14 @@ export async function handlePontoRoutes({
     top.sort((a, b) => a.distance - b.distance)
     const top5 = top.slice(0, 5)
     if (!best || !Number.isFinite(bestDistance) || bestDistance > threshold) {
-      return json(401, { ok: false, error: 'NOT_RECOGNIZED', bestDistance: Number.isFinite(bestDistance) ? bestDistance : null, threshold, top: top5 })
+      return json(401, { ok: false, error: 'NOT_RECOGNIZED', bestDistance: Number.isFinite(bestDistance) ? bestDistance : null, threshold, top: top5 }, cacheHeaders)
     }
 
     const employee = await findEmployeeById(db, best.employeeId)
-    if (!employee || employee.deleted_at || !employee.active) return json(404, { ok: false, error: 'EMPLOYEE_INACTIVE' })
+    if (!employee || employee.deleted_at || !employee.active) return json(404, { ok: false, error: 'EMPLOYEE_INACTIVE' }, cacheHeaders)
 
     const cooldown = await enforceCooldown(db, employee.id, punchCooldownSeconds)
-    if (!cooldown.ok) return json(409, { ok: false, error: 'COOLDOWN', secondsRemaining: cooldown.secondsRemaining, last: cooldown.last })
+    if (!cooldown.ok) return json(409, { ok: false, error: 'COOLDOWN', secondsRemaining: cooldown.secondsRemaining, last: cooldown.last }, cacheHeaders)
 
     const last = await findLastEmployeePunch(db, employee.id)
     const type = computePunchType(body?.type, last?.type)
@@ -1674,7 +1725,7 @@ export async function handlePontoRoutes({
       await writeAudit(db, env, 'PUNCH_FACE', { recordId: record.id, employeeId: employee.id, type, unit: auth.device.unit }, auth.actor)
     })
 
-    return json(200, { ok: true, data: record, employee: publicEmployee(employee) })
+    return json(200, { ok: true, data: record, employee: publicEmployee(employee) }, cacheHeaders)
   }
 
   if (sub === '/device/punch/pin' && request.method === 'POST') {
