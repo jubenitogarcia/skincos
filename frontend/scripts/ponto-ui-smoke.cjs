@@ -332,8 +332,25 @@ async function main() {
       if (visible) throw new Error('Kiosk PIN fallback is visible by default (expected hidden).')
     }
 
-    const adminTab = page.locator('button:has-text("Admin")').first()
-    const hasAdminTab = await adminTab.isVisible().catch(() => false)
+    async function waitForAdminTab(timeoutMs) {
+      const start = Date.now()
+      const adminTab = page.locator('button:has-text("Admin")').first()
+      while (Date.now() - start < timeoutMs) {
+        const visible = await adminTab.isVisible().catch(() => false)
+        if (visible) return adminTab
+        await page.waitForTimeout(250)
+      }
+      return null
+    }
+
+    const mutateRequested = MUTATE_ADMIN || MUTATE_EMPLOYEE || MUTATE_PUNCH
+    const adminTab = mutateRequested ? await waitForAdminTab(30_000) : page.locator('button:has-text("Admin")').first()
+    const hasAdminTab = adminTab ? await adminTab.isVisible().catch(() => false) : false
+
+    if (mutateRequested && !hasAdminTab) {
+      throw new Error('Mutation requested, but Admin tab is not visible. Ensure the smoke account is an admin and that /api/auth/me loads in time.')
+    }
+
     if (hasAdminTab) {
       await adminTab.click({ timeout: 30_000 })
       await page.waitForTimeout(1500)
