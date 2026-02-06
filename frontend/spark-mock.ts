@@ -1,5 +1,5 @@
 // Lightweight, test-friendly KV store and React hook
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type KVStore = Record<string, any>
 const store: KVStore = {}
@@ -37,6 +37,8 @@ export function useKV<T = any>(key: string, defaultValue: T): [T, (next: T | ((p
     const [value, setValue] = useState<T>(initial)
     const keyRef = useRef(key)
     keyRef.current = key
+    const defaultRef = useRef(defaultValue)
+    defaultRef.current = defaultValue
 
     useEffect(() => {
         // Ensure a value exists for the key
@@ -67,13 +69,17 @@ export function useKV<T = any>(key: string, defaultValue: T): [T, (next: T | ((p
         }
     }, [key, defaultValue])
 
-    const update = (next: T | ((prev: T) => T)) => {
-        const prev = (key in store ? (store[key] as T) : defaultValue)
+    // Stable setter: many components put this function into `useEffect` deps.
+    // If its identity changes on every render, it can create request storms.
+    const update = useCallback((next: T | ((prev: T) => T)) => {
+        const currentKey = keyRef.current
+        const currentDefault = defaultRef.current
+        const prev = (currentKey in store ? (store[currentKey] as T) : currentDefault)
         const nextValue = typeof next === 'function' ? (next as (p: T) => T)(prev) : next
-        store[key] = nextValue
+        store[currentKey] = nextValue
         setValue(nextValue)
-        notify(key, nextValue)
-    }
+        notify(currentKey, nextValue)
+    }, [])
 
     return [value, update]
 }
