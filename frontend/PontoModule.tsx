@@ -943,7 +943,12 @@ export function PontoModule() {
       await adminRefreshAll()
       toast.success('Vínculo atualizado')
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const details = e?.details as any
+      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
+        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
       toastErrorMeta(e)
     } finally {
       setLoading(false)
