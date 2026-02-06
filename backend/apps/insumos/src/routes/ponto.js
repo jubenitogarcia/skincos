@@ -870,7 +870,10 @@ export async function handlePontoRoutes({
   const actorSkewMs = clampInt(env?.PONTO_ACTOR_SKEW_MS, 5_000, 60 * 60 * 1000, 5 * 60 * 1000)
   const pinMaxFailures = clampInt(env?.PONTO_PIN_MAX_FAILURES, 2, 20, 5)
   const pinLockoutSeconds = clampInt(env?.PONTO_PIN_LOCKOUT_SECONDS, 10, 3600, 300)
-  const templatesCacheTtlMs = clampInt(env?.PONTO_TEMPLATES_CACHE_TTL_MS, 0, 60000, 5000)
+  // Cache facial templates in-memory (per Worker isolate) to reduce D1 + CPU usage in kiosk loops.
+  // Keep TTL configurable; default favors stability over maximum freshness, and cache is explicitly
+  // invalidated on enroll/update/delete paths.
+  const templatesCacheTtlMs = clampInt(env?.PONTO_TEMPLATES_CACHE_TTL_MS, 0, 10 * 60 * 1000, 30 * 1000)
 
   const json = (status, body, extraHeaders = {}) => withCORS(
     JSON.stringify(body),
