@@ -2668,6 +2668,8 @@ export function InsumosModule() {
 
   const loadOverview = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!canUseApi || !isAuthed) return
+    // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
+    setOverviewEverVisible(true)
     if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
     try {
       overviewAbortRef.current?.abort()
@@ -2906,6 +2908,8 @@ export function InsumosModule() {
 
   const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!canUseApi || !isAuthed) return
+    // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
+    setOverviewEverVisible(true)
     if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
     try {
       insightsAbortRef.current?.abort()
@@ -3185,7 +3189,7 @@ export function InsumosModule() {
     if (!overviewVisible && !overviewEverVisible) return
     const t = window.setTimeout(() => {
       void loadOverview()
-    }, 1200)
+    }, 250)
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, loadOverview, overviewEverVisible, overviewVisible])
 
@@ -3194,7 +3198,7 @@ export function InsumosModule() {
     if (!overviewVisible && !overviewEverVisible) return
     const t = window.setTimeout(() => {
       void loadInsights()
-    }, 2200)
+    }, 450)
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, loadInsights, overviewEverVisible, overviewVisible])
 
