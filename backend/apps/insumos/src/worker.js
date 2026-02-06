@@ -1442,6 +1442,7 @@ export default {
             buildActionables: (itens, u) => buildActionables(itens, u, config),
             buildRoi,
             buildQualityReport,
+            computeNotificationsForUnidade,
             stockDistribution,
             buildResumoEstoque,
             d1,

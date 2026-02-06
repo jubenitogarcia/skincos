@@ -136,6 +136,32 @@ type QualityReport = {
   issues?: QualityIssue[]
 }
 
+type OverviewBundleData = {
+  resumo?: EstoqueResumo | null
+  itens?: Insumo[] | null
+  notifications?: NotificationsSummary | null
+  actionables?: Actionables | null
+  roi?: RoiInsights | null
+  quality?: QualityReport | null
+  movResumo?: {
+    entradaQtd?: number
+    saidaQtd?: number
+    entradaValor?: number
+    saidaValor?: number
+    saldoLiquido?: number
+  } | null
+  movSeries?: Array<{ day?: string; entrada?: number; saida?: number; entradaValor?: number; saidaValor?: number }>
+}
+
+type InsightsBundleData = {
+  alertas?: EstoqueAlerta[] | null
+  trends?: any
+  turnover?: {
+    saida?: any
+    entrada?: any
+  } | null
+}
+
 type ShareFile = {
   name: string
   size?: number
@@ -2611,22 +2637,23 @@ export function InsumosModule() {
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
-	  const loadOverview = React.useCallback(async (opts?: { force?: boolean }) => {
-	    if (!canUseApi || !isAuthed) return
-	    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
-	    try {
-	      overviewAbortRef.current?.abort()
-	    } catch {
-	      // ignore
-	    }
-	    const ac = new AbortController()
-	    overviewAbortRef.current = ac
-	    setOverviewLoading(true)
-	    try {
+  const loadOverview = React.useCallback(async (opts?: { force?: boolean }) => {
+    if (!canUseApi || !isAuthed) return
+    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
+    try {
+      overviewAbortRef.current?.abort()
+    } catch {
+      // ignore
+    }
+    const ac = new AbortController()
+    overviewAbortRef.current = ac
+    setOverviewLoading(true)
+    try {
       const now = new Date()
       const yyyyMmDd = (d: Date) => d.toISOString().slice(0, 10)
       let de = ''
       let ate = yyyyMmDd(now)
+      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
 
       if (overviewPeriod === 'custom') {
         const deIso = dateInputToIso(overviewCustomFrom)
@@ -2634,6 +2661,10 @@ export function InsumosModule() {
         if (deIso && ateIso) {
           de = deIso
           ate = ateIso
+          const fromMs = new Date(deIso).getTime()
+          const toMs = new Date(ateIso).getTime()
+          const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
+          days = Math.max(1, Math.min(365, diffDays))
         }
       }
 
@@ -2645,94 +2676,45 @@ export function InsumosModule() {
         de = yyyyMmDd(start)
       }
 
-		      const params = `unidade=${encodeURIComponent(unidade)}`
-		      const [estoque, notif, act, roi, quality, movs] = await Promise.all([
-		        apiJson<{ success?: boolean; data?: { resumo?: EstoqueResumo; itens?: Insumo[] } }>(`/relatorios/estoque?${params}`, { signal: ac.signal }),
-		        apiJson<{ success?: boolean; data?: NotificationsSummary }>(`/notifications/summary?${params}`, { signal: ac.signal }),
-		        apiJson<{ success?: boolean; data?: Actionables }>(`/analytics/actionables?${params}`, { signal: ac.signal }),
-		        apiJson<{ success?: boolean; data?: RoiInsights }>(`/analytics/roi?${params}`, { signal: ac.signal }),
-		        apiJson<{ success?: boolean; data?: QualityReport }>(`/quality/report?${new URLSearchParams({ unidade, limitIssues: '120' }).toString()}`, { signal: ac.signal }),
-		        apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[] }>(
-	          `/movimentacoes?${new URLSearchParams({
-	            unidade,
-	            limite: '400',
-	            de,
-	            ate
-	          }).toString()}`,
-	          { signal: ac.signal }
-	        )
-	      ])
-		      if (overviewAbortRef.current !== ac) return
-		      setOverviewResumo(estoque?.data?.resumo || null)
-		      setOverviewInsumos(Array.isArray(estoque?.data?.itens) ? (estoque!.data!.itens as any) : null)
-		      setOverviewNotifications(notif?.data || null)
-		      setOverviewActionables(act?.data || null)
+      const params = new URLSearchParams({
+        unidade,
+        de,
+        ate,
+        days: String(days),
+        limitIssues: '120'
+      })
+      const out = await apiJson<{ success?: boolean; data?: OverviewBundleData }>(`/analytics/overview?${params.toString()}`, { signal: ac.signal })
 
-      setOverviewRoi(roi?.data || null)
-      setOverviewQuality(quality?.data || null)
-
-      const movList = (movs as any)?.movimentos ?? movs?.data
-      const list: Movimentacao[] = Array.isArray(movList) ? movList : []
-      const resumo = list.reduce(
-        (acc, m) => {
-          const t = String(m.tipo || '').toUpperCase().replace('Í', 'I')
-          const qtd = Number(m.quantidade) || 0
-          const preco = Number(m.preco) || 0
-          const valor = preco * qtd
-          if (t === 'ENTRADA') {
-            acc.entradaQtd += qtd
-            acc.entradaValor += valor
-          } else if (t === 'SAIDA' || t === 'SAÍDA') {
-            acc.saidaQtd += qtd
-            acc.saidaValor += valor
-          }
-          return acc
-        },
-        { entradaQtd: 0, saidaQtd: 0, entradaValor: 0, saidaValor: 0 }
-      )
-      setOverviewMovResumo({ ...resumo, saldoLiquido: resumo.entradaValor - resumo.saidaValor })
-
-      const byDay = new Map<string, { day: string; entrada: number; saida: number; entradaValor: number; saidaValor: number }>()
-      for (const m of list) {
-        const d = new Date(m.dataHora || '')
-        if (Number.isNaN(d.getTime())) continue
-        const day = d.toISOString().slice(0, 10)
-        const cur = byDay.get(day) || { day, entrada: 0, saida: 0, entradaValor: 0, saidaValor: 0 }
-        const t = String(m.tipo || '').toUpperCase().replace('Í', 'I')
-        const qtd = Number(m.quantidade) || 0
-        const preco = Number((m as any).preco) || 0
-        const valor = preco * qtd
-        if (t === 'ENTRADA') {
-          cur.entrada += qtd
-          cur.entradaValor += valor
-        } else if (t === 'SAIDA' || t === 'SAÍDA') {
-          cur.saida += qtd
-          cur.saidaValor += valor
-        }
-        byDay.set(day, cur)
+      if (overviewAbortRef.current !== ac) return
+      const data = out?.data || null
+      setOverviewResumo(data?.resumo || null)
+      setOverviewInsumos(Array.isArray(data?.itens) ? (data?.itens as any) : null)
+      setOverviewNotifications(data?.notifications || null)
+      setOverviewActionables(data?.actionables || null)
+      setOverviewRoi(data?.roi || null)
+      setOverviewQuality(data?.quality || null)
+      setOverviewMovResumo((data?.movResumo as any) || null)
+      setOverviewMovSeries(Array.isArray(data?.movSeries) ? data.movSeries : [])
+    } catch (e) {
+      if ((e as any)?.name === 'AbortError') return
+      if (overviewAbortRef.current !== ac) return
+      markAutoSyncFailure(e)
+      toast.error(e instanceof Error ? e.message : String(e))
+      setOverviewResumo(null)
+      setOverviewNotifications(null)
+      setOverviewActionables(null)
+      setOverviewRoi(null)
+      setOverviewQuality(null)
+      setOverviewMovResumo(null)
+      setOverviewMovSeries([])
+    } finally {
+      if (overviewAbortRef.current === ac) {
+        setOverviewLoaded(true)
+        setOverviewLoading(false)
+        overviewAbortRef.current = null
       }
-      const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
-      setOverviewMovSeries(Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day)).slice(-limit))
-	    } catch (e) {
-	      if ((e as any)?.name === 'AbortError') return
-	      if (overviewAbortRef.current !== ac) return
-	      markAutoSyncFailure(e)
-	      toast.error(e instanceof Error ? e.message : String(e))
-	      setOverviewResumo(null)
-	      setOverviewNotifications(null)
-	      setOverviewActionables(null)
-	      setOverviewRoi(null)
-	      setOverviewQuality(null)
-	      setOverviewMovResumo(null)
-	      setOverviewMovSeries([])
-	    } finally {
-	      if (overviewAbortRef.current === ac) {
-	        setOverviewLoaded(true)
-	        setOverviewLoading(false)
-	        overviewAbortRef.current = null
-	      }
-	    }
-	  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, unidade, overviewCustomFrom, overviewCustomTo, overviewPeriod])
+    }
+  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
   const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
@@ -2893,80 +2875,57 @@ export function InsumosModule() {
     }
   }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
 
-	  const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
-	    if (!canUseApi || !isAuthed) return
-	    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
-	    try {
-	      insightsAbortRef.current?.abort()
-	    } catch {
-	      // ignore
-	    }
-	    const ac = new AbortController()
-	    insightsAbortRef.current = ac
-	    setInsightsLoading(true)
-	    try {
-	      const base = new URLSearchParams()
-	      base.set('unidade', unidade)
+  const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
+    if (!canUseApi || !isAuthed) return
+    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
+    try {
+      insightsAbortRef.current?.abort()
+    } catch {
+      // ignore
+    }
+    const ac = new AbortController()
+    insightsAbortRef.current = ac
+    setInsightsLoading(true)
+    try {
+      const params = new URLSearchParams()
+      params.set('unidade', unidade)
+      params.set('groupBy', 'day')
 
-	      const trendsParams = new URLSearchParams(base.toString())
-	      trendsParams.set('groupBy', 'day')
-	      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
-	      const customFromIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomFrom) : ''
-	      const customToIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomTo) : ''
-	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-	        const fromMs = new Date(customFromIso).getTime()
-	        const toMs = new Date(customToIso).getTime()
-	        const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
-	        days = Math.max(1, Math.min(365, diffDays))
-	      }
-	      trendsParams.set('days', String(days))
-	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-	        trendsParams.set('from', customFromIso)
-	        trendsParams.set('to', customToIso)
-	      }
+      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
+      const customFromIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomFrom) : ''
+      const customToIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomTo) : ''
+      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
+        const fromMs = new Date(customFromIso).getTime()
+        const toMs = new Date(customToIso).getTime()
+        const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
+        days = Math.max(1, Math.min(365, diffDays))
+        params.set('from', customFromIso)
+        params.set('to', customToIso)
+      }
+      params.set('days', String(days))
 
-	      const turnoverBaseParams = new URLSearchParams(base.toString())
-	      turnoverBaseParams.set('days', String(days))
-	      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-	        turnoverBaseParams.set('from', customFromIso)
-	        turnoverBaseParams.set('to', customToIso)
-	      }
-
-	      const turnoverSaidaParams = new URLSearchParams(turnoverBaseParams.toString())
-	      turnoverSaidaParams.set('mode', 'saida')
-	      const turnoverEntradaParams = new URLSearchParams(turnoverBaseParams.toString())
-	      turnoverEntradaParams.set('mode', 'entrada')
-
-	      const [alertas, trends, turnoverSaida, turnoverEntrada] = await Promise.all([
-	        apiJson<{ success?: boolean; data?: EstoqueAlerta[] }>(`/alertas/estoque?${base.toString()}`, { signal: ac.signal }),
-	        apiJson<{ success?: boolean; data?: any }>(`/analytics/trends?${trendsParams.toString()}`, { signal: ac.signal }),
-	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverSaidaParams.toString()}`, { signal: ac.signal }),
-	        apiJson<{ success?: boolean; data?: any }>(`/analytics/category-turnover?${turnoverEntradaParams.toString()}`, { signal: ac.signal })
-	      ])
-	      if (insightsAbortRef.current !== ac) return
-
-	      setInsightsAlertas(Array.isArray(alertas?.data) ? alertas.data : [])
-	      setInsightsTrends(trends?.data || null)
-	      setInsightsTurnover({
-	        saida: turnoverSaida?.data || null,
-	        entrada: turnoverEntrada?.data || null
-	      })
-	    } catch (e) {
-	      if ((e as any)?.name === 'AbortError') return
-	      if (insightsAbortRef.current !== ac) return
-	      markAutoSyncFailure(e)
-	      toast.error(e instanceof Error ? e.message : String(e))
-	      setInsightsAlertas([])
-	      setInsightsTrends(null)
-	      setInsightsTurnover(null)
-	    } finally {
-	      if (insightsAbortRef.current === ac) {
-	        setInsightsLoaded(true)
-	        setInsightsLoading(false)
-	        insightsAbortRef.current = null
-	      }
-	    }
-	  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
+      const out = await apiJson<{ success?: boolean; data?: InsightsBundleData }>(`/analytics/insights?${params.toString()}`, { signal: ac.signal })
+      if (insightsAbortRef.current !== ac) return
+      const data = out?.data || null
+      setInsightsAlertas(Array.isArray(data?.alertas) ? data.alertas : [])
+      setInsightsTrends(data?.trends || null)
+      setInsightsTurnover(data?.turnover || null)
+    } catch (e) {
+      if ((e as any)?.name === 'AbortError') return
+      if (insightsAbortRef.current !== ac) return
+      markAutoSyncFailure(e)
+      toast.error(e instanceof Error ? e.message : String(e))
+      setInsightsAlertas([])
+      setInsightsTrends(null)
+      setInsightsTurnover(null)
+    } finally {
+      if (insightsAbortRef.current === ac) {
+        setInsightsLoaded(true)
+        setInsightsLoading(false)
+        insightsAbortRef.current = null
+      }
+    }
+  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
 
   const postMutationRefreshTimerRef = React.useRef<number | null>(null)
 	  const schedulePostMutationRefresh = React.useCallback(

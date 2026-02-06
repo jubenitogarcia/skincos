@@ -35,6 +35,94 @@ function safeNumber(v) {
     return Number.isFinite(n) ? n : 0;
 }
 
+function parseDateBound(raw, bound) {
+    const value = String(raw || '').trim();
+    if (!value) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const suffix = bound === 'end' ? 'T23:59:59.999Z' : 'T00:00:00.000Z';
+        return toDateOrNull(`${value}${suffix}`);
+    }
+    return toDateOrNull(value);
+}
+
+function resolveWindow(url, fallbackDays = 30) {
+    const daysRaw = parseInt(url.searchParams.get('days') || `${fallbackDays}`, 10) || fallbackDays;
+    const days = Math.max(1, Math.min(366, daysRaw));
+    const now = new Date();
+    const from =
+        parseDateBound(url.searchParams.get('from') || url.searchParams.get('de'), 'start') ||
+        new Date(now.getTime() - days * 86400000);
+    const to = parseDateBound(url.searchParams.get('to') || url.searchParams.get('ate'), 'end') || now;
+    return { from, to, days };
+}
+
+function buildStockAlerts(insumos) {
+    return (Array.isArray(insumos) ? insumos : [])
+        .filter((i) => safeNumber(i?.estoqueMinimo) > 0 && safeNumber(i?.estoqueAtual) <= safeNumber(i?.estoqueMinimo))
+        .map((i) => ({
+            codigoBarras: i.codigoBarras,
+            produto: i.produto,
+            categoria: i.categoria,
+            estoqueAtual: i.estoqueAtual,
+            estoqueMinimo: i.estoqueMinimo,
+            diferenca: safeNumber(i.estoqueAtual) - safeNumber(i.estoqueMinimo),
+            percentual: safeNumber(i.estoqueMinimo) > 0 ? Math.round((safeNumber(i.estoqueAtual) / safeNumber(i.estoqueMinimo)) * 100) : null,
+            tipoAlerta: 'ESTOQUE_BAIXO'
+        }));
+}
+
+function computeMovementOverview({ movimentos, insumoByCode, from, to, unidade, maxSeriesPoints = 365 }) {
+    const resumo = { entradaQtd: 0, saidaQtd: 0, entradaValor: 0, saidaValor: 0 };
+    const byDay = new Map();
+    const limit = Math.max(1, Math.min(366, parseInt(String(maxSeriesPoints || 365), 10) || 365));
+
+    for (const m of Array.isArray(movimentos) ? movimentos : []) {
+        if (unidade && String(m?.unidade || '') !== String(unidade)) continue;
+        const d = toDateOrNull(m?.dataHora);
+        if (!d) continue;
+        if (from && d < from) continue;
+        if (to && d > to) continue;
+
+        const code = String(m?.codigoBarras || '').trim();
+        const item = code ? insumoByCode.get(code) || null : null;
+        const tipo = normalizeTipo(m?.tipo);
+        const qtd = safeNumber(m?.quantidade);
+        const preco = safeNumber(m?.preco) || safeNumber(item?.precoCusto);
+        const valor = qtd * preco;
+
+        if (tipo === 'ENTRADA') {
+            resumo.entradaQtd += qtd;
+            resumo.entradaValor += valor;
+        } else if (tipo === 'SAIDA' || tipo === 'SAÍDA') {
+            resumo.saidaQtd += qtd;
+            resumo.saidaValor += valor;
+        } else {
+            continue;
+        }
+
+        const day = d.toISOString().slice(0, 10);
+        const current = byDay.get(day) || { day, entrada: 0, saida: 0, entradaValor: 0, saidaValor: 0 };
+        if (tipo === 'ENTRADA') {
+            current.entrada += qtd;
+            current.entradaValor += valor;
+        } else {
+            current.saida += qtd;
+            current.saidaValor += valor;
+        }
+        byDay.set(day, current);
+    }
+
+    return {
+        movResumo: {
+            ...resumo,
+            saldoLiquido: resumo.entradaValor - resumo.saidaValor
+        },
+        movSeries: Array.from(byDay.values())
+            .sort((a, b) => String(a.day).localeCompare(String(b.day)))
+            .slice(-limit)
+    };
+}
+
 function computeTrends({ movimentos, insumoByCode, groupBy, from, to, unidade }) {
     const byBucket = new Map();
     const totals = { entradaQtd: 0, saidaQtd: 0, ajusteQtd: 0, entradaValor: 0, saidaValor: 0 };
@@ -142,6 +230,7 @@ export async function handleInsightsRoutes({
     buildActionables,
     buildRoi,
     buildQualityReport,
+    computeNotificationsForUnidade,
     stockDistribution,
     buildResumoEstoque,
     d1,
@@ -180,6 +269,97 @@ export async function handleInsightsRoutes({
             .all();
         return r?.results || [];
     };
+
+    if (url.pathname === "/analytics/overview" && request.method === "GET") {
+        try {
+            const unidadeQ = url.searchParams.get('unidade') || unidade;
+            const limitIssues = url.searchParams.get('limitIssues') || '120';
+            const { from, to, days } = resolveWindow(url, 30);
+
+            const [insumos, movimentos] = await Promise.all([
+                listInsumos(unidadeQ),
+                listMovimentos({
+                    unidadeQ,
+                    fromIso: from ? from.toISOString() : null,
+                    toIso: to ? to.toISOString() : null
+                }),
+            ]);
+
+            const resumo = buildResumoEstoque(insumos);
+            const notifications = computeNotificationsForUnidade(insumos, unidadeQ);
+            const actionables = buildActionables(insumos, unidadeQ);
+            const roi = buildRoi(insumos, unidadeQ);
+            const quality = buildQualityReport(insumos, unidadeQ, limitIssues);
+            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
+            const movementData = computeMovementOverview({
+                movimentos,
+                insumoByCode,
+                from,
+                to,
+                unidade: unidadeQ,
+                maxSeriesPoints: days
+            });
+
+            const data = {
+                resumo,
+                itens: insumos,
+                notifications,
+                actionables,
+                roi,
+                quality,
+                ...movementData,
+                window: {
+                    from: from ? from.toISOString() : null,
+                    to: to ? to.toISOString() : null,
+                    days
+                }
+            };
+            return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
+    }
+
+    if (url.pathname === "/analytics/insights" && request.method === "GET") {
+        try {
+            const unidadeQ = url.searchParams.get('unidade') || unidade;
+            const groupBy = (url.searchParams.get('groupBy') || 'day').toLowerCase();
+            const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
+            const { from, to, days } = resolveWindow(url, 30);
+
+            const [insumos, movimentos] = await Promise.all([
+                listInsumos(unidadeQ),
+                listMovimentos({
+                    unidadeQ,
+                    fromIso: from ? from.toISOString() : null,
+                    toIso: to ? to.toISOString() : null
+                }),
+            ]);
+            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
+            const trends = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade: unidadeQ });
+            const turnoverSaida = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade: unidadeQ, mode: 'saida' });
+            const turnoverEntrada = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade: unidadeQ, mode: 'entrada' });
+
+            const data = {
+                alertas: buildStockAlerts(insumos),
+                trends,
+                turnover: {
+                    saida: turnoverSaida,
+                    entrada: turnoverEntrada
+                },
+                window: {
+                    from: from ? from.toISOString() : null,
+                    to: to ? to.toISOString() : null,
+                    days,
+                    groupBy: group
+                }
+            };
+            return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+        } catch (err) {
+            return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+        }
+    }
+
     // Stub analytics / relatorios / alertas / movimentacoes endpoints expected by frontend
     if (url.pathname === "/analytics/actionables" && request.method === "GET") {
         try {
@@ -211,12 +391,9 @@ export async function handleInsightsRoutes({
     }
     if (url.pathname === "/analytics/trends") {
         try {
-            const days = Math.max(1, Math.min(366, parseInt(url.searchParams.get('days') || '30', 10) || 30));
             const groupBy = (url.searchParams.get('groupBy') || 'day').toLowerCase();
             const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
-            const now = new Date();
-            const from = toDateOrNull(url.searchParams.get('from')) || toDateOrNull(url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
-            const to = toDateOrNull(url.searchParams.get('to')) || toDateOrNull(url.searchParams.get('ate')) || now;
+            const { from, to } = resolveWindow(url, 30);
 
             const [insumos, movimentos] = await Promise.all([
                 listInsumos(unidade),
@@ -236,10 +413,7 @@ export async function handleInsightsRoutes({
     }
     if (url.pathname === "/analytics/category-turnover") {
         try {
-            const days = Math.max(1, Math.min(366, parseInt(url.searchParams.get('days') || '30', 10) || 30));
-            const now = new Date();
-            const from = toDateOrNull(url.searchParams.get('from')) || toDateOrNull(url.searchParams.get('de')) || new Date(now.getTime() - days * 86400000);
-            const to = toDateOrNull(url.searchParams.get('to')) || toDateOrNull(url.searchParams.get('ate')) || now;
+            const { from, to } = resolveWindow(url, 30);
             const mode = (url.searchParams.get('mode') || 'saida').toLowerCase(); // saida|entrada|all
             const [insumos, movimentos] = await Promise.all([
                 listInsumos(unidade),
@@ -334,20 +508,7 @@ export async function handleInsightsRoutes({
     if (url.pathname === "/alertas/estoque") {
         try {
             const insumos = await listInsumos(unidade);
-            const alertas = insumos
-                .filter(i => i.estoqueMinimo > 0 && (i.estoqueAtual || 0) <= i.estoqueMinimo)
-                .map(i => ({
-                    codigoBarras: i.codigoBarras,
-                    produto: i.produto,
-                    categoria: i.categoria,
-                    estoqueAtual: i.estoqueAtual,
-                    estoqueMinimo: i.estoqueMinimo,
-                    diferenca: (i.estoqueAtual || 0) - (i.estoqueMinimo || 0),
-                    percentual: i.estoqueMinimo > 0
-                        ? Math.round(((i.estoqueAtual || 0) / i.estoqueMinimo) * 100)
-                        : null,
-                    tipoAlerta: 'ESTOQUE_BAIXO'
-                }));
+            const alertas = buildStockAlerts(insumos);
             return withCORS(JSON.stringify({ success: true, data: alertas }), { status: 200 }, appOrigin);
         } catch (err) {
             return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);

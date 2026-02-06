@@ -49,31 +49,26 @@ req "/health"
 req "/metrics"
 req "/insumos/health"
 
-health_json="$(curl -fsS "$BASE_URL/health" 2>/dev/null || true)"
-if echo "$health_json" | grep -Eq '"sheetsConfigured"[[:space:]]*:[[:space:]]*true'; then
-  if [[ -n "$SMOKE_USER" && -n "$SMOKE_PASS" ]]; then
-    echo "[smoke] Auth smoke enabled (sheetsConfigured=true)"
-    echo "[smoke] POST $BASE_URL/auth/login"
-    status="$(curl -sS -o "$TMP_BODY" -w "%{http_code}" \
-      -c "$TMP_COOKIES" \
-      -b "$TMP_COOKIES" \
-      -H "content-type: application/json" \
-      -d "{\"username\":\"$SMOKE_USER\",\"password\":\"$SMOKE_PASS\"}" \
-      "$BASE_URL/auth/login" || true)"
-    if [[ "$status" != "200" ]]; then
-      echo "[smoke] FAIL /auth/login (status=$status)" >&2
-      echo "[smoke] Body:" >&2
-      cat "$TMP_BODY" >&2 || true
-      exit 1
-    fi
-
-    req "/auth/me"
-    req "/insumos"
-  else
-    echo "[smoke] SKIP auth smoke (set INSUMOS_SMOKE_USER and INSUMOS_SMOKE_PASS)"
+if [[ -n "$SMOKE_USER" && -n "$SMOKE_PASS" ]]; then
+  echo "[smoke] Auth smoke enabled"
+  echo "[smoke] POST $BASE_URL/auth/login"
+  status="$(curl -sS -o "$TMP_BODY" -w "%{http_code}" \
+    -c "$TMP_COOKIES" \
+    -b "$TMP_COOKIES" \
+    -H "content-type: application/json" \
+    -d "{\"username\":\"$SMOKE_USER\",\"password\":\"$SMOKE_PASS\"}" \
+    "$BASE_URL/auth/login" || true)"
+  if [[ "$status" != "200" ]]; then
+    echo "[smoke] FAIL /auth/login (status=$status)" >&2
+    echo "[smoke] Body:" >&2
+    cat "$TMP_BODY" >&2 || true
+    exit 1
   fi
+
+  req "/auth/me"
+  req "/insumos"
 else
-  echo "[smoke] SKIP auth smoke (sheetsConfigured=false)"
+  echo "[smoke] SKIP auth smoke (set INSUMOS_SMOKE_USER and INSUMOS_SMOKE_PASS)"
 fi
 
 echo "[smoke] OK"
