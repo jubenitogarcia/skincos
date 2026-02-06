@@ -37,6 +37,8 @@ Esperado:
 - `ok: true`
 - `effectiveTargetConfigured: true`
 - `adminTokenConfigured: true`
+- `proxyTokenConfigured: true`
+- `actorKeyConfigured: true`
 Observação:
 - `targetConfigured: true` indica `PONTO_API_TARGET` explícito; se `false`, o proxy pode estar usando `INSUMOS_API_TARGET` como fallback.
 
@@ -78,6 +80,13 @@ Workflow: `.github/workflows/ponto-ui-smoke.yml`
   - `PONTO_SMOKE_EMAIL`
   - `PONTO_SMOKE_PASSWORD`
 
+**Bootstrap/repair do smoke bot (recomendado)**
+- Script (idempotente) que garante que o usuário existe com role `ADMIN` e rotaciona a senha, atualizando os secrets do GitHub:
+```
+NODE_PATH=frontend/node_modules node frontend/scripts/bootstrap-ponto-smoke-admin.cjs
+```
+Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/storage-crm.json` (você cria isso rodando o `ponto-ui-smoke.cjs` em `HEADED=1` e logando manualmente).
+
 **O que ele valida**
 - Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
 - Diagnóstico carrega (`/_proxy-status` e `/health`).
@@ -108,6 +117,12 @@ GET /api/ponto/admin/audit/verify
 ### Admin não acessa
 **Sinal:** erro `ADMIN_TOKEN_NOT_CONFIGURED`.  
 **Ação:** validar secrets do Pages em `_proxy-status`.
+
+### `_proxy-status` diz que secrets não estão configurados, mesmo após sync
+**Sinal:** `proxyTokenConfigured=false` / `actorKeyConfigured=false` / `adminTokenConfigured=false`, mas o workflow de sync está “success”.  
+**Causa provável:** em Cloudflare Pages, alterações de env vars podem exigir um novo deploy para entrarem em vigor no runtime.  
+**Ação:** rode o reconcile do Pages (ele também faz smoke check):
+- Workflow: `.github/workflows/deploy-crm-pages-reconcile.yml`
 
 ### Face não reconhece
 **Sinal:** erro `NOT_RECOGNIZED`.  
