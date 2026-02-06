@@ -173,6 +173,38 @@ jobs:
               time.sleep(10)
           PY
 
+      - name: Cache Playwright browsers (UI smoke)
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-chromium
+
+      - name: Install Playwright Chromium (UI smoke)
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        run: npx --yes playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Ponto UI smoke (production)
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        env:
+          CRM_URL: https://crm.skincos.com.br
+          EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
+          BUILD_BADGE_WAIT_MS: "120000"
+          AUTO_LOGIN: "1"
+          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          LOGIN_WAIT_MS: "120000"
+          NO_SCREENSHOTS: "1"
+          NODE_PATH: frontend/node_modules
+        run: |
+          set -euo pipefail
+          if [[ -z "${SMOKE_EMAIL:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
+            echo "Missing GitHub Actions secrets: PONTO_SMOKE_EMAIL / PONTO_SMOKE_PASSWORD"
+            exit 1
+          fi
+          node frontend/scripts/ponto-ui-smoke.cjs
+
       - name: Mark deployed SHA
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
         run: |

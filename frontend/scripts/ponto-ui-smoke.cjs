@@ -40,6 +40,10 @@ const SMOKE_PASSWORD = String(process.env.SMOKE_PASSWORD || '').trim()
 const CHANNEL = String(process.env.CHANNEL || '').trim()
 const PERSISTENT = process.env.PERSISTENT === '1' || process.env.PERSISTENT === 'true'
 const EXPECT_BUILD_SHA = String(process.env.EXPECT_BUILD_SHA || '').trim().toLowerCase()
+const BUILD_BADGE_WAIT_MS = Math.max(
+  5_000,
+  parseInt(String(process.env.BUILD_BADGE_WAIT_MS || ''), 10) || (process.env.CI ? 90_000 : 30_000)
+)
 const MUTATE_ADMIN = process.env.MUTATE_ADMIN === '1' || process.env.MUTATE_ADMIN === 'true'
 const MUTATE_EMPLOYEE = process.env.MUTATE_EMPLOYEE === '1' || process.env.MUTATE_EMPLOYEE === 'true'
 const MUTATE_PUNCH = process.env.MUTATE_PUNCH === '1' || process.env.MUTATE_PUNCH === 'true'
@@ -249,18 +253,23 @@ async function main() {
     await buildBadge.waitFor({ timeout: 30_000 })
     if (EXPECT_BUILD_SHA) {
       const expectedShort = EXPECT_BUILD_SHA.slice(0, 7)
+      const start = Date.now()
       let lastText = ''
-      for (let attempt = 1; attempt <= 4; attempt++) {
+      let attempt = 0
+      while (Date.now() - start < BUILD_BADGE_WAIT_MS) {
+        attempt += 1
         const badgeText = String((await buildBadge.textContent().catch(() => '')) || '').toLowerCase()
         lastText = badgeText
         if (badgeText.includes(expectedShort)) break
-        if (attempt >= 4) {
-          throw new Error(`Build badge mismatch (expected ${expectedShort}). Got: ${lastText || '(empty)'}`)
-        }
         // Sometimes Pages env + new deployment propagation can lag a little.
         await page.waitForTimeout(3000)
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
         await page.waitForTimeout(1200)
+      }
+      if (!lastText.includes(expectedShort)) {
+        throw new Error(
+          `Build badge mismatch after ${Math.ceil(BUILD_BADGE_WAIT_MS / 1000)}s (expected ${expectedShort}). Got: ${lastText || '(empty)'}`
+        )
       }
     }
     await maybeScreenshot('ponto-open')
