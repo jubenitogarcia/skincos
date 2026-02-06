@@ -29,10 +29,13 @@ const HEADED = process.env.HEADED === '1' || process.env.HEADED === 'true'
 const LOGIN_WAIT_MS = Math.max(5_000, parseInt(String(process.env.LOGIN_WAIT_MS || ''), 10) || 10 * 60_000)
 const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
+const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
 const CHANNEL = String(process.env.CHANNEL || '').trim()
 const PERSISTENT = process.env.PERSISTENT === '1' || process.env.PERSISTENT === 'true'
 const EXPECT_BUILD_SHA = String(process.env.EXPECT_BUILD_SHA || '').trim().toLowerCase()
 const MUTATE_ADMIN = process.env.MUTATE_ADMIN === '1' || process.env.MUTATE_ADMIN === 'true'
+const MUTATE_EMPLOYEE = process.env.MUTATE_EMPLOYEE === '1' || process.env.MUTATE_EMPLOYEE === 'true'
+const MUTATE_PUNCH = process.env.MUTATE_PUNCH === '1' || process.env.MUTATE_PUNCH === 'true'
 
 const { chromium } = require('playwright')
 
@@ -58,6 +61,8 @@ async function main() {
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling',
+      '--disable-gpu',
+      '--mute-audio',
     ],
   }
 
@@ -76,7 +81,18 @@ async function main() {
       ...(fs.existsSync(storageStatePath) ? { storageState: storageStatePath } : {}),
     })
   }
+  await context.addInitScript(() => {
+    try {
+      // Prefer going straight into the Ponto module to avoid heavy default dashboards.
+      localStorage.setItem('app.activeModule', 'ponto')
+    } catch {}
+  })
   const page = await context.newPage()
+
+  async function maybeScreenshot(name) {
+    if (NO_SCREENSHOTS) return
+    await page.screenshot({ path: shot(name), fullPage: FULL_PAGE })
+  }
 
   // Tracing is extremely useful when debugging failures, but it can slow down the browser significantly.
   // Keep it opt-in for routine smoke runs.
@@ -100,7 +116,7 @@ async function main() {
         }
       `,
     }).catch(() => {})
-    await page.screenshot({ path: shot('home'), fullPage: FULL_PAGE })
+    await maybeScreenshot('home')
 
     const loginMarker = page.locator('text=Acessar Plataforma').first()
     const isLogin = await loginMarker.isVisible().catch(() => false)
@@ -116,16 +132,12 @@ async function main() {
     // Persist auth for the next run without needing a persistent profile.
     await context.storageState({ path: storageStatePath }).catch(() => {})
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('after-auth'), fullPage: FULL_PAGE })
+    await maybeScreenshot('after-auth')
 
-    // Go directly to the Ponto module to avoid loading heavy default modules and to reduce flakiness in sidebar selectors.
-    await page
-      .evaluate(() => {
-        try {
-          localStorage.setItem('app.activeModule', 'ponto')
-        } catch {}
-      })
-      .catch(() => {})
+    // The initScript already set app.activeModule, but if the app booted before it ran (rare), set it again.
+    await page.evaluate(() => {
+      try { localStorage.setItem('app.activeModule', 'ponto') } catch {}
+    }).catch(() => {})
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
     await page.waitForTimeout(1500)
 
@@ -140,12 +152,12 @@ async function main() {
         throw new Error(`Build badge mismatch (expected ${expectedShort}). Got: ${badgeText || '(empty)'}`)
       }
     }
-    await page.screenshot({ path: shot('ponto-open'), fullPage: FULL_PAGE })
+    await maybeScreenshot('ponto-open')
 
     const diagButton = page.locator('button:has-text("Diagnóstico")').first()
     await diagButton.click({ timeout: 30_000 })
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('diagnostics'), fullPage: FULL_PAGE })
+    await maybeScreenshot('diagnostics')
 
     await page.locator('text=GET /api/ponto/_proxy-status').first().waitFor({ timeout: 30_000 })
     await page.locator('text=GET /api/ponto/health').first().waitFor({ timeout: 30_000 })
@@ -155,7 +167,7 @@ async function main() {
 
     await page.locator('button:has-text("Kiosk")').first().click({ timeout: 30_000 })
     await page.waitForTimeout(1500)
-    await page.screenshot({ path: shot('kiosk'), fullPage: FULL_PAGE })
+    await maybeScreenshot('kiosk')
     {
       // Avoid false positives: the module description contains "fallback por PIN" text even when the fallback card is closed.
       // The actual fallback UI uses CardTitle with data-slot="card-title".
@@ -168,7 +180,7 @@ async function main() {
     if (hasAdminTab) {
       await adminTab.click({ timeout: 30_000 })
       await page.waitForTimeout(1500)
-      await page.screenshot({ path: shot('admin'), fullPage: FULL_PAGE })
+      await maybeScreenshot('admin')
       // Avoid false positives: other tabs contain "token" strings (device token), and tab panels can remain in the DOM.
       // We only fail if there's an *actual* admin-token prompt (text or an input hinting admin token).
       const adminTokenTextVisible = await page
@@ -228,6 +240,94 @@ async function main() {
           return { id, name, code }
         })
         console.log(`[ponto-ui-smoke] Admin create/list/delete OK (employeeId=${created.id})`)
+      }
+
+      if (MUTATE_EMPLOYEE) {
+        if (!MUTATE_ADMIN) throw new Error('MUTATE_EMPLOYEE requires MUTATE_ADMIN (admin session + routes).')
+        const out = await page.evaluate(async ({ doPunch }) => {
+          const me0Res = await fetch('/api/ponto/me', { credentials: 'include' })
+          const me0Text = await me0Res.text()
+          let me0 = null
+          try { me0 = me0Text ? JSON.parse(me0Text) : null } catch {}
+          if (!me0Res.ok || !me0?.ok || !me0?.actorEmail) {
+            throw new Error(`me precheck failed: HTTP ${me0Res.status} body=${me0Text.slice(0, 400)}`)
+          }
+          const actorEmail = String(me0.actorEmail)
+
+          const stamp = Date.now()
+          const name = `Smoke Emp ${stamp}`
+          const code = `emp-${stamp}`
+          const pin = '1234'
+
+          const createRes = await fetch('/api/ponto/admin/employees', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ name, code, loginEmail: actorEmail }),
+          })
+          const createText = await createRes.text()
+          let createJson = null
+          try { createJson = createText ? JSON.parse(createText) : null } catch {}
+          if (!createRes.ok || !createJson?.ok || !createJson?.data?.id) {
+            throw new Error(`employee create (linked) failed: HTTP ${createRes.status} body=${createText.slice(0, 400)}`)
+          }
+          const employeeId = String(createJson.data.id)
+
+          const pinRes = await fetch(`/api/ponto/admin/employees/${encodeURIComponent(employeeId)}/pin`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ pin }),
+          })
+          const pinText = await pinRes.text()
+          let pinJson = null
+          try { pinJson = pinText ? JSON.parse(pinText) : null } catch {}
+          if (!pinRes.ok || !pinJson?.ok) {
+            throw new Error(`set pin failed: HTTP ${pinRes.status} body=${pinText.slice(0, 400)}`)
+          }
+
+          const me1Res = await fetch('/api/ponto/me', { credentials: 'include' })
+          const me1Text = await me1Res.text()
+          let me1 = null
+          try { me1 = me1Text ? JSON.parse(me1Text) : null } catch {}
+          if (!me1Res.ok || !me1?.ok || me1?.linked !== true) {
+            throw new Error(`me linked failed: HTTP ${me1Res.status} body=${me1Text.slice(0, 400)}`)
+          }
+          if (String(me1?.employee?.id || '') !== employeeId) {
+            throw new Error(`me employee mismatch: expected=${employeeId} got=${String(me1?.employee?.id || '')}`)
+          }
+
+          let punch = null
+          if (doPunch) {
+            const punchRes = await fetch('/api/ponto/me/punch', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ pin, type: 'AUTO', clientTime: new Date().toISOString() }),
+            })
+            const punchText = await punchRes.text()
+            let punchJson = null
+            try { punchJson = punchText ? JSON.parse(punchText) : null } catch {}
+            if (!punchRes.ok || !punchJson?.ok) {
+              throw new Error(`me punch failed: HTTP ${punchRes.status} body=${punchText.slice(0, 400)}`)
+            }
+            punch = punchJson?.data || null
+          }
+
+          const delRes = await fetch(`/api/ponto/admin/employees/${encodeURIComponent(employeeId)}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const delText = await delRes.text()
+          let delJson = null
+          try { delJson = delText ? JSON.parse(delText) : null } catch {}
+          if (!delRes.ok || !delJson?.ok) {
+            throw new Error(`cleanup delete failed: HTTP ${delRes.status} body=${delText.slice(0, 400)}`)
+          }
+
+          return { actorEmail, employeeId, punch }
+        }, { doPunch: MUTATE_PUNCH })
+        console.log(`[ponto-ui-smoke] Employee link + PIN OK (employeeId=${out.employeeId} actor=${out.actorEmail})${out.punch ? ' + punch' : ''}`)
       }
     }
 
