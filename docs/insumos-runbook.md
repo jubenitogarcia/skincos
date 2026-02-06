@@ -1,0 +1,80 @@
+# Runbook — Insumos (CRM)
+
+Este documento descreve como validar, diagnosticar e operar o módulo **Insumos** em produção.
+
+## 1) Arquitetura (camadas)
+1. **Frontend CRM**: `frontend/InsumosModule.tsx`
+2. **Proxy Pages Functions**: `frontend/functions/api/insumos/[[path]].ts`
+3. **Worker API (Insumos)**: `backend/apps/insumos/src/worker.js`
+4. **Persistência**: Cloudflare **D1** (sem Google Sheets)
+
+## 2) Invariantes obrigatórios
+- Modo de armazenamento: **D1-only**.
+- `zero demo` por padrão: dados simulados só com flag explícita.
+- Auto-sync resiliente: pausa temporária após falhas repetidas de API.
+
+## 3) Checklist rápido de saúde
+
+### 3.1 Health do Insumos (produção)
+```bash
+curl -sS https://crm.skincos.com.br/api/insumos/health
+```
+Esperado:
+- `ok: true`
+- `storage: "d1"`
+- `dbConfigured: true`
+
+### 3.2 Sessão autenticada
+```bash
+curl -sS -I https://crm.skincos.com.br/api/auth/me
+```
+Esperado:
+- `200` com sessão ativa
+- `401` quando não autenticado (comportamento esperado fora da sessão)
+
+### 3.3 Verificação visual no CRM
+1. Abrir o módulo **Insumos**.
+2. Confirmar ausência do banner **DADOS SIMULADOS** por padrão.
+3. Confirmar cards/alertas carregando com dados reais.
+
+## 4) Diagnóstico de incidentes (500/503/travamento)
+
+### 4.1 Sinais comuns
+- Storm de requests em `/api/insumos/*`.
+- Erros `500/503` ao entrar ou após movimentações.
+- UI lenta com DevTools aberto.
+
+### 4.2 Fluxo de diagnóstico
+1. Abrir DevTools > Network com `Preserve log`.
+2. Filtrar por `api/insumos`.
+3. Registrar endpoint, status e `x-request-id` dos erros.
+4. Correlacionar `x-request-id` no Cloudflare Worker logs.
+
+### 4.3 Comportamento esperado de proteção
+- Auto-sync de Overview/Insights pausa após 5 falhas em 30s por 60s.
+- Banner de degradação aparece com botões:
+  - `Retomar auto-sync`
+  - `Atualizar agora`
+- Reload manual continua possível.
+
+## 5) Testes de regressão obrigatórios
+Do root do repo:
+```bash
+npm -C frontend run test:e2e -- \
+  insumos-no-request-storm.spec.ts \
+  insumos-api-concurrency.spec.ts \
+  insumos-zero-demo-default.spec.ts \
+  insumos-circuit-breaker.spec.ts
+```
+
+Critérios:
+- Nenhum storm em `health/me`.
+- Concorrência do fan-out controlada.
+- Zero-demo por padrão.
+- Breaker ativo sob falhas repetidas.
+
+## 6) Regras de deploy e colaboração
+- Sempre via PR curto e focado.
+- Habilitar auto-merge só com checks obrigatórios verdes.
+- Evitar editar em paralelo os mesmos arquivos grandes (`InsumosModule.tsx`, `App.tsx`) sem sincronizar `origin/main`.
+

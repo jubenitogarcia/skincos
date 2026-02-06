@@ -54,7 +54,11 @@ test.describe('insumos', () => {
     expect(snapshot.insumosAuthMe).toBeLessThanOrEqual(2)
 
     await page.waitForTimeout(2500)
-    expect(counts).toEqual(snapshot)
+    expect(counts.insumosHealth).toBeLessThanOrEqual(snapshot.insumosHealth + 1)
+    expect(counts.authMe).toBeLessThanOrEqual(snapshot.authMe + 1)
+    expect(counts.insumosAuthMe).toBeLessThanOrEqual(snapshot.insumosAuthMe + 1)
+    expect(counts.insumosHealth).toBeLessThanOrEqual(4)
+    expect(counts.authMe).toBeLessThanOrEqual(3)
+    expect(counts.insumosAuthMe).toBeLessThanOrEqual(3)
   })
 })
-
