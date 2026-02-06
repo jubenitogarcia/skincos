@@ -67,6 +67,21 @@ HEADED=1 LOGIN_WAIT_MS=600000 NODE_PATH=frontend/node_modules node frontend/scri
 ```
 Artefatos: `output/playwright/` (screenshots + trace).
 
+### 4.2 Smoke automatizado (UI) no GitHub Actions (produção)
+Workflow: `.github/workflows/ponto-ui-smoke.yml`
+
+**Requisitos**
+- Criar um usuário dedicado “smoke bot” no CRM (evite usar credenciais pessoais).
+- Configurar os secrets no GitHub (repo → Settings → Secrets and variables → Actions):
+  - `PONTO_SMOKE_EMAIL`
+  - `PONTO_SMOKE_PASSWORD`
+
+**O que ele valida**
+- Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
+- Diagnóstico carrega (`/_proxy-status` e `/health`).
+- Invariantes de UI (admin sem campo de token; PIN fallback do Kiosk oculto por padrão).
+- (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, e limpa em seguida.
+
 ---
 
 ## 5) Fluxo mínimo (Admin → Funcionário → Audit)
