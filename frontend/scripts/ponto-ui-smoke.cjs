@@ -26,7 +26,10 @@ fs.mkdirSync(ARTIFACT_DIR, { recursive: true })
 
 const URL = process.env.CRM_URL || 'https://crm.skincos.com.br'
 const HEADED = process.env.HEADED === '1' || process.env.HEADED === 'true'
-const LOGIN_WAIT_MS = Math.max(5_000, parseInt(String(process.env.LOGIN_WAIT_MS || ''), 10) || 10 * 60_000)
+const LOGIN_WAIT_MS = Math.max(
+  5_000,
+  parseInt(String(process.env.LOGIN_WAIT_MS || ''), 10) || (process.env.CI ? 120_000 : 10 * 60_000)
+)
 const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
 const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
@@ -126,6 +129,42 @@ async function main() {
     return true
   }
 
+  async function authState() {
+    return await page.evaluate(async () => {
+      try {
+        const res = await fetch('/api/auth/me', { credentials: 'include' })
+        const text = await res.text()
+        let json = null
+        try { json = text ? JSON.parse(text) : null } catch { json = null }
+        const username = json?.user?.username ? String(json.user.username) : ''
+        return { ok: res.ok && !!username, status: res.status, username, text: String(text || '').slice(0, 240) }
+      } catch (e) {
+        return { ok: false, status: 0, username: '', text: String(e && e.message ? e.message : e).slice(0, 240) }
+      }
+    })
+  }
+
+  async function waitForAuthOrError(timeoutMs) {
+    const start = Date.now()
+    const alert = page.locator('[role="alert"]').first()
+
+    while (Date.now() - start < timeoutMs) {
+      const state = await authState()
+      if (state.ok) return state
+
+      const alertVisible = await alert.isVisible().catch(() => false)
+      if (alertVisible) {
+        const text = String((await alert.innerText().catch(() => '')) || '').trim()
+        throw new Error(`Login failed: ${text || '(unknown error)'} • /api/auth/me HTTP ${state.status}`)
+      }
+
+      await page.waitForTimeout(1000)
+    }
+
+    const state = await authState()
+    throw new Error(`Login timeout after ${Math.ceil(timeoutMs / 1000)}s • /api/auth/me HTTP ${state.status} ${state.text ? `• ${state.text}` : ''}`)
+  }
+
   // Tracing is extremely useful when debugging failures, but it can slow down the browser significantly.
   // Keep it opt-in for routine smoke runs.
   if (TRACE) await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
@@ -150,8 +189,9 @@ async function main() {
     }).catch(() => {})
     await maybeScreenshot('home')
 
-    const loginMarker = page.locator('text=Acessar Plataforma').first()
-    const isLogin = await loginMarker.isVisible().catch(() => false)
+    // We use API auth state as source of truth; UI text is prone to false-positives.
+    const preAuth = await authState()
+    const isLogin = !preAuth.ok
     if (isLogin) {
       console.log('[ponto-ui-smoke] Not authenticated yet.')
       if (AUTO_LOGIN) console.log('[ponto-ui-smoke] AUTO_LOGIN enabled: attempting login.')
@@ -163,7 +203,7 @@ async function main() {
       if (AUTO_LOGIN) {
         await tryAutoLogin()
       }
-      await loginMarker.waitFor({ state: 'hidden', timeout: LOGIN_WAIT_MS })
+      await waitForAuthOrError(LOGIN_WAIT_MS)
     }
     // Persist auth for the next run without needing a persistent profile.
     await context.storageState({ path: storageStatePath }).catch(() => {})
