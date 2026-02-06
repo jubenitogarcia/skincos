@@ -796,6 +796,8 @@ export function InsumosModule() {
   const insightsAbortRef = React.useRef<AbortController | null>(null)
   const apiFailureTimestampsRef = React.useRef<number[]>([])
   const [autoSyncSuspendedUntil, setAutoSyncSuspendedUntil] = React.useState<number>(0)
+  const [overviewVisible, setOverviewVisible] = React.useState(false)
+  const [overviewEverVisible, setOverviewEverVisible] = React.useState(false)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
   const [shareHidden, setShareHidden] = React.useState(false)
   const [shareSourceId, setShareSourceId] = React.useState<string | null>(null)
@@ -1034,6 +1036,28 @@ export function InsumosModule() {
       return {}
     }
   })
+
+  React.useEffect(() => {
+    const el = overviewSectionRef.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setOverviewVisible(true)
+      setOverviewEverVisible(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (!entry) return
+        const isVisible = entry.isIntersecting || entry.intersectionRatio > 0
+        setOverviewVisible(isVisible)
+        if (isVisible) setOverviewEverVisible(true)
+      },
+      { root: null, rootMargin: '120px 0px', threshold: 0.15 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const canUseApi = Boolean(
     typeof health?.ready === 'boolean'
@@ -2644,6 +2668,8 @@ export function InsumosModule() {
 
   const loadOverview = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!canUseApi || !isAuthed) return
+    // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
+    setOverviewEverVisible(true)
     if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
     try {
       overviewAbortRef.current?.abort()
@@ -2882,6 +2908,8 @@ export function InsumosModule() {
 
   const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!canUseApi || !isAuthed) return
+    // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
+    setOverviewEverVisible(true)
     if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
     try {
       insightsAbortRef.current?.abort()
@@ -3158,13 +3186,21 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
-    void loadOverview()
-  }, [canUseApi, isAuthed, loadOverview])
+    if (!overviewVisible && !overviewEverVisible) return
+    const t = window.setTimeout(() => {
+      void loadOverview()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [canUseApi, isAuthed, loadOverview, overviewEverVisible, overviewVisible])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
-    void loadInsights()
-  }, [canUseApi, isAuthed, loadInsights])
+    if (!overviewVisible && !overviewEverVisible) return
+    const t = window.setTimeout(() => {
+      void loadInsights()
+    }, 450)
+    return () => window.clearTimeout(t)
+  }, [canUseApi, isAuthed, loadInsights, overviewEverVisible, overviewVisible])
 
   React.useEffect(() => {
     const onOp = (event: Event) => {
