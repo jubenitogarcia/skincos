@@ -3,7 +3,7 @@ name: Deploy Cloudflare Workers (API + Insumos) reconcile
 on:
   schedule:
     # Workaround: merges performed via GitHub Actions can skip `on: push` deploy triggers.
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -97,3 +97,48 @@ jobs:
         with:
           key: workers-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/deployed_sha.txt
+
+      - name: Smoke check Ponto (production)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          BASE_URL: https://crm.skincos.com.br
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, sys, time, urllib.request
+
+          base = os.environ.get("BASE_URL", "").rstrip("/")
+          if not base:
+            raise SystemExit("BASE_URL not set")
+
+          def fetch_json(path: str):
+            url = f"{base}{path}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PontoWorkersReconcile/1.0)"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+              data = resp.read().decode("utf-8", "ignore")
+              return json.loads(data)
+
+          def check():
+            proxy = fetch_json("/api/ponto/_proxy-status")
+            if not proxy.get("ok"):
+              raise SystemExit(f"proxy-status ok=false: {proxy}")
+            if not proxy.get("effectiveTargetConfigured"):
+              raise SystemExit(f"proxy-status effectiveTargetConfigured=false: {proxy}")
+            if not proxy.get("adminTokenConfigured"):
+              raise SystemExit(f"proxy-status adminTokenConfigured=false: {proxy}")
+            health = fetch_json("/api/ponto/health")
+            if not health.get("ok"):
+              raise SystemExit(f"health ok=false: {health}")
+            return True
+
+          for i in range(1, 6):
+            try:
+              check()
+              print("Ponto workers reconcile smoke OK")
+              sys.exit(0)
+            except Exception as exc:
+              print(f"Attempt {i} failed: {exc}")
+              if i >= 5:
+                raise
+              time.sleep(6)
+          PY
