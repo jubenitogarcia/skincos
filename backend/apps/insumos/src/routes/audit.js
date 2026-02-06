@@ -7,12 +7,6 @@ export async function handleAuditRoutes({
     appOrigin,
     withCORS,
     requireRoles,
-    spreadsheetId,
-    accessToken,
-    readSheet,
-    ensureSheetExists,
-    getHeaderMap,
-    AUDIT_SHEET_NAME,
 }) {
     // GET /audit (consulta logs; prefer D1, fallback Sheets)
     if (url.pathname === "/audit" && request.method === "GET") {
@@ -67,52 +61,7 @@ export async function handleAuditRoutes({
                 );
             }
 
-            await ensureSheetExists(spreadsheetId, AUDIT_SHEET_NAME, accessToken);
-            const raw = await readSheet(spreadsheetId, `${AUDIT_SHEET_NAME}!A1:Z`, accessToken);
-            const headers = raw?.[0] || [];
-            const map = getHeaderMap(headers);
-            const rows = (raw || []).slice(1).map((r) => {
-                const row = r || [];
-                const get = (key) => {
-                    const idx = map[key];
-                    return idx === undefined ? '' : (row[idx] ?? '');
-                };
-                return {
-                    timestamp: get('timestamp'),
-                    actor: get('actor'),
-                    role: get('role'),
-                    action: get('action'),
-                    entity: get('entity'),
-                    entityId: get('entity_id'),
-                    unidade: get('unidade'),
-                    ip: get('ip'),
-                    userAgent: get('user_agent'),
-                    idempotencyKey: get('idempotency_key'),
-                };
-            });
-
-            let filtered = rows;
-            if (actorQ) {
-                filtered = filtered.filter((x) => String(x.actor || '').toLowerCase().includes(String(actorQ).toLowerCase()));
-            }
-            if (actionQ) {
-                filtered = filtered.filter((x) => String(x.action || '').toUpperCase() === String(actionQ).toUpperCase());
-            }
-            if (entityQ) {
-                filtered = filtered.filter((x) => String(x.entity || '').toUpperCase() === String(entityQ).toUpperCase());
-            }
-            if (unidadeQ) {
-                filtered = filtered.filter((x) => String(x.unidade || '') === String(unidadeQ));
-            }
-
-            filtered.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
-            const start = (pagina - 1) * limit;
-            const pageItems = filtered.slice(start, start + limit);
-            return withCORS(
-                JSON.stringify({ success: true, data: pageItems, resumo: { total: filtered.length, pagina, limit } }),
-                { status: 200 },
-                appOrigin
-            );
+            return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 503 }, appOrigin);
         } catch (err) {
             return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
         }

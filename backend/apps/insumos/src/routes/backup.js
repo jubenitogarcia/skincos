@@ -1,10 +1,8 @@
 // @ts-nocheck
 
-import { writeSheet } from '../../workers/sheets-api.js';
 import {
     buildBackupPayload,
     cleanupBackupSnapshots,
-    clearSheetRange,
     getBackupStatus,
     listBackupSnapshots,
     loadBackupSnapshot,
@@ -73,14 +71,7 @@ export async function handleBackupRoutes({
             const auth = await requireRoles(['ADMIN', 'GESTOR']);
             if (!auth.ok) return auth.response;
 
-            const payload = await buildBackupPayload({
-                spreadsheetId,
-                accessToken,
-                sheetRange,
-                userRange,
-                movimentacoesRange,
-                env
-            });
+            const payload = await buildBackupPayload({ env });
 
             const stored = await persistBackupSnapshot({
                 env,
@@ -156,36 +147,17 @@ export async function handleBackupRoutes({
                 return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
             }
 
-            const restoreSheets = body.restoreSheets === true;
-            if (hasSheets && !hasD1Insumos && !restoreSheets) {
+            if (hasSheets && !hasD1Insumos) {
                 return withCORS(
-                    JSON.stringify({ success: false, error: 'Backup contém apenas Sheets. Para restaurar, envie {"restoreSheets": true}.' }),
+                    JSON.stringify({ success: false, error: 'Backup legado (Sheets) não é suportado. Gere um novo backup a partir do D1.' }),
                     { status: 400 },
                     appOrigin
                 );
             }
-            if (restoreSheets) {
-                if (!hasSheets) {
-                    return withCORS(JSON.stringify({ success: false, error: 'Backup não contém Sheets' }), { status: 400 }, appOrigin);
-                }
-                if (!spreadsheetId || !accessToken) {
-                    return withCORS(JSON.stringify({ success: false, error: 'Sheets não configurado neste ambiente (sem SPREADSHEET_ID/GOOGLE creds)' }), { status: 500 }, appOrigin);
-                }
 
-                // Restore Sheets (clear then write full values)
-                await clearSheetRange(spreadsheetId, sheetRange, accessToken);
-                await writeSheet(spreadsheetId, sheetRange, p.sheets.insumosValues, accessToken, 'UPDATE');
-
-                await clearSheetRange(spreadsheetId, userRange, accessToken);
-                await writeSheet(spreadsheetId, userRange, p.sheets.usersValues, accessToken, 'UPDATE');
-
-                await clearSheetRange(spreadsheetId, movimentacoesRange, accessToken);
-                await writeSheet(spreadsheetId, movimentacoesRange, p.sheets.movValues, accessToken, 'UPDATE');
-            }
-
-	            // Restore D1 (includes Insumos tables + snapshots; does not touch jobs/backups)
-	            if (env?.DB && p?.d1) {
-	                try {
+            // Restore D1 (includes Insumos tables + snapshots; does not touch jobs/backups)
+            if (env?.DB && p?.d1) {
+                try {
 	                    const { usersTable } = await resolveCrmTables(env);
 	                    const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
 	                    const usersRows = Array.isArray(p.d1.crmUsers)

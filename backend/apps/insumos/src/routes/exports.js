@@ -7,17 +7,7 @@ export async function handleExportsRoutes({
     env,
     appOrigin,
     withCORS,
-    spreadsheetId,
-    accessToken,
-    sheetRange,
-    movimentacoesRange,
-    movimentacoesSheetName,
     unidade,
-    readSheet,
-    ensureHeaderColumns,
-    parseMovimentacoes,
-    normalizeInsumos,
-    parseInsumos,
     computeNotificationsForUnidade,
     safeJson,
     toCsv,
@@ -50,13 +40,8 @@ export async function handleExportsRoutes({
                 }
             }
 
-            let insumos;
-            if (d1?.enabled) {
-                insumos = await d1.listInsumos({ unidade: unidadeQ });
-            } else {
-                const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-                insumos = normalizeInsumos(parseInsumos(rows), unidadeQ);
-            }
+            if (!d1?.enabled) throw new Error('D1_ONLY');
+            const insumos = await d1.listInsumos({ unidade: unidadeQ });
             const data = computeNotificationsForUnidade(insumos, unidadeQ);
             try {
                 if (env.DB) {
@@ -87,13 +72,8 @@ export async function handleExportsRoutes({
     if (url.pathname === "/export/insumos.csv" && request.method === "GET") {
         try {
             const unidadeQ = url.searchParams.get('unidade') || unidade;
-            let insumos;
-            if (d1?.enabled) {
-                insumos = await d1.listInsumos({ unidade: unidadeQ });
-            } else {
-                const rows = await readSheet(spreadsheetId, sheetRange, accessToken);
-                insumos = normalizeInsumos(parseInsumos(rows), unidadeQ);
-            }
+            if (!d1?.enabled) throw new Error('D1_ONLY');
+            const insumos = await d1.listInsumos({ unidade: unidadeQ });
             const headers = [
                 'registro',
                 'codigoBarras',
@@ -151,87 +131,49 @@ export async function handleExportsRoutes({
             const filtroUser = url.searchParams.get('usuario');
             const filtroCodigo = url.searchParams.get('codigoBarras');
 
+            if (!d1?.enabled) throw new Error('D1_ONLY');
+            if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
             let movimentos = [];
-            if (d1?.enabled) {
-                if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
-                const where = [];
-                const binds = [];
+            const where = [];
+            const binds = [];
 
-                if (tipo) {
-                    where.push('UPPER(tipo) = ?');
-                    binds.push(String(tipo).toUpperCase().replace('Í', 'I'));
-                }
-                if (filtroUnidade) {
-                    where.push('unidade = ?');
-                    binds.push(String(filtroUnidade));
-                }
-                if (filtroUser) {
-                    where.push('usuario = ?');
-                    binds.push(String(filtroUser));
-                }
-                if (filtroCodigo) {
-                    where.push('codigo_barras = ?');
-                    binds.push(String(filtroCodigo).trim());
-                }
-                if (de) {
-                    where.push('data_hora >= ?');
-                    binds.push(`${String(de)}T00:00:00.000Z`);
-                }
-                if (ate) {
-                    where.push('data_hora <= ?');
-                    binds.push(`${String(ate)}T23:59:59.999Z`);
-                }
-
-                const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-                const rows = await env.DB.prepare(
-                    `SELECT data_hora as dataHora, tipo, codigo_barras as codigoBarras, produto, quantidade,
-                            estoque_anterior as estoqueAnterior, estoque_novo as estoqueNovo, unidade, usuario, observacoes
-                     FROM insumos_movements
-                     ${whereSql}
-                     ORDER BY data_hora DESC
-                     LIMIT 50000`
-                )
-                    .bind(...binds)
-                    .all();
-                movimentos = rows?.results || [];
-            } else {
-                await ensureHeaderColumns({
-                    spreadsheetId,
-                    sheetName: movimentacoesSheetName,
-                    accessToken,
-                    requiredHeaders: ['UNIDADE'],
-                });
-                const raw = await readSheet(spreadsheetId, movimentacoesRange, accessToken);
-                movimentos = parseMovimentacoes(raw);
-
-                if (tipo) {
-                    movimentos = movimentos.filter((m) => String(m.tipo).toUpperCase() === String(tipo).toUpperCase());
-                }
-                if (filtroUnidade) {
-                    movimentos = movimentos.filter((m) => (m.unidade || '') === filtroUnidade);
-                }
-                if (filtroUser) {
-                    movimentos = movimentos.filter((m) => (m.usuario || '') === filtroUser);
-                }
-                if (filtroCodigo) {
-                    movimentos = movimentos.filter(
-                        (m) => String(m.codigoBarras || '').trim() === String(filtroCodigo).trim()
-                    );
-                }
-                const start = de ? new Date(`${de}T00:00:00.000Z`) : null;
-                const end = ate ? new Date(`${ate}T23:59:59.999Z`) : null;
-                if (start || end) {
-                    movimentos = movimentos.filter((m) => {
-                        const d = new Date(m.dataHora);
-                        if (Number.isNaN(d.getTime())) return false;
-                        if (start && d < start) return false;
-                        if (end && d > end) return false;
-                        return true;
-                    });
-                }
-
-                movimentos.sort((a, b) => new Date(b.dataHora).getTime() - new Date(a.dataHora).getTime());
+            if (tipo) {
+                where.push('UPPER(tipo) = ?');
+                binds.push(String(tipo).toUpperCase().replace('Í', 'I'));
             }
+            if (filtroUnidade) {
+                where.push('unidade = ?');
+                binds.push(String(filtroUnidade));
+            }
+            if (filtroUser) {
+                where.push('usuario = ?');
+                binds.push(String(filtroUser));
+            }
+            if (filtroCodigo) {
+                where.push('codigo_barras = ?');
+                binds.push(String(filtroCodigo).trim());
+            }
+            if (de) {
+                where.push('data_hora >= ?');
+                binds.push(`${String(de)}T00:00:00.000Z`);
+            }
+            if (ate) {
+                where.push('data_hora <= ?');
+                binds.push(`${String(ate)}T23:59:59.999Z`);
+            }
+
+            const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+            const rows = await env.DB.prepare(
+                `SELECT data_hora as dataHora, tipo, codigo_barras as codigoBarras, produto, quantidade,
+                        estoque_anterior as estoqueAnterior, estoque_novo as estoqueNovo, unidade, usuario, observacoes
+                 FROM insumos_movements
+                 ${whereSql}
+                 ORDER BY data_hora DESC
+                 LIMIT 50000`
+            )
+                .bind(...binds)
+                .all();
+            movimentos = rows?.results || [];
 
             const headers = [
                 'dataHora',

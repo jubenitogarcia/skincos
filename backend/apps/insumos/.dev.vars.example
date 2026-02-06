@@ -1,23 +1,7 @@
 # Local-only vars for `wrangler dev` (copy to `.dev.vars` and fill values)
 # IMPORTANT: `.dev.vars` is ignored by git.
 #
-# Sheets integration requires BOTH:
-# - GOOGLE_SERVICE_ACCOUNT_EMAIL (service account email)
-# - GOOGLE_PRIVATE_KEY (private key, with \n escapes)
-# - SPREADSHEET_ID (Google Sheet id)
-#
-# Example:
-# GOOGLE_PRIVATE_KEY="(paste your key here with \\n escapes)"
-
-SPREADSHEET_ID="your-spreadsheet-id"
-GOOGLE_SERVICE_ACCOUNT_EMAIL="your-service-account@your-project.iam.gserviceaccount.com"
-GOOGLE_PRIVATE_KEY="your-private-key-with-\\n-escapes"
-
-# Optional overrides (defaults are in wrangler.toml)
-# SHEET_RANGE="Insumos!A:AZ"
-# USER_SHEET_RANGE="Usuarios!A:AZ"
-# MOVIMENTACOES_RANGE="Movimentacoes!A:AZ"
-# SHEET_ID="1511948550"
+# D1-only: this Worker requires a D1 binding named `DB` (configured in `wrangler.toml` and/or Cloudflare dashboard).
 
 # Local dev helpers
 # APP_ORIGIN="http://localhost:5173"
