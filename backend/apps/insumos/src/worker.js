@@ -786,13 +786,15 @@ function computeNotificationsForUnidade(insumos, unidade) {
     for (const i of insumos) {
         const estoqueAtual = Number(i.estoqueAtual) || 0;
         const estoqueMinimo = Number(i.estoqueMinimo) || 0;
-        if (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo) {
+        const isBreakage = estoqueAtual < 0;
+        if (isBreakage || (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo)) {
             lowStock.push({
                 codigoBarras: i.codigoBarras,
                 produto: i.produto,
                 categoria: i.categoria,
                 estoqueAtual,
                 estoqueMinimo,
+                tipoAlerta: isBreakage ? 'QUEBRA_ESTOQUE' : 'ESTOQUE_BAIXO',
             });
         }
 

@@ -634,9 +634,10 @@ export async function d1EntradaBaixa({ env, unidade, body, kind }) {
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
   ).bind(reg, unit).first();
   const estoqueAnterior = toInt(beforeRow?.quantidade, 0);
-  if (kind === 'BAIXA' && quantidade > estoqueAnterior) return { ok: false, status: 400, error: 'Estoque insuficiente' };
 
   const novoEstoque = kind === 'ENTRADA' ? estoqueAnterior + quantidade : estoqueAnterior - quantidade;
+  const quebraEstoque = kind === 'BAIXA' && novoEstoque < 0;
+  const deficit = quebraEstoque ? Math.abs(novoEstoque) : 0;
   const ts = nowIso();
   const movId = crypto.randomUUID();
 
@@ -674,7 +675,7 @@ export async function d1EntradaBaixa({ env, unidade, body, kind }) {
   );
 
   await env.DB.batch(stmts);
-  return { ok: true, estoqueAnterior, novoEstoque, registro: reg };
+  return { ok: true, estoqueAnterior, novoEstoque, registro: reg, quebraEstoque, deficit };
 }
 
 export async function d1Ajuste({ env, unidade, body }) {
