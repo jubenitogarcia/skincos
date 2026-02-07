@@ -1136,10 +1136,40 @@ export function InsumosModule() {
     return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
   }, [authLoaded, canUseApi, healthLoaded, insumosLoaded, insightsLoaded, isAuthed, movLoaded, overviewLoaded])
 
+  const loadingPercent = Math.max(0, Math.min(100, Math.round(dashboardProgress)))
+
   const isDashboardLoading =
     authLoading || healthLoading || (canUseApi && isAuthed && dashboardProgress < 100)
   const shouldShowDashboardLoading =
     isDashboardLoading || !authLoaded || !healthLoaded
+
+  const LoadingBadge = React.useCallback(
+    ({ active }: { active: boolean }) => {
+      if (!active) return null
+      return (
+        <div className="flex items-center gap-1.5 text-[11px] text-blue-100/70">
+          <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+          <span className="font-mono">{loadingPercent}%</span>
+        </div>
+      )
+    },
+    [loadingPercent]
+  )
+
+  const renderLoadingText = React.useCallback(
+    (loading: boolean, emptyLabel: string) => {
+      if (loading || shouldShowDashboardLoading) {
+        return (
+          <span className="inline-flex items-center gap-2 text-blue-100/70">
+            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+            {`Carregando ${loadingPercent}%`}
+          </span>
+        )
+      }
+      return <span>{emptyLabel}</span>
+    },
+    [loadingPercent, shouldShowDashboardLoading]
+  )
 
   const DashboardLoadingButton = React.useCallback(
     ({ size = 'sm', className = '' }: { size?: 'sm' | 'default' | 'lg'; className?: string } = {}) => (
@@ -1153,11 +1183,11 @@ export function InsumosModule() {
 
   const renderListPlaceholder = React.useCallback(
     (loading: boolean, emptyLabel: string) => {
-      if (loading || shouldShowDashboardLoading) return <DashboardLoadingButton />
+      if (loading || shouldShowDashboardLoading) return <div className="text-sm text-blue-100/70">{renderLoadingText(true, emptyLabel)}</div>
       if (isAuthed) return emptyLabel
       return 'Faça login para carregar.'
     },
-    [DashboardLoadingButton, isAuthed, shouldShowDashboardLoading]
+    [DashboardLoadingButton, isAuthed, renderLoadingText, shouldShowDashboardLoading]
   )
 
   const visibleMainPanels = React.useMemo(() => {
@@ -3730,7 +3760,7 @@ export function InsumosModule() {
         const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
         if (restValue > 0 && gb !== 'item') top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' } as any)
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
         const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
         if (!hasAny) {
           return (
@@ -3791,7 +3821,7 @@ export function InsumosModule() {
         const gb: ChartGroupBy = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
 
         if (gb === 'tempo') {
-          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados para o período.')}</div>
           const mode: MovementsMode =
             slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout' ? slot.mode : 'inout'
 
@@ -3895,7 +3925,7 @@ export function InsumosModule() {
         const mode: MovementsMode = slot.mode === 'entrada' ? 'entrada' : 'saida'
         const turnover = (mode === 'entrada' ? insightsTurnover?.entrada : insightsTurnover?.saida) || null
         const raw = Array.isArray(turnover?.categories) ? turnover.categories : []
-        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+        if (!raw.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados para o período.')}</div>
 
         const sorted = [...raw].sort((a: any, b: any) => {
           const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
@@ -3910,7 +3940,7 @@ export function InsumosModule() {
         const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
         if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados.')}</div>
         const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
         if (!hasAny) {
           return (
@@ -3963,7 +3993,7 @@ export function InsumosModule() {
       }
 
 	      if (presetId === 'roi_risk') {
-	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
 
 	        const perdas = (overviewRoi as any)?.perdas || {}
 	        const ruptura = (overviewRoi as any)?.ruptura || {}
@@ -3981,7 +4011,7 @@ export function InsumosModule() {
 	            ]
 
 	        const hasAny = data.some((d) => (Number(d.value) || 0) > 0)
-	        if (!hasAny) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+	        if (!hasAny) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
 
 	        return view === 'pie' ? (
 	          <div className="w-full" style={{ height }}>
@@ -5069,7 +5099,7 @@ export function InsumosModule() {
                       {!items.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={6}>
-                            {overviewLoading ? 'Carregando…' : 'Sem recomendações de compra.'}
+                            {renderLoadingText(overviewLoading, 'Sem recomendações de compra.')}
                           </td>
                         </tr>
                       ) : null}
@@ -5091,11 +5121,12 @@ export function InsumosModule() {
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
                 Valor em estoque
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">
@@ -5106,11 +5137,12 @@ export function InsumosModule() {
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
                 Críticos
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
@@ -5119,11 +5151,12 @@ export function InsumosModule() {
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
                 Estoque baixo
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
@@ -5132,11 +5165,12 @@ export function InsumosModule() {
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
                 Vencendo
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
@@ -5145,11 +5179,12 @@ export function InsumosModule() {
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
                 Expirado c/ estoque
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
@@ -5158,14 +5193,15 @@ export function InsumosModule() {
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
                 Movimentações
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
-	              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
+              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
               <div className="text-sm text-blue-100/80">
                 <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
                 <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
@@ -5470,7 +5506,8 @@ export function InsumosModule() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-1">
+                                <div className="absolute top-2 right-2 flex items-center gap-2">
+                                  <LoadingBadge active={overviewLoading || insightsLoading} />
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -5649,7 +5686,7 @@ export function InsumosModule() {
                           {!(overviewNotifications?.expiringSoon || []).length ? (
                             <tr>
                               <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+                                {renderLoadingText(overviewLoading, 'Sem itens.')}
                               </td>
                             </tr>
                           ) : null}
@@ -5701,7 +5738,7 @@ export function InsumosModule() {
                           {!(overviewNotifications?.expiredWithStock || []).length ? (
                             <tr>
                               <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+                                {renderLoadingText(overviewLoading, 'Sem itens.')}
                               </td>
                             </tr>
                           ) : null}
@@ -5756,7 +5793,7 @@ export function InsumosModule() {
                     </button>
                   ))}
                   {!overviewActionables?.reposicao?.length ? (
-                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem recomendações.')}</div>
                   ) : null}
                 </div>
                 <div className="space-y-2">
@@ -5784,7 +5821,7 @@ export function InsumosModule() {
                     </button>
                   ))}
                   {!overviewActionables?.transferencias?.length ? (
-                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem sugestões.')}</div>
                   ) : null}
                 </div>
               </div>
@@ -5799,7 +5836,7 @@ export function InsumosModule() {
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Qualidade do cadastro{' '}
                 <span className="text-xs text-blue-200/60">
-                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : overviewLoading ? 'Carregando…' : '—'}
+                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : renderLoadingText(overviewLoading, '—')}
                 </span>
               </summary>
               <div className="mt-3 space-y-2">
@@ -5842,7 +5879,7 @@ export function InsumosModule() {
                     </>
                   ) : null}
                   {!overviewQuality?.summary?.total ? (
-                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem ocorrências.'}</span>
+                    <span className="text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem ocorrências.')}</span>
                   ) : null}
                 </div>
 
@@ -5938,7 +5975,8 @@ export function InsumosModule() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-1">
+                                <div className="absolute top-2 right-2 flex items-center gap-2">
+                                  <LoadingBadge active={overviewLoading || insightsLoading} />
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -6171,6 +6209,9 @@ export function InsumosModule() {
                               </SelectContent>
                             </Select>
                           ) : null}
+                        </div>
+                        <div className="flex justify-end">
+                          <LoadingBadge active={overviewLoading || insightsLoading} />
                         </div>
                       </CardHeader>
                       <CardContent>{renderChart({ ...slot, view, metric, topN }, { height })}</CardContent>
