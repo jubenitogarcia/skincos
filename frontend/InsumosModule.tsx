@@ -3174,7 +3174,14 @@ export function InsumosModule() {
       toast.error('Registro do insumo ausente.')
       return
     }
-    if (!canUseApi || !isAuthed) return
+    if (!isAuthed) {
+      toast.error('Nao autenticado.')
+      return
+    }
+    if (!canUseApi) {
+      toast.error('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
+      return
+    }
     const codigoBarras = editCodigo.trim()
     const produto = editProduto.trim()
     if (!codigoBarras) return toast.error('Informe o código de barras')
@@ -7012,13 +7019,16 @@ export function InsumosModule() {
           </details>
 
           <DialogFooter>
+            {!canUseApi ? (
+              <span className="mr-auto text-xs text-muted-foreground">API indisponivel. Aguarde o carregamento.</span>
+            ) : null}
             <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editSaving}>
               Cancelar
             </Button>
             <Button variant="destructive" onClick={deleteEdit} disabled={editSaving || !isAuthed}>
               Excluir
             </Button>
-            <Button onClick={saveEdit} disabled={editSaving || !isAuthed}>
+            <Button onClick={saveEdit} disabled={editSaving || !isAuthed || !canUseApi}>
               {editSaving ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
