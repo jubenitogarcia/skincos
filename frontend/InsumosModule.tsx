@@ -3782,8 +3782,10 @@ export function InsumosModule() {
     )
   }, [insumos])
 
+  // Canonical unit types: keep list short but expressive enough for Insumos.
+  // We intentionally collapse "flaconete" into "frasco" to avoid expanding the list.
   const CANONICAL_TIPOS_UNIDADE = React.useMemo(
-    () => ['frasco', 'seringa', 'caixa', 'ampola', 'flaconete', 'pacote', 'rolo'] as const,
+    () => ['unidade', 'frasco', 'seringa', 'caixa', 'ampola', 'pacote', 'rolo'] as const,
     []
   )
   const canonicalTipoUnidadeSet = React.useMemo(() => new Set(CANONICAL_TIPOS_UNIDADE as readonly string[]), [CANONICAL_TIPOS_UNIDADE])
@@ -3795,6 +3797,7 @@ export function InsumosModule() {
         .replace(/\s*\(s\)\s*/g, '')
         .trim()
       if (!s0) return ''
+      if (s0 === 'flaconete') return 'frasco'
       return canonicalTipoUnidadeSet.has(s0) ? s0 : ''
     },
     [canonicalTipoUnidadeSet]

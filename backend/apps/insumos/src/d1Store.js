@@ -21,11 +21,21 @@ function normalizeTipo(tipo) {
 }
 
 function normalizeTipoUnidade(raw) {
-  return String(raw || '')
+  const v = String(raw || '')
     .trim()
     .toLowerCase()
     .replace(/\s*\(s\)\s*/g, '')
     .trim();
+  if (!v) return '';
+  if (v === 'flaconete') return 'frasco';
+  if (v === 'unidade') return 'unidade';
+  if (v === 'frasco') return 'frasco';
+  if (v === 'seringa') return 'seringa';
+  if (v === 'caixa') return 'caixa';
+  if (v === 'ampola') return 'ampola';
+  if (v === 'pacote') return 'pacote';
+  if (v === 'rolo') return 'rolo';
+  return '';
 }
 
 function calcularStatusValidade(dataValidade) {

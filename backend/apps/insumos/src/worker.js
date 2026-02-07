@@ -438,7 +438,7 @@ function buildRoi(itens, unidade) {
     };
 }
 
-const ALLOWED_UNIDADES_MEDIDA = new Set(['FRASCO', 'SERINGA', 'CAIXA', 'AMPOLA', 'FLACONETE', 'PACOTE', 'ROLO']);
+const ALLOWED_UNIDADES_MEDIDA = new Set(['UNIDADE', 'FRASCO', 'SERINGA', 'CAIXA', 'AMPOLA', 'PACOTE', 'ROLO']);
 
 function buildQualityReport(itens, unidade, limitIssues = 500) {
     const issues = [];
