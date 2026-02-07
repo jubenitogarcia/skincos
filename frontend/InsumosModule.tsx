@@ -1043,6 +1043,23 @@ export function InsumosModule() {
   const [editLote, setEditLote] = React.useState('')
   const [editDataValidade, setEditDataValidade] = React.useState('')
   const [editSaving, setEditSaving] = React.useState(false)
+  type EditValidationKey =
+    | 'codigoBarras'
+    | 'produto'
+    | 'tipoUnidade'
+    | 'lote'
+    | 'dataValidade'
+    | 'policy'
+  type EditValidationErrors = Partial<Record<EditValidationKey, string>>
+  const [editValidationErrors, setEditValidationErrors] = React.useState<EditValidationErrors>({})
+  const clearEditValidationError = React.useCallback((key: EditValidationKey) => {
+    setEditValidationErrors((prev) => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }, [])
 
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
   const [lotSelecionado, setLotSelecionado] = React.useState<Insumo | null>(null)
@@ -2410,6 +2427,13 @@ export function InsumosModule() {
     return false
   }
 
+  const getPolicyErrorCode = (e: unknown): 'POLICY_REQUIRES_LOT' | 'POLICY_REQUIRES_EXPIRY' | null => {
+    const code = String((e as any)?.code || '').toUpperCase()
+    if (code === 'POLICY_REQUIRES_LOT') return 'POLICY_REQUIRES_LOT'
+    if (code === 'POLICY_REQUIRES_EXPIRY') return 'POLICY_REQUIRES_EXPIRY'
+    return null
+  }
+
   const enqueueOffline = React.useCallback(
     (item: Omit<OfflineQueueItem, 'id' | 'ts'>) => {
       const queue = readOfflineQueue()
@@ -2727,6 +2751,7 @@ export function InsumosModule() {
 
   const openEditDialog = React.useCallback((i: Insumo) => {
     setEditTarget(i)
+    setEditValidationErrors({})
     setEditCodigo(String(i.codigoBarras || ''))
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
@@ -3184,11 +3209,18 @@ export function InsumosModule() {
     }
     const codigoBarras = editCodigo.trim()
     const produto = editProduto.trim()
-    if (!codigoBarras) return toast.error('Informe o código de barras')
-    if (!produto) return toast.error('Informe o produto')
+    if (!codigoBarras) {
+      setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
+      return toast.error('Informe o código de barras')
+    }
+    if (!produto) {
+      setEditValidationErrors({ produto: 'Obrigatorio.' })
+      return toast.error('Informe o produto')
+    }
 
     setEditSaving(true)
     try {
+      setEditValidationErrors({})
       const categoria = editCategoria.trim()
       const policy = {
         requiresLot: !!editCategoriaRequiresLot,
@@ -3200,19 +3232,29 @@ export function InsumosModule() {
       const tipoUnidade = normalizeTipoUnidadeToCanonical(editTipoUnidade)
 
       if (!tipoUnidade) {
+        setEditValidationErrors({ tipoUnidade: 'Selecione a unidade (medida).' })
         toast.error('Informe a unidade (medida) para salvar.')
         return
       }
 
       if (policy.fefo && !policy.requiresExpiry) {
+        setEditValidationErrors({ policy: 'FEFO exige validade obrigatoria.' })
         toast.error('FEFO exige validade obrigatória')
         return
       }
       if (policy.requiresLot && !lote) {
+        setEditValidationErrors({
+          policy: 'Lote obrigatorio pela politica.',
+          lote: 'Obrigatorio (pela politica do item).'
+        })
         toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
         return
       }
       if (policy.requiresExpiry && !dataValidade) {
+        setEditValidationErrors({
+          policy: 'Validade obrigatoria pela politica.',
+          dataValidade: 'Obrigatorio (pela politica do item).'
+        })
         toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
         return
       }
@@ -3244,13 +3286,29 @@ export function InsumosModule() {
       setEditOpen(false)
       await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
     } catch (e) {
-      if (policyErrorToast(e)) return
+      const policyCode = getPolicyErrorCode(e)
+      if (policyCode) {
+        policyErrorToast(e)
+        if (policyCode === 'POLICY_REQUIRES_LOT') {
+          setEditValidationErrors({
+            policy: 'Lote obrigatorio pela politica.',
+            lote: 'Obrigatorio (pela politica do item).'
+          })
+        } else {
+          setEditValidationErrors({
+            policy: 'Validade obrigatoria pela politica.',
+            dataValidade: 'Obrigatorio (pela politica do item).'
+          })
+        }
+        return
+      }
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
     }
   }, [
     canUseApi,
+    clearEditValidationError,
     editCalibre,
     editCategoria,
     editCategoriaFefo,
@@ -3274,6 +3332,7 @@ export function InsumosModule() {
     loadOverview,
     mutateJson,
     refreshInsumos,
+    getPolicyErrorCode,
     unidade
   ])
 
@@ -6866,11 +6925,43 @@ export function InsumosModule() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
-              <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} placeholder="789..." />
+              <Input
+                value={editCodigo}
+                onChange={(e) => {
+                  setEditCodigo(e.target.value)
+                  clearEditValidationError('codigoBarras')
+                }}
+                placeholder="789..."
+                aria-invalid={editValidationErrors.codigoBarras ? true : undefined}
+                className={
+                  editValidationErrors.codigoBarras
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              {editValidationErrors.codigoBarras ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.codigoBarras}</div>
+              ) : null}
             </div>
             <div className="md:col-span-2">
               <div className="text-xs text-muted-foreground mb-1">Produto</div>
-              <Input value={editProduto} onChange={(e) => setEditProduto(e.target.value)} placeholder="Nome do produto" />
+              <Input
+                value={editProduto}
+                onChange={(e) => {
+                  setEditProduto(e.target.value)
+                  clearEditValidationError('produto')
+                }}
+                placeholder="Nome do produto"
+                aria-invalid={editValidationErrors.produto ? true : undefined}
+                className={
+                  editValidationErrors.produto
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              {editValidationErrors.produto ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.produto}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Categoria</div>
@@ -6890,7 +6981,11 @@ export function InsumosModule() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
+            <div
+              className={`md:col-span-2 rounded-xl border p-3 ${
+                editValidationErrors.policy ? 'border-red-500/50 bg-red-500/5' : 'border-white/10 bg-black/10'
+              }`}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs text-muted-foreground">Política do item</div>
                 <div className="text-xs text-muted-foreground">Defina as regras para este insumo.</div>
@@ -6901,6 +6996,8 @@ export function InsumosModule() {
                     checked={editCategoriaRequiresLot}
                     onCheckedChange={(v) => {
                       setEditCategoriaRequiresLot(!!v)
+                      clearEditValidationError('policy')
+                      clearEditValidationError('lote')
                     }}
                     disabled={!isManagerRole}
                   />
@@ -6913,6 +7010,8 @@ export function InsumosModule() {
                       const next = !!v
                       setEditCategoriaRequiresExpiry(next)
                       if (!next) setEditCategoriaFefo(false)
+                      clearEditValidationError('policy')
+                      clearEditValidationError('dataValidade')
                     }}
                     disabled={!isManagerRole}
                   />
@@ -6925,6 +7024,7 @@ export function InsumosModule() {
                       const next = !!v
                       setEditCategoriaFefo(next)
                       if (next) setEditCategoriaRequiresExpiry(true)
+                      clearEditValidationError('policy')
                     }}
                     disabled={!isManagerRole}
                   />
@@ -6932,6 +7032,9 @@ export function InsumosModule() {
                 </label>
                 {!isManagerRole ? <span className="text-xs text-muted-foreground">Somente gestores alteram.</span> : null}
               </div>
+              {editValidationErrors.policy ? (
+                <div className="mt-2 text-xs text-red-300">{editValidationErrors.policy}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Marca</div>
@@ -6953,8 +7056,19 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
-              <Select value={normalizeTipoUnidadeToCanonical(editTipoUnidade) || undefined} onValueChange={setEditTipoUnidade}>
-                <SelectTrigger>
+              <Select
+                value={normalizeTipoUnidadeToCanonical(editTipoUnidade) || undefined}
+                onValueChange={(v) => {
+                  setEditTipoUnidade(v)
+                  clearEditValidationError('tipoUnidade')
+                }}
+              >
+                <SelectTrigger
+                  aria-invalid={editValidationErrors.tipoUnidade ? true : undefined}
+                  className={
+                    editValidationErrors.tipoUnidade ? 'border-red-500/60 ring-2 ring-red-500/15' : undefined
+                  }
+                >
                   <SelectValue placeholder="Selecione a unidade" />
                 </SelectTrigger>
                 <SelectContent>
@@ -6965,6 +7079,9 @@ export function InsumosModule() {
                   ))}
                 </SelectContent>
               </Select>
+              {editValidationErrors.tipoUnidade ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.tipoUnidade}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
@@ -6976,11 +7093,35 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Lote</div>
-              <Input value={editLote} onChange={(e) => setEditLote(e.target.value)} placeholder="ex: L2026-01" />
+              <Input
+                value={editLote}
+                onChange={(e) => {
+                  setEditLote(e.target.value)
+                  clearEditValidationError('lote')
+                }}
+                placeholder="ex: L2026-01"
+                aria-invalid={editValidationErrors.lote ? true : undefined}
+                className={editValidationErrors.lote ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined}
+              />
+              {editValidationErrors.lote ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.lote}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Validade</div>
-              <BrDatePickerInput value={editDataValidade} onChange={setEditDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
+              <BrDatePickerInput
+                value={editDataValidade}
+                onChange={(v) => {
+                  setEditDataValidade(v)
+                  clearEditValidationError('dataValidade')
+                }}
+                placeholder="DD/MM/AA"
+                ariaLabel="Validade"
+                className={editValidationErrors.dataValidade ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined}
+              />
+              {editValidationErrors.dataValidade ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.dataValidade}</div>
+              ) : null}
             </div>
           </div>
 
