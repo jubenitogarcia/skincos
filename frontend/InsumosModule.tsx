@@ -2608,7 +2608,7 @@ export function InsumosModule() {
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
     setEditMarca(String(i.marca || ''))
-    setEditTipoUnidade(String(i.tipoUnidade || ''))
+    setEditTipoUnidade(normalizeTipoUnidadeToCanonical(String(i.tipoUnidade || '')) || '')
     setEditEspecificacao(String(i.especificacao || ''))
     setEditConcentracao(String(i.concentracao || ''))
     setEditVolume(String(i.volume || ''))
@@ -2619,7 +2619,7 @@ export function InsumosModule() {
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
     setEditOpen(true)
-  }, [])
+  }, [normalizeTipoUnidadeToCanonical])
 
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
@@ -3064,6 +3064,12 @@ export function InsumosModule() {
           : currentPolicy
       const lote = editLote.trim()
       const dataValidade = dateInputToIso(editDataValidade)
+      const tipoUnidade = normalizeTipoUnidadeToCanonical(editTipoUnidade)
+
+      if (!tipoUnidade) {
+        toast.error('Informe a unidade (medida) para salvar.')
+        return
+      }
 
       if (policy.requiresLot && !lote) {
         toast.error('Esta categoria exige Lote. Preencha o campo lote para salvar.')
@@ -3113,7 +3119,7 @@ export function InsumosModule() {
           produto,
           categoria,
           marca: editMarca.trim(),
-          tipoUnidade: normalizeTipoUnidadeToCanonical(editTipoUnidade) || editTipoUnidade.trim(),
+          tipoUnidade,
           especificacao: editEspecificacao.trim(),
           concentracao: editConcentracao.trim(),
           volume: editVolume.trim(),
@@ -4826,6 +4832,8 @@ export function InsumosModule() {
 
                       const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
                       if (!produto) return toast.error('Informe o produto')
+                      const tipoUnidade = normalizeTipoUnidadeToCanonical(createTipoUnidade)
+                      if (!tipoUnidade) return toast.error('Informe a unidade (medida)')
 
                       setCreateLoading(true)
                       try {
@@ -4869,7 +4877,7 @@ export function InsumosModule() {
                             allowDuplicateLot,
                             categoria,
                             marca: createMarca.trim(),
-                            tipoUnidade: normalizeTipoUnidadeToCanonical(createTipoUnidade),
+                            tipoUnidade,
                             especificacao: createEspecificacao.trim(),
                             concentracao: createConcentracao.trim(),
                             volume: createVolume.trim(),
@@ -6890,14 +6898,11 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
-              <Select value={editTipoUnidade || undefined} onValueChange={setEditTipoUnidade}>
+              <Select value={normalizeTipoUnidadeToCanonical(editTipoUnidade) || undefined} onValueChange={setEditTipoUnidade}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione a unidade" />
                 </SelectTrigger>
                 <SelectContent>
-                  {editTipoUnidade && !insumosTiposUnidade.includes(editTipoUnidade) ? (
-                    <SelectItem value={editTipoUnidade}>{editTipoUnidade}</SelectItem>
-                  ) : null}
                   {insumosTiposUnidade.map((t) => (
                     <SelectItem key={t} value={t}>
                       {t}
@@ -7503,6 +7508,8 @@ export function InsumosModule() {
 
                   const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
                   if (!produto) return toast.error('Informe o produto')
+                  const tipoUnidade = normalizeTipoUnidadeToCanonical(createTipoUnidade)
+                  if (!tipoUnidade) return toast.error('Informe a unidade (medida)')
 
                   setCreateLoading(true)
                   try {
@@ -7546,7 +7553,7 @@ export function InsumosModule() {
                         allowDuplicateLot,
                         categoria,
                         marca: createMarca.trim(),
-                        tipoUnidade: normalizeTipoUnidadeToCanonical(createTipoUnidade),
+                        tipoUnidade,
                         especificacao: createEspecificacao.trim(),
                         concentracao: createConcentracao.trim(),
                         volume: createVolume.trim(),
