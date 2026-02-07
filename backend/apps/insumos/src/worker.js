@@ -25,6 +25,7 @@ import {
     d1Transfer,
     d1ListMovimentacoes,
     d1ListInsumosPaged,
+    d1ListInsumosOptions,
     d1GetUserByUsername,
     d1GetUserByIdentifier,
     d1UpdateUserProfile,
@@ -438,7 +439,7 @@ function buildRoi(itens, unidade) {
     };
 }
 
-const ALLOWED_UNIDADES_MEDIDA = new Set(['FRASCO', 'SERINGA', 'UNIDADE', 'CAIXA', 'ML', 'AMPOLA']);
+const ALLOWED_UNIDADES_MEDIDA = new Set(['UNIDADE', 'FRASCO', 'SERINGA', 'CAIXA', 'AMPOLA', 'PACOTE', 'ROLO']);
 
 function buildQualityReport(itens, unidade, limitIssues = 500) {
     const issues = [];
@@ -531,7 +532,7 @@ function buildQualityReport(itens, unidade, limitIssues = 500) {
                 codigoBarras: codigo,
                 produto,
                 unidade,
-                suggestion: 'Definir unidade (ex.: Frasco, Seringa, ml)'
+                suggestion: 'Definir unidade (ex.: frasco, seringa, caixa, ampola)'
             }));
         } else if (!ALLOWED_UNIDADES_MEDIDA.has(tipoUnidade.toUpperCase())) {
             issues.push(makeIssue({
@@ -786,13 +787,15 @@ function computeNotificationsForUnidade(insumos, unidade) {
     for (const i of insumos) {
         const estoqueAtual = Number(i.estoqueAtual) || 0;
         const estoqueMinimo = Number(i.estoqueMinimo) || 0;
-        if (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo) {
+        const isBreakage = estoqueAtual < 0;
+        if (isBreakage || (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo)) {
             lowStock.push({
                 codigoBarras: i.codigoBarras,
                 produto: i.produto,
                 categoria: i.categoria,
                 estoqueAtual,
                 estoqueMinimo,
+                tipoAlerta: isBreakage ? 'QUEBRA_ESTOQUE' : 'ESTOQUE_BAIXO',
             });
         }
 
@@ -1329,6 +1332,7 @@ export default {
             enabled: true,
             listInsumos: ({ unidade }) => d1ListInsumos({ env, unidades: UNIDADES, unidade }),
             listInsumosPaged: ({ unidade, q, pagina, limite }) => d1ListInsumosPaged({ env, unidades: UNIDADES, unidade, q, pagina, limite }),
+            listInsumosOptions: ({ limite }) => d1ListInsumosOptions({ env, limite }),
             createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
             updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
             deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),

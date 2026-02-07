@@ -41,6 +41,20 @@ export async function handleInsumosRoutes({
             }
         }
 
+        // GET /insumos/options
+        if (url.pathname === "/insumos/options" && request.method === "GET") {
+            try {
+                const limite = url.searchParams.get('limite') || url.searchParams.get('limit') || null;
+                if (typeof d1.listInsumosOptions === 'function') {
+                    const data = await d1.listInsumosOptions({ limite });
+                    return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+                }
+                return withCORS(JSON.stringify({ success: true, data: { categorias: [], marcas: [] } }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
         // POST /insumos - cadastrar novo insumo/lote
         if (url.pathname === "/insumos" && request.method === "POST") {
             try {
@@ -166,7 +180,17 @@ export async function handleInsumosRoutes({
                     after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
                 });
                 ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+                return withCORS(
+                    JSON.stringify({
+                        success: true,
+                        estoqueAnterior: out.estoqueAnterior,
+                        novoEstoque: out.novoEstoque,
+                        quebraEstoque: !!out.quebraEstoque,
+                        deficit: Number(out.deficit || 0)
+                    }),
+                    { status: 200 },
+                    appOrigin
+                );
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }
@@ -196,7 +220,17 @@ export async function handleInsumosRoutes({
                     after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
                 });
                 ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+                return withCORS(
+                    JSON.stringify({
+                        success: true,
+                        estoqueAnterior: out.estoqueAnterior,
+                        novoEstoque: out.novoEstoque,
+                        quebraEstoque: !!out.quebraEstoque,
+                        deficit: Number(out.deficit || 0)
+                    }),
+                    { status: 200 },
+                    appOrigin
+                );
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }

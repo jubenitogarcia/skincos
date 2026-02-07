@@ -43,6 +43,9 @@ type Insumo = {
   tipoUnidade?: string
   fonte?: string
   calibre?: string
+  policyRequiresLot?: boolean | null
+  policyRequiresExpiry?: boolean | null
+  policyFefo?: boolean | null
   lote?: string
   precoCusto?: number
   estoqueAtual?: number
@@ -226,6 +229,20 @@ type OfflineQueueItem = {
   body?: unknown
 }
 
+const CANONICAL_TIPOS_UNIDADE = ['unidade', 'frasco', 'seringa', 'caixa', 'ampola', 'pacote', 'rolo'] as const
+const CANONICAL_TIPOS_UNIDADE_SET = new Set<string>(CANONICAL_TIPOS_UNIDADE as readonly string[])
+
+function normalizeTipoUnidadeToCanonical(raw: string): string {
+  const normalized = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\(s\)\s*/g, '')
+    .trim()
+  if (!normalized) return ''
+  if (normalized === 'flaconete') return 'frasco'
+  return CANONICAL_TIPOS_UNIDADE_SET.has(normalized) ? normalized : ''
+}
+
 function fmtMoneyBRL(value: number) {
   try {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -273,6 +290,7 @@ const CATEGORIA_CORES: Record<string, string> = {
 }
 
 const CATEGORIA_PALETA = ['#60a5fa', '#a78bfa', '#34d399', '#f87171', '#fbbf24', '#22d3ee', '#fb7185', '#c084fc', '#4ade80', '#f472b6']
+const MARCA_PALETA = ['#0891b2', '#2563eb', '#7c3aed', '#db2777', '#16a34a', '#ea580c', '#475569', '#be123c']
 
 function hashToIndex(value: string, mod: number) {
   let h = 0
@@ -288,6 +306,32 @@ function getCategoriaBgColor(categoria?: string | null) {
   if (mapped) return mapped
   if (!key) return '#0ea5e9'
   return CATEGORIA_PALETA[hashToIndex(key, CATEGORIA_PALETA.length)] || '#0ea5e9'
+}
+
+function getMarcaBgColor(marca?: string | null) {
+  const key = String(marca || '').trim().toLowerCase()
+  if (!key) return '#334155'
+  return MARCA_PALETA[hashToIndex(key, MARCA_PALETA.length)] || '#334155'
+}
+
+function getContrastColor(hexColor?: string | null) {
+  const raw = String(hexColor || '').trim()
+  const hex = raw.startsWith('#') ? raw.slice(1) : raw
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return '#ffffff'
+  const r = parseInt(hex.slice(0, 2), 16)
+  const g = parseInt(hex.slice(2, 4), 16)
+  const b = parseInt(hex.slice(4, 6), 16)
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return luminance > 140 ? '#0f172a' : '#ffffff'
+}
+
+function buildTagStyle(bgColor?: string | null): React.CSSProperties {
+  const bg = String(bgColor || '').trim() || '#334155'
+  return {
+    backgroundColor: bg,
+    color: getContrastColor(bg),
+    borderColor: 'rgba(255,255,255,0.25)'
+  }
 }
 
 function slugifyCategoria(value?: string | null) {
@@ -307,6 +351,20 @@ function normalizeText(value?: string | null) {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
+}
+
+function uniqueSortedTextOptions(values: Array<string | null | undefined>) {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of values || []) {
+    const value = String(raw || '').trim()
+    if (!value) continue
+    const key = normalizeText(value)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(value)
+  }
+  return out.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
 }
 
 type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
@@ -451,6 +509,8 @@ function BarcodeScannerInline({
   const [running, setRunning] = React.useState(false)
   const [needsGesture, setNeedsGesture] = React.useState(false)
   const [mode, setMode] = React.useState<'BARCODE_DETECTOR' | 'ZXING' | 'NONE'>('BARCODE_DETECTOR')
+  const [facingMode, setFacingMode] = React.useState<'user' | 'environment'>('user')
+  const [activeFacingMode, setActiveFacingMode] = React.useState<'user' | 'environment' | null>(null)
 
   const stop = React.useCallback(() => {
     runTokenRef.current += 1
@@ -475,10 +535,11 @@ function BarcodeScannerInline({
     if (mountedRef.current) {
       setRunning(false)
       setStarting(false)
+      setActiveFacingMode(null)
     }
   }, [])
 
-  const start = React.useCallback(async (origin: 'auto' | 'gesture') => {
+  const start = React.useCallback(async (origin: 'auto' | 'gesture', preferredFacing?: 'user' | 'environment') => {
     stop()
     setError(null)
     setNeedsGesture(false)
@@ -493,6 +554,27 @@ function BarcodeScannerInline({
     }
 
     const token = runTokenRef.current
+    const targetFacingMode = preferredFacing || facingMode
+    const facingAttempts: Array<'user' | 'environment'> =
+      targetFacingMode === 'user' ? ['user', 'environment'] : ['environment', 'user']
+
+    const getStreamWithFallback = async () => {
+      let lastError: any = null
+      for (const currentFacingMode of facingAttempts) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: currentFacingMode } as any },
+            audio: false
+          })
+          return { stream, currentFacingMode }
+        } catch (e: any) {
+          lastError = e
+          const name = String(e?.name || '')
+          if (name === 'NotAllowedError' || name === 'SecurityError') break
+        }
+      }
+      throw lastError || new Error('Não foi possível abrir a câmera.')
+    }
 
     const tickBarcodeDetector = async (detector: any, tickToken: number) => {
       if (tickToken !== runTokenRef.current) return
@@ -519,10 +601,7 @@ function BarcodeScannerInline({
         const detector = new Detector({
           formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e']
         })
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } as any },
-          audio: false
-        })
+        const { stream, currentFacingMode } = await getStreamWithFallback()
         if (token !== runTokenRef.current) {
           for (const t of stream.getTracks()) t.stop()
           return
@@ -534,6 +613,7 @@ function BarcodeScannerInline({
         await video.play()
         if (token !== runTokenRef.current) return
         setRunning(true)
+        setActiveFacingMode(currentFacingMode)
         rafRef.current = requestAnimationFrame(() => { void tickBarcodeDetector(detector, token) })
         return
       }
@@ -548,17 +628,36 @@ function BarcodeScannerInline({
       const video = videoRef.current
       if (!video) throw new Error('Pré-visualização indisponível.')
 
-      const controls = await reader.decodeFromConstraints(
-        { video: { facingMode: { ideal: 'environment' } } } as any,
-        video,
-        (result: any) => {
-          if (token !== runTokenRef.current) return
-          const raw = result?.getText ? String(result.getText() || '') : ''
-          if (!raw) return
-          stop()
-          onDetected(raw)
+      let controls: any = null
+      let usedFacingMode: 'user' | 'environment' | null = null
+      let lastDecodeError: any = null
+      for (const currentFacingMode of facingAttempts) {
+        try {
+          controls = await reader.decodeFromConstraints(
+            { video: { facingMode: { ideal: currentFacingMode } } } as any,
+            video,
+            (result: any) => {
+              if (token !== runTokenRef.current) return
+              const raw = result?.getText ? String(result.getText() || '') : ''
+              if (!raw) return
+              stop()
+              onDetected(raw)
+            }
+          )
+          usedFacingMode = currentFacingMode
+          break
+        } catch (e: any) {
+          lastDecodeError = e
+          const name = String(e?.name || '')
+          if (name === 'NotAllowedError' || name === 'SecurityError') break
         }
-      )
+      }
+      if (!controls) {
+        throw lastDecodeError || new Error('Não foi possível iniciar o scanner de câmera.')
+      }
+      if (!usedFacingMode) {
+        usedFacingMode = targetFacingMode
+      }
       if (token !== runTokenRef.current) {
         try {
           controls?.stop?.()
@@ -569,6 +668,7 @@ function BarcodeScannerInline({
       }
       zxingControlsRef.current = controls
       setRunning(true)
+      setActiveFacingMode(usedFacingMode)
     } catch (e: any) {
       const name = String(e?.name || '')
       const message = String(e?.message || '')
@@ -592,7 +692,7 @@ function BarcodeScannerInline({
     } finally {
       if (mountedRef.current && token === runTokenRef.current) setStarting(false)
     }
-  }, [onDetected, stop])
+  }, [facingMode, onDetected, stop])
 
   React.useEffect(() => {
     void start('auto')
@@ -620,9 +720,21 @@ function BarcodeScannerInline({
     <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm text-blue-100/80">
-          {mode === 'ZXING' ? 'Scanner (compatível)' : 'Scanner (rápido)'} • Aponte a câmera para o código
+          {mode === 'ZXING' ? 'Scanner (compatível)' : 'Scanner (rápido)'} • {activeFacingMode === 'user' ? 'câmera frontal' : 'câmera traseira'}
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            type="button"
+            onClick={() => {
+              const next = facingMode === 'user' ? 'environment' : 'user'
+              setFacingMode(next)
+              void start('gesture', next)
+            }}
+            disabled={starting}
+          >
+            Inverter câmera
+          </Button>
           {!running ? (
             <Button
               variant="outline"
@@ -637,9 +749,25 @@ function BarcodeScannerInline({
         </div>
       </div>
       {error ? <div className="text-sm text-red-200">{error}</div> : null}
-      <video ref={videoRef} className="w-full max-w-xl rounded-lg border border-white/10 bg-black" playsInline muted />
+      <div className="relative w-full max-w-xl">
+        <video
+          ref={videoRef}
+          className="w-full rounded-lg border border-white/10 bg-black"
+          style={{ transform: 'scaleX(-1)' }}
+          playsInline
+          muted
+        />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="relative h-[28%] w-[78%] rounded-xl border-2 border-emerald-300/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.24)]">
+            <div className="absolute -top-2 -left-2 h-6 w-6 border-l-2 border-t-2 border-white/90 rounded-tl-md" />
+            <div className="absolute -top-2 -right-2 h-6 w-6 border-r-2 border-t-2 border-white/90 rounded-tr-md" />
+            <div className="absolute -bottom-2 -left-2 h-6 w-6 border-l-2 border-b-2 border-white/90 rounded-bl-md" />
+            <div className="absolute -bottom-2 -right-2 h-6 w-6 border-r-2 border-b-2 border-white/90 rounded-br-md" />
+          </div>
+        </div>
+      </div>
       <div className="text-xs text-blue-200/60">
-        Dica: se não detectar, aumente a luz e aproxime o código.
+        Posicione o código dentro da moldura verde. Se não detectar, aumente a luz e aproxime o produto.
       </div>
     </div>
   )
@@ -753,6 +881,7 @@ export function InsumosModule() {
   const [healthLoading, setHealthLoading] = React.useState(true)
 
   const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
+  const INSUMOS_OPTIONS_CACHE_KEY = 'skincos.insumos.options.v1'
   const [unidade, setUnidade] = React.useState<string>(() => {
     try {
       return window.localStorage.getItem(INSUMOS_UNIT_KEY) || 'novo-hamburgo'
@@ -784,6 +913,7 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
+  const [quickActionFeedback, setQuickActionFeedback] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [quickLookupLoading, setQuickLookupLoading] = React.useState(false)
   const [quickLookupError, setQuickLookupError] = React.useState<string | null>(null)
   const [quickLookupCtxUnidade, setQuickLookupCtxUnidade] = React.useState<string | null>(null)
@@ -809,6 +939,38 @@ export function InsumosModule() {
 
   const [categoryPolicies, setCategoryPolicies] = React.useState<CategoryPolicy[]>([])
   const [categoryPoliciesLoading, setCategoryPoliciesLoading] = React.useState(false)
+  const [insumosOptionsCategorias, setInsumosOptionsCategorias] = React.useState<string[]>([])
+  const [insumosOptionsMarcas, setInsumosOptionsMarcas] = React.useState<string[]>([])
+  const readInsumosOptionsCache = React.useCallback(() => {
+    try {
+      const raw = localStorage.getItem(INSUMOS_OPTIONS_CACHE_KEY)
+      if (!raw) return { categorias: [] as string[], marcas: [] as string[] }
+      const parsed = JSON.parse(raw) as Record<string, { categorias?: string[]; marcas?: string[] }>
+      const scoped = parsed?.[unidade]
+      return {
+        categorias: uniqueSortedTextOptions(scoped?.categorias || []),
+        marcas: uniqueSortedTextOptions(scoped?.marcas || [])
+      }
+    } catch {
+      return { categorias: [] as string[], marcas: [] as string[] }
+    }
+  }, [INSUMOS_OPTIONS_CACHE_KEY, unidade])
+  const persistInsumosOptionsCache = React.useCallback(
+    (categorias: string[], marcas: string[]) => {
+      try {
+        const raw = localStorage.getItem(INSUMOS_OPTIONS_CACHE_KEY)
+        const current = raw ? (JSON.parse(raw) as Record<string, { categorias?: string[]; marcas?: string[] }>) : {}
+        current[unidade] = {
+          categorias: uniqueSortedTextOptions(categorias),
+          marcas: uniqueSortedTextOptions(marcas)
+        }
+        localStorage.setItem(INSUMOS_OPTIONS_CACHE_KEY, JSON.stringify(current))
+      } catch {
+        // ignore
+      }
+    },
+    [INSUMOS_OPTIONS_CACHE_KEY, unidade]
+  )
 
   const [adminCategoryPolicies, setAdminCategoryPolicies] = React.useState<CategoryPolicy[]>([])
   const [adminCategorySuggestions, setAdminCategorySuggestions] = React.useState<CategoryPolicySuggestion[]>([])
@@ -838,7 +1000,7 @@ export function InsumosModule() {
   const [createCodigo, setCreateCodigo] = React.useState('')
   const [createProduto, setCreateProduto] = React.useState('')
   const [createCategoria, setCreateCategoria] = React.useState('')
-  const [createCategoriaPolicyKey, setCreateCategoriaPolicyKey] = React.useState('')
+  const [createPolicyTouched, setCreatePolicyTouched] = React.useState(false)
   const [createCategoriaRequiresLot, setCreateCategoriaRequiresLot] = React.useState(false)
   const [createCategoriaRequiresExpiry, setCreateCategoriaRequiresExpiry] = React.useState(false)
   const [createCategoriaFefo, setCreateCategoriaFefo] = React.useState(false)
@@ -866,7 +1028,6 @@ export function InsumosModule() {
   const [editCodigo, setEditCodigo] = React.useState('')
   const [editProduto, setEditProduto] = React.useState('')
   const [editCategoria, setEditCategoria] = React.useState('')
-  const [editCategoriaPolicyKey, setEditCategoriaPolicyKey] = React.useState('')
   const [editCategoriaRequiresLot, setEditCategoriaRequiresLot] = React.useState(false)
   const [editCategoriaRequiresExpiry, setEditCategoriaRequiresExpiry] = React.useState(false)
   const [editCategoriaFefo, setEditCategoriaFefo] = React.useState(false)
@@ -875,13 +1036,30 @@ export function InsumosModule() {
   const [editEspecificacao, setEditEspecificacao] = React.useState('')
   const [editConcentracao, setEditConcentracao] = React.useState('')
   const [editVolume, setEditVolume] = React.useState('')
-  const [editFonte, setEditFonte] = React.useState('')
+  const [editHomologado, setEditHomologado] = React.useState(false)
   const [editCalibre, setEditCalibre] = React.useState('')
   const [editPrecoCusto, setEditPrecoCusto] = React.useState('')
   const [editEstoqueMinimo, setEditEstoqueMinimo] = React.useState('')
   const [editLote, setEditLote] = React.useState('')
   const [editDataValidade, setEditDataValidade] = React.useState('')
   const [editSaving, setEditSaving] = React.useState(false)
+  type EditValidationKey =
+    | 'codigoBarras'
+    | 'produto'
+    | 'tipoUnidade'
+    | 'lote'
+    | 'dataValidade'
+    | 'policy'
+  type EditValidationErrors = Partial<Record<EditValidationKey, string>>
+  const [editValidationErrors, setEditValidationErrors] = React.useState<EditValidationErrors>({})
+  const clearEditValidationError = React.useCallback((key: EditValidationKey) => {
+    setEditValidationErrors((prev) => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }, [])
 
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
   const [lotSelecionado, setLotSelecionado] = React.useState<Insumo | null>(null)
@@ -931,6 +1109,10 @@ export function InsumosModule() {
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
   const [overviewQualitySeverity, setOverviewQualitySeverity] = React.useState<'ALL' | 'CRITICAL' | 'WARN' | 'INFO'>('ALL')
+  const [qualityMatchesOpen, setQualityMatchesOpen] = React.useState(false)
+  const [qualityMatchesItems, setQualityMatchesItems] = React.useState<Insumo[]>([])
+  const [qualityMatchesIssue, setQualityMatchesIssue] = React.useState<QualityIssue | null>(null)
+  const [qualityMatchesSavingRegistro, setQualityMatchesSavingRegistro] = React.useState('')
   const [overviewMovResumo, setOverviewMovResumo] = React.useState<{ entradaQtd: number; saidaQtd: number; entradaValor: number; saidaValor: number; saldoLiquido: number } | null>(null)
   const [overviewMovSeries, setOverviewMovSeries] = React.useState<
     Array<{ day: string; entrada: number; saida: number; entradaValor?: number; saidaValor?: number }>
@@ -1136,10 +1318,42 @@ export function InsumosModule() {
     return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
   }, [authLoaded, canUseApi, healthLoaded, insumosLoaded, insightsLoaded, isAuthed, movLoaded, overviewLoaded])
 
+  const loadingPercent = Math.max(0, Math.min(100, Math.round(dashboardProgress)))
+
   const isDashboardLoading =
     authLoading || healthLoading || (canUseApi && isAuthed && dashboardProgress < 100)
   const shouldShowDashboardLoading =
     isDashboardLoading || !authLoaded || !healthLoaded
+  const showOverviewLoadingProgress =
+    overviewLoading || (canUseApi && isAuthed && shouldShowDashboardLoading)
+
+  const LoadingBadge = React.useCallback(
+    ({ active }: { active: boolean }) => {
+      if (!active) return null
+      return (
+        <div className="flex items-center gap-1.5 text-[11px] text-blue-100/70">
+          <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+          <span className="font-mono">{loadingPercent}%</span>
+        </div>
+      )
+    },
+    [loadingPercent]
+  )
+
+  const renderLoadingText = React.useCallback(
+    (loading: boolean, emptyLabel: string) => {
+      if (loading || shouldShowDashboardLoading) {
+        return (
+          <span className="inline-flex items-center gap-2 text-blue-100/70">
+            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+            {`Carregando ${loadingPercent}%`}
+          </span>
+        )
+      }
+      return <span>{emptyLabel}</span>
+    },
+    [loadingPercent, shouldShowDashboardLoading]
+  )
 
   const DashboardLoadingButton = React.useCallback(
     ({ size = 'sm', className = '' }: { size?: 'sm' | 'default' | 'lg'; className?: string } = {}) => (
@@ -1153,11 +1367,11 @@ export function InsumosModule() {
 
   const renderListPlaceholder = React.useCallback(
     (loading: boolean, emptyLabel: string) => {
-      if (loading || shouldShowDashboardLoading) return <DashboardLoadingButton />
+      if (loading || shouldShowDashboardLoading) return <div className="text-sm text-blue-100/70">{renderLoadingText(true, emptyLabel)}</div>
       if (isAuthed) return emptyLabel
       return 'Faça login para carregar.'
     },
-    [DashboardLoadingButton, isAuthed, shouldShowDashboardLoading]
+    [DashboardLoadingButton, isAuthed, renderLoadingText, shouldShowDashboardLoading]
   )
 
   const visibleMainPanels = React.useMemo(() => {
@@ -1464,38 +1678,42 @@ export function InsumosModule() {
   )
 
   React.useEffect(() => {
+    if (!createOpen) return
+    if (createPolicyTouched) return
     const slug = slugifyCategoria(createCategoria)
-    if (!createOpen || !slug) {
-      setCreateCategoriaPolicyKey('')
+    if (!slug) {
       setCreateCategoriaRequiresLot(false)
       setCreateCategoriaRequiresExpiry(false)
       setCreateCategoriaFefo(false)
       return
     }
-    if (slug === createCategoriaPolicyKey) return
     const p = getPolicyForCategoria(createCategoria)
-    setCreateCategoriaPolicyKey(slug)
     setCreateCategoriaRequiresLot(!!p.requiresLot)
     setCreateCategoriaRequiresExpiry(!!p.requiresExpiry)
     setCreateCategoriaFefo(!!p.fefo)
-  }, [createCategoria, createCategoriaPolicyKey, createOpen, getPolicyForCategoria])
+  }, [createCategoria, createOpen, createPolicyTouched, getPolicyForCategoria])
 
   React.useEffect(() => {
-    const slug = slugifyCategoria(editCategoria)
-    if (!editOpen || !slug) {
-      setEditCategoriaPolicyKey('')
-      setEditCategoriaRequiresLot(false)
-      setEditCategoriaRequiresExpiry(false)
-      setEditCategoriaFefo(false)
-      return
-    }
-    if (slug === editCategoriaPolicyKey) return
-    const p = getPolicyForCategoria(editCategoria)
-    setEditCategoriaPolicyKey(slug)
-    setEditCategoriaRequiresLot(!!p.requiresLot)
-    setEditCategoriaRequiresExpiry(!!p.requiresExpiry)
-    setEditCategoriaFefo(!!p.fefo)
-  }, [editCategoria, editCategoriaPolicyKey, editOpen, getPolicyForCategoria])
+    if (createOpen) return
+    setCreatePolicyTouched(false)
+  }, [createOpen])
+
+  const getPolicyForItem = React.useCallback(
+    (item?: Insumo | null, categoriaOverride?: string | null) => {
+      const hasExplicit =
+        item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
+      if (hasExplicit) {
+        return {
+          requiresLot: !!item?.policyRequiresLot,
+          requiresExpiry: !!item?.policyRequiresExpiry,
+          fefo: !!item?.policyFefo
+        }
+      }
+      const categoria = String(categoriaOverride || item?.categoria || '').trim()
+      return getPolicyForCategoria(categoria)
+    },
+    [getPolicyForCategoria]
+  )
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -1555,6 +1773,48 @@ export function InsumosModule() {
     }
     return quickLotes
   }, [quickCandidates, quickLotes, quickRegistros.join('|')])
+
+  const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
+    setQuickCodigo('')
+    setQuickRegistro('')
+    setQuickRegistros([])
+    setQuickCandidates([])
+    setQuickAutoFefo(true)
+    setQuickQuantidade('1')
+    setQuickNovoEstoque('')
+    setQuickObs('')
+    setQuickMotivo('Ajuste manual')
+    setQuickScanOpen(false)
+    setQuickLookupLoading(false)
+    setQuickLookupError(null)
+    setQuickLookupCtxUnidade(null)
+    setQuickLookupCode(null)
+    setQuickLookupItems([])
+    setQuickActionLoading(false)
+    if (!opts?.keepFeedback) setQuickActionFeedback(null)
+  }, [])
+
+  const openQuickOperation = React.useCallback(
+    (
+      op: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA',
+      prefill?: {
+        codigoBarras?: string | null
+        quantidade?: number | string | null
+        obs?: string | null
+        fromUnidade?: string | null
+        toUnidade?: string | null
+      }
+    ) => {
+      resetQuickOperationState()
+      if (prefill?.codigoBarras) setQuickCodigo(String(prefill.codigoBarras).trim())
+      if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
+      if (prefill?.obs) setQuickObs(String(prefill.obs))
+      if (prefill?.fromUnidade) setTransferFrom(String(prefill.fromUnidade))
+      if (prefill?.toUnidade) setTransferTo(String(prefill.toUnidade))
+      setQuickOp(op)
+    },
+    [resetQuickOperationState]
+  )
 
   React.useEffect(() => {
     if (!quickOp) return
@@ -1634,13 +1894,19 @@ export function InsumosModule() {
     if (!createProduto.trim() && it.produto) setCreateProduto(String(it.produto))
     if (!createCategoria.trim() && it.categoria) setCreateCategoria(String(it.categoria))
     if (!createMarca.trim() && it.marca) setCreateMarca(String(it.marca))
-    if (!createTipoUnidade.trim() && it.tipoUnidade) setCreateTipoUnidade(String(it.tipoUnidade))
+    if (!createTipoUnidade.trim() && it.tipoUnidade) setCreateTipoUnidade(normalizeTipoUnidadeToCanonical(String(it.tipoUnidade)) || '')
     if (!createEspecificacao.trim() && (it as any).especificacao) setCreateEspecificacao(String((it as any).especificacao))
     if (!createConcentracao.trim() && (it as any).concentracao) setCreateConcentracao(String((it as any).concentracao))
     if (!createVolume.trim() && (it as any).volume) setCreateVolume(String((it as any).volume))
     if (!createFonte.trim() && (it as any).fonte) setCreateFonte(String((it as any).fonte))
     if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
     if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
+    if (!createPolicyTouched) {
+      const policy = getPolicyForItem(it, it.categoria)
+      setCreateCategoriaRequiresLot(!!policy.requiresLot)
+      setCreateCategoriaRequiresExpiry(!!policy.requiresExpiry)
+      setCreateCategoriaFefo(!!policy.fefo)
+    }
   }, [
     createCalibre,
     createCategoria,
@@ -1648,10 +1914,13 @@ export function InsumosModule() {
     createEspecificacao,
     createFonte,
     createMarca,
+    createPolicyTouched,
     createPrecoCusto,
     createProduto,
     createTipoUnidade,
-    createVolume
+    createVolume,
+    getPolicyForItem,
+    normalizeTipoUnidadeToCanonical
   ])
 
   React.useEffect(() => {
@@ -1691,14 +1960,13 @@ export function InsumosModule() {
     if (!quickOp) return
     if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
     if (!quickAutoFefo) return
-    const categoria = String(quickLookupItems?.[0]?.categoria || '').trim()
-    const policy = getPolicyForCategoria(categoria)
+    const policy = getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '')
     if (!policy.fefo) return
     if (!quickLotes.length) return
     const suggested = quickLotes[0]?.registro
     if (!suggested) return
     setQuickRegistro((cur) => (cur ? cur : suggested))
-  }, [getPolicyForCategoria, quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickLookupItems?.[0]?.categoria, quickOp])
+  }, [getPolicyForItem, quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickLookupItems?.[0], quickOp])
 
   const persistShareHistory = React.useCallback(
     (next: ShareHistoryItem[]) => {
@@ -1757,6 +2025,44 @@ export function InsumosModule() {
     }
   }, [apiJson, canUseApi, isAuthed])
 
+  const loadInsumosOptions = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    let categorias: string[] = []
+    let marcas: string[] = []
+    try {
+      const out = await apiJson<{ success?: boolean; data?: { categorias?: string[]; marcas?: string[] } }>(`/insumos/options?limit=300`)
+      categorias = uniqueSortedTextOptions(Array.isArray(out?.data?.categorias) ? out!.data!.categorias! : [])
+      marcas = uniqueSortedTextOptions(Array.isArray(out?.data?.marcas) ? out!.data!.marcas! : [])
+    } catch {
+      // fallback below
+    }
+
+    if (!categorias.length && !marcas.length) {
+      try {
+        const fallback = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?pagina=1&limite=1000`)
+        const items = Array.isArray(fallback?.data) ? fallback.data : []
+        categorias = uniqueSortedTextOptions(items.map((item) => String(item?.categoria || '').trim()))
+        marcas = uniqueSortedTextOptions(items.map((item) => String(item?.marca || '').trim()))
+      } catch {
+        // fallback below
+      }
+    }
+
+    if (!categorias.length) {
+      categorias = uniqueSortedTextOptions([
+        ...((insumosRef.current || []).map((item) => String(item?.categoria || '').trim())),
+        ...((categoryPolicies || []).map((policy) => String(policy?.label || '').trim()))
+      ])
+    }
+    if (!marcas.length) {
+      marcas = uniqueSortedTextOptions((insumosRef.current || []).map((item) => String(item?.marca || '').trim()))
+    }
+
+    if (categorias.length) setInsumosOptionsCategorias(categorias)
+    if (marcas.length) setInsumosOptionsMarcas(marcas)
+    if (categorias.length || marcas.length) persistInsumosOptionsCache(categorias, marcas)
+  }, [apiJson, canUseApi, isAuthed, categoryPolicies, persistInsumosOptionsCache])
+
   const loadAdminCategoryPolicies = React.useCallback(
     async (opts?: { includeSuggestions?: boolean }) => {
       if (!canUseApi || !isAuthed || !isManagerRole) return
@@ -1809,6 +2115,17 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
     void loadCategoryPolicies()
   }, [canUseApi, isAuthed, loadCategoryPolicies])
+
+  React.useEffect(() => {
+    const cached = readInsumosOptionsCache()
+    if (cached.categorias.length) setInsumosOptionsCategorias(cached.categorias)
+    if (cached.marcas.length) setInsumosOptionsMarcas(cached.marcas)
+  }, [readInsumosOptionsCache])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    void loadInsumosOptions()
+  }, [canUseApi, isAuthed, loadInsumosOptions])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed || !isManagerRole) return
@@ -1871,9 +2188,9 @@ export function InsumosModule() {
       }
 
       if (wantsQuickAction) {
-        if (actionLabel === 'Entrada') setQuickOp('ENTRADA')
-        else if (actionLabel === 'Saída') setQuickOp('BAIXA')
-        else if (actionLabel === 'Transferência') setQuickOp('TRANSFERENCIA')
+        if (actionLabel === 'Entrada') openQuickOperation('ENTRADA')
+        else if (actionLabel === 'Saída') openQuickOperation('BAIXA')
+        else if (actionLabel === 'Transferência') openQuickOperation('TRANSFERENCIA')
         setTimeout(() => {
           window.scrollTo({ top: 0, behavior: 'smooth' })
         }, 250)
@@ -2100,14 +2417,21 @@ export function InsumosModule() {
   const policyErrorToast = (e: unknown) => {
     const code = String((e as any)?.code || '').toUpperCase()
     if (code === 'POLICY_REQUIRES_LOT') {
-      toast.error('Esta categoria exige Lote. Abra o cadastro do item e preencha o lote.')
+      toast.error('Este item exige Lote. Abra o cadastro do item e preencha o lote.')
       return true
     }
     if (code === 'POLICY_REQUIRES_EXPIRY') {
-      toast.error('Esta categoria exige Data de validade. Abra o cadastro do item e preencha a validade.')
+      toast.error('Este item exige Data de validade. Abra o cadastro do item e preencha a validade.')
       return true
     }
     return false
+  }
+
+  const getPolicyErrorCode = (e: unknown): 'POLICY_REQUIRES_LOT' | 'POLICY_REQUIRES_EXPIRY' | null => {
+    const code = String((e as any)?.code || '').toUpperCase()
+    if (code === 'POLICY_REQUIRES_LOT') return 'POLICY_REQUIRES_LOT'
+    if (code === 'POLICY_REQUIRES_EXPIRY') return 'POLICY_REQUIRES_EXPIRY'
+    return null
   }
 
   const enqueueOffline = React.useCallback(
@@ -2427,6 +2751,7 @@ export function InsumosModule() {
 
   const openEditDialog = React.useCallback((i: Insumo) => {
     setEditTarget(i)
+    setEditValidationErrors({})
     setEditCodigo(String(i.codigoBarras || ''))
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
@@ -2435,14 +2760,98 @@ export function InsumosModule() {
     setEditEspecificacao(String(i.especificacao || ''))
     setEditConcentracao(String(i.concentracao || ''))
     setEditVolume(String(i.volume || ''))
-    setEditFonte(String(i.fonte || ''))
+    setEditHomologado(/homologad/i.test(String(i.fonte || '').trim()))
     setEditCalibre(String(i.calibre || ''))
     setEditPrecoCusto(i.precoCusto != null ? String(i.precoCusto) : '')
     setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
+    const policy = getPolicyForItem(i, i.categoria)
+    setEditCategoriaRequiresLot(!!policy.requiresLot)
+    setEditCategoriaRequiresExpiry(!!policy.requiresExpiry)
+    setEditCategoriaFefo(!!policy.fefo)
     setEditOpen(true)
-  }, [])
+  }, [getPolicyForItem])
+
+  const openQualityFix = React.useCallback(
+    async (issue: QualityIssue) => {
+      if (!isAuthed) {
+        toast.error('Faça login para editar.')
+        return
+      }
+      const registro = String(issue?.registro || '').trim()
+      const codigo = String(issue?.codigoBarras || '').trim()
+      const issueCode = String(issue?.code || '').trim().toUpperCase()
+      const issueUnit = String(issue?.unidade || '').trim()
+      if (!registro && !codigo) {
+        toast.error('Ocorrência sem referência de insumo para edição rápida.')
+        return
+      }
+      if (issueUnit && issueUnit !== unidade) {
+        setUnidade(issueUnit)
+      }
+
+      if (issueCode === 'DUPLICATE_BARCODE' && codigo) {
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: issueUnit || unidade })
+          const byRegistro = new Map<string, Insumo>()
+          for (const item of items || []) {
+            const itemRegistro = String(item?.registro || '').trim()
+            if (!itemRegistro || byRegistro.has(itemRegistro)) continue
+            byRegistro.set(itemRegistro, item)
+          }
+          const matches = Array.from(byRegistro.values())
+          if (matches.length > 1) {
+            setQualityMatchesIssue(issue)
+            setQualityMatchesItems(matches)
+            setQualityMatchesOpen(true)
+            return
+          }
+          if (matches.length === 1) {
+            openEditDialog(matches[0])
+            return
+          }
+          toast.error('Nenhuma correspondência encontrada para o código duplicado.')
+          return
+        } catch (e: any) {
+          toast.error(e?.message || 'Falha ao buscar duplicidades para edição.')
+          return
+        }
+      }
+      if (registro) {
+        const foundByRegistro = (insumosRef.current || []).find(
+          (i) => String(i?.registro || '').trim() === registro
+        )
+        if (foundByRegistro) {
+          openEditDialog(foundByRegistro)
+          return
+        }
+      }
+
+      if (codigo) {
+        const foundByCodigo = (insumosRef.current || []).find(
+          (i) => String(i?.codigoBarras || '').trim() === codigo
+        )
+        if (foundByCodigo) {
+          openEditDialog(foundByCodigo)
+          return
+        }
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: issueUnit || unidade })
+          if (items?.length) {
+            openEditDialog(items[0])
+            return
+          }
+        } catch (e: any) {
+          toast.error(e?.message || 'Falha ao buscar insumo para edição.')
+          return
+        }
+      }
+
+      toast.error('Insumo não encontrado para edição rápida.')
+    },
+    [isAuthed, lookupInsumosByCodigo, openEditDialog, unidade]
+  )
 
   const loadInsumosPaged = React.useCallback(
     async (opts?: { pagina?: number; limite?: number; q?: string; append?: boolean }): Promise<number | null> => {
@@ -2725,7 +3134,19 @@ export function InsumosModule() {
       setOverviewRoi(data?.roi || null)
       setOverviewQuality(data?.quality || null)
       setOverviewMovResumo((data?.movResumo as any) || null)
-      setOverviewMovSeries(Array.isArray(data?.movSeries) ? data.movSeries : [])
+      setOverviewMovSeries(
+        Array.isArray(data?.movSeries)
+          ? data.movSeries
+              .map((item) => ({
+                day: String(item?.day || ''),
+                entrada: Number(item?.entrada ?? 0) || 0,
+                saida: Number(item?.saida ?? 0) || 0,
+                entradaValor: Number.isFinite(Number(item?.entradaValor)) ? Number(item?.entradaValor) : undefined,
+                saidaValor: Number.isFinite(Number(item?.saidaValor)) ? Number(item?.saidaValor) : undefined
+              }))
+              .filter((item) => item.day)
+          : []
+      )
     } catch (e) {
       if ((e as any)?.name === 'AbortError') return
       if (overviewAbortRef.current !== ac) return
@@ -2778,51 +3199,64 @@ export function InsumosModule() {
       toast.error('Registro do insumo ausente.')
       return
     }
-    if (!canUseApi || !isAuthed) return
+    if (!isAuthed) {
+      toast.error('Nao autenticado.')
+      return
+    }
+    if (!canUseApi) {
+      toast.error('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
+      return
+    }
     const codigoBarras = editCodigo.trim()
     const produto = editProduto.trim()
-    if (!codigoBarras) return toast.error('Informe o código de barras')
-    if (!produto) return toast.error('Informe o produto')
+    if (!codigoBarras) {
+      setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
+      return toast.error('Informe o código de barras')
+    }
+    if (!produto) {
+      setEditValidationErrors({ produto: 'Obrigatorio.' })
+      return toast.error('Informe o produto')
+    }
 
     setEditSaving(true)
     try {
+      setEditValidationErrors({})
       const categoria = editCategoria.trim()
-      const slug = slugifyCategoria(categoria)
-      const currentPolicy = getPolicyForCategoria(categoria)
-      const policy =
-        editCategoriaPolicyKey && slug && editCategoriaPolicyKey === slug
-          ? { slug, requiresLot: editCategoriaRequiresLot, requiresExpiry: editCategoriaRequiresExpiry, fefo: editCategoriaFefo }
-          : currentPolicy
+      const policy = {
+        requiresLot: !!editCategoriaRequiresLot,
+        requiresExpiry: !!editCategoriaRequiresExpiry,
+        fefo: !!editCategoriaFefo
+      }
+      const lote = editLote.trim()
+      const dataValidade = dateInputToIso(editDataValidade)
+      const tipoUnidade = normalizeTipoUnidadeToCanonical(editTipoUnidade)
 
-      if (isManagerRole && slug && editCategoriaPolicyKey && editCategoriaPolicyKey === slug) {
-        if (policy.fefo && !policy.requiresExpiry) {
-          toast.error('FEFO exige validade obrigatória')
-          return
-        }
-        const changed =
-          !!currentPolicy.requiresLot !== !!policy.requiresLot ||
-          !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
-          !!currentPolicy.fefo !== !!policy.fefo
-        if (changed) {
-          const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
-            '/admin/categories',
-            {
-              method: 'POST',
-              queueLabel: 'Política por categoria',
-              body: {
-                slug,
-                label: categoria,
-                requiresLot: !!policy.requiresLot,
-                requiresExpiry: !!policy.requiresExpiry,
-                fefo: !!policy.fefo
-              }
-            },
-            { needsCsrf: true }
-          )
-          if (!(out as any)?.queued) {
-            await Promise.allSettled([loadCategoryPolicies()])
-          }
-        }
+      if (!tipoUnidade) {
+        setEditValidationErrors({ tipoUnidade: 'Selecione a unidade (medida).' })
+        toast.error('Informe a unidade (medida) para salvar.')
+        return
+      }
+
+      if (policy.fefo && !policy.requiresExpiry) {
+        setEditValidationErrors({ policy: 'FEFO exige validade obrigatoria.' })
+        toast.error('FEFO exige validade obrigatória')
+        return
+      }
+      if (policy.requiresLot && !lote) {
+        setEditValidationErrors({
+          policy: 'Lote obrigatorio pela politica.',
+          lote: 'Obrigatorio (pela politica do item).'
+        })
+        toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
+        return
+      }
+      if (policy.requiresExpiry && !dataValidade) {
+        setEditValidationErrors({
+          policy: 'Validade obrigatoria pela politica.',
+          dataValidade: 'Obrigatorio (pela politica do item).'
+        })
+        toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
+        return
       }
 
       await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
@@ -2833,33 +3267,51 @@ export function InsumosModule() {
           produto,
           categoria,
           marca: editMarca.trim(),
-          tipoUnidade: editTipoUnidade.trim(),
+          tipoUnidade,
           especificacao: editEspecificacao.trim(),
           concentracao: editConcentracao.trim(),
           volume: editVolume.trim(),
-          fonte: editFonte.trim(),
+          fonte: editHomologado ? 'Homologado' : '',
           calibre: editCalibre.trim(),
           precoCusto: editPrecoCusto.trim(),
           estoqueMinimo: Number(editEstoqueMinimo) || 0,
-          lote: editLote.trim(),
-          dataValidade: dateInputToIso(editDataValidade)
+          lote,
+          dataValidade,
+          policyRequiresLot: policy.requiresLot,
+          policyRequiresExpiry: policy.requiresExpiry,
+          policyFefo: policy.fefo
         }
       })
       toast.success('Insumo atualizado')
       setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
     } catch (e) {
-      if (policyErrorToast(e)) return
+      const policyCode = getPolicyErrorCode(e)
+      if (policyCode) {
+        policyErrorToast(e)
+        if (policyCode === 'POLICY_REQUIRES_LOT') {
+          setEditValidationErrors({
+            policy: 'Lote obrigatorio pela politica.',
+            lote: 'Obrigatorio (pela politica do item).'
+          })
+        } else {
+          setEditValidationErrors({
+            policy: 'Validade obrigatoria pela politica.',
+            dataValidade: 'Obrigatorio (pela politica do item).'
+          })
+        }
+        return
+      }
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
     }
   }, [
     canUseApi,
+    clearEditValidationError,
     editCalibre,
     editCategoria,
     editCategoriaFefo,
-    editCategoriaPolicyKey,
     editCategoriaRequiresExpiry,
     editCategoriaRequiresLot,
     editCodigo,
@@ -2867,7 +3319,7 @@ export function InsumosModule() {
     editDataValidade,
     editEspecificacao,
     editEstoqueMinimo,
-    editFonte,
+    editHomologado,
     editLote,
     editMarca,
     editPrecoCusto,
@@ -2875,13 +3327,12 @@ export function InsumosModule() {
     editTarget?.registro,
     editTipoUnidade,
     editVolume,
-    getPolicyForCategoria,
     isAuthed,
-    isManagerRole,
-    loadCategoryPolicies,
+    loadInsumosOptions,
     loadOverview,
     mutateJson,
     refreshInsumos,
+    getPolicyErrorCode,
     unidade
   ])
 
@@ -2898,13 +3349,36 @@ export function InsumosModule() {
       })
       toast.success('Insumo excluído')
       setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
     }
-  }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
+  }, [canUseApi, editTarget?.registro, isAuthed, loadInsumosOptions, loadOverview, mutateJson, refreshInsumos, unidade])
+
+  const deleteInsumoByRegistro = React.useCallback(
+    async (registroRaw: string) => {
+      const registro = String(registroRaw || '').trim()
+      if (!registro || !canUseApi || !isAuthed) return
+      if (!window.confirm('Excluir este insumo? Esta ação não pode ser desfeita.')) return
+      setQualityMatchesSavingRegistro(registro)
+      try {
+        await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
+          method: 'DELETE',
+          queueLabel: 'Exclusão de insumo'
+        })
+        toast.success('Insumo excluído')
+        setQualityMatchesItems((prev) => prev.filter((it) => String(it?.registro || '').trim() !== registro))
+        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setQualityMatchesSavingRegistro('')
+      }
+    },
+    [canUseApi, isAuthed, loadInsumosOptions, loadOverview, mutateJson, refreshInsumos, unidade]
+  )
 
   const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!canUseApi || !isAuthed) return
@@ -3000,36 +3474,66 @@ export function InsumosModule() {
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
-      if (!canUseApi || !isAuthed) return
+      if (!canUseApi || !isAuthed) return false
+      setQuickActionFeedback(null)
       const codigoBarras = quickCodigo.trim()
-      if (!codigoBarras) return toast.error('Informe o código de barras')
+      if (!codigoBarras) {
+        const message = 'Informe o código de barras'
+        setQuickActionFeedback({ type: 'error', message })
+        return false
+      }
 
       setQuickActionLoading(true)
       try {
         if (kind === 'AJUSTE') {
           const novoEstoque = Number.isFinite(Number(quickNovoEstoque)) ? Number(quickNovoEstoque) : null
-          if (novoEstoque === null) return toast.error('Informe o novo estoque')
+          if (novoEstoque === null) {
+            const message = 'Informe o novo estoque'
+            setQuickActionFeedback({ type: 'error', message })
+            return false
+          }
           const registro = quickRegistro.trim()
           await mutateJson(`/insumos/ajuste?unidade=${encodeURIComponent(unidade)}`, {
             method: 'POST',
             body: { codigoBarras, registro: registro || undefined, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
             queueLabel: 'Ajuste'
           })
-          toast.success('Ajuste registrado')
+          const message = 'Ajuste registrado'
+          setQuickActionFeedback({ type: 'success', message })
         } else {
           const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
           const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
           const registro = quickRegistro.trim()
           if (quickLoteNeedsPick && !registro) {
-            toast.error('Selecione o lote/registro')
+            const message = 'Selecione o lote/registro'
+            setQuickActionFeedback({ type: 'error', message })
             return false
           }
-          await mutateJson(`${path}?unidade=${encodeURIComponent(unidade)}`, {
-            method: 'POST',
-            body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
-            queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
-          })
-          toast.success(kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
+          const out = await mutateJson<{ success?: boolean; novoEstoque?: number; quebraEstoque?: boolean; deficit?: number }>(
+            `${path}?unidade=${encodeURIComponent(unidade)}`,
+            {
+              method: 'POST',
+              body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
+              queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
+            }
+          )
+
+          const novoEstoque = Number((out as any)?.novoEstoque)
+          const quebraEstoque = kind === 'BAIXA' && (
+            (out as any)?.quebraEstoque === true ||
+            (Number.isFinite(novoEstoque) && novoEstoque < 0)
+          )
+          const message =
+            quebraEstoque
+              ? `Baixa registrada com quebra de estoque (saldo: ${Number.isFinite(novoEstoque) ? novoEstoque : '-'})`
+              : (kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
+          setQuickActionFeedback({ type: 'success', message })
+          if (quebraEstoque) {
+            const deficit = Number((out as any)?.deficit)
+            toast.warning(
+              `Quebra de estoque detectada${Number.isFinite(deficit) ? `: déficit de ${deficit}` : ''}. Confira os alertas.`
+            )
+          }
         }
 
         await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
@@ -3064,11 +3568,16 @@ export function InsumosModule() {
             setQuickCandidates([])
             setQuickRegistros(registros)
           }
-          toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
+          const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
+          setQuickActionFeedback({ type: 'error', message })
           return false
         }
-        if (policyErrorToast(e)) return false
-        toast.error(e instanceof Error ? e.message : String(e))
+        if (policyErrorToast(e)) {
+          setQuickActionFeedback({ type: 'error', message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+        const message = e instanceof Error ? e.message : String(e)
+        setQuickActionFeedback({ type: 'error', message })
         return false
       } finally {
         setQuickActionLoading(false)
@@ -3088,19 +3597,30 @@ export function InsumosModule() {
       quickRegistro,
       refreshInsumos,
       schedulePostMutationRefresh,
+      setQuickActionFeedback,
       unidade
     ]
   )
 
   const runTransfer = React.useCallback(async (): Promise<boolean> => {
-    if (!canUseApi || !isAuthed) return
+    if (!canUseApi || !isAuthed) return false
+    setQuickActionFeedback(null)
     const codigoBarras = quickCodigo.trim()
-    if (!codigoBarras) return toast.error('Informe o código de barras')
+    if (!codigoBarras) {
+      const message = 'Informe o código de barras'
+      setQuickActionFeedback({ type: 'error', message })
+      return false
+    }
 
-    if (transferFrom === transferTo) return toast.error('Origem e destino devem ser diferentes')
+    if (transferFrom === transferTo) {
+      const message = 'Origem e destino devem ser diferentes'
+      setQuickActionFeedback({ type: 'error', message })
+      return false
+    }
     const registro = quickRegistro.trim()
     if (quickLoteNeedsPick && !registro) {
-      toast.error('Selecione o lote/registro')
+      const message = 'Selecione o lote/registro'
+      setQuickActionFeedback({ type: 'error', message })
       return false
     }
 
@@ -3119,7 +3639,8 @@ export function InsumosModule() {
         },
         queueLabel: 'Transferência'
       })
-      toast.success('Transferência registrada')
+      const message = 'Transferência registrada'
+      setQuickActionFeedback({ type: 'success', message })
 
       // Refresh what the user is seeing (estoque + movimentações)
       await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
@@ -3154,11 +3675,16 @@ export function InsumosModule() {
           setQuickCandidates([])
           setQuickRegistros(registros)
         }
-        toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
+        const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
+        setQuickActionFeedback({ type: 'error', message })
         return false
       }
-      if (policyErrorToast(e)) return false
-      toast.error(e instanceof Error ? e.message : String(e))
+      if (policyErrorToast(e)) {
+        setQuickActionFeedback({ type: 'error', message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+      const message = e instanceof Error ? e.message : String(e)
+      setQuickActionFeedback({ type: 'error', message })
       return false
     } finally {
       setQuickActionLoading(false)
@@ -3175,6 +3701,7 @@ export function InsumosModule() {
     quickRegistro,
     refreshInsumos,
     schedulePostMutationRefresh,
+    setQuickActionFeedback,
     transferFrom,
     transferTo
   ])
@@ -3203,12 +3730,11 @@ export function InsumosModule() {
   }, [canUseApi, isAuthed, loadInsights, overviewEverVisible, overviewVisible])
 
   React.useEffect(() => {
-    const onOp = (event: Event) => {
-      const e = event as CustomEvent<{ op?: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' }>
-      const op = e.detail?.op
-      if (!op) return
-      setQuickScanOpen(false)
-      setQuickOp(op)
+      const onOp = (event: Event) => {
+        const e = event as CustomEvent<{ op?: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' }>
+        const op = e.detail?.op
+        if (!op) return
+      openQuickOperation(op)
       try {
         window.scrollTo({ top: 0, behavior: 'smooth' })
       } catch {
@@ -3217,7 +3743,7 @@ export function InsumosModule() {
     }
     window.addEventListener('skincos:insumos:op', onOp as EventListener)
     return () => window.removeEventListener('skincos:insumos:op', onOp as EventListener)
-  }, [])
+  }, [openQuickOperation])
 
   React.useEffect(() => {
     const onLayout = (event: Event) => {
@@ -3414,27 +3940,19 @@ export function InsumosModule() {
   }, [insumos])
 
   const lotCategorias = React.useMemo(() => {
-    const base = insumos || []
-    return Array.from(new Set(base.map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
-    )
-  }, [insumos])
+    const fromInsumos = (insumos || []).map((item) => String(item.categoria || '').trim()).filter(Boolean)
+    const fromPolicies = categoryPolicies
+      .map((policy) => String(policy.label || '').trim())
+      .filter(Boolean)
+    return uniqueSortedTextOptions([...fromInsumos, ...fromPolicies, ...insumosOptionsCategorias])
+  }, [categoryPolicies, insumos, insumosOptionsCategorias])
 
   const insumosMarcas = React.useMemo(() => {
-    const base = insumos || []
-    return Array.from(new Set(base.map((i) => String(i.marca || '').trim()).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
-    )
-  }, [insumos])
+    const fromInsumos = (insumos || []).map((item) => String(item.marca || '').trim()).filter(Boolean)
+    return uniqueSortedTextOptions([...fromInsumos, ...insumosOptionsMarcas])
+  }, [insumos, insumosOptionsMarcas])
 
-  const insumosTiposUnidade = React.useMemo(() => {
-    const base = insumos || []
-    const fromData = Array.from(
-      new Set(base.map((i) => String(i.tipoUnidade || '').trim()).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
-    const fixed = ['Frasco', 'Seringa', 'Unidade', 'Caixa', 'ml']
-    return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
-  }, [insumos])
+  const insumosTiposUnidade = React.useMemo(() => Array.from(CANONICAL_TIPOS_UNIDADE as readonly string[]), [])
 
 	  type ChartPresetId = 'distribution' | 'movements' | 'roi_risk'
 
@@ -3662,7 +4180,7 @@ export function InsumosModule() {
   }, [insightsTrends])
 
   const trendsSeries = React.useMemo(() => {
-    const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+    const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
     const raw = trendsSeriesRaw.slice(-limit)
     if (overviewPeriod !== '1y') return raw
 
@@ -3730,7 +4248,7 @@ export function InsumosModule() {
         const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
         if (restValue > 0 && gb !== 'item') top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' } as any)
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
         const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
         if (!hasAny) {
           return (
@@ -3791,7 +4309,7 @@ export function InsumosModule() {
         const gb: ChartGroupBy = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
 
         if (gb === 'tempo') {
-          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados para o período.')}</div>
           const mode: MovementsMode =
             slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout' ? slot.mode : 'inout'
 
@@ -3895,7 +4413,7 @@ export function InsumosModule() {
         const mode: MovementsMode = slot.mode === 'entrada' ? 'entrada' : 'saida'
         const turnover = (mode === 'entrada' ? insightsTurnover?.entrada : insightsTurnover?.saida) || null
         const raw = Array.isArray(turnover?.categories) ? turnover.categories : []
-        if (!raw.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados para o período.'}</div>
+        if (!raw.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados para o período.')}</div>
 
         const sorted = [...raw].sort((a: any, b: any) => {
           const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
@@ -3910,7 +4428,7 @@ export function InsumosModule() {
         const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
         if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{insightsLoading ? 'Carregando…' : 'Sem dados.'}</div>
+        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados.')}</div>
         const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
         if (!hasAny) {
           return (
@@ -3963,7 +4481,7 @@ export function InsumosModule() {
       }
 
 	      if (presetId === 'roi_risk') {
-	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
 
 	        const perdas = (overviewRoi as any)?.perdas || {}
 	        const ruptura = (overviewRoi as any)?.ruptura || {}
@@ -3981,7 +4499,7 @@ export function InsumosModule() {
 	            ]
 
 	        const hasAny = data.some((d) => (Number(d.value) || 0) > 0)
-	        if (!hasAny) return <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem dados.'}</div>
+	        if (!hasAny) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
 
 	        return view === 'pie' ? (
 	          <div className="w-full" style={{ height }}>
@@ -4302,19 +4820,18 @@ export function InsumosModule() {
 	                  </div>
                   <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-blue-200/70">Política da categoria</div>
-                      {createCategoriaPolicyKey ? (
-                        <div className="text-xs text-blue-200/60 font-mono">{createCategoriaPolicyKey}</div>
-                      ) : (
-                        <div className="text-xs text-blue-200/60">Defina a categoria para ver as regras.</div>
-                      )}
+                      <div className="text-xs text-blue-200/70">Política do item</div>
+                      <div className="text-xs text-blue-200/60">Defina as regras para este insumo.</div>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
                       <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
                         <Checkbox
                           checked={createCategoriaRequiresLot}
-                          onCheckedChange={(v) => setCreateCategoriaRequiresLot(!!v)}
-                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                          onCheckedChange={(v) => {
+                            setCreatePolicyTouched(true)
+                            setCreateCategoriaRequiresLot(!!v)
+                          }}
+                          disabled={!isManagerRole}
                         />
                         Lote obrigatório
                       </label>
@@ -4322,11 +4839,12 @@ export function InsumosModule() {
                         <Checkbox
                           checked={createCategoriaRequiresExpiry}
                           onCheckedChange={(v) => {
+                            setCreatePolicyTouched(true)
                             const next = !!v
                             setCreateCategoriaRequiresExpiry(next)
                             if (!next) setCreateCategoriaFefo(false)
                           }}
-                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                          disabled={!isManagerRole}
                         />
                         Validade obrigatória
                       </label>
@@ -4334,11 +4852,12 @@ export function InsumosModule() {
                         <Checkbox
                           checked={createCategoriaFefo}
                           onCheckedChange={(v) => {
+                            setCreatePolicyTouched(true)
                             const next = !!v
                             setCreateCategoriaFefo(next)
                             if (next) setCreateCategoriaRequiresExpiry(true)
                           }}
-                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                          disabled={!isManagerRole}
                         />
                         FEFO
                       </label>
@@ -4361,17 +4880,21 @@ export function InsumosModule() {
 	                  </div>
 	                  <div>
 	                    <div className="text-xs text-blue-200/70 mb-1">Tipo (unidade)</div>
-	                    <Input
-	                      value={createTipoUnidade}
-	                      onChange={(e) => setCreateTipoUnidade(e.target.value)}
-	                      placeholder="ex: frasco"
-	                      list="insumos-tipos-unidade"
-	                    />
-	                    <datalist id="insumos-tipos-unidade">
-	                      {insumosTiposUnidade.map((u) => (
-	                        <option key={u} value={u} />
-	                      ))}
-	                    </datalist>
+	                    <Select
+	                      value={normalizeTipoUnidadeToCanonical(createTipoUnidade) || undefined}
+	                      onValueChange={setCreateTipoUnidade}
+	                    >
+	                      <SelectTrigger>
+	                        <SelectValue placeholder="Selecione a unidade" />
+	                      </SelectTrigger>
+	                      <SelectContent>
+	                        {insumosTiposUnidade.map((u) => (
+	                          <SelectItem key={u} value={u}>
+	                            {u}
+	                          </SelectItem>
+	                        ))}
+	                      </SelectContent>
+	                    </Select>
 	                  </div>
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Preço (custo)</div>
@@ -4431,60 +4954,33 @@ export function InsumosModule() {
                       if (!codigoBarras) return toast.error('Informe o código de barras')
                       const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
                       const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                      const slug = slugifyCategoria(categoria)
-                      const currentPolicy = getPolicyForCategoria(categoria)
-                      const policy =
-                        createCategoriaPolicyKey && slug && createCategoriaPolicyKey === slug
-                          ? { slug, requiresLot: createCategoriaRequiresLot, requiresExpiry: createCategoriaRequiresExpiry, fefo: createCategoriaFefo }
-                          : currentPolicy
+                      const policy = {
+                        requiresLot: !!createCategoriaRequiresLot,
+                        requiresExpiry: !!createCategoriaRequiresExpiry,
+                        fefo: !!createCategoriaFefo
+                      }
                       const validadeIso = dateInputToIso(createDataValidade)
 
                       const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
                       if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
 
                       if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
-                        return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pela categoria)' : 'Informe o lote (Novo lote: on)')
+                        return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pelo item)' : 'Informe o lote (Novo lote: on)')
                       }
                       if (policy.requiresExpiry && !validadeIso) {
-                        return toast.error('Informe a data de validade (obrigatória pela categoria)')
+                        return toast.error('Informe a data de validade (obrigatória pelo item)')
+                      }
+                      if (policy.fefo && !policy.requiresExpiry) {
+                        return toast.error('FEFO exige validade obrigatória')
                       }
 
                       const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
                       if (!produto) return toast.error('Informe o produto')
+                      const tipoUnidade = normalizeTipoUnidadeToCanonical(createTipoUnidade)
+                      if (!tipoUnidade) return toast.error('Informe a unidade (medida)')
 
                       setCreateLoading(true)
                       try {
-                        if (isManagerRole && slug && createCategoriaPolicyKey && createCategoriaPolicyKey === slug) {
-                          if (policy.fefo && !policy.requiresExpiry) {
-                            toast.error('FEFO exige validade obrigatória')
-                            return
-                          }
-                          const policyChanged =
-                            !!currentPolicy.requiresLot !== !!policy.requiresLot ||
-                            !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
-                            !!currentPolicy.fefo !== !!policy.fefo
-                          if (policyChanged) {
-                            const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
-                              '/admin/categories',
-                              {
-                                method: 'POST',
-                                queueLabel: 'Política por categoria',
-                                body: {
-                                  slug,
-                                  label: categoria,
-                                  requiresLot: !!policy.requiresLot,
-                                  requiresExpiry: !!policy.requiresExpiry,
-                                  fefo: !!policy.fefo
-                                }
-                              },
-                              { needsCsrf: true }
-                            )
-                            if (!(out as any)?.queued) {
-                              await Promise.allSettled([loadCategoryPolicies()])
-                            }
-                          }
-                        }
-
                         await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                           method: 'POST',
                           queueLabel: 'Cadastro de insumo',
@@ -4494,7 +4990,7 @@ export function InsumosModule() {
                             allowDuplicateLot,
                             categoria,
                             marca: createMarca.trim(),
-                            tipoUnidade: createTipoUnidade.trim(),
+                            tipoUnidade,
                             especificacao: createEspecificacao.trim(),
                             concentracao: createConcentracao.trim(),
                             volume: createVolume.trim(),
@@ -4504,12 +5000,15 @@ export function InsumosModule() {
                             estoqueInicial: createEstoqueInicial ? Number(createEstoqueInicial) : undefined,
                             estoqueMinimo: createEstoqueMinimo ? Number(createEstoqueMinimo) : undefined,
                             lote: createLote.trim(),
-                            dataValidade: validadeIso || undefined
+                            dataValidade: validadeIso || undefined,
+                            policyRequiresLot: policy.requiresLot,
+                            policyRequiresExpiry: policy.requiresExpiry,
+                            policyFefo: policy.fefo
                           }
                         })
                         toast.success('Insumo cadastrado.')
                         setCreateOpen(false)
-                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
                       } catch (e) {
                         if (policyErrorToast(e)) return
                         toast.error(e instanceof Error ? e.message : String(e))
@@ -4706,11 +5205,8 @@ export function InsumosModule() {
         open={quickOp != null}
         onOpenChange={(open) => {
           if (open) return
+          resetQuickOperationState({ keepFeedback: !!quickActionFeedback })
           setQuickOp(null)
-          setQuickScanOpen(false)
-          setQuickRegistros([])
-          setQuickCandidates([])
-          setQuickRegistro('')
         }}
       >
         <DialogContent className="max-w-xl dark bg-corporate-900 border-white/10 text-white">
@@ -4736,6 +5232,12 @@ export function InsumosModule() {
               <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
             )
           ) : null}
+
+          <div className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
+            {quickOp === 'TRANSFERENCIA'
+              ? `Unidade da operação: ${unidadeLabel(transferFrom)} → ${unidadeLabel(transferTo)}`
+              : `Unidade da operação: ${unidadeLabel(unidade)}`}
+          </div>
 
           <div className="space-y-3">
             <div>
@@ -4764,16 +5266,23 @@ export function InsumosModule() {
                             const v = ctx && (it as any)?.estoques ? Number((it as any).estoques?.[ctx] ?? 0) : Number((it as any).estoqueAtual ?? 0)
                             return acc + (Number.isFinite(v) ? v : 0)
                           }, 0)
-                          return `Estoque: ${Math.max(0, total)}`
+                          return `Estoque: ${total}`
                         })()}
                         {' • '}
                         {Array.from(new Set(quickLookupItems.map((it) => String((it as any)?.registro || '').trim()).filter(Boolean))).length} registros
                       </div>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
-                      {quickLookupItems[0]?.categoria ? <span>Categoria: {String(quickLookupItems[0].categoria)}</span> : null}
-                      {quickLookupItems[0]?.marca ? <span>Marca: {String(quickLookupItems[0].marca)}</span> : null}
-                      <span className="font-mono">Código: {quickCodigo.trim()}</span>
+                      {quickLookupItems[0]?.categoria ? (
+                        <Badge style={buildTagStyle(getCategoriaBgColor(String(quickLookupItems[0].categoria)))} className="border">
+                          {String(quickLookupItems[0].categoria)}
+                        </Badge>
+                      ) : null}
+                      {quickLookupItems[0]?.marca ? (
+                        <Badge style={buildTagStyle(getMarcaBgColor(String(quickLookupItems[0].marca)))} className="border">
+                          {String(quickLookupItems[0].marca)}
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -4782,11 +5291,11 @@ export function InsumosModule() {
 
             {quickLoteNeedsPick ? (
               <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs text-blue-200/70">Lote/registro</div>
-                  {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
-                    quickLotesForPicker.length > 1 &&
-                    getPolicyForCategoria(String(quickLookupItems?.[0]?.categoria || '')).fefo ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-blue-200/70">Lote/registro</div>
+                    {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
+                      quickLotesForPicker.length > 1 &&
+                      getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '').fefo ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -4888,28 +5397,36 @@ export function InsumosModule() {
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setQuickOp(null)
-                setQuickScanOpen(false)
-              }}
-            >
-              Cancelar
-            </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  resetQuickOperationState()
+                  setQuickOp(null)
+                }}
+              >
+                Cancelar
+              </Button>
             {quickOp === 'TRANSFERENCIA' ? (
               <Button
                 className="!bg-blue-600 hover:!bg-blue-700 !text-white"
                 onClick={async () => {
                   const ok = await runTransfer()
                   if (ok) {
+                    resetQuickOperationState({ keepFeedback: true })
                     setQuickOp(null)
-                    setQuickScanOpen(false)
                   }
                 }}
                 disabled={quickActionLoading || !isAuthed}
               >
-                Confirmar transferência
+                <span className="flex items-center gap-2">
+                  {quickActionLoading ? (
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+                      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                    </svg>
+                  ) : null}
+                  {quickActionLoading ? 'Processando...' : 'Confirmar transferência'}
+                </span>
               </Button>
             ) : (
               <Button
@@ -4924,15 +5441,51 @@ export function InsumosModule() {
                 onClick={async () => {
                   const ok = await runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')
                   if (ok) {
+                    resetQuickOperationState({ keepFeedback: true })
                     setQuickOp(null)
-                    setQuickScanOpen(false)
                   }
                 }}
                 disabled={quickActionLoading || !isAuthed}
               >
-                {quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída'}
+                <span className="flex items-center gap-2">
+                  {quickActionLoading ? (
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+                      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                    </svg>
+                  ) : null}
+                  {quickActionLoading ? 'Processando...' : (quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída')}
+                </span>
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!quickActionFeedback}
+        onOpenChange={(open) => {
+          if (!open) setQuickActionFeedback(null)
+        }}
+      >
+        <DialogContent className="max-w-md dark bg-corporate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              {quickActionFeedback?.type === 'success' ? 'Sucesso' : 'Falha'}
+            </DialogTitle>
+            <DialogDescription className="text-blue-100/70">
+              {quickActionFeedback?.type === 'success'
+                ? 'A operacao foi registrada.'
+                : 'Nao foi possivel concluir a operacao.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm text-blue-50">
+            {quickActionFeedback?.message || '-'}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setQuickActionFeedback(null)}>
+              Fechar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -5051,10 +5604,11 @@ export function InsumosModule() {
                                 variant="outline"
                                 className="h-8 px-2 text-xs"
                                 onClick={() => {
-                                  setQuickOp('ENTRADA')
-                                  setQuickCodigo(String(it.codigoBarras || ''))
-                                  setQuickQuantidade(String(it.suggestedPurchaseQty ?? 1))
-                                  setQuickObs('Reposição sugerida')
+                                  openQuickOperation('ENTRADA', {
+                                    codigoBarras: String(it.codigoBarras || ''),
+                                    quantidade: it.suggestedPurchaseQty ?? 1,
+                                    obs: 'Reposição sugerida'
+                                  })
                                   setPurchaseDialogOpen(false)
                                 }}
                                 disabled={!isAuthed}
@@ -5069,7 +5623,7 @@ export function InsumosModule() {
                       {!items.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={6}>
-                            {overviewLoading ? 'Carregando…' : 'Sem recomendações de compra.'}
+                            {renderLoadingText(overviewLoading, 'Sem recomendações de compra.')}
                           </td>
                         </tr>
                       ) : null}
@@ -5091,88 +5645,136 @@ export function InsumosModule() {
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
                 Valor em estoque
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">
                 {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
               </div>
-              <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+              )}
             </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
                 Críticos
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+              )}
             </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
                 Estoque baixo
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">atenção</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">atenção</div>
+              )}
             </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
                 Vencendo
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">janela próxima</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">janela próxima</div>
+              )}
             </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
                 Expirado c/ estoque
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">risco imediato</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">risco imediato</div>
+              )}
             </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
                 Movimentações
               </CardTitle>
+              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
-	              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
+              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
               <div className="text-sm text-blue-100/80">
                 <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
                 <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
               </div>
-              <div className="text-xs text-blue-200/60">
-                saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-              </div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">
+                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+                </div>
+              )}
             </CardContent>
 	        </Card>
         </div>
@@ -5470,7 +6072,8 @@ export function InsumosModule() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-1">
+                                <div className="absolute top-2 right-2 flex items-center gap-2">
+                                  <LoadingBadge active={overviewLoading || insightsLoading} />
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -5649,7 +6252,7 @@ export function InsumosModule() {
                           {!(overviewNotifications?.expiringSoon || []).length ? (
                             <tr>
                               <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+                                {renderLoadingText(overviewLoading, 'Sem itens.')}
                               </td>
                             </tr>
                           ) : null}
@@ -5701,7 +6304,7 @@ export function InsumosModule() {
                           {!(overviewNotifications?.expiredWithStock || []).length ? (
                             <tr>
                               <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {overviewLoading ? 'Carregando…' : 'Sem itens.'}
+                                {renderLoadingText(overviewLoading, 'Sem itens.')}
                               </td>
                             </tr>
                           ) : null}
@@ -5741,10 +6344,11 @@ export function InsumosModule() {
                       key={String(r.codigoBarras)}
                       className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                       onClick={() => {
-                        setQuickOp('ENTRADA')
-                        if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
-                        if (r.suggestedPurchaseQty != null) setQuickQuantidade(String(r.suggestedPurchaseQty))
-                        setQuickObs('Reposição sugerida')
+                        openQuickOperation('ENTRADA', {
+                          codigoBarras: r.codigoBarras ? String(r.codigoBarras) : '',
+                          quantidade: r.suggestedPurchaseQty ?? null,
+                          obs: 'Reposição sugerida'
+                        })
                       }}
                     >
                       <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
@@ -5756,7 +6360,7 @@ export function InsumosModule() {
                     </button>
                   ))}
                   {!overviewActionables?.reposicao?.length ? (
-                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem recomendações.'}</div>
+                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem recomendações.')}</div>
                   ) : null}
                 </div>
                 <div className="space-y-2">
@@ -5766,12 +6370,13 @@ export function InsumosModule() {
                       key={`${t.codigoBarras}-${t.from}-${t.to}`}
                       className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                       onClick={() => {
-                        setQuickOp('TRANSFERENCIA')
-                        if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-                        if (t.qty != null) setQuickQuantidade(String(t.qty))
-                        if (t.from) setTransferFrom(String(t.from))
-                        if (t.to) setTransferTo(String(t.to))
-                        setQuickObs('Transferência sugerida')
+                        openQuickOperation('TRANSFERENCIA', {
+                          codigoBarras: t.codigoBarras ? String(t.codigoBarras) : '',
+                          quantidade: t.qty ?? null,
+                          fromUnidade: t.from ? String(t.from) : null,
+                          toUnidade: t.to ? String(t.to) : null,
+                          obs: 'Transferência sugerida'
+                        })
                       }}
                     >
                       <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
@@ -5784,7 +6389,7 @@ export function InsumosModule() {
                     </button>
                   ))}
                   {!overviewActionables?.transferencias?.length ? (
-                    <div className="text-sm text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem sugestões.'}</div>
+                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem sugestões.')}</div>
                   ) : null}
                 </div>
               </div>
@@ -5799,7 +6404,7 @@ export function InsumosModule() {
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
                 Qualidade do cadastro{' '}
                 <span className="text-xs text-blue-200/60">
-                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : overviewLoading ? 'Carregando…' : '—'}
+                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : renderLoadingText(overviewLoading, '—')}
                 </span>
               </summary>
               <div className="mt-3 space-y-2">
@@ -5842,7 +6447,7 @@ export function InsumosModule() {
                     </>
                   ) : null}
                   {!overviewQuality?.summary?.total ? (
-                    <span className="text-blue-100/70">{overviewLoading ? 'Carregando…' : 'Sem ocorrências.'}</span>
+                    <span className="text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem ocorrências.')}</span>
                   ) : null}
                 </div>
 
@@ -5854,6 +6459,7 @@ export function InsumosModule() {
                           <th className="text-left p-3">Nível</th>
                           <th className="text-left p-3">Código</th>
                           <th className="text-left p-3">Mensagem</th>
+                          <th className="text-left p-3">Ação</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -5882,6 +6488,16 @@ export function InsumosModule() {
                                     {it.produto || ''}
                                   </div>
                                 ) : null}
+                              </td>
+                              <td className="p-3">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openQualityFix(it)}
+                                  disabled={!isAuthed || (!it.registro && !it.codigoBarras)}
+                                >
+                                  Edicao rapida
+                                </Button>
                               </td>
                             </tr>
                           )
@@ -5938,7 +6554,8 @@ export function InsumosModule() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-1">
+                                <div className="absolute top-2 right-2 flex items-center gap-2">
+                                  <LoadingBadge active={overviewLoading || insightsLoading} />
                                   <Button
                                     size="icon"
                                     variant="ghost"
@@ -6172,8 +6789,19 @@ export function InsumosModule() {
                             </Select>
                           ) : null}
                         </div>
+                        <div className="flex justify-end">
+                          <LoadingBadge active={overviewLoading || insightsLoading} />
+                        </div>
                       </CardHeader>
-                      <CardContent>{renderChart({ ...slot, view, metric, topN }, { height })}</CardContent>
+                      <CardContent>
+                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
+                          <div className="mb-2 text-xs text-blue-200/70 inline-flex items-center gap-2">
+                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                            Carregando {loadingPercent}%
+                          </div>
+                        ) : null}
+                        {renderChart({ ...slot, view, metric, topN }, { height })}
+                      </CardContent>
                     </Card>
                   )
                 })}
@@ -6195,6 +6823,90 @@ export function InsumosModule() {
       </div>
 
       <Dialog
+        open={qualityMatchesOpen}
+        onOpenChange={(next) => {
+          setQualityMatchesOpen(next)
+          if (!next) {
+            setQualityMatchesIssue(null)
+            setQualityMatchesItems([])
+            setQualityMatchesSavingRegistro('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Duplicidade de código de barras</DialogTitle>
+            <DialogDescription>
+              {qualityMatchesIssue?.codigoBarras ? (
+                <>
+                  Selecione qual registro editar ou excluir para o código <span className="font-mono">#{qualityMatchesIssue.codigoBarras}</span>.
+                  {' '}
+                  ({qualityMatchesItems.length} correspondências)
+                </>
+              ) : (
+                <>Selecione qual registro editar ou excluir para resolver a duplicidade.</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+            <table className="min-w-full text-sm">
+              <thead className="bg-black/30 text-blue-100/80">
+                <tr>
+                  <th className="text-left p-3">Registro</th>
+                  <th className="text-left p-3">Produto</th>
+                  <th className="text-left p-3">Lote</th>
+                  <th className="text-left p-3">Estoque ({unidadeLabel(unidade)})</th>
+                  <th className="text-left p-3">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {qualityMatchesItems.map((item) => {
+                  const registro = String(item?.registro || '').trim()
+                  const isDeleting = qualityMatchesSavingRegistro === registro
+                  return (
+                    <tr key={registro || String(item?.codigoBarras || '')} className="hover:bg-white/5">
+                      <td className="p-3 font-mono text-blue-100/80">{registro || '-'}</td>
+                      <td className="p-3 text-blue-50">{String(item?.produto || '-')}</td>
+                      <td className="p-3 text-blue-100/70">{String(item?.lote || '-')}</td>
+                      <td className="p-3 text-blue-100/70">{Number(item?.estoqueAtual || 0)}</td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setQualityMatchesOpen(false)
+                              openEditDialog(item)
+                            }}
+                            disabled={!isAuthed || isDeleting}
+                          >
+                            Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => void deleteInsumoByRegistro(registro)}
+                            disabled={!isAuthed || !registro || isDeleting}
+                          >
+                            {isDeleting ? 'Excluindo…' : 'Excluir'}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {!qualityMatchesItems.length ? (
+                  <tr>
+                    <td className="p-3 text-blue-100/70" colSpan={5}>Nenhuma correspondência encontrada.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={editOpen}
         onOpenChange={(v) => {
           setEditOpen(v)
@@ -6213,36 +6925,81 @@ export function InsumosModule() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
-              <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} placeholder="789..." />
+              <Input
+                value={editCodigo}
+                onChange={(e) => {
+                  setEditCodigo(e.target.value)
+                  clearEditValidationError('codigoBarras')
+                }}
+                placeholder="789..."
+                aria-invalid={editValidationErrors.codigoBarras ? true : undefined}
+                className={
+                  editValidationErrors.codigoBarras
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              {editValidationErrors.codigoBarras ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.codigoBarras}</div>
+              ) : null}
             </div>
             <div className="md:col-span-2">
               <div className="text-xs text-muted-foreground mb-1">Produto</div>
-              <Input value={editProduto} onChange={(e) => setEditProduto(e.target.value)} placeholder="Nome do produto" />
+              <Input
+                value={editProduto}
+                onChange={(e) => {
+                  setEditProduto(e.target.value)
+                  clearEditValidationError('produto')
+                }}
+                placeholder="Nome do produto"
+                aria-invalid={editValidationErrors.produto ? true : undefined}
+                className={
+                  editValidationErrors.produto
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              {editValidationErrors.produto ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.produto}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-              <Input value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} placeholder="ex: Anestésicos" list="edit-insumos-categorias" />
-              <datalist id="edit-insumos-categorias">
-                {lotCategorias.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
+              <Select value={editCategoria || undefined} onValueChange={setEditCategoria}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a categoria" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editCategoria && !lotCategorias.includes(editCategoria) ? (
+                    <SelectItem value={editCategoria}>{editCategoria}</SelectItem>
+                  ) : null}
+                  {lotCategorias.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
+            <div
+              className={`md:col-span-2 rounded-xl border p-3 ${
+                editValidationErrors.policy ? 'border-red-500/50 bg-red-500/5' : 'border-white/10 bg-black/10'
+              }`}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">Política da categoria</div>
-                {editCategoriaPolicyKey ? (
-                  <div className="text-xs text-muted-foreground font-mono">{editCategoriaPolicyKey}</div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">Defina a categoria para ver as regras.</div>
-                )}
+                <div className="text-xs text-muted-foreground">Política do item</div>
+                <div className="text-xs text-muted-foreground">Defina as regras para este insumo.</div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
                 <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
                   <Checkbox
                     checked={editCategoriaRequiresLot}
-                    onCheckedChange={(v) => setEditCategoriaRequiresLot(!!v)}
-                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                    onCheckedChange={(v) => {
+                      setEditCategoriaRequiresLot(!!v)
+                      clearEditValidationError('policy')
+                      clearEditValidationError('lote')
+                    }}
+                    disabled={!isManagerRole}
                   />
                   Lote obrigatório
                 </label>
@@ -6253,8 +7010,10 @@ export function InsumosModule() {
                       const next = !!v
                       setEditCategoriaRequiresExpiry(next)
                       if (!next) setEditCategoriaFefo(false)
+                      clearEditValidationError('policy')
+                      clearEditValidationError('dataValidade')
                     }}
-                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                    disabled={!isManagerRole}
                   />
                   Validade obrigatória
                 </label>
@@ -6265,31 +7024,64 @@ export function InsumosModule() {
                       const next = !!v
                       setEditCategoriaFefo(next)
                       if (next) setEditCategoriaRequiresExpiry(true)
+                      clearEditValidationError('policy')
                     }}
-                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                    disabled={!isManagerRole}
                   />
                   FEFO
                 </label>
                 {!isManagerRole ? <span className="text-xs text-muted-foreground">Somente gestores alteram.</span> : null}
               </div>
+              {editValidationErrors.policy ? (
+                <div className="mt-2 text-xs text-red-300">{editValidationErrors.policy}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Marca</div>
-              <Input value={editMarca} onChange={(e) => setEditMarca(e.target.value)} placeholder="ex: Galderma" list="edit-insumos-marcas" />
-              <datalist id="edit-insumos-marcas">
-                {insumosMarcas.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
+              <Select value={editMarca || undefined} onValueChange={setEditMarca}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a marca" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editMarca && !insumosMarcas.includes(editMarca) ? (
+                    <SelectItem value={editMarca}>{editMarca}</SelectItem>
+                  ) : null}
+                  {insumosMarcas.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
-              <Input value={editTipoUnidade} onChange={(e) => setEditTipoUnidade(e.target.value)} placeholder="ex: Frasco" list="insumos-tipos-unidade" />
-              <datalist id="insumos-tipos-unidade">
-                {insumosTiposUnidade.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
+              <Select
+                value={normalizeTipoUnidadeToCanonical(editTipoUnidade) || undefined}
+                onValueChange={(v) => {
+                  setEditTipoUnidade(v)
+                  clearEditValidationError('tipoUnidade')
+                }}
+              >
+                <SelectTrigger
+                  aria-invalid={editValidationErrors.tipoUnidade ? true : undefined}
+                  className={
+                    editValidationErrors.tipoUnidade ? 'border-red-500/60 ring-2 ring-red-500/15' : undefined
+                  }
+                >
+                  <SelectValue placeholder="Selecione a unidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {insumosTiposUnidade.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {editValidationErrors.tipoUnidade ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.tipoUnidade}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
@@ -6301,11 +7093,35 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Lote</div>
-              <Input value={editLote} onChange={(e) => setEditLote(e.target.value)} placeholder="ex: L2026-01" />
+              <Input
+                value={editLote}
+                onChange={(e) => {
+                  setEditLote(e.target.value)
+                  clearEditValidationError('lote')
+                }}
+                placeholder="ex: L2026-01"
+                aria-invalid={editValidationErrors.lote ? true : undefined}
+                className={editValidationErrors.lote ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined}
+              />
+              {editValidationErrors.lote ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.lote}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Validade</div>
-              <BrDatePickerInput value={editDataValidade} onChange={setEditDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
+              <BrDatePickerInput
+                value={editDataValidade}
+                onChange={(v) => {
+                  setEditDataValidade(v)
+                  clearEditValidationError('dataValidade')
+                }}
+                placeholder="DD/MM/AA"
+                ariaLabel="Validade"
+                className={editValidationErrors.dataValidade ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined}
+              />
+              {editValidationErrors.dataValidade ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.dataValidade}</div>
+              ) : null}
             </div>
           </div>
 
@@ -6334,20 +7150,26 @@ export function InsumosModule() {
                 <Input value={editCalibre} onChange={(e) => setEditCalibre(e.target.value)} placeholder="ex: 30G" />
               </div>
               <div className="md:col-span-2">
-                <div className="text-xs text-muted-foreground mb-1">Fonte</div>
-                <Input value={editFonte} onChange={(e) => setEditFonte(e.target.value)} placeholder="ex: Tabela 2025" />
+                <div className="text-xs text-muted-foreground mb-1">Homologado</div>
+                <label className="flex items-center gap-2 text-sm text-blue-100/80 select-none">
+                  <Checkbox checked={editHomologado} onCheckedChange={(v) => setEditHomologado(!!v)} />
+                  Produto homologado
+                </label>
               </div>
             </div>
           </details>
 
           <DialogFooter>
+            {!canUseApi ? (
+              <span className="mr-auto text-xs text-muted-foreground">API indisponivel. Aguarde o carregamento.</span>
+            ) : null}
             <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editSaving}>
               Cancelar
             </Button>
             <Button variant="destructive" onClick={deleteEdit} disabled={editSaving || !isAuthed}>
               Excluir
             </Button>
-            <Button onClick={saveEdit} disabled={editSaving || !isAuthed}>
+            <Button onClick={saveEdit} disabled={editSaving || !isAuthed || !canUseApi}>
               {editSaving ? 'Salvando…' : 'Salvar'}
             </Button>
           </DialogFooter>
@@ -6680,19 +7502,18 @@ export function InsumosModule() {
               </div>
               <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs text-blue-200/70">Política da categoria</div>
-                  {createCategoriaPolicyKey ? (
-                    <div className="text-xs text-blue-200/60 font-mono">{createCategoriaPolicyKey}</div>
-                  ) : (
-                    <div className="text-xs text-blue-200/60">Defina a categoria para ver as regras.</div>
-                  )}
+                  <div className="text-xs text-blue-200/70">Política do item</div>
+                  <div className="text-xs text-blue-200/60">Defina as regras para este insumo.</div>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
                   <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
                     <Checkbox
                       checked={createCategoriaRequiresLot}
-                      onCheckedChange={(v) => setCreateCategoriaRequiresLot(!!v)}
-                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                      onCheckedChange={(v) => {
+                        setCreatePolicyTouched(true)
+                        setCreateCategoriaRequiresLot(!!v)
+                      }}
+                      disabled={!isManagerRole}
                     />
                     Lote obrigatório
                   </label>
@@ -6700,11 +7521,12 @@ export function InsumosModule() {
                     <Checkbox
                       checked={createCategoriaRequiresExpiry}
                       onCheckedChange={(v) => {
+                        setCreatePolicyTouched(true)
                         const next = !!v
                         setCreateCategoriaRequiresExpiry(next)
                         if (!next) setCreateCategoriaFefo(false)
                       }}
-                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                      disabled={!isManagerRole}
                     />
                     Validade obrigatória
                   </label>
@@ -6712,11 +7534,12 @@ export function InsumosModule() {
                     <Checkbox
                       checked={createCategoriaFefo}
                       onCheckedChange={(v) => {
+                        setCreatePolicyTouched(true)
                         const next = !!v
                         setCreateCategoriaFefo(next)
                         if (next) setCreateCategoriaRequiresExpiry(true)
                       }}
-                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                      disabled={!isManagerRole}
                     />
                     FEFO
                   </label>
@@ -6739,17 +7562,21 @@ export function InsumosModule() {
               </div>
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
-                <Input
-                  value={createTipoUnidade}
-                  onChange={(e) => setCreateTipoUnidade(e.target.value)}
-                  placeholder="ex: Frasco"
-                  list="insumos-tipos-unidade"
-                />
-                <datalist id="insumos-tipos-unidade">
-                  {insumosTiposUnidade.map((u) => (
-                    <option key={u} value={u} />
-                  ))}
-                </datalist>
+                <Select
+                  value={normalizeTipoUnidadeToCanonical(createTipoUnidade) || undefined}
+                  onValueChange={setCreateTipoUnidade}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a unidade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {insumosTiposUnidade.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Preço custo</div>
@@ -6861,60 +7688,33 @@ export function InsumosModule() {
                   if (!codigoBarras) return toast.error('Informe o código de barras')
                   const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
                   const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                  const slug = slugifyCategoria(categoria)
-                  const currentPolicy = getPolicyForCategoria(categoria)
-                  const policy =
-                    createCategoriaPolicyKey && slug && createCategoriaPolicyKey === slug
-                      ? { slug, requiresLot: createCategoriaRequiresLot, requiresExpiry: createCategoriaRequiresExpiry, fefo: createCategoriaFefo }
-                      : currentPolicy
+                  const policy = {
+                    requiresLot: !!createCategoriaRequiresLot,
+                    requiresExpiry: !!createCategoriaRequiresExpiry,
+                    fefo: !!createCategoriaFefo
+                  }
                   const validadeIso = dateInputToIso(createDataValidade)
 
                   const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
                   if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
 
                   if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
-                    return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pela categoria)' : 'Informe o lote (Novo lote: on)')
+                    return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pelo item)' : 'Informe o lote (Novo lote: on)')
                   }
                   if (policy.requiresExpiry && !validadeIso) {
-                    return toast.error('Informe a data de validade (obrigatória pela categoria)')
+                    return toast.error('Informe a data de validade (obrigatória pelo item)')
+                  }
+                  if (policy.fefo && !policy.requiresExpiry) {
+                    return toast.error('FEFO exige validade obrigatória')
                   }
 
                   const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
                   if (!produto) return toast.error('Informe o produto')
+                  const tipoUnidade = normalizeTipoUnidadeToCanonical(createTipoUnidade)
+                  if (!tipoUnidade) return toast.error('Informe a unidade (medida)')
 
                   setCreateLoading(true)
                   try {
-                    if (isManagerRole && slug && createCategoriaPolicyKey && createCategoriaPolicyKey === slug) {
-                      if (policy.fefo && !policy.requiresExpiry) {
-                        toast.error('FEFO exige validade obrigatória')
-                        return
-                      }
-                      const policyChanged =
-                        !!currentPolicy.requiresLot !== !!policy.requiresLot ||
-                        !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
-                        !!currentPolicy.fefo !== !!policy.fefo
-                      if (policyChanged) {
-                        const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
-                          '/admin/categories',
-                          {
-                            method: 'POST',
-                            queueLabel: 'Política por categoria',
-                            body: {
-                              slug,
-                              label: categoria,
-                              requiresLot: !!policy.requiresLot,
-                              requiresExpiry: !!policy.requiresExpiry,
-                              fefo: !!policy.fefo
-                            }
-                          },
-                          { needsCsrf: true }
-                        )
-                        if (!(out as any)?.queued) {
-                          await Promise.allSettled([loadCategoryPolicies()])
-                        }
-                      }
-                    }
-
                     await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                       method: 'POST',
                       queueLabel: 'Cadastro de insumo',
@@ -6924,7 +7724,7 @@ export function InsumosModule() {
                         allowDuplicateLot,
                         categoria,
                         marca: createMarca.trim(),
-                        tipoUnidade: createTipoUnidade.trim(),
+                        tipoUnidade,
                         especificacao: createEspecificacao.trim(),
                         concentracao: createConcentracao.trim(),
                         volume: createVolume.trim(),
@@ -6934,7 +7734,10 @@ export function InsumosModule() {
                         estoqueInicial: Number(createEstoqueInicial) || 0,
                         estoqueMinimo: Number(createEstoqueMinimo) || 0,
                         lote: createLote.trim(),
-                        dataValidade: validadeIso
+                        dataValidade: validadeIso,
+                        policyRequiresLot: policy.requiresLot,
+                        policyRequiresExpiry: policy.requiresExpiry,
+                        policyFefo: policy.fefo
                       }
                     })
                     toast.success('Insumo cadastrado')
@@ -6955,7 +7758,7 @@ export function InsumosModule() {
                     setCreateDataValidade('')
                     setCreateNovoLote(false)
                     setCreateOpen(false)
-                    await refreshInsumos({ pagina: 1 })
+                    await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadInsumosOptions()])
                   } catch (e) {
                     const status = (e as any)?.status
                     const msg = e instanceof Error ? e.message : String(e)
