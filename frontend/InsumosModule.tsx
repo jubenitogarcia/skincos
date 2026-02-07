@@ -973,7 +973,7 @@ export function InsumosModule() {
   const [editEspecificacao, setEditEspecificacao] = React.useState('')
   const [editConcentracao, setEditConcentracao] = React.useState('')
   const [editVolume, setEditVolume] = React.useState('')
-  const [editFonte, setEditFonte] = React.useState('')
+  const [editHomologado, setEditHomologado] = React.useState(false)
   const [editCalibre, setEditCalibre] = React.useState('')
   const [editPrecoCusto, setEditPrecoCusto] = React.useState('')
   const [editEstoqueMinimo, setEditEstoqueMinimo] = React.useState('')
@@ -2611,7 +2611,7 @@ export function InsumosModule() {
     setEditEspecificacao(String(i.especificacao || ''))
     setEditConcentracao(String(i.concentracao || ''))
     setEditVolume(String(i.volume || ''))
-    setEditFonte(String(i.fonte || ''))
+    setEditHomologado(/homologad/i.test(String(i.fonte || '').trim()))
     setEditCalibre(String(i.calibre || ''))
     setEditPrecoCusto(i.precoCusto != null ? String(i.precoCusto) : '')
     setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
@@ -3061,6 +3061,17 @@ export function InsumosModule() {
         editCategoriaPolicyKey && slug && editCategoriaPolicyKey === slug
           ? { slug, requiresLot: editCategoriaRequiresLot, requiresExpiry: editCategoriaRequiresExpiry, fefo: editCategoriaFefo }
           : currentPolicy
+      const lote = editLote.trim()
+      const dataValidade = dateInputToIso(editDataValidade)
+
+      if (policy.requiresLot && !lote) {
+        toast.error('Esta categoria exige Lote. Preencha o campo lote para salvar.')
+        return
+      }
+      if (policy.requiresExpiry && !dataValidade) {
+        toast.error('Esta categoria exige Data de validade. Preencha o campo validade para salvar.')
+        return
+      }
 
       if (isManagerRole && slug && editCategoriaPolicyKey && editCategoriaPolicyKey === slug) {
         if (policy.fefo && !policy.requiresExpiry) {
@@ -3105,12 +3116,12 @@ export function InsumosModule() {
           especificacao: editEspecificacao.trim(),
           concentracao: editConcentracao.trim(),
           volume: editVolume.trim(),
-          fonte: editFonte.trim(),
+          fonte: editHomologado ? 'Homologado' : '',
           calibre: editCalibre.trim(),
           precoCusto: editPrecoCusto.trim(),
           estoqueMinimo: Number(editEstoqueMinimo) || 0,
-          lote: editLote.trim(),
-          dataValidade: dateInputToIso(editDataValidade)
+          lote,
+          dataValidade
         }
       })
       toast.success('Insumo atualizado')
@@ -3135,7 +3146,7 @@ export function InsumosModule() {
     editDataValidade,
     editEspecificacao,
     editEstoqueMinimo,
-    editFonte,
+    editHomologado,
     editLote,
     editMarca,
     editPrecoCusto,
@@ -6777,12 +6788,21 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-              <Input value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} placeholder="ex: Anestésicos" list="edit-insumos-categorias" />
-              <datalist id="edit-insumos-categorias">
-                {lotCategorias.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
+              <Select value={editCategoria || undefined} onValueChange={setEditCategoria}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a categoria" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editCategoria && !lotCategorias.includes(editCategoria) ? (
+                    <SelectItem value={editCategoria}>{editCategoria}</SelectItem>
+                  ) : null}
+                  {lotCategorias.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -6831,21 +6851,39 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Marca</div>
-              <Input value={editMarca} onChange={(e) => setEditMarca(e.target.value)} placeholder="ex: Galderma" list="edit-insumos-marcas" />
-              <datalist id="edit-insumos-marcas">
-                {insumosMarcas.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
+              <Select value={editMarca || undefined} onValueChange={setEditMarca}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a marca" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editMarca && !insumosMarcas.includes(editMarca) ? (
+                    <SelectItem value={editMarca}>{editMarca}</SelectItem>
+                  ) : null}
+                  {insumosMarcas.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
-              <Input value={editTipoUnidade} onChange={(e) => setEditTipoUnidade(e.target.value)} placeholder="ex: Frasco" list="insumos-tipos-unidade" />
-              <datalist id="insumos-tipos-unidade">
-                {insumosTiposUnidade.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
+              <Select value={editTipoUnidade || undefined} onValueChange={setEditTipoUnidade}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a unidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editTipoUnidade && !insumosTiposUnidade.includes(editTipoUnidade) ? (
+                    <SelectItem value={editTipoUnidade}>{editTipoUnidade}</SelectItem>
+                  ) : null}
+                  {insumosTiposUnidade.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
@@ -6890,8 +6928,11 @@ export function InsumosModule() {
                 <Input value={editCalibre} onChange={(e) => setEditCalibre(e.target.value)} placeholder="ex: 30G" />
               </div>
               <div className="md:col-span-2">
-                <div className="text-xs text-muted-foreground mb-1">Fonte</div>
-                <Input value={editFonte} onChange={(e) => setEditFonte(e.target.value)} placeholder="ex: Tabela 2025" />
+                <div className="text-xs text-muted-foreground mb-1">Homologado</div>
+                <label className="flex items-center gap-2 text-sm text-blue-100/80 select-none">
+                  <Checkbox checked={editHomologado} onCheckedChange={(v) => setEditHomologado(!!v)} />
+                  Produto homologado
+                </label>
               </div>
             </div>
           </details>
