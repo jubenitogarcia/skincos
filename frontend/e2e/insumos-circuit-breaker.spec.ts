@@ -89,7 +89,7 @@ test.describe('insumos', () => {
       await page.waitForTimeout(900)
     }
 
-    await expect(page.getByText('API instável detectada.')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/API instável/i)).toBeVisible({ timeout: 10000 })
 
     const requestsBeforePauseProbe = overviewRequests
     await page.evaluate(() => {

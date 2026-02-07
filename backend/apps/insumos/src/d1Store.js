@@ -20,6 +20,24 @@ function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
 }
 
+function normalizeTipoUnidade(raw) {
+  const v = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\(s\)\s*/g, '')
+    .trim();
+  if (!v) return '';
+  if (v === 'flaconete') return 'frasco';
+  if (v === 'unidade') return 'unidade';
+  if (v === 'frasco') return 'frasco';
+  if (v === 'seringa') return 'seringa';
+  if (v === 'caixa') return 'caixa';
+  if (v === 'ampola') return 'ampola';
+  if (v === 'pacote') return 'pacote';
+  if (v === 'rolo') return 'rolo';
+  return '';
+}
+
 function calcularStatusValidade(dataValidade) {
   if (!dataValidade) return { status: 'OK', dias: null };
   const hoje = new Date();
@@ -509,7 +527,7 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
       String(body?.concentracao || '').trim(),
       String(body?.volume || '').trim(),
       String(body?.calibre || '').trim(),
-      String(body?.tipoUnidade || body?.unidade || '').trim(),
+      normalizeTipoUnidade(String(body?.tipoUnidade || body?.unidade || '').trim()),
       String(body?.fonte || '').trim(),
       precoCusto,
       estoqueMinimo,
@@ -565,7 +583,7 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   if (body?.concentracao !== undefined) set('concentracao', String(body.concentracao || '').trim());
   if (body?.volume !== undefined) set('volume', String(body.volume || '').trim());
   if (body?.calibre !== undefined) set('calibre', String(body.calibre || '').trim());
-  if (body?.tipoUnidade !== undefined) set('tipo_unidade', String(body.tipoUnidade || '').trim());
+  if (body?.tipoUnidade !== undefined) set('tipo_unidade', normalizeTipoUnidade(String(body.tipoUnidade || '').trim()));
   if (body?.fonte !== undefined) set('fonte', String(body.fonte || '').trim());
   if (body?.precoCusto !== undefined) set('preco_custo', toNumber(body.precoCusto, 0));
   if (body?.estoqueMinimo !== undefined) set('estoque_minimo', toInt(body.estoqueMinimo, 0));
