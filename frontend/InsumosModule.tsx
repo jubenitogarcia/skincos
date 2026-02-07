@@ -273,6 +273,7 @@ const CATEGORIA_CORES: Record<string, string> = {
 }
 
 const CATEGORIA_PALETA = ['#60a5fa', '#a78bfa', '#34d399', '#f87171', '#fbbf24', '#22d3ee', '#fb7185', '#c084fc', '#4ade80', '#f472b6']
+const MARCA_PALETA = ['#0891b2', '#2563eb', '#7c3aed', '#db2777', '#16a34a', '#ea580c', '#475569', '#be123c']
 
 function hashToIndex(value: string, mod: number) {
   let h = 0
@@ -288,6 +289,32 @@ function getCategoriaBgColor(categoria?: string | null) {
   if (mapped) return mapped
   if (!key) return '#0ea5e9'
   return CATEGORIA_PALETA[hashToIndex(key, CATEGORIA_PALETA.length)] || '#0ea5e9'
+}
+
+function getMarcaBgColor(marca?: string | null) {
+  const key = String(marca || '').trim().toLowerCase()
+  if (!key) return '#334155'
+  return MARCA_PALETA[hashToIndex(key, MARCA_PALETA.length)] || '#334155'
+}
+
+function getContrastColor(hexColor?: string | null) {
+  const raw = String(hexColor || '').trim()
+  const hex = raw.startsWith('#') ? raw.slice(1) : raw
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return '#ffffff'
+  const r = parseInt(hex.slice(0, 2), 16)
+  const g = parseInt(hex.slice(2, 4), 16)
+  const b = parseInt(hex.slice(4, 6), 16)
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return luminance > 140 ? '#0f172a' : '#ffffff'
+}
+
+function buildTagStyle(bgColor?: string | null): React.CSSProperties {
+  const bg = String(bgColor || '').trim() || '#334155'
+  return {
+    backgroundColor: bg,
+    color: getContrastColor(bg),
+    borderColor: 'rgba(255,255,255,0.25)'
+  }
 }
 
 function slugifyCategoria(value?: string | null) {
@@ -451,6 +478,8 @@ function BarcodeScannerInline({
   const [running, setRunning] = React.useState(false)
   const [needsGesture, setNeedsGesture] = React.useState(false)
   const [mode, setMode] = React.useState<'BARCODE_DETECTOR' | 'ZXING' | 'NONE'>('BARCODE_DETECTOR')
+  const [facingMode, setFacingMode] = React.useState<'user' | 'environment'>('user')
+  const [activeFacingMode, setActiveFacingMode] = React.useState<'user' | 'environment' | null>(null)
 
   const stop = React.useCallback(() => {
     runTokenRef.current += 1
@@ -475,10 +504,11 @@ function BarcodeScannerInline({
     if (mountedRef.current) {
       setRunning(false)
       setStarting(false)
+      setActiveFacingMode(null)
     }
   }, [])
 
-  const start = React.useCallback(async (origin: 'auto' | 'gesture') => {
+  const start = React.useCallback(async (origin: 'auto' | 'gesture', preferredFacing?: 'user' | 'environment') => {
     stop()
     setError(null)
     setNeedsGesture(false)
@@ -493,6 +523,27 @@ function BarcodeScannerInline({
     }
 
     const token = runTokenRef.current
+    const targetFacingMode = preferredFacing || facingMode
+    const facingAttempts: Array<'user' | 'environment'> =
+      targetFacingMode === 'user' ? ['user', 'environment'] : ['environment', 'user']
+
+    const getStreamWithFallback = async () => {
+      let lastError: any = null
+      for (const currentFacingMode of facingAttempts) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: currentFacingMode } as any },
+            audio: false
+          })
+          return { stream, currentFacingMode }
+        } catch (e: any) {
+          lastError = e
+          const name = String(e?.name || '')
+          if (name === 'NotAllowedError' || name === 'SecurityError') break
+        }
+      }
+      throw lastError || new Error('Não foi possível abrir a câmera.')
+    }
 
     const tickBarcodeDetector = async (detector: any, tickToken: number) => {
       if (tickToken !== runTokenRef.current) return
@@ -519,10 +570,7 @@ function BarcodeScannerInline({
         const detector = new Detector({
           formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e']
         })
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } as any },
-          audio: false
-        })
+        const { stream, currentFacingMode } = await getStreamWithFallback()
         if (token !== runTokenRef.current) {
           for (const t of stream.getTracks()) t.stop()
           return
@@ -534,6 +582,7 @@ function BarcodeScannerInline({
         await video.play()
         if (token !== runTokenRef.current) return
         setRunning(true)
+        setActiveFacingMode(currentFacingMode)
         rafRef.current = requestAnimationFrame(() => { void tickBarcodeDetector(detector, token) })
         return
       }
@@ -548,17 +597,36 @@ function BarcodeScannerInline({
       const video = videoRef.current
       if (!video) throw new Error('Pré-visualização indisponível.')
 
-      const controls = await reader.decodeFromConstraints(
-        { video: { facingMode: { ideal: 'environment' } } } as any,
-        video,
-        (result: any) => {
-          if (token !== runTokenRef.current) return
-          const raw = result?.getText ? String(result.getText() || '') : ''
-          if (!raw) return
-          stop()
-          onDetected(raw)
+      let controls: any = null
+      let usedFacingMode: 'user' | 'environment' | null = null
+      let lastDecodeError: any = null
+      for (const currentFacingMode of facingAttempts) {
+        try {
+          controls = await reader.decodeFromConstraints(
+            { video: { facingMode: { ideal: currentFacingMode } } } as any,
+            video,
+            (result: any) => {
+              if (token !== runTokenRef.current) return
+              const raw = result?.getText ? String(result.getText() || '') : ''
+              if (!raw) return
+              stop()
+              onDetected(raw)
+            }
+          )
+          usedFacingMode = currentFacingMode
+          break
+        } catch (e: any) {
+          lastDecodeError = e
+          const name = String(e?.name || '')
+          if (name === 'NotAllowedError' || name === 'SecurityError') break
         }
-      )
+      }
+      if (!controls) {
+        throw lastDecodeError || new Error('Não foi possível iniciar o scanner de câmera.')
+      }
+      if (!usedFacingMode) {
+        usedFacingMode = targetFacingMode
+      }
       if (token !== runTokenRef.current) {
         try {
           controls?.stop?.()
@@ -569,6 +637,7 @@ function BarcodeScannerInline({
       }
       zxingControlsRef.current = controls
       setRunning(true)
+      setActiveFacingMode(usedFacingMode)
     } catch (e: any) {
       const name = String(e?.name || '')
       const message = String(e?.message || '')
@@ -592,7 +661,7 @@ function BarcodeScannerInline({
     } finally {
       if (mountedRef.current && token === runTokenRef.current) setStarting(false)
     }
-  }, [onDetected, stop])
+  }, [facingMode, onDetected, stop])
 
   React.useEffect(() => {
     void start('auto')
@@ -620,9 +689,21 @@ function BarcodeScannerInline({
     <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm text-blue-100/80">
-          {mode === 'ZXING' ? 'Scanner (compatível)' : 'Scanner (rápido)'} • Aponte a câmera para o código
+          {mode === 'ZXING' ? 'Scanner (compatível)' : 'Scanner (rápido)'} • {activeFacingMode === 'user' ? 'câmera frontal' : 'câmera traseira'}
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            type="button"
+            onClick={() => {
+              const next = facingMode === 'user' ? 'environment' : 'user'
+              setFacingMode(next)
+              void start('gesture', next)
+            }}
+            disabled={starting}
+          >
+            Inverter câmera
+          </Button>
           {!running ? (
             <Button
               variant="outline"
@@ -637,9 +718,25 @@ function BarcodeScannerInline({
         </div>
       </div>
       {error ? <div className="text-sm text-red-200">{error}</div> : null}
-      <video ref={videoRef} className="w-full max-w-xl rounded-lg border border-white/10 bg-black" playsInline muted />
+      <div className="relative w-full max-w-xl">
+        <video
+          ref={videoRef}
+          className="w-full rounded-lg border border-white/10 bg-black"
+          style={{ transform: 'scaleX(-1)' }}
+          playsInline
+          muted
+        />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="relative h-[28%] w-[78%] rounded-xl border-2 border-emerald-300/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.24)]">
+            <div className="absolute -top-2 -left-2 h-6 w-6 border-l-2 border-t-2 border-white/90 rounded-tl-md" />
+            <div className="absolute -top-2 -right-2 h-6 w-6 border-r-2 border-t-2 border-white/90 rounded-tr-md" />
+            <div className="absolute -bottom-2 -left-2 h-6 w-6 border-l-2 border-b-2 border-white/90 rounded-bl-md" />
+            <div className="absolute -bottom-2 -right-2 h-6 w-6 border-r-2 border-b-2 border-white/90 rounded-br-md" />
+          </div>
+        </div>
+      </div>
       <div className="text-xs text-blue-200/60">
-        Dica: se não detectar, aumente a luz e aproxime o código.
+        Posicione o código dentro da moldura verde. Se não detectar, aumente a luz e aproxime o produto.
       </div>
     </div>
   )
@@ -784,6 +881,7 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
+  const [quickActionFeedback, setQuickActionFeedback] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [quickLookupLoading, setQuickLookupLoading] = React.useState(false)
   const [quickLookupError, setQuickLookupError] = React.useState<string | null>(null)
   const [quickLookupCtxUnidade, setQuickLookupCtxUnidade] = React.useState<string | null>(null)
@@ -1146,6 +1244,8 @@ export function InsumosModule() {
     authLoading || healthLoading || (canUseApi && isAuthed && dashboardProgress < 100)
   const shouldShowDashboardLoading =
     isDashboardLoading || !authLoaded || !healthLoaded
+  const showOverviewLoadingProgress =
+    overviewLoading || (canUseApi && isAuthed && shouldShowDashboardLoading)
 
   const LoadingBadge = React.useCallback(
     ({ active }: { active: boolean }) => {
@@ -1590,6 +1690,48 @@ export function InsumosModule() {
     return quickLotes
   }, [quickCandidates, quickLotes, quickRegistros.join('|')])
 
+  const resetQuickOperationState = React.useCallback(() => {
+    setQuickCodigo('')
+    setQuickRegistro('')
+    setQuickRegistros([])
+    setQuickCandidates([])
+    setQuickAutoFefo(true)
+    setQuickQuantidade('1')
+    setQuickNovoEstoque('')
+    setQuickObs('')
+    setQuickMotivo('Ajuste manual')
+    setQuickScanOpen(false)
+    setQuickLookupLoading(false)
+    setQuickLookupError(null)
+    setQuickLookupCtxUnidade(null)
+    setQuickLookupCode(null)
+    setQuickLookupItems([])
+    setQuickActionLoading(false)
+    setQuickActionFeedback(null)
+  }, [])
+
+  const openQuickOperation = React.useCallback(
+    (
+      op: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA',
+      prefill?: {
+        codigoBarras?: string | null
+        quantidade?: number | string | null
+        obs?: string | null
+        fromUnidade?: string | null
+        toUnidade?: string | null
+      }
+    ) => {
+      resetQuickOperationState()
+      if (prefill?.codigoBarras) setQuickCodigo(String(prefill.codigoBarras).trim())
+      if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
+      if (prefill?.obs) setQuickObs(String(prefill.obs))
+      if (prefill?.fromUnidade) setTransferFrom(String(prefill.fromUnidade))
+      if (prefill?.toUnidade) setTransferTo(String(prefill.toUnidade))
+      setQuickOp(op)
+    },
+    [resetQuickOperationState]
+  )
+
   React.useEffect(() => {
     if (!quickOp) return
     setQuickRegistros([])
@@ -1905,9 +2047,9 @@ export function InsumosModule() {
       }
 
       if (wantsQuickAction) {
-        if (actionLabel === 'Entrada') setQuickOp('ENTRADA')
-        else if (actionLabel === 'Saída') setQuickOp('BAIXA')
-        else if (actionLabel === 'Transferência') setQuickOp('TRANSFERENCIA')
+        if (actionLabel === 'Entrada') openQuickOperation('ENTRADA')
+        else if (actionLabel === 'Saída') openQuickOperation('BAIXA')
+        else if (actionLabel === 'Transferência') openQuickOperation('TRANSFERENCIA')
         setTimeout(() => {
           window.scrollTo({ top: 0, behavior: 'smooth' })
         }, 250)
@@ -3137,28 +3279,43 @@ export function InsumosModule() {
 
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
-      if (!canUseApi || !isAuthed) return
+      if (!canUseApi || !isAuthed) return false
+      setQuickActionFeedback(null)
       const codigoBarras = quickCodigo.trim()
-      if (!codigoBarras) return toast.error('Informe o código de barras')
+      if (!codigoBarras) {
+        const message = 'Informe o código de barras'
+        setQuickActionFeedback({ type: 'error', message })
+        toast.error(message)
+        return false
+      }
 
       setQuickActionLoading(true)
       try {
         if (kind === 'AJUSTE') {
           const novoEstoque = Number.isFinite(Number(quickNovoEstoque)) ? Number(quickNovoEstoque) : null
-          if (novoEstoque === null) return toast.error('Informe o novo estoque')
+          if (novoEstoque === null) {
+            const message = 'Informe o novo estoque'
+            setQuickActionFeedback({ type: 'error', message })
+            toast.error(message)
+            return false
+          }
           const registro = quickRegistro.trim()
           await mutateJson(`/insumos/ajuste?unidade=${encodeURIComponent(unidade)}`, {
             method: 'POST',
             body: { codigoBarras, registro: registro || undefined, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
             queueLabel: 'Ajuste'
           })
-          toast.success('Ajuste registrado')
+          const message = 'Ajuste registrado'
+          setQuickActionFeedback({ type: 'success', message })
+          toast.success(message)
         } else {
           const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
           const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
           const registro = quickRegistro.trim()
           if (quickLoteNeedsPick && !registro) {
-            toast.error('Selecione o lote/registro')
+            const message = 'Selecione o lote/registro'
+            setQuickActionFeedback({ type: 'error', message })
+            toast.error(message)
             return false
           }
           await mutateJson(`${path}?unidade=${encodeURIComponent(unidade)}`, {
@@ -3166,7 +3323,9 @@ export function InsumosModule() {
             body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
             queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
           })
-          toast.success(kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
+          const message = kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada'
+          setQuickActionFeedback({ type: 'success', message })
+          toast.success(message)
         }
 
         await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
@@ -3201,11 +3360,18 @@ export function InsumosModule() {
             setQuickCandidates([])
             setQuickRegistros(registros)
           }
-          toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
+          const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
+          setQuickActionFeedback({ type: 'error', message })
+          toast.error(message)
           return false
         }
-        if (policyErrorToast(e)) return false
-        toast.error(e instanceof Error ? e.message : String(e))
+        if (policyErrorToast(e)) {
+          setQuickActionFeedback({ type: 'error', message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+        const message = e instanceof Error ? e.message : String(e)
+        setQuickActionFeedback({ type: 'error', message })
+        toast.error(message)
         return false
       } finally {
         setQuickActionLoading(false)
@@ -3225,19 +3391,33 @@ export function InsumosModule() {
       quickRegistro,
       refreshInsumos,
       schedulePostMutationRefresh,
+      setQuickActionFeedback,
       unidade
     ]
   )
 
   const runTransfer = React.useCallback(async (): Promise<boolean> => {
-    if (!canUseApi || !isAuthed) return
+    if (!canUseApi || !isAuthed) return false
+    setQuickActionFeedback(null)
     const codigoBarras = quickCodigo.trim()
-    if (!codigoBarras) return toast.error('Informe o código de barras')
+    if (!codigoBarras) {
+      const message = 'Informe o código de barras'
+      setQuickActionFeedback({ type: 'error', message })
+      toast.error(message)
+      return false
+    }
 
-    if (transferFrom === transferTo) return toast.error('Origem e destino devem ser diferentes')
+    if (transferFrom === transferTo) {
+      const message = 'Origem e destino devem ser diferentes'
+      setQuickActionFeedback({ type: 'error', message })
+      toast.error(message)
+      return false
+    }
     const registro = quickRegistro.trim()
     if (quickLoteNeedsPick && !registro) {
-      toast.error('Selecione o lote/registro')
+      const message = 'Selecione o lote/registro'
+      setQuickActionFeedback({ type: 'error', message })
+      toast.error(message)
       return false
     }
 
@@ -3256,7 +3436,9 @@ export function InsumosModule() {
         },
         queueLabel: 'Transferência'
       })
-      toast.success('Transferência registrada')
+      const message = 'Transferência registrada'
+      setQuickActionFeedback({ type: 'success', message })
+      toast.success(message)
 
       // Refresh what the user is seeing (estoque + movimentações)
       await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
@@ -3291,11 +3473,18 @@ export function InsumosModule() {
           setQuickCandidates([])
           setQuickRegistros(registros)
         }
-        toast.error('Este código possui múltiplos lotes. Selecione o lote/registro.')
+        const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
+        setQuickActionFeedback({ type: 'error', message })
+        toast.error(message)
         return false
       }
-      if (policyErrorToast(e)) return false
-      toast.error(e instanceof Error ? e.message : String(e))
+      if (policyErrorToast(e)) {
+        setQuickActionFeedback({ type: 'error', message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+      const message = e instanceof Error ? e.message : String(e)
+      setQuickActionFeedback({ type: 'error', message })
+      toast.error(message)
       return false
     } finally {
       setQuickActionLoading(false)
@@ -3312,6 +3501,7 @@ export function InsumosModule() {
     quickRegistro,
     refreshInsumos,
     schedulePostMutationRefresh,
+    setQuickActionFeedback,
     transferFrom,
     transferTo
   ])
@@ -3340,12 +3530,11 @@ export function InsumosModule() {
   }, [canUseApi, isAuthed, loadInsights, overviewEverVisible, overviewVisible])
 
   React.useEffect(() => {
-    const onOp = (event: Event) => {
-      const e = event as CustomEvent<{ op?: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' }>
-      const op = e.detail?.op
-      if (!op) return
-      setQuickScanOpen(false)
-      setQuickOp(op)
+      const onOp = (event: Event) => {
+        const e = event as CustomEvent<{ op?: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' }>
+        const op = e.detail?.op
+        if (!op) return
+      openQuickOperation(op)
       try {
         window.scrollTo({ top: 0, behavior: 'smooth' })
       } catch {
@@ -3354,7 +3543,7 @@ export function InsumosModule() {
     }
     window.addEventListener('skincos:insumos:op', onOp as EventListener)
     return () => window.removeEventListener('skincos:insumos:op', onOp as EventListener)
-  }, [])
+  }, [openQuickOperation])
 
   React.useEffect(() => {
     const onLayout = (event: Event) => {
@@ -4843,11 +5032,8 @@ export function InsumosModule() {
         open={quickOp != null}
         onOpenChange={(open) => {
           if (open) return
+          resetQuickOperationState()
           setQuickOp(null)
-          setQuickScanOpen(false)
-          setQuickRegistros([])
-          setQuickCandidates([])
-          setQuickRegistro('')
         }}
       >
         <DialogContent className="max-w-xl dark bg-corporate-900 border-white/10 text-white">
@@ -4873,6 +5059,12 @@ export function InsumosModule() {
               <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
             )
           ) : null}
+
+          <div className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
+            {quickOp === 'TRANSFERENCIA'
+              ? `Unidade da operação: ${unidadeLabel(transferFrom)} → ${unidadeLabel(transferTo)}`
+              : `Unidade da operação: ${unidadeLabel(unidade)}`}
+          </div>
 
           <div className="space-y-3">
             <div>
@@ -4908,8 +5100,16 @@ export function InsumosModule() {
                       </div>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
-                      {quickLookupItems[0]?.categoria ? <span>Categoria: {String(quickLookupItems[0].categoria)}</span> : null}
-                      {quickLookupItems[0]?.marca ? <span>Marca: {String(quickLookupItems[0].marca)}</span> : null}
+                      {quickLookupItems[0]?.categoria ? (
+                        <Badge style={buildTagStyle(getCategoriaBgColor(String(quickLookupItems[0].categoria)))} className="border">
+                          Categoria: {String(quickLookupItems[0].categoria)}
+                        </Badge>
+                      ) : null}
+                      {quickLookupItems[0]?.marca ? (
+                        <Badge style={buildTagStyle(getMarcaBgColor(String(quickLookupItems[0].marca)))} className="border">
+                          Marca: {String(quickLookupItems[0].marca)}
+                        </Badge>
+                      ) : null}
                       <span className="font-mono">Código: {quickCodigo.trim()}</span>
                     </div>
                   </div>
@@ -5025,28 +5225,36 @@ export function InsumosModule() {
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setQuickOp(null)
-                setQuickScanOpen(false)
-              }}
-            >
-              Cancelar
-            </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  resetQuickOperationState()
+                  setQuickOp(null)
+                }}
+              >
+                Cancelar
+              </Button>
             {quickOp === 'TRANSFERENCIA' ? (
               <Button
                 className="!bg-blue-600 hover:!bg-blue-700 !text-white"
                 onClick={async () => {
                   const ok = await runTransfer()
                   if (ok) {
+                    resetQuickOperationState()
                     setQuickOp(null)
-                    setQuickScanOpen(false)
                   }
                 }}
                 disabled={quickActionLoading || !isAuthed}
               >
-                Confirmar transferência
+                <span className="flex items-center gap-2">
+                  {quickActionLoading ? (
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+                      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                    </svg>
+                  ) : null}
+                  {quickActionLoading ? 'Processando...' : 'Confirmar transferência'}
+                </span>
               </Button>
             ) : (
               <Button
@@ -5061,16 +5269,30 @@ export function InsumosModule() {
                 onClick={async () => {
                   const ok = await runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')
                   if (ok) {
+                    resetQuickOperationState()
                     setQuickOp(null)
-                    setQuickScanOpen(false)
                   }
                 }}
                 disabled={quickActionLoading || !isAuthed}
               >
-                {quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída'}
+                <span className="flex items-center gap-2">
+                  {quickActionLoading ? (
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+                      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                    </svg>
+                  ) : null}
+                  {quickActionLoading ? 'Processando...' : (quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída')}
+                </span>
               </Button>
             )}
           </DialogFooter>
+          {quickActionFeedback ? (
+            <div className={`text-xs ${quickActionFeedback.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
+              {quickActionFeedback.type === 'success' ? 'Sucesso: ' : 'Falha: '}
+              {quickActionFeedback.message}
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -5188,10 +5410,11 @@ export function InsumosModule() {
                                 variant="outline"
                                 className="h-8 px-2 text-xs"
                                 onClick={() => {
-                                  setQuickOp('ENTRADA')
-                                  setQuickCodigo(String(it.codigoBarras || ''))
-                                  setQuickQuantidade(String(it.suggestedPurchaseQty ?? 1))
-                                  setQuickObs('Reposição sugerida')
+                                  openQuickOperation('ENTRADA', {
+                                    codigoBarras: String(it.codigoBarras || ''),
+                                    quantidade: it.suggestedPurchaseQty ?? 1,
+                                    obs: 'Reposição sugerida'
+                                  })
                                   setPurchaseDialogOpen(false)
                                 }}
                                 disabled={!isAuthed}
@@ -5239,7 +5462,14 @@ export function InsumosModule() {
               <div className="text-lg text-blue-50 font-mono">
                 {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
               </div>
-              <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+              )}
             </CardContent>
           </Card>
 
@@ -5253,7 +5483,14 @@ export function InsumosModule() {
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+              )}
             </CardContent>
           </Card>
 
@@ -5267,7 +5504,14 @@ export function InsumosModule() {
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">atenção</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">atenção</div>
+              )}
             </CardContent>
           </Card>
 
@@ -5281,7 +5525,14 @@ export function InsumosModule() {
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">janela próxima</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">janela próxima</div>
+              )}
             </CardContent>
           </Card>
 
@@ -5295,7 +5546,14 @@ export function InsumosModule() {
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-              <div className="text-xs text-blue-200/60">risco imediato</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">risco imediato</div>
+              )}
             </CardContent>
           </Card>
 
@@ -5313,9 +5571,16 @@ export function InsumosModule() {
                 <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
                 <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
               </div>
-              <div className="text-xs text-blue-200/60">
-                saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-              </div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">
+                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+                </div>
+              )}
             </CardContent>
 	        </Card>
         </div>
@@ -5885,10 +6150,11 @@ export function InsumosModule() {
                       key={String(r.codigoBarras)}
                       className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                       onClick={() => {
-                        setQuickOp('ENTRADA')
-                        if (r.codigoBarras) setQuickCodigo(String(r.codigoBarras))
-                        if (r.suggestedPurchaseQty != null) setQuickQuantidade(String(r.suggestedPurchaseQty))
-                        setQuickObs('Reposição sugerida')
+                        openQuickOperation('ENTRADA', {
+                          codigoBarras: r.codigoBarras ? String(r.codigoBarras) : '',
+                          quantidade: r.suggestedPurchaseQty ?? null,
+                          obs: 'Reposição sugerida'
+                        })
                       }}
                     >
                       <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
@@ -5910,12 +6176,13 @@ export function InsumosModule() {
                       key={`${t.codigoBarras}-${t.from}-${t.to}`}
                       className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
                       onClick={() => {
-                        setQuickOp('TRANSFERENCIA')
-                        if (t.codigoBarras) setQuickCodigo(String(t.codigoBarras))
-                        if (t.qty != null) setQuickQuantidade(String(t.qty))
-                        if (t.from) setTransferFrom(String(t.from))
-                        if (t.to) setTransferTo(String(t.to))
-                        setQuickObs('Transferência sugerida')
+                        openQuickOperation('TRANSFERENCIA', {
+                          codigoBarras: t.codigoBarras ? String(t.codigoBarras) : '',
+                          quantidade: t.qty ?? null,
+                          fromUnidade: t.from ? String(t.from) : null,
+                          toUnidade: t.to ? String(t.to) : null,
+                          obs: 'Transferência sugerida'
+                        })
                       }}
                     >
                       <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
@@ -6332,7 +6599,15 @@ export function InsumosModule() {
                           <LoadingBadge active={overviewLoading || insightsLoading} />
                         </div>
                       </CardHeader>
-                      <CardContent>{renderChart({ ...slot, view, metric, topN }, { height })}</CardContent>
+                      <CardContent>
+                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
+                          <div className="mb-2 text-xs text-blue-200/70 inline-flex items-center gap-2">
+                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                            Carregando {loadingPercent}%
+                          </div>
+                        ) : null}
+                        {renderChart({ ...slot, view, metric, topN }, { height })}
+                      </CardContent>
                     </Card>
                   )
                 })}
@@ -6369,7 +6644,11 @@ export function InsumosModule() {
             <DialogTitle>Duplicidade de código de barras</DialogTitle>
             <DialogDescription>
               {qualityMatchesIssue?.codigoBarras ? (
-                <>Selecione qual registro editar ou excluir para o código <span className="font-mono">#{qualityMatchesIssue.codigoBarras}</span>.</>
+                <>
+                  Selecione qual registro editar ou excluir para o código <span className="font-mono">#{qualityMatchesIssue.codigoBarras}</span>.
+                  {' '}
+                  ({qualityMatchesItems.length} correspondências)
+                </>
               ) : (
                 <>Selecione qual registro editar ou excluir para resolver a duplicidade.</>
               )}

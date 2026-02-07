@@ -14,7 +14,9 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-const MAX_SQL_VARIABLES_PER_STATEMENT = 900;
+// D1/SQLite can reject statements with many bound variables.
+// Keep this deliberately conservative to avoid `too many SQL variables`.
+const MAX_SQL_VARIABLES_PER_STATEMENT = 80;
 
 function chunkArray(items, size) {
   if (!Array.isArray(items) || !items.length) return [];
