@@ -2523,7 +2523,6 @@ export function InsumosModule() {
           return
         }
       }
-
       if (registro) {
         const foundByRegistro = (insumosRef.current || []).find(
           (i) => String(i?.registro || '').trim() === registro
