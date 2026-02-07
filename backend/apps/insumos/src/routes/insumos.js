@@ -166,7 +166,17 @@ export async function handleInsumosRoutes({
                     after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
                 });
                 ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+                return withCORS(
+                    JSON.stringify({
+                        success: true,
+                        estoqueAnterior: out.estoqueAnterior,
+                        novoEstoque: out.novoEstoque,
+                        quebraEstoque: !!out.quebraEstoque,
+                        deficit: Number(out.deficit || 0)
+                    }),
+                    { status: 200 },
+                    appOrigin
+                );
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }
@@ -196,7 +206,17 @@ export async function handleInsumosRoutes({
                     after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
                 });
                 ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+                return withCORS(
+                    JSON.stringify({
+                        success: true,
+                        estoqueAnterior: out.estoqueAnterior,
+                        novoEstoque: out.novoEstoque,
+                        quebraEstoque: !!out.quebraEstoque,
+                        deficit: Number(out.deficit || 0)
+                    }),
+                    { status: 200 },
+                    appOrigin
+                );
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }

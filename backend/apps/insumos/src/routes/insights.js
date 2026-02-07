@@ -58,17 +58,26 @@ function resolveWindow(url, fallbackDays = 30) {
 
 function buildStockAlerts(insumos) {
     return (Array.isArray(insumos) ? insumos : [])
-        .filter((i) => safeNumber(i?.estoqueMinimo) > 0 && safeNumber(i?.estoqueAtual) <= safeNumber(i?.estoqueMinimo))
-        .map((i) => ({
-            codigoBarras: i.codigoBarras,
-            produto: i.produto,
-            categoria: i.categoria,
-            estoqueAtual: i.estoqueAtual,
-            estoqueMinimo: i.estoqueMinimo,
-            diferenca: safeNumber(i.estoqueAtual) - safeNumber(i.estoqueMinimo),
-            percentual: safeNumber(i.estoqueMinimo) > 0 ? Math.round((safeNumber(i.estoqueAtual) / safeNumber(i.estoqueMinimo)) * 100) : null,
-            tipoAlerta: 'ESTOQUE_BAIXO'
-        }));
+        .filter((i) => {
+            const estoqueAtual = safeNumber(i?.estoqueAtual);
+            const estoqueMinimo = safeNumber(i?.estoqueMinimo);
+            return estoqueAtual < 0 || (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo);
+        })
+        .map((i) => {
+            const estoqueAtual = safeNumber(i?.estoqueAtual);
+            const estoqueMinimo = safeNumber(i?.estoqueMinimo);
+            const isBreakage = estoqueAtual < 0;
+            return {
+                codigoBarras: i.codigoBarras,
+                produto: i.produto,
+                categoria: i.categoria,
+                estoqueAtual,
+                estoqueMinimo,
+                diferenca: estoqueAtual - estoqueMinimo,
+                percentual: estoqueMinimo > 0 ? Math.round((estoqueAtual / estoqueMinimo) * 100) : null,
+                tipoAlerta: isBreakage ? 'QUEBRA_ESTOQUE' : 'ESTOQUE_BAIXO'
+            };
+        });
 }
 
 function computeMovementOverview({ movimentos, insumoByCode, from, to, unidade, maxSeriesPoints = 365 }) {
