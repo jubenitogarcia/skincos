@@ -2981,7 +2981,19 @@ export function InsumosModule() {
       setOverviewRoi(data?.roi || null)
       setOverviewQuality(data?.quality || null)
       setOverviewMovResumo((data?.movResumo as any) || null)
-      setOverviewMovSeries(Array.isArray(data?.movSeries) ? data.movSeries : [])
+      setOverviewMovSeries(
+        Array.isArray(data?.movSeries)
+          ? data.movSeries
+              .map((item) => ({
+                day: String(item?.day || ''),
+                entrada: Number(item?.entrada ?? 0) || 0,
+                saida: Number(item?.saida ?? 0) || 0,
+                entradaValor: Number.isFinite(Number(item?.entradaValor)) ? Number(item?.entradaValor) : undefined,
+                saidaValor: Number.isFinite(Number(item?.saidaValor)) ? Number(item?.saidaValor) : undefined
+              }))
+              .filter((item) => item.day)
+          : []
+      )
     } catch (e) {
       if ((e as any)?.name === 'AbortError') return
       if (overviewAbortRef.current !== ac) return
@@ -4006,7 +4018,7 @@ export function InsumosModule() {
   }, [insightsTrends])
 
   const trendsSeries = React.useMemo(() => {
-    const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : overviewPeriod === '90d' ? 90 : 365
+    const limit = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
     const raw = trendsSeriesRaw.slice(-limit)
     if (overviewPeriod !== '1y') return raw
 
@@ -5111,7 +5123,7 @@ export function InsumosModule() {
                             const v = ctx && (it as any)?.estoques ? Number((it as any).estoques?.[ctx] ?? 0) : Number((it as any).estoqueAtual ?? 0)
                             return acc + (Number.isFinite(v) ? v : 0)
                           }, 0)
-                          return `Estoque: ${Math.max(0, total)}`
+                          return `Estoque: ${total}`
                         })()}
                         {' • '}
                         {Array.from(new Set(quickLookupItems.map((it) => String((it as any)?.registro || '').trim()).filter(Boolean))).length} registros
