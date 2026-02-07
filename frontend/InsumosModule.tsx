@@ -3426,14 +3426,12 @@ export function InsumosModule() {
     if (!codigoBarras) {
       const message = 'Informe o código de barras'
       setQuickActionFeedback({ type: 'error', message })
-      toast.error(message)
       return false
     }
 
     if (transferFrom === transferTo) {
       const message = 'Origem e destino devem ser diferentes'
       setQuickActionFeedback({ type: 'error', message })
-      toast.error(message)
       return false
     }
     const registro = quickRegistro.trim()
