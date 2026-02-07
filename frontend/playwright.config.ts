@@ -7,6 +7,7 @@ export default defineConfig({
   // Keep Playwright artifacts outside `frontend/` to avoid dev-server watchers (Tailwind/Vite)
   // tripping over rapidly-created/deleted trace resource files during E2E runs.
   outputDir: '../.playwright-output',
+  workers: process.env.CI ? 1 : undefined,
   timeout: 60000,
   use: {
     baseURL,

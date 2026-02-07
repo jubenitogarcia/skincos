@@ -226,6 +226,20 @@ type OfflineQueueItem = {
   body?: unknown
 }
 
+const CANONICAL_TIPOS_UNIDADE = ['unidade', 'frasco', 'seringa', 'caixa', 'ampola', 'pacote', 'rolo'] as const
+const CANONICAL_TIPOS_UNIDADE_SET = new Set<string>(CANONICAL_TIPOS_UNIDADE as readonly string[])
+
+function normalizeTipoUnidadeToCanonical(raw: string): string {
+  const normalized = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\(s\)\s*/g, '')
+    .trim()
+  if (!normalized) return ''
+  if (normalized === 'flaconete') return 'frasco'
+  return CANONICAL_TIPOS_UNIDADE_SET.has(normalized) ? normalized : ''
+}
+
 function fmtMoneyBRL(value: number) {
   try {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -2608,7 +2622,7 @@ export function InsumosModule() {
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
     setEditMarca(String(i.marca || ''))
-    setEditTipoUnidade(normalizeTipoUnidadeToCanonical(String(i.tipoUnidade || '')) || '')
+    setEditTipoUnidade(String(i.tipoUnidade || ''))
     setEditEspecificacao(String(i.especificacao || ''))
     setEditConcentracao(String(i.concentracao || ''))
     setEditVolume(String(i.volume || ''))
@@ -2619,7 +2633,7 @@ export function InsumosModule() {
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
     setEditOpen(true)
-  }, [normalizeTipoUnidadeToCanonical])
+  }, [])
 
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
@@ -3788,30 +3802,7 @@ export function InsumosModule() {
     )
   }, [insumos])
 
-  // Canonical unit types: keep list short but expressive enough for Insumos.
-  // We intentionally collapse "flaconete" into "frasco" to avoid expanding the list.
-  const CANONICAL_TIPOS_UNIDADE = React.useMemo(
-    () => ['unidade', 'frasco', 'seringa', 'caixa', 'ampola', 'pacote', 'rolo'] as const,
-    []
-  )
-  const canonicalTipoUnidadeSet = React.useMemo(() => new Set(CANONICAL_TIPOS_UNIDADE as readonly string[]), [CANONICAL_TIPOS_UNIDADE])
-  const normalizeTipoUnidadeToCanonical = React.useCallback(
-    (raw: string) => {
-      const s0 = String(raw || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\s*\(s\)\s*/g, '')
-        .trim()
-      if (!s0) return ''
-      if (s0 === 'flaconete') return 'frasco'
-      return canonicalTipoUnidadeSet.has(s0) ? s0 : ''
-    },
-    [canonicalTipoUnidadeSet]
-  )
-
-  const insumosTiposUnidade = React.useMemo(() => {
-    return Array.from(CANONICAL_TIPOS_UNIDADE)
-  }, [CANONICAL_TIPOS_UNIDADE])
+  const insumosTiposUnidade = React.useMemo(() => Array.from(CANONICAL_TIPOS_UNIDADE as readonly string[]), [])
 
 	  type ChartPresetId = 'distribution' | 'movements' | 'roi_risk'
 
