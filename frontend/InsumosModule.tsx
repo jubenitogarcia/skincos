@@ -350,6 +350,20 @@ function normalizeText(value?: string | null) {
     .replace(/\s+/g, ' ')
 }
 
+function uniqueSortedTextOptions(values: Array<string | null | undefined>) {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of values || []) {
+    const value = String(raw || '').trim()
+    if (!value) continue
+    const key = normalizeText(value)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(value)
+  }
+  return out.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
+}
+
 type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
 
 function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): EstoqueStatus {
@@ -864,6 +878,7 @@ export function InsumosModule() {
   const [healthLoading, setHealthLoading] = React.useState(true)
 
   const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
+  const INSUMOS_OPTIONS_CACHE_KEY = 'skincos.insumos.options.v1'
   const [unidade, setUnidade] = React.useState<string>(() => {
     try {
       return window.localStorage.getItem(INSUMOS_UNIT_KEY) || 'novo-hamburgo'
@@ -923,6 +938,36 @@ export function InsumosModule() {
   const [categoryPoliciesLoading, setCategoryPoliciesLoading] = React.useState(false)
   const [insumosOptionsCategorias, setInsumosOptionsCategorias] = React.useState<string[]>([])
   const [insumosOptionsMarcas, setInsumosOptionsMarcas] = React.useState<string[]>([])
+  const readInsumosOptionsCache = React.useCallback(() => {
+    try {
+      const raw = localStorage.getItem(INSUMOS_OPTIONS_CACHE_KEY)
+      if (!raw) return { categorias: [] as string[], marcas: [] as string[] }
+      const parsed = JSON.parse(raw) as Record<string, { categorias?: string[]; marcas?: string[] }>
+      const scoped = parsed?.[unidade]
+      return {
+        categorias: uniqueSortedTextOptions(scoped?.categorias || []),
+        marcas: uniqueSortedTextOptions(scoped?.marcas || [])
+      }
+    } catch {
+      return { categorias: [] as string[], marcas: [] as string[] }
+    }
+  }, [INSUMOS_OPTIONS_CACHE_KEY, unidade])
+  const persistInsumosOptionsCache = React.useCallback(
+    (categorias: string[], marcas: string[]) => {
+      try {
+        const raw = localStorage.getItem(INSUMOS_OPTIONS_CACHE_KEY)
+        const current = raw ? (JSON.parse(raw) as Record<string, { categorias?: string[]; marcas?: string[] }>) : {}
+        current[unidade] = {
+          categorias: uniqueSortedTextOptions(categorias),
+          marcas: uniqueSortedTextOptions(marcas)
+        }
+        localStorage.setItem(INSUMOS_OPTIONS_CACHE_KEY, JSON.stringify(current))
+      } catch {
+        // ignore
+      }
+    },
+    [INSUMOS_OPTIONS_CACHE_KEY, unidade]
+  )
 
   const [adminCategoryPolicies, setAdminCategoryPolicies] = React.useState<CategoryPolicy[]>([])
   const [adminCategorySuggestions, setAdminCategorySuggestions] = React.useState<CategoryPolicySuggestion[]>([])
@@ -1952,21 +1997,41 @@ export function InsumosModule() {
 
   const loadInsumosOptions = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
+    let categorias: string[] = []
+    let marcas: string[] = []
     try {
       const out = await apiJson<{ success?: boolean; data?: { categorias?: string[]; marcas?: string[] } }>(`/insumos/options?limit=300`)
-      const categorias = Array.isArray(out?.data?.categorias)
-        ? out!.data!.categorias!.map((value) => String(value || '').trim()).filter(Boolean)
-        : []
-      const marcas = Array.isArray(out?.data?.marcas)
-        ? out!.data!.marcas!.map((value) => String(value || '').trim()).filter(Boolean)
-        : []
-      setInsumosOptionsCategorias(categorias)
-      setInsumosOptionsMarcas(marcas)
+      categorias = uniqueSortedTextOptions(Array.isArray(out?.data?.categorias) ? out!.data!.categorias! : [])
+      marcas = uniqueSortedTextOptions(Array.isArray(out?.data?.marcas) ? out!.data!.marcas! : [])
     } catch {
-      setInsumosOptionsCategorias([])
-      setInsumosOptionsMarcas([])
+      // fallback below
     }
-  }, [apiJson, canUseApi, isAuthed])
+
+    if (!categorias.length && !marcas.length) {
+      try {
+        const fallback = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?pagina=1&limite=1000`)
+        const items = Array.isArray(fallback?.data) ? fallback.data : []
+        categorias = uniqueSortedTextOptions(items.map((item) => String(item?.categoria || '').trim()))
+        marcas = uniqueSortedTextOptions(items.map((item) => String(item?.marca || '').trim()))
+      } catch {
+        // fallback below
+      }
+    }
+
+    if (!categorias.length) {
+      categorias = uniqueSortedTextOptions([
+        ...((insumosRef.current || []).map((item) => String(item?.categoria || '').trim())),
+        ...((categoryPolicies || []).map((policy) => String(policy?.label || '').trim()))
+      ])
+    }
+    if (!marcas.length) {
+      marcas = uniqueSortedTextOptions((insumosRef.current || []).map((item) => String(item?.marca || '').trim()))
+    }
+
+    if (categorias.length) setInsumosOptionsCategorias(categorias)
+    if (marcas.length) setInsumosOptionsMarcas(marcas)
+    if (categorias.length || marcas.length) persistInsumosOptionsCache(categorias, marcas)
+  }, [apiJson, canUseApi, isAuthed, categoryPolicies, persistInsumosOptionsCache])
 
   const loadAdminCategoryPolicies = React.useCallback(
     async (opts?: { includeSuggestions?: boolean }) => {
@@ -2020,6 +2085,12 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
     void loadCategoryPolicies()
   }, [canUseApi, isAuthed, loadCategoryPolicies])
+
+  React.useEffect(() => {
+    const cached = readInsumosOptionsCache()
+    if (cached.categorias.length) setInsumosOptionsCategorias(cached.categorias)
+    if (cached.marcas.length) setInsumosOptionsMarcas(cached.marcas)
+  }, [readInsumosOptionsCache])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -3819,16 +3890,12 @@ export function InsumosModule() {
     const fromPolicies = categoryPolicies
       .map((policy) => String(policy.label || '').trim())
       .filter(Boolean)
-    return Array.from(new Set([...fromInsumos, ...fromPolicies, ...insumosOptionsCategorias])).sort((a, b) =>
-      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
-    )
+    return uniqueSortedTextOptions([...fromInsumos, ...fromPolicies, ...insumosOptionsCategorias])
   }, [categoryPolicies, insumos, insumosOptionsCategorias])
 
   const insumosMarcas = React.useMemo(() => {
     const fromInsumos = (insumos || []).map((item) => String(item.marca || '').trim()).filter(Boolean)
-    return Array.from(new Set([...fromInsumos, ...insumosOptionsMarcas])).sort((a, b) =>
-      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
-    )
+    return uniqueSortedTextOptions([...fromInsumos, ...insumosOptionsMarcas])
   }, [insumos, insumosOptionsMarcas])
 
   const insumosTiposUnidade = React.useMemo(() => Array.from(CANONICAL_TIPOS_UNIDADE as readonly string[]), [])
