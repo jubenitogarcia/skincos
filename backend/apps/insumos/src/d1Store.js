@@ -14,6 +14,18 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+const MAX_SQL_VARIABLES_PER_STATEMENT = 900;
+
+function chunkArray(items, size) {
+  if (!Array.isArray(items) || !items.length) return [];
+  const chunkSize = Math.max(1, toInt(size, 1) || 1);
+  const out = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    out.push(items.slice(index, index + chunkSize));
+  }
+  return out;
+}
+
 function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
 }
@@ -376,21 +388,24 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
   const registros = items.map((it) => String(it.registro || '').trim()).filter(Boolean);
   const byRegistro = new Map();
   if (registros.length) {
-    const placeholders = registros.map(() => '?').join(',');
-    const stocksRes = await env.DB.prepare(
-      `SELECT registro, unidade, quantidade
-       FROM insumos_stocks
-       WHERE registro IN (${placeholders})`
-    )
-      .bind(...registros)
-      .all();
-    const stocks = stocksRes?.results || [];
-    for (const s of stocks) {
-      const reg = String(s.registro || '').trim();
-      if (!reg) continue;
-      const map = byRegistro.get(reg) || {};
-      map[String(s.unidade || '').trim()] = toInt(s.quantidade, 0);
-      byRegistro.set(reg, map);
+    const registroChunks = chunkArray(registros, MAX_SQL_VARIABLES_PER_STATEMENT);
+    for (const registroChunk of registroChunks) {
+      const placeholders = registroChunk.map(() => '?').join(',');
+      const stocksRes = await env.DB.prepare(
+        `SELECT registro, unidade, quantidade
+         FROM insumos_stocks
+         WHERE registro IN (${placeholders})`
+      )
+        .bind(...registroChunk)
+        .all();
+      const stocks = stocksRes?.results || [];
+      for (const s of stocks) {
+        const reg = String(s.registro || '').trim();
+        if (!reg) continue;
+        const map = byRegistro.get(reg) || {};
+        map[String(s.unidade || '').trim()] = toInt(s.quantidade, 0);
+        byRegistro.set(reg, map);
+      }
     }
   }
 
