@@ -928,10 +928,12 @@ export async function handlePontoRoutes({
       const records = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_records`).first()
       const audit = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_audit`).first()
       const cacheAgeMs = allTemplatesCache?.ts ? Math.max(0, Date.now() - allTemplatesCache.ts) : null
+      const workerBuild = String(env?.PONTO_BUILD_SHA || env?.WORKER_BUILD_SHA || '').trim()
       return json(200, {
         ok: true,
         version: 2,
         storage: 'd1',
+        workerBuild: workerBuild || null,
         cryptoAuditHmac: !!String(env?.PONTO_AUDIT_HMAC_KEY || '').trim(),
         cryptoTemplates: !!String(env?.PONTO_TEMPLATES_KEY || '').trim(),
         templatesCacheTtlMs,
