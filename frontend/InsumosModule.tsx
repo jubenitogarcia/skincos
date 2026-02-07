@@ -2474,6 +2474,58 @@ export function InsumosModule() {
     setEditOpen(true)
   }, [])
 
+  const openQualityFix = React.useCallback(
+    async (issue: QualityIssue) => {
+      if (!isAuthed) {
+        toast.error('Faça login para editar.')
+        return
+      }
+      const registro = String(issue?.registro || '').trim()
+      const codigo = String(issue?.codigoBarras || '').trim()
+      const issueUnit = String(issue?.unidade || '').trim()
+      if (!registro && !codigo) {
+        toast.error('Ocorrência sem referência de insumo para edição rápida.')
+        return
+      }
+      if (issueUnit && issueUnit !== unidade) {
+        setUnidade(issueUnit)
+      }
+
+      if (registro) {
+        const foundByRegistro = (insumosRef.current || []).find(
+          (i) => String(i?.registro || '').trim() === registro
+        )
+        if (foundByRegistro) {
+          openEditDialog(foundByRegistro)
+          return
+        }
+      }
+
+      if (codigo) {
+        const foundByCodigo = (insumosRef.current || []).find(
+          (i) => String(i?.codigoBarras || '').trim() === codigo
+        )
+        if (foundByCodigo) {
+          openEditDialog(foundByCodigo)
+          return
+        }
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: issueUnit || unidade })
+          if (items?.length) {
+            openEditDialog(items[0])
+            return
+          }
+        } catch (e: any) {
+          toast.error(e?.message || 'Falha ao buscar insumo para edição.')
+          return
+        }
+      }
+
+      toast.error('Insumo não encontrado para edição rápida.')
+    },
+    [isAuthed, lookupInsumosByCodigo, openEditDialog, unidade]
+  )
+
   const loadInsumosPaged = React.useCallback(
     async (opts?: { pagina?: number; limite?: number; q?: string; append?: boolean }): Promise<number | null> => {
       if (!canUseApi || !isAuthed) return null
@@ -5891,6 +5943,7 @@ export function InsumosModule() {
                           <th className="text-left p-3">Nível</th>
                           <th className="text-left p-3">Código</th>
                           <th className="text-left p-3">Mensagem</th>
+                          <th className="text-left p-3">Ação</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -5919,6 +5972,16 @@ export function InsumosModule() {
                                     {it.produto || ''}
                                   </div>
                                 ) : null}
+                              </td>
+                              <td className="p-3">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openQualityFix(it)}
+                                  disabled={!isAuthed || (!it.registro && !it.codigoBarras)}
+                                >
+                                  Edicao rapida
+                                </Button>
                               </td>
                             </tr>
                           )
