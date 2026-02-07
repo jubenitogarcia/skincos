@@ -495,6 +495,22 @@ async function main() {
             if (!auditRes.ok || !auditJson?.ok) {
               throw new Error(`audit verify failed: HTTP ${auditRes.status} body=${auditText.slice(0, 400)}`)
             }
+
+            // Validate CSV export (admin).
+            const csvRes = await fetch(`/api/ponto/admin/records.csv?employeeId=${encodeURIComponent(employeeId)}`, {
+              credentials: 'include',
+            })
+            const csvType = String(csvRes.headers.get('content-type') || '')
+            const csvText = await csvRes.text()
+            if (!csvRes.ok) {
+              throw new Error(`csv export failed: HTTP ${csvRes.status} body=${csvText.slice(0, 200)}`)
+            }
+            if (!csvType.toLowerCase().includes('text/csv')) {
+              throw new Error(`csv export content-type invalid: ${csvType || '(empty)'}`)
+            }
+            if (!csvText.trim()) {
+              throw new Error('csv export returned empty body')
+            }
           }
 
           const delRes = await fetch(`/api/ponto/admin/employees/${encodeURIComponent(employeeId)}`, {

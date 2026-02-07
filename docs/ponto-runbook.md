@@ -105,7 +105,7 @@ Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/
 - Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
 - Diagnóstico carrega (`/_proxy-status` e `/health`).
 - Invariantes de UI (admin sem campo de token; PIN fallback do Kiosk oculto por padrão).
-- (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, e limpa em seguida.
+- (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, faz punch por PIN, valida `audit/verify`, exporta CSV e limpa em seguida.
 
 ---
 
