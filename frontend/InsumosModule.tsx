@@ -931,6 +931,10 @@ export function InsumosModule() {
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
   const [overviewQualitySeverity, setOverviewQualitySeverity] = React.useState<'ALL' | 'CRITICAL' | 'WARN' | 'INFO'>('ALL')
+  const [qualityMatchesOpen, setQualityMatchesOpen] = React.useState(false)
+  const [qualityMatchesItems, setQualityMatchesItems] = React.useState<Insumo[]>([])
+  const [qualityMatchesIssue, setQualityMatchesIssue] = React.useState<QualityIssue | null>(null)
+  const [qualityMatchesSavingRegistro, setQualityMatchesSavingRegistro] = React.useState('')
   const [overviewMovResumo, setOverviewMovResumo] = React.useState<{ entradaQtd: number; saidaQtd: number; entradaValor: number; saidaValor: number; saldoLiquido: number } | null>(null)
   const [overviewMovSeries, setOverviewMovSeries] = React.useState<
     Array<{ day: string; entrada: number; saida: number; entradaValor?: number; saidaValor?: number }>
@@ -2482,6 +2486,7 @@ export function InsumosModule() {
       }
       const registro = String(issue?.registro || '').trim()
       const codigo = String(issue?.codigoBarras || '').trim()
+      const issueCode = String(issue?.code || '').trim().toUpperCase()
       const issueUnit = String(issue?.unidade || '').trim()
       if (!registro && !codigo) {
         toast.error('Ocorrência sem referência de insumo para edição rápida.')
@@ -2491,6 +2496,33 @@ export function InsumosModule() {
         setUnidade(issueUnit)
       }
 
+      if (issueCode === 'DUPLICATE_BARCODE' && codigo) {
+        try {
+          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: issueUnit || unidade })
+          const byRegistro = new Map<string, Insumo>()
+          for (const item of items || []) {
+            const itemRegistro = String(item?.registro || '').trim()
+            if (!itemRegistro || byRegistro.has(itemRegistro)) continue
+            byRegistro.set(itemRegistro, item)
+          }
+          const matches = Array.from(byRegistro.values())
+          if (matches.length > 1) {
+            setQualityMatchesIssue(issue)
+            setQualityMatchesItems(matches)
+            setQualityMatchesOpen(true)
+            return
+          }
+          if (matches.length === 1) {
+            openEditDialog(matches[0])
+            return
+          }
+          toast.error('Nenhuma correspondência encontrada para o código duplicado.')
+          return
+        } catch (e: any) {
+          toast.error(e?.message || 'Falha ao buscar duplicidades para edição.')
+          return
+        }
+      }
       if (registro) {
         const foundByRegistro = (insumosRef.current || []).find(
           (i) => String(i?.registro || '').trim() === registro
@@ -2987,6 +3019,29 @@ export function InsumosModule() {
       setEditSaving(false)
     }
   }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
+
+  const deleteInsumoByRegistro = React.useCallback(
+    async (registroRaw: string) => {
+      const registro = String(registroRaw || '').trim()
+      if (!registro || !canUseApi || !isAuthed) return
+      if (!window.confirm('Excluir este insumo? Esta ação não pode ser desfeita.')) return
+      setQualityMatchesSavingRegistro(registro)
+      try {
+        await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
+          method: 'DELETE',
+          queueLabel: 'Exclusão de insumo'
+        })
+        toast.success('Insumo excluído')
+        setQualityMatchesItems((prev) => prev.filter((it) => String(it?.registro || '').trim() !== registro))
+        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setQualityMatchesSavingRegistro('')
+      }
+    },
+    [canUseApi, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade]
+  )
 
   const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!canUseApi || !isAuthed) return
@@ -6297,6 +6352,86 @@ export function InsumosModule() {
           </Droppable>
         </div>
       </div>
+
+      <Dialog
+        open={qualityMatchesOpen}
+        onOpenChange={(next) => {
+          setQualityMatchesOpen(next)
+          if (!next) {
+            setQualityMatchesIssue(null)
+            setQualityMatchesItems([])
+            setQualityMatchesSavingRegistro('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Duplicidade de código de barras</DialogTitle>
+            <DialogDescription>
+              {qualityMatchesIssue?.codigoBarras ? (
+                <>Selecione qual registro editar ou excluir para o código <span className="font-mono">#{qualityMatchesIssue.codigoBarras}</span>.</>
+              ) : (
+                <>Selecione qual registro editar ou excluir para resolver a duplicidade.</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+            <table className="min-w-full text-sm">
+              <thead className="bg-black/30 text-blue-100/80">
+                <tr>
+                  <th className="text-left p-3">Registro</th>
+                  <th className="text-left p-3">Produto</th>
+                  <th className="text-left p-3">Lote</th>
+                  <th className="text-left p-3">Estoque ({unidadeLabel(unidade)})</th>
+                  <th className="text-left p-3">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {qualityMatchesItems.map((item) => {
+                  const registro = String(item?.registro || '').trim()
+                  const isDeleting = qualityMatchesSavingRegistro === registro
+                  return (
+                    <tr key={registro || String(item?.codigoBarras || '')} className="hover:bg-white/5">
+                      <td className="p-3 font-mono text-blue-100/80">{registro || '-'}</td>
+                      <td className="p-3 text-blue-50">{String(item?.produto || '-')}</td>
+                      <td className="p-3 text-blue-100/70">{String(item?.lote || '-')}</td>
+                      <td className="p-3 text-blue-100/70">{Number(item?.estoqueAtual || 0)}</td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setQualityMatchesOpen(false)
+                              openEditDialog(item)
+                            }}
+                            disabled={!isAuthed || isDeleting}
+                          >
+                            Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => void deleteInsumoByRegistro(registro)}
+                            disabled={!isAuthed || !registro || isDeleting}
+                          >
+                            {isDeleting ? 'Excluindo…' : 'Excluir'}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {!qualityMatchesItems.length ? (
+                  <tr>
+                    <td className="p-3 text-blue-100/70" colSpan={5}>Nenhuma correspondência encontrada.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={editOpen}
