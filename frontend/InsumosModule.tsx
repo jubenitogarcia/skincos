@@ -1810,7 +1810,7 @@ export function InsumosModule() {
     if (!createProduto.trim() && it.produto) setCreateProduto(String(it.produto))
     if (!createCategoria.trim() && it.categoria) setCreateCategoria(String(it.categoria))
     if (!createMarca.trim() && it.marca) setCreateMarca(String(it.marca))
-    if (!createTipoUnidade.trim() && it.tipoUnidade) setCreateTipoUnidade(String(it.tipoUnidade))
+    if (!createTipoUnidade.trim() && it.tipoUnidade) setCreateTipoUnidade(normalizeTipoUnidadeToCanonical(String(it.tipoUnidade)) || '')
     if (!createEspecificacao.trim() && (it as any).especificacao) setCreateEspecificacao(String((it as any).especificacao))
     if (!createConcentracao.trim() && (it as any).concentracao) setCreateConcentracao(String((it as any).concentracao))
     if (!createVolume.trim() && (it as any).volume) setCreateVolume(String((it as any).volume))
@@ -1827,7 +1827,8 @@ export function InsumosModule() {
     createPrecoCusto,
     createProduto,
     createTipoUnidade,
-    createVolume
+    createVolume,
+    normalizeTipoUnidadeToCanonical
   ])
 
   React.useEffect(() => {
@@ -3112,7 +3113,7 @@ export function InsumosModule() {
           produto,
           categoria,
           marca: editMarca.trim(),
-          tipoUnidade: editTipoUnidade.trim(),
+          tipoUnidade: normalizeTipoUnidadeToCanonical(editTipoUnidade) || editTipoUnidade.trim(),
           especificacao: editEspecificacao.trim(),
           concentracao: editConcentracao.trim(),
           volume: editVolume.trim(),
@@ -3781,14 +3782,27 @@ export function InsumosModule() {
     )
   }, [insumos])
 
+  const CANONICAL_TIPOS_UNIDADE = React.useMemo(
+    () => ['frasco', 'seringa', 'caixa', 'ampola', 'flaconete', 'pacote', 'rolo'] as const,
+    []
+  )
+  const canonicalTipoUnidadeSet = React.useMemo(() => new Set(CANONICAL_TIPOS_UNIDADE as readonly string[]), [CANONICAL_TIPOS_UNIDADE])
+  const normalizeTipoUnidadeToCanonical = React.useCallback(
+    (raw: string) => {
+      const s0 = String(raw || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s*\(s\)\s*/g, '')
+        .trim()
+      if (!s0) return ''
+      return canonicalTipoUnidadeSet.has(s0) ? s0 : ''
+    },
+    [canonicalTipoUnidadeSet]
+  )
+
   const insumosTiposUnidade = React.useMemo(() => {
-    const base = insumos || []
-    const fromData = Array.from(
-      new Set(base.map((i) => String(i.tipoUnidade || '').trim()).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
-    const fixed = ['Frasco', 'Seringa', 'Unidade', 'Caixa', 'ml']
-    return Array.from(new Set([...fixed, ...fromData])).filter(Boolean)
-  }, [insumos])
+    return Array.from(CANONICAL_TIPOS_UNIDADE)
+  }, [CANONICAL_TIPOS_UNIDADE])
 
 	  type ChartPresetId = 'distribution' | 'movements' | 'roi_risk'
 
@@ -4715,17 +4729,21 @@ export function InsumosModule() {
 	                  </div>
 	                  <div>
 	                    <div className="text-xs text-blue-200/70 mb-1">Tipo (unidade)</div>
-	                    <Input
-	                      value={createTipoUnidade}
-	                      onChange={(e) => setCreateTipoUnidade(e.target.value)}
-	                      placeholder="ex: frasco"
-	                      list="insumos-tipos-unidade"
-	                    />
-	                    <datalist id="insumos-tipos-unidade">
-	                      {insumosTiposUnidade.map((u) => (
-	                        <option key={u} value={u} />
-	                      ))}
-	                    </datalist>
+	                    <Select
+	                      value={normalizeTipoUnidadeToCanonical(createTipoUnidade) || undefined}
+	                      onValueChange={setCreateTipoUnidade}
+	                    >
+	                      <SelectTrigger>
+	                        <SelectValue placeholder="Selecione a unidade" />
+	                      </SelectTrigger>
+	                      <SelectContent>
+	                        {insumosTiposUnidade.map((u) => (
+	                          <SelectItem key={u} value={u}>
+	                            {u}
+	                          </SelectItem>
+	                        ))}
+	                      </SelectContent>
+	                    </Select>
 	                  </div>
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Preço (custo)</div>
@@ -4848,7 +4866,7 @@ export function InsumosModule() {
                             allowDuplicateLot,
                             categoria,
                             marca: createMarca.trim(),
-                            tipoUnidade: createTipoUnidade.trim(),
+                            tipoUnidade: normalizeTipoUnidadeToCanonical(createTipoUnidade),
                             especificacao: createEspecificacao.trim(),
                             concentracao: createConcentracao.trim(),
                             volume: createVolume.trim(),
@@ -7336,17 +7354,21 @@ export function InsumosModule() {
               </div>
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
-                <Input
-                  value={createTipoUnidade}
-                  onChange={(e) => setCreateTipoUnidade(e.target.value)}
-                  placeholder="ex: Frasco"
-                  list="insumos-tipos-unidade"
-                />
-                <datalist id="insumos-tipos-unidade">
-                  {insumosTiposUnidade.map((u) => (
-                    <option key={u} value={u} />
-                  ))}
-                </datalist>
+                <Select
+                  value={normalizeTipoUnidadeToCanonical(createTipoUnidade) || undefined}
+                  onValueChange={setCreateTipoUnidade}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a unidade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {insumosTiposUnidade.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Preço custo</div>
@@ -7521,7 +7543,7 @@ export function InsumosModule() {
                         allowDuplicateLot,
                         categoria,
                         marca: createMarca.trim(),
-                        tipoUnidade: createTipoUnidade.trim(),
+                        tipoUnidade: normalizeTipoUnidadeToCanonical(createTipoUnidade),
                         especificacao: createEspecificacao.trim(),
                         concentracao: createConcentracao.trim(),
                         volume: createVolume.trim(),

@@ -438,7 +438,7 @@ function buildRoi(itens, unidade) {
     };
 }
 
-const ALLOWED_UNIDADES_MEDIDA = new Set(['FRASCO', 'SERINGA', 'UNIDADE', 'CAIXA', 'ML', 'AMPOLA']);
+const ALLOWED_UNIDADES_MEDIDA = new Set(['FRASCO', 'SERINGA', 'CAIXA', 'AMPOLA', 'FLACONETE', 'PACOTE', 'ROLO']);
 
 function buildQualityReport(itens, unidade, limitIssues = 500) {
     const issues = [];
@@ -531,7 +531,7 @@ function buildQualityReport(itens, unidade, limitIssues = 500) {
                 codigoBarras: codigo,
                 produto,
                 unidade,
-                suggestion: 'Definir unidade (ex.: Frasco, Seringa, ml)'
+                suggestion: 'Definir unidade (ex.: frasco, seringa, caixa, ampola)'
             }));
         } else if (!ALLOWED_UNIDADES_MEDIDA.has(tipoUnidade.toUpperCase())) {
             issues.push(makeIssue({
