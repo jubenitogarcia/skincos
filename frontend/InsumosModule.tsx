@@ -3318,14 +3318,32 @@ export function InsumosModule() {
             toast.error(message)
             return false
           }
-          await mutateJson(`${path}?unidade=${encodeURIComponent(unidade)}`, {
-            method: 'POST',
-            body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
-            queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
-          })
-          const message = kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada'
+          const out = await mutateJson<{ success?: boolean; novoEstoque?: number; quebraEstoque?: boolean; deficit?: number }>(
+            `${path}?unidade=${encodeURIComponent(unidade)}`,
+            {
+              method: 'POST',
+              body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
+              queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
+            }
+          )
+
+          const novoEstoque = Number((out as any)?.novoEstoque)
+          const quebraEstoque = kind === 'BAIXA' && (
+            (out as any)?.quebraEstoque === true ||
+            (Number.isFinite(novoEstoque) && novoEstoque < 0)
+          )
+          const message =
+            quebraEstoque
+              ? `Baixa registrada com quebra de estoque (saldo: ${Number.isFinite(novoEstoque) ? novoEstoque : '-'})`
+              : (kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
           setQuickActionFeedback({ type: 'success', message })
           toast.success(message)
+          if (quebraEstoque) {
+            const deficit = Number((out as any)?.deficit)
+            toast.warning(
+              `Quebra de estoque detectada${Number.isFinite(deficit) ? `: déficit de ${deficit}` : ''}. Confira os alertas.`
+            )
+          }
         }
 
         await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
