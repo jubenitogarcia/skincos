@@ -43,6 +43,9 @@ type Insumo = {
   tipoUnidade?: string
   fonte?: string
   calibre?: string
+  policyRequiresLot?: boolean | null
+  policyRequiresExpiry?: boolean | null
+  policyFefo?: boolean | null
   lote?: string
   precoCusto?: number
   estoqueAtual?: number
@@ -997,7 +1000,7 @@ export function InsumosModule() {
   const [createCodigo, setCreateCodigo] = React.useState('')
   const [createProduto, setCreateProduto] = React.useState('')
   const [createCategoria, setCreateCategoria] = React.useState('')
-  const [createCategoriaPolicyKey, setCreateCategoriaPolicyKey] = React.useState('')
+  const [createPolicyTouched, setCreatePolicyTouched] = React.useState(false)
   const [createCategoriaRequiresLot, setCreateCategoriaRequiresLot] = React.useState(false)
   const [createCategoriaRequiresExpiry, setCreateCategoriaRequiresExpiry] = React.useState(false)
   const [createCategoriaFefo, setCreateCategoriaFefo] = React.useState(false)
@@ -1025,7 +1028,6 @@ export function InsumosModule() {
   const [editCodigo, setEditCodigo] = React.useState('')
   const [editProduto, setEditProduto] = React.useState('')
   const [editCategoria, setEditCategoria] = React.useState('')
-  const [editCategoriaPolicyKey, setEditCategoriaPolicyKey] = React.useState('')
   const [editCategoriaRequiresLot, setEditCategoriaRequiresLot] = React.useState(false)
   const [editCategoriaRequiresExpiry, setEditCategoriaRequiresExpiry] = React.useState(false)
   const [editCategoriaFefo, setEditCategoriaFefo] = React.useState(false)
@@ -1659,38 +1661,42 @@ export function InsumosModule() {
   )
 
   React.useEffect(() => {
+    if (!createOpen) return
+    if (createPolicyTouched) return
     const slug = slugifyCategoria(createCategoria)
-    if (!createOpen || !slug) {
-      setCreateCategoriaPolicyKey('')
+    if (!slug) {
       setCreateCategoriaRequiresLot(false)
       setCreateCategoriaRequiresExpiry(false)
       setCreateCategoriaFefo(false)
       return
     }
-    if (slug === createCategoriaPolicyKey) return
     const p = getPolicyForCategoria(createCategoria)
-    setCreateCategoriaPolicyKey(slug)
     setCreateCategoriaRequiresLot(!!p.requiresLot)
     setCreateCategoriaRequiresExpiry(!!p.requiresExpiry)
     setCreateCategoriaFefo(!!p.fefo)
-  }, [createCategoria, createCategoriaPolicyKey, createOpen, getPolicyForCategoria])
+  }, [createCategoria, createOpen, createPolicyTouched, getPolicyForCategoria])
 
   React.useEffect(() => {
-    const slug = slugifyCategoria(editCategoria)
-    if (!editOpen || !slug) {
-      setEditCategoriaPolicyKey('')
-      setEditCategoriaRequiresLot(false)
-      setEditCategoriaRequiresExpiry(false)
-      setEditCategoriaFefo(false)
-      return
-    }
-    if (slug === editCategoriaPolicyKey) return
-    const p = getPolicyForCategoria(editCategoria)
-    setEditCategoriaPolicyKey(slug)
-    setEditCategoriaRequiresLot(!!p.requiresLot)
-    setEditCategoriaRequiresExpiry(!!p.requiresExpiry)
-    setEditCategoriaFefo(!!p.fefo)
-  }, [editCategoria, editCategoriaPolicyKey, editOpen, getPolicyForCategoria])
+    if (createOpen) return
+    setCreatePolicyTouched(false)
+  }, [createOpen])
+
+  const getPolicyForItem = React.useCallback(
+    (item?: Insumo | null, categoriaOverride?: string | null) => {
+      const hasExplicit =
+        item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
+      if (hasExplicit) {
+        return {
+          requiresLot: !!item?.policyRequiresLot,
+          requiresExpiry: !!item?.policyRequiresExpiry,
+          fefo: !!item?.policyFefo
+        }
+      }
+      const categoria = String(categoriaOverride || item?.categoria || '').trim()
+      return getPolicyForCategoria(categoria)
+    },
+    [getPolicyForCategoria]
+  )
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -1878,6 +1884,12 @@ export function InsumosModule() {
     if (!createFonte.trim() && (it as any).fonte) setCreateFonte(String((it as any).fonte))
     if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
     if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
+    if (!createPolicyTouched) {
+      const policy = getPolicyForItem(it, it.categoria)
+      setCreateCategoriaRequiresLot(!!policy.requiresLot)
+      setCreateCategoriaRequiresExpiry(!!policy.requiresExpiry)
+      setCreateCategoriaFefo(!!policy.fefo)
+    }
   }, [
     createCalibre,
     createCategoria,
@@ -1885,10 +1897,12 @@ export function InsumosModule() {
     createEspecificacao,
     createFonte,
     createMarca,
+    createPolicyTouched,
     createPrecoCusto,
     createProduto,
     createTipoUnidade,
     createVolume,
+    getPolicyForItem,
     normalizeTipoUnidadeToCanonical
   ])
 
@@ -1929,14 +1943,13 @@ export function InsumosModule() {
     if (!quickOp) return
     if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
     if (!quickAutoFefo) return
-    const categoria = String(quickLookupItems?.[0]?.categoria || '').trim()
-    const policy = getPolicyForCategoria(categoria)
+    const policy = getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '')
     if (!policy.fefo) return
     if (!quickLotes.length) return
     const suggested = quickLotes[0]?.registro
     if (!suggested) return
     setQuickRegistro((cur) => (cur ? cur : suggested))
-  }, [getPolicyForCategoria, quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickLookupItems?.[0]?.categoria, quickOp])
+  }, [getPolicyForItem, quickAutoFefo, quickLotes.map((l) => l.registro).join('|'), quickLookupItems?.[0], quickOp])
 
   const persistShareHistory = React.useCallback(
     (next: ShareHistoryItem[]) => {
@@ -2387,11 +2400,11 @@ export function InsumosModule() {
   const policyErrorToast = (e: unknown) => {
     const code = String((e as any)?.code || '').toUpperCase()
     if (code === 'POLICY_REQUIRES_LOT') {
-      toast.error('Esta categoria exige Lote. Abra o cadastro do item e preencha o lote.')
+      toast.error('Este item exige Lote. Abra o cadastro do item e preencha o lote.')
       return true
     }
     if (code === 'POLICY_REQUIRES_EXPIRY') {
-      toast.error('Esta categoria exige Data de validade. Abra o cadastro do item e preencha a validade.')
+      toast.error('Este item exige Data de validade. Abra o cadastro do item e preencha a validade.')
       return true
     }
     return false
@@ -2728,8 +2741,12 @@ export function InsumosModule() {
     setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
+    const policy = getPolicyForItem(i, i.categoria)
+    setEditCategoriaRequiresLot(!!policy.requiresLot)
+    setEditCategoriaRequiresExpiry(!!policy.requiresExpiry)
+    setEditCategoriaFefo(!!policy.fefo)
     setEditOpen(true)
-  }, [])
+  }, [getPolicyForItem])
 
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
@@ -3166,12 +3183,11 @@ export function InsumosModule() {
     setEditSaving(true)
     try {
       const categoria = editCategoria.trim()
-      const slug = slugifyCategoria(categoria)
-      const currentPolicy = getPolicyForCategoria(categoria)
-      const policy =
-        editCategoriaPolicyKey && slug && editCategoriaPolicyKey === slug
-          ? { slug, requiresLot: editCategoriaRequiresLot, requiresExpiry: editCategoriaRequiresExpiry, fefo: editCategoriaFefo }
-          : currentPolicy
+      const policy = {
+        requiresLot: !!editCategoriaRequiresLot,
+        requiresExpiry: !!editCategoriaRequiresExpiry,
+        fefo: !!editCategoriaFefo
+      }
       const lote = editLote.trim()
       const dataValidade = dateInputToIso(editDataValidade)
       const tipoUnidade = normalizeTipoUnidadeToCanonical(editTipoUnidade)
@@ -3181,44 +3197,17 @@ export function InsumosModule() {
         return
       }
 
+      if (policy.fefo && !policy.requiresExpiry) {
+        toast.error('FEFO exige validade obrigatória')
+        return
+      }
       if (policy.requiresLot && !lote) {
-        toast.error('Esta categoria exige Lote. Preencha o campo lote para salvar.')
+        toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
         return
       }
       if (policy.requiresExpiry && !dataValidade) {
-        toast.error('Esta categoria exige Data de validade. Preencha o campo validade para salvar.')
+        toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
         return
-      }
-
-      if (isManagerRole && slug && editCategoriaPolicyKey && editCategoriaPolicyKey === slug) {
-        if (policy.fefo && !policy.requiresExpiry) {
-          toast.error('FEFO exige validade obrigatória')
-          return
-        }
-        const changed =
-          !!currentPolicy.requiresLot !== !!policy.requiresLot ||
-          !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
-          !!currentPolicy.fefo !== !!policy.fefo
-        if (changed) {
-          const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
-            '/admin/categories',
-            {
-              method: 'POST',
-              queueLabel: 'Política por categoria',
-              body: {
-                slug,
-                label: categoria,
-                requiresLot: !!policy.requiresLot,
-                requiresExpiry: !!policy.requiresExpiry,
-                fefo: !!policy.fefo
-              }
-            },
-            { needsCsrf: true }
-          )
-          if (!(out as any)?.queued) {
-            await Promise.allSettled([loadCategoryPolicies()])
-          }
-        }
       }
 
       await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
@@ -3238,7 +3227,10 @@ export function InsumosModule() {
           precoCusto: editPrecoCusto.trim(),
           estoqueMinimo: Number(editEstoqueMinimo) || 0,
           lote,
-          dataValidade
+          dataValidade,
+          policyRequiresLot: policy.requiresLot,
+          policyRequiresExpiry: policy.requiresExpiry,
+          policyFefo: policy.fefo
         }
       })
       toast.success('Insumo atualizado')
@@ -3255,7 +3247,6 @@ export function InsumosModule() {
     editCalibre,
     editCategoria,
     editCategoriaFefo,
-    editCategoriaPolicyKey,
     editCategoriaRequiresExpiry,
     editCategoriaRequiresLot,
     editCodigo,
@@ -3271,10 +3262,7 @@ export function InsumosModule() {
     editTarget?.registro,
     editTipoUnidade,
     editVolume,
-    getPolicyForCategoria,
     isAuthed,
-    isManagerRole,
-    loadCategoryPolicies,
     loadInsumosOptions,
     loadOverview,
     mutateJson,
@@ -4766,19 +4754,18 @@ export function InsumosModule() {
 	                  </div>
                   <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-blue-200/70">Política da categoria</div>
-                      {createCategoriaPolicyKey ? (
-                        <div className="text-xs text-blue-200/60 font-mono">{createCategoriaPolicyKey}</div>
-                      ) : (
-                        <div className="text-xs text-blue-200/60">Defina a categoria para ver as regras.</div>
-                      )}
+                      <div className="text-xs text-blue-200/70">Política do item</div>
+                      <div className="text-xs text-blue-200/60">Defina as regras para este insumo.</div>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
                       <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
                         <Checkbox
                           checked={createCategoriaRequiresLot}
-                          onCheckedChange={(v) => setCreateCategoriaRequiresLot(!!v)}
-                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                          onCheckedChange={(v) => {
+                            setCreatePolicyTouched(true)
+                            setCreateCategoriaRequiresLot(!!v)
+                          }}
+                          disabled={!isManagerRole}
                         />
                         Lote obrigatório
                       </label>
@@ -4786,11 +4773,12 @@ export function InsumosModule() {
                         <Checkbox
                           checked={createCategoriaRequiresExpiry}
                           onCheckedChange={(v) => {
+                            setCreatePolicyTouched(true)
                             const next = !!v
                             setCreateCategoriaRequiresExpiry(next)
                             if (!next) setCreateCategoriaFefo(false)
                           }}
-                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                          disabled={!isManagerRole}
                         />
                         Validade obrigatória
                       </label>
@@ -4798,11 +4786,12 @@ export function InsumosModule() {
                         <Checkbox
                           checked={createCategoriaFefo}
                           onCheckedChange={(v) => {
+                            setCreatePolicyTouched(true)
                             const next = !!v
                             setCreateCategoriaFefo(next)
                             if (next) setCreateCategoriaRequiresExpiry(true)
                           }}
-                          disabled={!isManagerRole || !createCategoriaPolicyKey}
+                          disabled={!isManagerRole}
                         />
                         FEFO
                       </label>
@@ -4899,22 +4888,24 @@ export function InsumosModule() {
                       if (!codigoBarras) return toast.error('Informe o código de barras')
                       const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
                       const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                      const slug = slugifyCategoria(categoria)
-                      const currentPolicy = getPolicyForCategoria(categoria)
-                      const policy =
-                        createCategoriaPolicyKey && slug && createCategoriaPolicyKey === slug
-                          ? { slug, requiresLot: createCategoriaRequiresLot, requiresExpiry: createCategoriaRequiresExpiry, fefo: createCategoriaFefo }
-                          : currentPolicy
+                      const policy = {
+                        requiresLot: !!createCategoriaRequiresLot,
+                        requiresExpiry: !!createCategoriaRequiresExpiry,
+                        fefo: !!createCategoriaFefo
+                      }
                       const validadeIso = dateInputToIso(createDataValidade)
 
                       const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
                       if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
 
                       if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
-                        return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pela categoria)' : 'Informe o lote (Novo lote: on)')
+                        return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pelo item)' : 'Informe o lote (Novo lote: on)')
                       }
                       if (policy.requiresExpiry && !validadeIso) {
-                        return toast.error('Informe a data de validade (obrigatória pela categoria)')
+                        return toast.error('Informe a data de validade (obrigatória pelo item)')
+                      }
+                      if (policy.fefo && !policy.requiresExpiry) {
+                        return toast.error('FEFO exige validade obrigatória')
                       }
 
                       const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
@@ -4924,37 +4915,6 @@ export function InsumosModule() {
 
                       setCreateLoading(true)
                       try {
-                        if (isManagerRole && slug && createCategoriaPolicyKey && createCategoriaPolicyKey === slug) {
-                          if (policy.fefo && !policy.requiresExpiry) {
-                            toast.error('FEFO exige validade obrigatória')
-                            return
-                          }
-                          const policyChanged =
-                            !!currentPolicy.requiresLot !== !!policy.requiresLot ||
-                            !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
-                            !!currentPolicy.fefo !== !!policy.fefo
-                          if (policyChanged) {
-                            const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
-                              '/admin/categories',
-                              {
-                                method: 'POST',
-                                queueLabel: 'Política por categoria',
-                                body: {
-                                  slug,
-                                  label: categoria,
-                                  requiresLot: !!policy.requiresLot,
-                                  requiresExpiry: !!policy.requiresExpiry,
-                                  fefo: !!policy.fefo
-                                }
-                              },
-                              { needsCsrf: true }
-                            )
-                            if (!(out as any)?.queued) {
-                              await Promise.allSettled([loadCategoryPolicies()])
-                            }
-                          }
-                        }
-
                         await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                           method: 'POST',
                           queueLabel: 'Cadastro de insumo',
@@ -4974,7 +4934,10 @@ export function InsumosModule() {
                             estoqueInicial: createEstoqueInicial ? Number(createEstoqueInicial) : undefined,
                             estoqueMinimo: createEstoqueMinimo ? Number(createEstoqueMinimo) : undefined,
                             lote: createLote.trim(),
-                            dataValidade: validadeIso || undefined
+                            dataValidade: validadeIso || undefined,
+                            policyRequiresLot: policy.requiresLot,
+                            policyRequiresExpiry: policy.requiresExpiry,
+                            policyFefo: policy.fefo
                           }
                         })
                         toast.success('Insumo cadastrado.')
@@ -5262,11 +5225,11 @@ export function InsumosModule() {
 
             {quickLoteNeedsPick ? (
               <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs text-blue-200/70">Lote/registro</div>
-                  {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
-                    quickLotesForPicker.length > 1 &&
-                    getPolicyForCategoria(String(quickLookupItems?.[0]?.categoria || '')).fefo ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-blue-200/70">Lote/registro</div>
+                    {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
+                      quickLotesForPicker.length > 1 &&
+                      getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '').fefo ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -6922,19 +6885,17 @@ export function InsumosModule() {
             </div>
             <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">Política da categoria</div>
-                {editCategoriaPolicyKey ? (
-                  <div className="text-xs text-muted-foreground font-mono">{editCategoriaPolicyKey}</div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">Defina a categoria para ver as regras.</div>
-                )}
+                <div className="text-xs text-muted-foreground">Política do item</div>
+                <div className="text-xs text-muted-foreground">Defina as regras para este insumo.</div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
                 <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
                   <Checkbox
                     checked={editCategoriaRequiresLot}
-                    onCheckedChange={(v) => setEditCategoriaRequiresLot(!!v)}
-                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                    onCheckedChange={(v) => {
+                      setEditCategoriaRequiresLot(!!v)
+                    }}
+                    disabled={!isManagerRole}
                   />
                   Lote obrigatório
                 </label>
@@ -6946,7 +6907,7 @@ export function InsumosModule() {
                       setEditCategoriaRequiresExpiry(next)
                       if (!next) setEditCategoriaFefo(false)
                     }}
-                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                    disabled={!isManagerRole}
                   />
                   Validade obrigatória
                 </label>
@@ -6958,7 +6919,7 @@ export function InsumosModule() {
                       setEditCategoriaFefo(next)
                       if (next) setEditCategoriaRequiresExpiry(true)
                     }}
-                    disabled={!isManagerRole || !editCategoriaPolicyKey}
+                    disabled={!isManagerRole}
                   />
                   FEFO
                 </label>
@@ -7390,19 +7351,18 @@ export function InsumosModule() {
               </div>
               <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs text-blue-200/70">Política da categoria</div>
-                  {createCategoriaPolicyKey ? (
-                    <div className="text-xs text-blue-200/60 font-mono">{createCategoriaPolicyKey}</div>
-                  ) : (
-                    <div className="text-xs text-blue-200/60">Defina a categoria para ver as regras.</div>
-                  )}
+                  <div className="text-xs text-blue-200/70">Política do item</div>
+                  <div className="text-xs text-blue-200/60">Defina as regras para este insumo.</div>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
                   <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
                     <Checkbox
                       checked={createCategoriaRequiresLot}
-                      onCheckedChange={(v) => setCreateCategoriaRequiresLot(!!v)}
-                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                      onCheckedChange={(v) => {
+                        setCreatePolicyTouched(true)
+                        setCreateCategoriaRequiresLot(!!v)
+                      }}
+                      disabled={!isManagerRole}
                     />
                     Lote obrigatório
                   </label>
@@ -7410,11 +7370,12 @@ export function InsumosModule() {
                     <Checkbox
                       checked={createCategoriaRequiresExpiry}
                       onCheckedChange={(v) => {
+                        setCreatePolicyTouched(true)
                         const next = !!v
                         setCreateCategoriaRequiresExpiry(next)
                         if (!next) setCreateCategoriaFefo(false)
                       }}
-                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                      disabled={!isManagerRole}
                     />
                     Validade obrigatória
                   </label>
@@ -7422,11 +7383,12 @@ export function InsumosModule() {
                     <Checkbox
                       checked={createCategoriaFefo}
                       onCheckedChange={(v) => {
+                        setCreatePolicyTouched(true)
                         const next = !!v
                         setCreateCategoriaFefo(next)
                         if (next) setCreateCategoriaRequiresExpiry(true)
                       }}
-                      disabled={!isManagerRole || !createCategoriaPolicyKey}
+                      disabled={!isManagerRole}
                     />
                     FEFO
                   </label>
@@ -7575,22 +7537,24 @@ export function InsumosModule() {
                   if (!codigoBarras) return toast.error('Informe o código de barras')
                   const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
                   const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                  const slug = slugifyCategoria(categoria)
-                  const currentPolicy = getPolicyForCategoria(categoria)
-                  const policy =
-                    createCategoriaPolicyKey && slug && createCategoriaPolicyKey === slug
-                      ? { slug, requiresLot: createCategoriaRequiresLot, requiresExpiry: createCategoriaRequiresExpiry, fefo: createCategoriaFefo }
-                      : currentPolicy
+                  const policy = {
+                    requiresLot: !!createCategoriaRequiresLot,
+                    requiresExpiry: !!createCategoriaRequiresExpiry,
+                    fefo: !!createCategoriaFefo
+                  }
                   const validadeIso = dateInputToIso(createDataValidade)
 
                   const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
                   if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
 
                   if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
-                    return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pela categoria)' : 'Informe o lote (Novo lote: on)')
+                    return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pelo item)' : 'Informe o lote (Novo lote: on)')
                   }
                   if (policy.requiresExpiry && !validadeIso) {
-                    return toast.error('Informe a data de validade (obrigatória pela categoria)')
+                    return toast.error('Informe a data de validade (obrigatória pelo item)')
+                  }
+                  if (policy.fefo && !policy.requiresExpiry) {
+                    return toast.error('FEFO exige validade obrigatória')
                   }
 
                   const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
@@ -7600,37 +7564,6 @@ export function InsumosModule() {
 
                   setCreateLoading(true)
                   try {
-                    if (isManagerRole && slug && createCategoriaPolicyKey && createCategoriaPolicyKey === slug) {
-                      if (policy.fefo && !policy.requiresExpiry) {
-                        toast.error('FEFO exige validade obrigatória')
-                        return
-                      }
-                      const policyChanged =
-                        !!currentPolicy.requiresLot !== !!policy.requiresLot ||
-                        !!currentPolicy.requiresExpiry !== !!policy.requiresExpiry ||
-                        !!currentPolicy.fefo !== !!policy.fefo
-                      if (policyChanged) {
-                        const out = await mutateJson<{ success?: boolean; data?: CategoryPolicy }>(
-                          '/admin/categories',
-                          {
-                            method: 'POST',
-                            queueLabel: 'Política por categoria',
-                            body: {
-                              slug,
-                              label: categoria,
-                              requiresLot: !!policy.requiresLot,
-                              requiresExpiry: !!policy.requiresExpiry,
-                              fefo: !!policy.fefo
-                            }
-                          },
-                          { needsCsrf: true }
-                        )
-                        if (!(out as any)?.queued) {
-                          await Promise.allSettled([loadCategoryPolicies()])
-                        }
-                      }
-                    }
-
                     await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
                       method: 'POST',
                       queueLabel: 'Cadastro de insumo',
@@ -7650,7 +7583,10 @@ export function InsumosModule() {
                         estoqueInicial: Number(createEstoqueInicial) || 0,
                         estoqueMinimo: Number(createEstoqueMinimo) || 0,
                         lote: createLote.trim(),
-                        dataValidade: validadeIso
+                        dataValidade: validadeIso,
+                        policyRequiresLot: policy.requiresLot,
+                        policyRequiresExpiry: policy.requiresExpiry,
+                        policyFefo: policy.fefo
                       }
                     })
                     toast.success('Insumo cadastrado')

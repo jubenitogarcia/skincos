@@ -198,8 +198,10 @@ export async function handleBackupRoutes({
                         await env.DB.prepare(
                             `INSERT INTO insumos_items
                              (registro, codigo_barras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade,
-                              fonte, preco_custo, estoque_minimo, lote, data_validade, data_cadastro, data_atualizacao)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                              fonte, preco_custo, estoque_minimo, lote, data_validade,
+                              policy_requires_lot, policy_requires_expiry, policy_fefo,
+                              data_cadastro, data_atualizacao)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                         )
                             .bind(
                                 row.registro || '',
@@ -217,6 +219,9 @@ export async function handleBackupRoutes({
                                 Number(row.estoqueMinimo || 0),
                                 row.lote || '',
                                 row.dataValidade || '',
+                                row.policyRequiresLot !== undefined && row.policyRequiresLot !== null ? (Number(row.policyRequiresLot) ? 1 : 0) : null,
+                                row.policyRequiresExpiry !== undefined && row.policyRequiresExpiry !== null ? (Number(row.policyRequiresExpiry) ? 1 : 0) : null,
+                                row.policyFefo !== undefined && row.policyFefo !== null ? (Number(row.policyFefo) ? 1 : 0) : null,
                                 row.dataCadastro || new Date().toISOString(),
                                 row.dataAtualizacao || new Date().toISOString()
                             )
