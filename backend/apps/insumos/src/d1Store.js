@@ -451,6 +451,36 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
   };
 }
 
+export async function d1ListInsumosOptions({ env, limite }) {
+  const lim = Math.max(50, Math.min(500, toInt(limite, 250) || 250));
+
+  const [categoriasRes, marcasRes] = await Promise.all([
+    env.DB.prepare(
+      `SELECT DISTINCT categoria
+       FROM insumos_items
+       WHERE categoria IS NOT NULL AND TRIM(categoria) != ''
+       ORDER BY categoria COLLATE NOCASE ASC
+       LIMIT ?`
+    ).bind(lim).all(),
+    env.DB.prepare(
+      `SELECT DISTINCT marca
+       FROM insumos_items
+       WHERE marca IS NOT NULL AND TRIM(marca) != ''
+       ORDER BY marca COLLATE NOCASE ASC
+       LIMIT ?`
+    ).bind(lim).all()
+  ]);
+
+  const categorias = (categoriasRes?.results || [])
+    .map((row) => String(row?.categoria || '').trim())
+    .filter(Boolean);
+  const marcas = (marcasRes?.results || [])
+    .map((row) => String(row?.marca || '').trim())
+    .filter(Boolean);
+
+  return { categorias, marcas };
+}
+
 export async function d1GetInsumoByRegistro(env, registro) {
   const row = await env.DB.prepare(
     `SELECT

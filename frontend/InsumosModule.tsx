@@ -921,6 +921,8 @@ export function InsumosModule() {
 
   const [categoryPolicies, setCategoryPolicies] = React.useState<CategoryPolicy[]>([])
   const [categoryPoliciesLoading, setCategoryPoliciesLoading] = React.useState(false)
+  const [insumosOptionsCategorias, setInsumosOptionsCategorias] = React.useState<string[]>([])
+  const [insumosOptionsMarcas, setInsumosOptionsMarcas] = React.useState<string[]>([])
 
   const [adminCategoryPolicies, setAdminCategoryPolicies] = React.useState<CategoryPolicy[]>([])
   const [adminCategorySuggestions, setAdminCategorySuggestions] = React.useState<CategoryPolicySuggestion[]>([])
@@ -1948,6 +1950,24 @@ export function InsumosModule() {
     }
   }, [apiJson, canUseApi, isAuthed])
 
+  const loadInsumosOptions = React.useCallback(async () => {
+    if (!canUseApi || !isAuthed) return
+    try {
+      const out = await apiJson<{ success?: boolean; data?: { categorias?: string[]; marcas?: string[] } }>(`/insumos/options?limit=300`)
+      const categorias = Array.isArray(out?.data?.categorias)
+        ? out!.data!.categorias!.map((value) => String(value || '').trim()).filter(Boolean)
+        : []
+      const marcas = Array.isArray(out?.data?.marcas)
+        ? out!.data!.marcas!.map((value) => String(value || '').trim()).filter(Boolean)
+        : []
+      setInsumosOptionsCategorias(categorias)
+      setInsumosOptionsMarcas(marcas)
+    } catch {
+      setInsumosOptionsCategorias([])
+      setInsumosOptionsMarcas([])
+    }
+  }, [apiJson, canUseApi, isAuthed])
+
   const loadAdminCategoryPolicies = React.useCallback(
     async (opts?: { includeSuggestions?: boolean }) => {
       if (!canUseApi || !isAuthed || !isManagerRole) return
@@ -2000,6 +2020,11 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
     void loadCategoryPolicies()
   }, [canUseApi, isAuthed, loadCategoryPolicies])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    void loadInsumosOptions()
+  }, [canUseApi, isAuthed, loadInsumosOptions])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed || !isManagerRole) return
@@ -3147,7 +3172,7 @@ export function InsumosModule() {
       })
       toast.success('Insumo atualizado')
       setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
     } catch (e) {
       if (policyErrorToast(e)) return
       toast.error(e instanceof Error ? e.message : String(e))
@@ -3179,6 +3204,7 @@ export function InsumosModule() {
     isAuthed,
     isManagerRole,
     loadCategoryPolicies,
+    loadInsumosOptions,
     loadOverview,
     mutateJson,
     refreshInsumos,
@@ -3198,13 +3224,13 @@ export function InsumosModule() {
       })
       toast.success('Insumo excluído')
       setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
     }
-  }, [canUseApi, editTarget?.registro, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade])
+  }, [canUseApi, editTarget?.registro, isAuthed, loadInsumosOptions, loadOverview, mutateJson, refreshInsumos, unidade])
 
   const deleteInsumoByRegistro = React.useCallback(
     async (registroRaw: string) => {
@@ -3219,14 +3245,14 @@ export function InsumosModule() {
         })
         toast.success('Insumo excluído')
         setQualityMatchesItems((prev) => prev.filter((it) => String(it?.registro || '').trim() !== registro))
-        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e))
       } finally {
         setQualityMatchesSavingRegistro('')
       }
     },
-    [canUseApi, isAuthed, loadOverview, mutateJson, refreshInsumos, unidade]
+    [canUseApi, isAuthed, loadInsumosOptions, loadOverview, mutateJson, refreshInsumos, unidade]
   )
 
   const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
@@ -3789,18 +3815,21 @@ export function InsumosModule() {
   }, [insumos])
 
   const lotCategorias = React.useMemo(() => {
-    const base = insumos || []
-    return Array.from(new Set(base.map((i) => String(i.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
+    const fromInsumos = (insumos || []).map((item) => String(item.categoria || '').trim()).filter(Boolean)
+    const fromPolicies = categoryPolicies
+      .map((policy) => String(policy.label || '').trim())
+      .filter(Boolean)
+    return Array.from(new Set([...fromInsumos, ...fromPolicies, ...insumosOptionsCategorias])).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
-  }, [insumos])
+  }, [categoryPolicies, insumos, insumosOptionsCategorias])
 
   const insumosMarcas = React.useMemo(() => {
-    const base = insumos || []
-    return Array.from(new Set(base.map((i) => String(i.marca || '').trim()).filter(Boolean))).sort((a, b) =>
+    const fromInsumos = (insumos || []).map((item) => String(item.marca || '').trim()).filter(Boolean)
+    return Array.from(new Set([...fromInsumos, ...insumosOptionsMarcas])).sort((a, b) =>
       a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     )
-  }, [insumos])
+  }, [insumos, insumosOptionsMarcas])
 
   const insumosTiposUnidade = React.useMemo(() => Array.from(CANONICAL_TIPOS_UNIDADE as readonly string[]), [])
 
@@ -4883,7 +4912,7 @@ export function InsumosModule() {
                         })
                         toast.success('Insumo cadastrado.')
                         setCreateOpen(false)
-                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true })])
+                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
                       } catch (e) {
                         if (policyErrorToast(e)) return
                         toast.error(e instanceof Error ? e.message : String(e))
@@ -7575,7 +7604,7 @@ export function InsumosModule() {
                     setCreateDataValidade('')
                     setCreateNovoLote(false)
                     setCreateOpen(false)
-                    await refreshInsumos({ pagina: 1 })
+                    await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadInsumosOptions()])
                   } catch (e) {
                     const status = (e as any)?.status
                     const msg = e instanceof Error ? e.message : String(e)
