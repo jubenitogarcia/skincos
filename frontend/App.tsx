@@ -33,6 +33,16 @@ function BuildCornerBadge() {
     )
 }
 
+function BuildHeaderBadge() {
+    const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
+    const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
+    return (
+        <Badge variant="outline" className="bg-white/[0.06] text-white border-white/20 text-[10px] px-2 py-1">
+            Build: {buildSha}
+        </Badge>
+    )
+}
+
 type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
 
 type ApiError = {
@@ -1007,6 +1017,7 @@ export default function AppFunctionalNeatlab() {
 	                                </div>
 
 		                                <div className="flex items-center gap-4">
+		                                    <BuildHeaderBadge />
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-center gap-1">
 		                                            <Button

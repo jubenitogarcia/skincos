@@ -487,6 +487,47 @@ async function main() {
             }
             punch = punchJson?.data || null
 
+            const recordsRes = await fetch('/api/ponto/me/records?limit=5', { credentials: 'include' })
+            const recordsText = await recordsRes.text()
+            let recordsJson = null
+            try { recordsJson = recordsText ? JSON.parse(recordsText) : null } catch {}
+            if (!recordsRes.ok || !recordsJson?.ok || !Array.isArray(recordsJson?.data)) {
+              throw new Error(`me records failed: HTTP ${recordsRes.status} body=${recordsText.slice(0, 400)}`)
+            }
+            if (!recordsJson.data.some((r) => String(r.id || '') === String(punch?.id || ''))) {
+              throw new Error(`me records missing punch (punchId=${String(punch?.id || '')})`)
+            }
+
+            const csvRes = await fetch('/api/ponto/admin/records.csv?limit=5', { credentials: 'include' })
+            const csvText = await csvRes.text()
+            const csvType = String(csvRes.headers.get('content-type') || '')
+            if (!csvRes.ok || !csvType.includes('text/csv')) {
+              throw new Error(`admin records csv failed: HTTP ${csvRes.status} type=${csvType} body=${csvText.slice(0, 200)}`)
+            }
+            if (!csvText.includes('id,employeeId')) {
+              throw new Error('admin records csv missing header row')
+            }
+            if (punch?.id && !csvText.includes(String(punch.id))) {
+              throw new Error(`admin records csv missing punch (punchId=${String(punch.id)})`)
+            }
+
+            const cooldownRes = await fetch('/api/ponto/me/punch', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ pin, type: 'AUTO', clientTime: new Date().toISOString() }),
+            })
+            const cooldownText = await cooldownRes.text()
+            let cooldownJson = null
+            try { cooldownJson = cooldownText ? JSON.parse(cooldownText) : null } catch {}
+            if (cooldownRes.status === 409) {
+              if (cooldownJson?.error !== 'COOLDOWN') {
+                throw new Error(`cooldown mismatch: HTTP ${cooldownRes.status} body=${cooldownText.slice(0, 240)}`)
+              }
+            } else if (!cooldownRes.ok) {
+              throw new Error(`cooldown check failed: HTTP ${cooldownRes.status} body=${cooldownText.slice(0, 240)}`)
+            }
+
             // Verify audit chain is still consistent after a punch write.
             const auditRes = await fetch('/api/ponto/admin/audit/verify', { credentials: 'include' })
             const auditText = await auditRes.text()
