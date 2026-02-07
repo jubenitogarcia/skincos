@@ -1690,7 +1690,7 @@ export function InsumosModule() {
     return quickLotes
   }, [quickCandidates, quickLotes, quickRegistros.join('|')])
 
-  const resetQuickOperationState = React.useCallback(() => {
+  const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
     setQuickCodigo('')
     setQuickRegistro('')
     setQuickRegistros([])
@@ -1707,7 +1707,7 @@ export function InsumosModule() {
     setQuickLookupCode(null)
     setQuickLookupItems([])
     setQuickActionLoading(false)
-    setQuickActionFeedback(null)
+    if (!opts?.keepFeedback) setQuickActionFeedback(null)
   }, [])
 
   const openQuickOperation = React.useCallback(
@@ -3297,7 +3297,6 @@ export function InsumosModule() {
       if (!codigoBarras) {
         const message = 'Informe o código de barras'
         setQuickActionFeedback({ type: 'error', message })
-        toast.error(message)
         return false
       }
 
@@ -3308,7 +3307,6 @@ export function InsumosModule() {
           if (novoEstoque === null) {
             const message = 'Informe o novo estoque'
             setQuickActionFeedback({ type: 'error', message })
-            toast.error(message)
             return false
           }
           const registro = quickRegistro.trim()
@@ -3319,7 +3317,6 @@ export function InsumosModule() {
           })
           const message = 'Ajuste registrado'
           setQuickActionFeedback({ type: 'success', message })
-          toast.success(message)
         } else {
           const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
           const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
@@ -3327,7 +3324,6 @@ export function InsumosModule() {
           if (quickLoteNeedsPick && !registro) {
             const message = 'Selecione o lote/registro'
             setQuickActionFeedback({ type: 'error', message })
-            toast.error(message)
             return false
           }
           const out = await mutateJson<{ success?: boolean; novoEstoque?: number; quebraEstoque?: boolean; deficit?: number }>(
@@ -3349,7 +3345,6 @@ export function InsumosModule() {
               ? `Baixa registrada com quebra de estoque (saldo: ${Number.isFinite(novoEstoque) ? novoEstoque : '-'})`
               : (kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
           setQuickActionFeedback({ type: 'success', message })
-          toast.success(message)
           if (quebraEstoque) {
             const deficit = Number((out as any)?.deficit)
             toast.warning(
@@ -3392,7 +3387,6 @@ export function InsumosModule() {
           }
           const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
           setQuickActionFeedback({ type: 'error', message })
-          toast.error(message)
           return false
         }
         if (policyErrorToast(e)) {
@@ -3401,7 +3395,6 @@ export function InsumosModule() {
         }
         const message = e instanceof Error ? e.message : String(e)
         setQuickActionFeedback({ type: 'error', message })
-        toast.error(message)
         return false
       } finally {
         setQuickActionLoading(false)
@@ -3433,21 +3426,18 @@ export function InsumosModule() {
     if (!codigoBarras) {
       const message = 'Informe o código de barras'
       setQuickActionFeedback({ type: 'error', message })
-      toast.error(message)
       return false
     }
 
     if (transferFrom === transferTo) {
       const message = 'Origem e destino devem ser diferentes'
       setQuickActionFeedback({ type: 'error', message })
-      toast.error(message)
       return false
     }
     const registro = quickRegistro.trim()
     if (quickLoteNeedsPick && !registro) {
       const message = 'Selecione o lote/registro'
       setQuickActionFeedback({ type: 'error', message })
-      toast.error(message)
       return false
     }
 
@@ -3468,7 +3458,6 @@ export function InsumosModule() {
       })
       const message = 'Transferência registrada'
       setQuickActionFeedback({ type: 'success', message })
-      toast.success(message)
 
       // Refresh what the user is seeing (estoque + movimentações)
       await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
@@ -3505,7 +3494,6 @@ export function InsumosModule() {
         }
         const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
         setQuickActionFeedback({ type: 'error', message })
-        toast.error(message)
         return false
       }
       if (policyErrorToast(e)) {
@@ -3514,7 +3502,6 @@ export function InsumosModule() {
       }
       const message = e instanceof Error ? e.message : String(e)
       setQuickActionFeedback({ type: 'error', message })
-      toast.error(message)
       return false
     } finally {
       setQuickActionLoading(false)
@@ -5062,7 +5049,7 @@ export function InsumosModule() {
         open={quickOp != null}
         onOpenChange={(open) => {
           if (open) return
-          resetQuickOperationState()
+          resetQuickOperationState({ keepFeedback: !!quickActionFeedback })
           setQuickOp(null)
         }}
       >
@@ -5132,15 +5119,14 @@ export function InsumosModule() {
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
                       {quickLookupItems[0]?.categoria ? (
                         <Badge style={buildTagStyle(getCategoriaBgColor(String(quickLookupItems[0].categoria)))} className="border">
-                          Categoria: {String(quickLookupItems[0].categoria)}
+                          {String(quickLookupItems[0].categoria)}
                         </Badge>
                       ) : null}
                       {quickLookupItems[0]?.marca ? (
                         <Badge style={buildTagStyle(getMarcaBgColor(String(quickLookupItems[0].marca)))} className="border">
-                          Marca: {String(quickLookupItems[0].marca)}
+                          {String(quickLookupItems[0].marca)}
                         </Badge>
                       ) : null}
-                      <span className="font-mono">Código: {quickCodigo.trim()}</span>
                     </div>
                   </div>
                 ) : null}
@@ -5270,7 +5256,7 @@ export function InsumosModule() {
                 onClick={async () => {
                   const ok = await runTransfer()
                   if (ok) {
-                    resetQuickOperationState()
+                    resetQuickOperationState({ keepFeedback: true })
                     setQuickOp(null)
                   }
                 }}
@@ -5299,7 +5285,7 @@ export function InsumosModule() {
                 onClick={async () => {
                   const ok = await runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')
                   if (ok) {
-                    resetQuickOperationState()
+                    resetQuickOperationState({ keepFeedback: true })
                     setQuickOp(null)
                   }
                 }}
@@ -5317,12 +5303,34 @@ export function InsumosModule() {
               </Button>
             )}
           </DialogFooter>
-          {quickActionFeedback ? (
-            <div className={`text-xs ${quickActionFeedback.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
-              {quickActionFeedback.type === 'success' ? 'Sucesso: ' : 'Falha: '}
-              {quickActionFeedback.message}
-            </div>
-          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!quickActionFeedback}
+        onOpenChange={(open) => {
+          if (!open) setQuickActionFeedback(null)
+        }}
+      >
+        <DialogContent className="max-w-md dark bg-corporate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              {quickActionFeedback?.type === 'success' ? 'Sucesso' : 'Falha'}
+            </DialogTitle>
+            <DialogDescription className="text-blue-100/70">
+              {quickActionFeedback?.type === 'success'
+                ? 'A operacao foi registrada.'
+                : 'Nao foi possivel concluir a operacao.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm text-blue-50">
+            {quickActionFeedback?.message || '-'}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setQuickActionFeedback(null)}>
+              Fechar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
