@@ -7774,9 +7774,9 @@ export function InsumosModule() {
                 const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
                 const estoque = Number(i.estoqueAtual) || 0
                 const min = Number(i.estoqueMinimo) || 0
-                const stockStatus = min > 0 ? calcularStatusEstoque(estoque, min) : 'OK'
-                const isCritico = min > 0 && stockStatus === 'URGENTE'
-                const isLowStock = min > 0 && stockStatus === 'ATENCAO'
+                const stockStatus = calcularStatusEstoque(estoque, min)
+                const isCritico = stockStatus === 'URGENTE'
+                const isLowStock = stockStatus === 'ATENCAO'
                 const validadeStatus = String(i.statusValidade?.status || '').toUpperCase()
                 const isVencendo = validadeStatus === 'VENCENDO'
                 const isExpirado = validadeStatus === 'EXPIRADO'

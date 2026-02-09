@@ -314,7 +314,11 @@ function withCORSBase(body, init = {}, origin) {
 function buildResumoEstoque(itens) {
     const totalInsumos = itens.length;
     const valorEstoqueTotal = itens.reduce((acc, cur) => acc + (Number(cur.precoCusto) || 0) * (Number(cur.estoqueAtual) || 0), 0);
-    const criticos = itens.filter(i => i.estoqueMinimo > 0 && (Number(i.estoqueAtual) || 0) < (Number(i.estoqueMinimo) || 0)).length;
+    const criticos = itens.filter(i => {
+        const estoqueAtual = Number(i.estoqueAtual) || 0;
+        const estoqueMinimo = Number(i.estoqueMinimo) || 0;
+        return estoqueAtual < 0 || (estoqueMinimo > 0 && estoqueAtual < estoqueMinimo);
+    }).length;
     return { totalInsumos, valorEstoqueTotal, criticos };
 }
 
