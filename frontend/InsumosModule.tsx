@@ -6366,20 +6366,20 @@ export function InsumosModule() {
               </div>
             </details>
 
-            <details
-              data-pref-key="insumos.details.alerts.quality"
-              open={detailsOpen['insumos.details.alerts.quality'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Qualidade do cadastro{' '}
-                <span className="text-xs text-blue-200/60">
-                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : renderLoadingText(overviewLoading, '—')}
-                </span>
-              </summary>
-              <div className="mt-3 space-y-2">
-                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+	            <details
+	              data-pref-key="insumos.details.alerts.quality"
+	              open={detailsOpen['insumos.details.alerts.quality'] ?? true}
+	              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
+	              className="rounded-xl border border-white/10 bg-black/10 p-3"
+	            >
+	              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+	                Qualidade do cadastro{' '}
+	                <span className="text-xs text-blue-200/60">
+	                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : '—'}
+	                </span>
+	              </summary>
+	              <div className="mt-3 space-y-2">
+	                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
                   {overviewQuality?.summary?.bySeverity ? (
                     <>
                       <button
@@ -6415,12 +6415,14 @@ export function InsumosModule() {
                           INFO {overviewQuality.summary.bySeverity.INFO ?? 0}
                         </Badge>
                       </button>
-                    </>
-                  ) : null}
-                  {!overviewQuality?.summary?.total ? (
-                    <span className="text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem ocorrências.')}</span>
-                  ) : null}
-                </div>
+	                    </>
+	                  ) : null}
+	                  {overviewLoading && !overviewQuality?.summary?.total && !overviewQuality?.issues?.length ? (
+	                    <span className="text-blue-100/70">{renderInlinePercent(true, 'text-[11px]')}</span>
+	                  ) : !overviewLoading && !overviewQuality?.summary?.total ? (
+	                    <span className="text-blue-100/70">Sem ocorrências.</span>
+	                  ) : null}
+	                </div>
 
                 {overviewQuality?.issues?.length ? (
                   <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
@@ -6589,8 +6591,8 @@ export function InsumosModule() {
 
                   return (
                     <Card key={`${slot.presetId}-${idx}`} className={`bg-black/20 border border-white/10 ${cardSpan}`}>
-                      <CardHeader className="space-y-2">
-                        <div className="flex items-center gap-2">
+	                      <CardHeader className="space-y-2">
+	                        <div className="flex items-center gap-2">
 	                          <Select
 	                            value={slot.presetId}
 	                            onValueChange={(v) => {
@@ -6758,18 +6760,20 @@ export function InsumosModule() {
                               </SelectContent>
                             </Select>
                           ) : null}
-	                        </div>
-	                        <div className="flex justify-end">{renderInlinePercent(overviewLoading || insightsLoading)}</div>
+		                        </div>
 	                      </CardHeader>
 	                      <CardContent>
-	                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
-	                          <div className="mb-2">{renderInlinePercent(true)}</div>
-	                        ) : null}
-	                        {renderChart({ ...slot, view, metric, topN }, { height })}
+		                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
+		                          <div className="w-full flex items-center justify-center" style={{ height }}>
+		                            {renderInlinePercent(true)}
+		                          </div>
+		                        ) : (
+		                          renderChart({ ...slot, view, metric, topN }, { height })
+		                        )}
 	                      </CardContent>
 	                    </Card>
 	                  )
-                })}
+	                })}
               </div>
 
 	                              </CardContent>
