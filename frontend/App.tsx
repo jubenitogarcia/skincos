@@ -101,6 +101,7 @@ const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ 
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
 const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m => ({ default: m.MetaSentimentMonitor })))
 const WhatsAppUnifiedHub = lazy(() => import('@/WhatsAppUnifiedHub').then(m => ({ default: m.WhatsAppUnifiedHub })))
+const HarmoniaModule = lazy(() => import('@/HarmoniaModule').then(m => ({ default: m.HarmoniaModule })))
 const InstagramStudioPro = lazy(() => import('@/InstagramStudioPro').then(m => ({ default: m.InstagramStudioPro })))
 const ThreadsStudio = lazy(() => import('@/ThreadsStudio').then(m => ({ default: m.ThreadsStudio })))
 const SocialNetworksStudio = lazy(() => import('@/SocialNetworksStudio').then(m => ({ default: m.SocialNetworksStudio })))
@@ -173,6 +174,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
     { key: 'meta-sentiment', label: 'Sentimento', icon: '🧠', component: <MetaSentimentMonitor /> },
     { key: 'whatsapp-business', label: 'WhatsApp', icon: '📱', component: <WhatsAppUnifiedHub /> },
+    { key: 'harmonia', label: 'Harmonia', icon: '🎼', component: <HarmoniaModule /> },
     { key: 'instagram-studio', label: 'Redes Sociais', icon: '🌐', component: <SocialNetworksStudio /> },
     { key: 'threads-studio', label: 'Threads', icon: '🧵', component: <ThreadsStudio /> },
     { key: 'workflow', label: 'Workflows', icon: '⚙️', component: <WorkflowEngine /> },
@@ -284,7 +286,7 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio', 'ponto']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio', 'ponto', 'harmonia']), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
