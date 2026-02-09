@@ -393,6 +393,30 @@ function estoqueStatusBadgeVariant(status: EstoqueStatus): 'default' | 'secondar
   return 'default'
 }
 
+type AlertaStatusTag = 'URGENTE' | 'ATENCAO' | 'VENCENDO' | 'EXPIRADO'
+
+function alertaTagLabel(tag: AlertaStatusTag) {
+  if (tag === 'URGENTE') return 'Crítico'
+  if (tag === 'ATENCAO') return 'Atenção'
+  if (tag === 'VENCENDO') return 'Vencendo'
+  return 'Expirado'
+}
+
+function alertaTagVariant(tag: AlertaStatusTag): 'default' | 'secondary' | 'destructive' {
+  if (tag === 'URGENTE') return 'destructive'
+  if (tag === 'EXPIRADO') return 'destructive'
+  if (tag === 'VENCENDO') return 'secondary'
+  return 'secondary'
+}
+
+function normalizeAlertTags(tags: Set<AlertaStatusTag>): AlertaStatusTag[] {
+  const out = new Set(tags)
+  if (out.has('URGENTE')) out.delete('ATENCAO')
+  if (out.has('EXPIRADO')) out.delete('VENCENDO')
+  const order: Record<AlertaStatusTag, number> = { URGENTE: 0, EXPIRADO: 1, VENCENDO: 2, ATENCAO: 3 }
+  return Array.from(out).sort((a, b) => order[a] - order[b])
+}
+
 function fmtDate(value?: string | null) {
   if (!value) return ''
   const d = new Date(value)
@@ -1126,7 +1150,8 @@ export function InsumosModule() {
 	  const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
 	  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
 	  const [insightsTurnover, setInsightsTurnover] = React.useState<{ saida?: any; entrada?: any } | null>(null)
-  const [alertasStatus, setAlertasStatus] = React.useState<'TODOS' | EstoqueStatus>('TODOS')
+  type AlertasStatusFilter = 'TODOS' | 'ATENCAO' | 'URGENTE' | 'VENCENDO' | 'EXPIRADO'
+  const [alertasStatus, setAlertasStatus] = React.useState<AlertasStatusFilter>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
   const [offlineQueueCount, setOfflineQueueCount] = React.useState(0)
@@ -4543,23 +4568,137 @@ export function InsumosModule() {
 	    [fmtBucketLabel, fmtChartValue, insightsLoading, insightsTurnover, overviewLoading, overviewRoi, stockAgg, trendsSeries]
 	  )
 
-  const alertasCategorias = React.useMemo(() => {
-    return Array.from(new Set((insightsAlertas || []).map((a) => String(a.categoria || '').trim()).filter(Boolean))).sort(
-      (a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
-    )
-  }, [insightsAlertas])
+  type AlertasLinha = {
+    key: string
+    codigoBarras?: string
+    produto?: string
+    categoria?: string
+    estoqueAtual?: number
+    estoqueMinimo?: number
+    diferenca?: number
+    percentual?: number | null
+    dataValidade?: string | null
+    dias?: number | null
+    tags: AlertaStatusTag[]
+  }
 
-  const insightsAlertasFiltrados = React.useMemo(() => {
+  const alertasLinhas = React.useMemo<AlertasLinha[]>(() => {
+    const byKey = new Map<string, { base: Omit<AlertasLinha, 'tags' | 'key'>; tags: Set<AlertaStatusTag> }>()
+
+    const upsert = (id: { codigoBarras?: string; produto?: string; categoria?: string }, patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>, tag?: AlertaStatusTag) => {
+      const code = String(id.codigoBarras || '').trim()
+      const produto = String(id.produto || '').trim()
+      const categoria = String(id.categoria || '').trim()
+      const key = code || `${produto}::${categoria}` || `${Math.random()}`
+      const prev = byKey.get(key)
+      if (!prev) {
+        const base: any = {
+          codigoBarras: code || undefined,
+          produto: produto || undefined,
+          categoria: categoria || undefined,
+          estoqueAtual: undefined,
+          estoqueMinimo: undefined,
+          diferenca: undefined,
+          percentual: null,
+          dataValidade: null,
+          dias: null,
+          ...patch
+        }
+        const tags = new Set<AlertaStatusTag>()
+        if (tag) tags.add(tag)
+        byKey.set(key, { base, tags })
+        return
+      }
+      Object.assign(prev.base, patch)
+      if (tag) prev.tags.add(tag)
+    }
+
+    // Stock alerts (insights)
+    for (const a of Array.isArray(insightsAlertas) ? insightsAlertas : []) {
+      const estoqueAtual = Number(a?.estoqueAtual) || 0
+      const estoqueMinimo = Number(a?.estoqueMinimo) || 0
+      const st = calcularStatusEstoque(estoqueAtual, estoqueMinimo)
+      const tag: AlertaStatusTag | null = st === 'URGENTE' ? 'URGENTE' : st === 'ATENCAO' ? 'ATENCAO' : null
+      if (!tag) continue
+      upsert(
+        { codigoBarras: a.codigoBarras, produto: a.produto, categoria: a.categoria },
+        {
+          estoqueAtual,
+          estoqueMinimo,
+          diferenca: Number.isFinite(Number(a?.diferenca)) ? Number(a.diferenca) : estoqueAtual - estoqueMinimo,
+          percentual: a?.percentual != null ? Number(a.percentual) : null
+        },
+        tag
+      )
+    }
+
+    // Validity alerts (overview)
+    for (const it of Array.isArray(overviewNotifications?.expiringSoon) ? overviewNotifications!.expiringSoon : []) {
+      upsert(
+        { codigoBarras: (it as any)?.codigoBarras, produto: (it as any)?.produto, categoria: (it as any)?.categoria },
+        {
+          estoqueAtual: Number((it as any)?.estoqueAtual) || 0,
+          dataValidade: (it as any)?.dataValidade ? String((it as any).dataValidade) : null,
+          dias: Number.isFinite(Number((it as any)?.dias)) ? Number((it as any).dias) : null
+        },
+        'VENCENDO'
+      )
+    }
+    for (const it of Array.isArray(overviewNotifications?.expiredWithStock) ? overviewNotifications!.expiredWithStock : []) {
+      upsert(
+        { codigoBarras: (it as any)?.codigoBarras, produto: (it as any)?.produto, categoria: (it as any)?.categoria },
+        {
+          estoqueAtual: Number((it as any)?.estoqueAtual) || 0,
+          dataValidade: (it as any)?.dataValidade ? String((it as any).dataValidade) : null,
+          dias: null
+        },
+        'EXPIRADO'
+      )
+    }
+
+    const rows: AlertasLinha[] = []
+    for (const [key, v] of byKey.entries()) {
+      rows.push({ key, ...v.base, tags: normalizeAlertTags(v.tags) })
+    }
+
+    const severityRank = (tags: AlertaStatusTag[]) => {
+      if (tags.includes('URGENTE')) return 0
+      if (tags.includes('EXPIRADO')) return 1
+      if (tags.includes('VENCENDO')) return 2
+      if (tags.includes('ATENCAO')) return 3
+      return 9
+    }
+
+    rows.sort((a, b) => {
+      const ra = severityRank(a.tags)
+      const rb = severityRank(b.tags)
+      if (ra !== rb) return ra - rb
+      const ca = String(a.categoria || '')
+      const cb = String(b.categoria || '')
+      const catCmp = ca.localeCompare(cb, 'pt-BR', { sensitivity: 'base' })
+      if (catCmp !== 0) return catCmp
+      return String(a.produto || '').localeCompare(String(b.produto || ''), 'pt-BR', { sensitivity: 'base' })
+    })
+
+    return rows
+  }, [insightsAlertas, overviewNotifications, calcularStatusEstoque])
+
+  const alertasCategorias = React.useMemo(() => {
+    return Array.from(new Set(alertasLinhas.map((a) => String(a.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+    )
+  }, [alertasLinhas])
+
+  const alertasLinhasFiltradas = React.useMemo(() => {
     const q = alertasBusca.trim().toLowerCase()
-    return (insightsAlertas || []).filter((a) => {
+    return alertasLinhas.filter((a) => {
       if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
-      const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
-      if (alertasStatus !== 'TODOS' && status !== alertasStatus) return false
+      if (alertasStatus !== 'TODOS' && !a.tags.includes(alertasStatus as any)) return false
       if (!q) return true
       const hay = [a.produto, a.categoria, a.codigoBarras].filter(Boolean).join(' ').toLowerCase()
       return hay.includes(q)
     })
-  }, [alertasBusca, alertasCategoria, alertasStatus, insightsAlertas])
+  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasStatus])
 
   const fmtAge = React.useCallback((ts?: number) => {
     const t = Number(ts) || 0
@@ -6048,7 +6187,7 @@ export function InsumosModule() {
                                         <span className="font-mono">
                                           {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
                                             ? Number(overviewNotifications?.counts?.lowStock)
-                                            : insightsAlertasFiltrados.length}
+                                            : (Array.isArray(insightsAlertas) ? insightsAlertas.length : 0)}
                                         </span>
                                       </span>
                                       <span>•</span>
@@ -6105,6 +6244,8 @@ export function InsumosModule() {
                         <SelectItem value="TODOS">Todos</SelectItem>
                         <SelectItem value="ATENCAO">Atenção</SelectItem>
                         <SelectItem value="URGENTE">Crítico</SelectItem>
+                        <SelectItem value="VENCENDO">Vencendo</SelectItem>
+                        <SelectItem value="EXPIRADO">Expirado</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -6147,13 +6288,31 @@ export function InsumosModule() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                      {insightsAlertasFiltrados.slice(0, 80).map((a, idx) => {
-                        const status = calcularStatusEstoque(Number(a.estoqueAtual) || 0, Number(a.estoqueMinimo) || 0)
+                      {alertasLinhasFiltradas.slice(0, 120).map((a, idx) => {
                         return (
-                          <tr key={`${a.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                          <tr
+                            key={`${a.key}-${idx}`}
+                            className={`hover:bg-white/5 ${a.codigoBarras ? 'cursor-pointer' : ''}`}
+                            onClick={() => {
+                              const code = String(a.codigoBarras || '').trim()
+                              if (code) setQuickCodigo(code)
+                            }}
+                            title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
+                          >
                             <td className="p-3 text-blue-50">
                               <div className="text-blue-50">{a.produto || '-'}</div>
                               <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
+                              {a.dataValidade ? (
+                                <div className="mt-1 text-xs text-blue-200/60">
+                                  validade: <span className="font-mono">{fmtDateOnlyBR(String(a.dataValidade))}</span>
+                                  {a.dias != null ? (
+                                    <>
+                                      {' '}
+                                      <span className="font-mono">({Number(a.dias)}d)</span>
+                                    </>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </td>
                             <td className="p-3 text-blue-100/80">
                               <div className="flex items-center gap-2">
@@ -6162,7 +6321,13 @@ export function InsumosModule() {
                               </div>
                             </td>
                             <td className="p-3">
-                              <Badge variant={estoqueStatusBadgeVariant(status)}>{estoqueStatusLabel(status)}</Badge>
+                              <div className="flex flex-wrap gap-1">
+                                {(a.tags || []).map((t) => (
+                                  <Badge key={t} variant={alertaTagVariant(t)}>
+                                    {alertaTagLabel(t)}
+                                  </Badge>
+                                ))}
+                              </div>
                             </td>
                             <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
                             <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
@@ -6171,7 +6336,7 @@ export function InsumosModule() {
                           </tr>
                         )
                       })}
-                      {!insightsAlertasFiltrados.length ? (
+                      {!alertasLinhasFiltradas.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={7}>
                             {renderListPlaceholder(insightsLoading, 'Sem alertas.')}
@@ -6180,126 +6345,6 @@ export function InsumosModule() {
                       ) : null}
                     </tbody>
                   </table>
-                </div>
-              </div>
-            </details>
-
-            <details
-              data-pref-key="insumos.details.alerts.validity"
-              open={detailsOpen['insumos.details.alerts.validity'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.validity', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
-              <div className="mt-3 space-y-3">
-                <div className="text-xs text-blue-200/60">
-                  Lista resumida (até 50 itens) gerada automaticamente para a unidade.
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                        <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                        Vencendo
-                      </div>
-                      <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
-                    </div>
-                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-left p-3">Validade</th>
-                            <th className="text-right p-3">Estoque</th>
-                            <th className="text-right p-3">Ação</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5 text-blue-50/90">
-                          {(overviewNotifications?.expiringSoon || []).map((it: any, idx: number) => (
-                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3">
-                                <div className="font-medium">{it.produto || '-'}</div>
-                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
-                              </td>
-                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
-                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
-                              <td className="p-3 text-right">
-                                <Button
-                                  variant="secondary"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => {
-                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
-                                  }}
-                                  disabled={!isAuthed}
-                                >
-                                  Usar
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                          {!(overviewNotifications?.expiringSoon || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {renderLoadingText(overviewLoading, 'Sem itens.')}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                        <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                        Expirado
-                      </div>
-                      <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
-                    </div>
-                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-left p-3">Validade</th>
-                            <th className="text-right p-3">Estoque</th>
-                            <th className="text-right p-3">Ação</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5 text-blue-50/90">
-                          {(overviewNotifications?.expiredWithStock || []).map((it: any, idx: number) => (
-                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3">
-                                <div className="font-medium">{it.produto || '-'}</div>
-                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
-                              </td>
-                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
-                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
-                              <td className="p-3 text-right">
-                                <Button
-                                  variant="secondary"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => {
-                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
-                                  }}
-                                  disabled={!isAuthed}
-                                >
-                                  Usar
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                          {!(overviewNotifications?.expiredWithStock || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {renderLoadingText(overviewLoading, 'Sem itens.')}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
                 </div>
               </div>
             </details>
