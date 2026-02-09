@@ -40,7 +40,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: ./.github/actions/checkout-with-fallback
+        with:
+          token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          ssh_key: ${{ secrets.ACTIONS_DEPLOY_KEY != '' && secrets.ACTIONS_DEPLOY_KEY || '' }}
 
       - name: Setup Node.js
         if: ${{ matrix.language == 'javascript' }}

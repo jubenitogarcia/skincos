@@ -1,0 +1,41 @@
+name: Checkout with SSH fallback
+description: Prefer SSH checkout when a deploy key is provided, otherwise use HTTPS.
+inputs:
+  ssh_key:
+    description: "Private SSH key for repo checkout (optional)"
+    required: false
+    default: ""
+  token:
+    description: "Token for HTTPS checkout"
+    required: true
+  fetch_depth:
+    description: "Fetch depth for checkout"
+    required: false
+    default: "1"
+  lfs:
+    description: "Whether to fetch LFS files"
+    required: false
+    default: "false"
+  submodules:
+    description: "Whether to fetch submodules"
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Checkout via SSH
+      if: ${{ inputs.ssh_key != '' }}
+      uses: actions/checkout@v4
+      with:
+        ssh-key: ${{ inputs.ssh_key }}
+        fetch-depth: ${{ inputs.fetch_depth }}
+        lfs: ${{ inputs.lfs }}
+        submodules: ${{ inputs.submodules }}
+    - name: Checkout via HTTPS
+      if: ${{ inputs.ssh_key == '' }}
+      uses: actions/checkout@v4
+      with:
+        token: ${{ inputs.token }}
+        fetch-depth: ${{ inputs.fetch_depth }}
+        lfs: ${{ inputs.lfs }}
+        submodules: ${{ inputs.submodules }}
