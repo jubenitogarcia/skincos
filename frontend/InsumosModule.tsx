@@ -1074,12 +1074,15 @@ export function InsumosModule() {
   type EditValidationKey =
     | 'codigoBarras'
     | 'produto'
+    | 'categoria'
+    | 'marca'
     | 'tipoUnidade'
     | 'lote'
     | 'dataValidade'
     | 'policy'
   type EditValidationErrors = Partial<Record<EditValidationKey, string>>
   const [editValidationErrors, setEditValidationErrors] = React.useState<EditValidationErrors>({})
+  const [editSaveError, setEditSaveError] = React.useState<string | null>(null)
   const clearEditValidationError = React.useCallback((key: EditValidationKey) => {
     setEditValidationErrors((prev) => {
       if (!prev[key]) return prev
@@ -1087,6 +1090,7 @@ export function InsumosModule() {
       delete next[key]
       return next
     })
+    setEditSaveError((prev) => (prev ? null : prev))
   }, [])
 
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
@@ -1709,40 +1713,28 @@ export function InsumosModule() {
   React.useEffect(() => {
     if (!createOpen) return
     if (createPolicyTouched) return
-    const slug = slugifyCategoria(createCategoria)
-    if (!slug) {
-      setCreateCategoriaRequiresLot(false)
-      setCreateCategoriaRequiresExpiry(false)
-      setCreateCategoriaFefo(false)
-      return
-    }
-    const p = getPolicyForCategoria(createCategoria)
-    setCreateCategoriaRequiresLot(!!p.requiresLot)
-    setCreateCategoriaRequiresExpiry(!!p.requiresExpiry)
-    setCreateCategoriaFefo(!!p.fefo)
-  }, [createCategoria, createOpen, createPolicyTouched, getPolicyForCategoria])
+    setCreateCategoriaRequiresLot(false)
+    setCreateCategoriaRequiresExpiry(false)
+    setCreateCategoriaFefo(false)
+  }, [createOpen, createPolicyTouched])
 
   React.useEffect(() => {
     if (createOpen) return
     setCreatePolicyTouched(false)
   }, [createOpen])
 
-  const getPolicyForItem = React.useCallback(
-    (item?: Insumo | null, categoriaOverride?: string | null) => {
-      const hasExplicit =
-        item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
-      if (hasExplicit) {
-        return {
-          requiresLot: !!item?.policyRequiresLot,
-          requiresExpiry: !!item?.policyRequiresExpiry,
-          fefo: !!item?.policyFefo
-        }
+  const getPolicyForItem = React.useCallback((item?: Insumo | null) => {
+    const hasExplicit =
+      item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
+    if (hasExplicit) {
+      return {
+        requiresLot: !!item?.policyRequiresLot,
+        requiresExpiry: !!item?.policyRequiresExpiry,
+        fefo: !!item?.policyFefo
       }
-      const categoria = String(categoriaOverride || item?.categoria || '').trim()
-      return getPolicyForCategoria(categoria)
-    },
-    [getPolicyForCategoria]
-  )
+    }
+    return { requiresLot: false, requiresExpiry: false, fefo: false }
+  }, [])
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -1931,7 +1923,7 @@ export function InsumosModule() {
     if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
     if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
     if (!createPolicyTouched) {
-      const policy = getPolicyForItem(it, it.categoria)
+      const policy = getPolicyForItem(it)
       setCreateCategoriaRequiresLot(!!policy.requiresLot)
       setCreateCategoriaRequiresExpiry(!!policy.requiresExpiry)
       setCreateCategoriaFefo(!!policy.fefo)
@@ -1989,7 +1981,7 @@ export function InsumosModule() {
     if (!quickOp) return
     if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
     if (!quickAutoFefo) return
-    const policy = getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '')
+    const policy = getPolicyForItem(quickLookupItems?.[0] || null)
     if (!policy.fefo) return
     if (!quickLotes.length) return
     const suggested = quickLotes[0]?.registro
@@ -2781,6 +2773,7 @@ export function InsumosModule() {
   const openEditDialog = React.useCallback((i: Insumo) => {
     setEditTarget(i)
     setEditValidationErrors({})
+    setEditSaveError(null)
     setEditCodigo(String(i.codigoBarras || ''))
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
@@ -2795,7 +2788,7 @@ export function InsumosModule() {
     setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
-    const policy = getPolicyForItem(i, i.categoria)
+    const policy = getPolicyForItem(i)
     setEditCategoriaRequiresLot(!!policy.requiresLot)
     setEditCategoriaRequiresExpiry(!!policy.requiresExpiry)
     setEditCategoriaFefo(!!policy.fefo)
@@ -3225,14 +3218,17 @@ export function InsumosModule() {
   const saveEdit = React.useCallback(async () => {
     const registro = String(editTarget?.registro || '').trim()
     if (!registro) {
+      setEditSaveError('Registro do insumo ausente.')
       toast.error('Registro do insumo ausente.')
       return
     }
     if (!isAuthed) {
+      setEditSaveError('Nao autenticado.')
       toast.error('Nao autenticado.')
       return
     }
     if (!canUseApi) {
+      setEditSaveError('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
       toast.error('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
       return
     }
@@ -3240,15 +3236,18 @@ export function InsumosModule() {
     const produto = editProduto.trim()
     if (!codigoBarras) {
       setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
+      setEditSaveError('Informe o código de barras para salvar.')
       return toast.error('Informe o código de barras')
     }
     if (!produto) {
       setEditValidationErrors({ produto: 'Obrigatorio.' })
+      setEditSaveError('Informe o produto para salvar.')
       return toast.error('Informe o produto')
     }
 
     setEditSaving(true)
     try {
+      setEditSaveError(null)
       setEditValidationErrors({})
       const categoria = editCategoria.trim()
       const policy = {
@@ -3262,12 +3261,14 @@ export function InsumosModule() {
 
       if (!tipoUnidade) {
         setEditValidationErrors({ tipoUnidade: 'Selecione a unidade (medida).' })
+        setEditSaveError('Informe a unidade (medida) para salvar.')
         toast.error('Informe a unidade (medida) para salvar.')
         return
       }
 
       if (policy.fefo && !policy.requiresExpiry) {
         setEditValidationErrors({ policy: 'FEFO exige validade obrigatoria.' })
+        setEditSaveError('FEFO exige validade obrigatoria.')
         toast.error('FEFO exige validade obrigatória')
         return
       }
@@ -3276,6 +3277,7 @@ export function InsumosModule() {
           policy: 'Lote obrigatorio pela politica.',
           lote: 'Obrigatorio (pela politica do item).'
         })
+        setEditSaveError('Este item exige Lote. Preencha o campo lote para salvar.')
         toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
         return
       }
@@ -3284,6 +3286,7 @@ export function InsumosModule() {
           policy: 'Validade obrigatoria pela politica.',
           dataValidade: 'Obrigatorio (pela politica do item).'
         })
+        setEditSaveError('Este item exige Data de validade. Preencha o campo validade para salvar.')
         toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
         return
       }
@@ -3317,6 +3320,7 @@ export function InsumosModule() {
     } catch (e) {
       const policyCode = getPolicyErrorCode(e)
       if (policyCode) {
+        setEditSaveError(e instanceof Error ? e.message : String(e))
         policyErrorToast(e)
         if (policyCode === 'POLICY_REQUIRES_LOT') {
           setEditValidationErrors({
@@ -3331,6 +3335,7 @@ export function InsumosModule() {
         }
         return
       }
+      setEditSaveError(e instanceof Error ? e.message : String(e))
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
@@ -5485,7 +5490,7 @@ export function InsumosModule() {
                     <div className="text-xs text-blue-200/70">Lote/registro</div>
                     {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
                       quickLotesForPicker.length > 1 &&
-                      getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '').fefo ? (
+                      getPolicyForItem(quickLookupItems?.[0] || null).fefo ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -6971,6 +6976,12 @@ export function InsumosModule() {
             </DialogDescription>
           </DialogHeader>
 
+          {editSaveError ? (
+            <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-100">
+              {editSaveError}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
@@ -7014,21 +7025,29 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-              <Select value={editCategoria || undefined} onValueChange={setEditCategoria}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a categoria" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editCategoria && !lotCategorias.includes(editCategoria) ? (
-                    <SelectItem value={editCategoria}>{editCategoria}</SelectItem>
-                  ) : null}
-                  {lotCategorias.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                value={editCategoria}
+                onChange={(e) => {
+                  setEditCategoria(e.target.value)
+                  clearEditValidationError('categoria')
+                }}
+                placeholder="ex: toxina"
+                list="insumos-categorias-edit"
+                aria-invalid={editValidationErrors.categoria ? true : undefined}
+                className={
+                  editValidationErrors.categoria
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              <datalist id="insumos-categorias-edit">
+                {lotCategorias.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              {editValidationErrors.categoria ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.categoria}</div>
+              ) : null}
             </div>
             <div
               className={`md:col-span-2 rounded-xl border p-3 ${
@@ -7087,21 +7106,29 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Marca</div>
-              <Select value={editMarca || undefined} onValueChange={setEditMarca}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a marca" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editMarca && !insumosMarcas.includes(editMarca) ? (
-                    <SelectItem value={editMarca}>{editMarca}</SelectItem>
-                  ) : null}
-                  {insumosMarcas.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                value={editMarca}
+                onChange={(e) => {
+                  setEditMarca(e.target.value)
+                  clearEditValidationError('marca')
+                }}
+                placeholder="ex: Allergan"
+                list="insumos-marcas-edit"
+                aria-invalid={editValidationErrors.marca ? true : undefined}
+                className={
+                  editValidationErrors.marca
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              <datalist id="insumos-marcas-edit">
+                {insumosMarcas.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+              {editValidationErrors.marca ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.marca}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
