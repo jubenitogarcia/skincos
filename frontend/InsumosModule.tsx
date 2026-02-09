@@ -4700,6 +4700,40 @@ export function InsumosModule() {
     })
   }, [alertasBusca, alertasCategoria, alertasLinhas, alertasStatus])
 
+  type AlertasRecommendation =
+    | { kind: 'TRANSFERENCIA'; fromUnidade?: string | null; toUnidade?: string | null; qty?: number | null }
+    | { kind: 'ENTRADA'; qty?: number | null }
+
+  const alertasRecommendationByCode = React.useMemo(() => {
+    const map = new Map<string, AlertasRecommendation>()
+
+    for (const t of Array.isArray(overviewActionables?.transferencias) ? overviewActionables!.transferencias : []) {
+      const code = String((t as any)?.codigoBarras || '').trim()
+      if (!code) continue
+      const qty = Number((t as any)?.qty) || 0
+      const prev = map.get(code)
+      if (!prev || prev.kind !== 'TRANSFERENCIA' || qty > (Number(prev.qty) || 0)) {
+        map.set(code, {
+          kind: 'TRANSFERENCIA',
+          fromUnidade: (t as any)?.from != null ? String((t as any).from) : null,
+          toUnidade: (t as any)?.to != null ? String((t as any).to) : null,
+          qty: qty || null
+        })
+      }
+    }
+
+    for (const r of Array.isArray(overviewActionables?.reposicao) ? overviewActionables!.reposicao : []) {
+      const code = String((r as any)?.codigoBarras || '').trim()
+      if (!code) continue
+      // Prefer transfer suggestion over purchase suggestion if both exist.
+      if (map.get(code)?.kind === 'TRANSFERENCIA') continue
+      const qty = Number((r as any)?.suggestedPurchaseQty) || 0
+      map.set(code, { kind: 'ENTRADA', qty: qty || null })
+    }
+
+    return map
+  }, [overviewActionables])
+
   const fmtAge = React.useCallback((ts?: number) => {
     const t = Number(ts) || 0
     if (!t) return '-'
@@ -6281,6 +6315,7 @@ export function InsumosModule() {
                         <th className="text-left p-3">Produto</th>
                         <th className="text-left p-3">Categoria</th>
                         <th className="text-left p-3">Status</th>
+                        <th className="text-left p-3">Ação recomendada</th>
                         <th className="text-right p-3">Atual</th>
                         <th className="text-right p-3">Mín</th>
                         <th className="text-right p-3">Dif</th>
@@ -6289,12 +6324,14 @@ export function InsumosModule() {
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {alertasLinhasFiltradas.slice(0, 120).map((a, idx) => {
+                        const code = String(a.codigoBarras || '').trim()
+                        const rec = code ? alertasRecommendationByCode.get(code) || null : null
+                        const canQuick = !!code && isAuthed
                         return (
                           <tr
                             key={`${a.key}-${idx}`}
                             className={`hover:bg-white/5 ${a.codigoBarras ? 'cursor-pointer' : ''}`}
                             onClick={() => {
-                              const code = String(a.codigoBarras || '').trim()
                               if (code) setQuickCodigo(code)
                             }}
                             title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
@@ -6329,6 +6366,66 @@ export function InsumosModule() {
                                 ))}
                               </div>
                             </td>
+                            <td className="p-3">
+                              <div className="flex flex-wrap gap-2">
+                                {rec?.kind === 'TRANSFERENCIA' ? (
+                                  <Button
+                                    variant="outline"
+                                    className="h-8 px-2 text-xs"
+                                    disabled={!canQuick}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      openQuickOperation('TRANSFERENCIA', {
+                                        codigoBarras: code,
+                                        quantidade: rec.qty ?? 1,
+                                        fromUnidade: rec.fromUnidade ?? null,
+                                        toUnidade: rec.toUnidade ?? null,
+                                        obs: 'Transferência sugerida'
+                                      })
+                                    }}
+                                  >
+                                    Transferir
+                                  </Button>
+                                ) : null}
+                                {rec?.kind === 'ENTRADA' ? (
+                                  <Button
+                                    variant="outline"
+                                    className="h-8 px-2 text-xs"
+                                    disabled={!canQuick}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      openQuickOperation('ENTRADA', {
+                                        codigoBarras: code,
+                                        quantidade: rec.qty ?? 1,
+                                        obs: 'Reposição sugerida'
+                                      })
+                                    }}
+                                  >
+                                    Entrada
+                                  </Button>
+                                ) : null}
+                                {!rec && (a.tags.includes('EXPIRADO') || a.tags.includes('VENCENDO')) ? (
+                                  <Button
+                                    variant={a.tags.includes('EXPIRADO') ? 'destructive' : 'secondary'}
+                                    className="h-8 px-2 text-xs"
+                                    disabled={!canQuick}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      openQuickOperation('BAIXA', {
+                                        codigoBarras: code,
+                                        quantidade: 1,
+                                        obs: a.tags.includes('EXPIRADO') ? 'Descartar (expirado)' : 'Priorizar consumo (vencendo)'
+                                      })
+                                    }}
+                                  >
+                                    {a.tags.includes('EXPIRADO') ? 'Baixar' : 'Usar'}
+                                  </Button>
+                                ) : null}
+                                {!rec && !(a.tags.includes('EXPIRADO') || a.tags.includes('VENCENDO')) ? (
+                                  <span className="text-xs text-blue-200/60">-</span>
+                                ) : null}
+                              </div>
+                            </td>
                             <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
                             <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
                             <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
@@ -6338,7 +6435,7 @@ export function InsumosModule() {
                       })}
                       {!alertasLinhasFiltradas.length ? (
                         <tr>
-                          <td className="p-3 text-blue-100/70" colSpan={7}>
+                          <td className="p-3 text-blue-100/70" colSpan={8}>
                             {renderListPlaceholder(insightsLoading, 'Sem alertas.')}
                           </td>
                         </tr>
