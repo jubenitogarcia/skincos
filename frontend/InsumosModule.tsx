@@ -4740,7 +4740,7 @@ export function InsumosModule() {
       ) : null}
       <DragDropContext onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
-        <DialogContent className="max-w-6xl">
+        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-6xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Insumos</DialogTitle>
             <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
@@ -4753,7 +4753,7 @@ export function InsumosModule() {
                   value={insumosQuery}
                   onChange={(e) => setInsumosQuery(e.target.value)}
                   placeholder="Buscar por código, produto, categoria…"
-                  className="w-80"
+                  className="w-full sm:w-80"
                 />
                 <Button
                   variant="outline"
@@ -5031,18 +5031,18 @@ export function InsumosModule() {
             <div
               ref={insumosModalListContainerRef}
               onScroll={onInsumosModalScroll}
-              className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
+              className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10"
             >
-              <table className="min-w-full text-sm">
+              <table className="w-full table-fixed text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
                     <th className="text-left p-3">Produto</th>
-                    <th className="text-left p-3">Categoria</th>
-                    <th className="text-left p-3">Código</th>
+                    <th className="text-left p-3 hidden md:table-cell">Categoria</th>
+                    <th className="text-left p-3 hidden lg:table-cell">Código</th>
                     <th className="text-right p-3">Estoque</th>
-                    <th className="text-right p-3">Mín</th>
-                    <th className="text-left p-3">Validade</th>
-                    <th className="text-right p-3">Valor</th>
+                    <th className="text-right p-3 hidden sm:table-cell">Mín</th>
+                    <th className="text-left p-3 hidden xl:table-cell">Validade</th>
+                    <th className="text-right p-3 hidden xl:table-cell">Valor</th>
                     <th className="text-right p-3">Ações</th>
                   </tr>
                 </thead>
@@ -5054,18 +5054,31 @@ export function InsumosModule() {
                     const valor = (Number(i.precoCusto) || 0) * (Number.isFinite(estoque) ? estoque : 0)
                     return (
                       <tr key={`${i.registro || ''}-${idx}`} className="hover:bg-white/5">
-                        <td className="p-3 text-blue-50">{i.produto || '-'}</td>
-                        <td className="p-3 text-blue-100/80">{i.categoria || '-'}</td>
-                        <td className="p-3 font-mono text-blue-100/70">{i.codigoBarras || '-'}</td>
-                        <td className="p-3 text-right text-blue-100/80 font-mono">{Number.isFinite(estoque) ? estoque : '-'}</td>
-                        <td className="p-3 text-right text-blue-100/70 font-mono">{min || '-'}</td>
-                        <td className="p-3 text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</td>
-                        <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
+                        <td className="p-3 text-blue-50 align-top">
+                          <div className="min-w-0">
+                            <div className="font-medium break-words">{i.produto || '-'}</div>
+                            <div className="mt-1 space-y-0.5">
+                              <div className="text-xs text-blue-200/60 md:hidden break-words">{i.categoria || '-'}</div>
+                              <div className="text-xs text-blue-200/60 lg:hidden font-mono break-all">{i.codigoBarras || '-'}</div>
+                              <div className="text-xs text-blue-200/60 xl:hidden">{fmtDateOnlyBR(i.dataValidade || '') || '-'}</div>
+                              <div className="text-xs text-blue-200/60 xl:hidden">{fmtMoneyBRL(valor)}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3 text-blue-100/80 hidden md:table-cell align-top">
+                          <div className="break-words">{i.categoria || '-'}</div>
+                        </td>
+                        <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-top break-all">{i.codigoBarras || '-'}</td>
+                        <td className="p-3 text-right text-blue-100/80 font-mono align-top">{Number.isFinite(estoque) ? estoque : '-'}</td>
+                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-top">{min || '-'}</td>
+                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top">{fmtDateOnlyBR(i.dataValidade || '')}</td>
+                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top">{fmtMoneyBRL(valor)}</td>
                         <td className="p-3 text-right">
-                          <div className="flex justify-end gap-2">
+                          <div className="flex flex-col sm:flex-row justify-end gap-2">
                             <Button
                               variant="secondary"
                               size="sm"
+                              className="h-8 px-2 text-xs"
                               onClick={() => {
                                 if (codigoBarras) setSelectedCodigoBarras(codigoBarras)
                                 setInsumosListModalOpen(false)
@@ -5074,7 +5087,7 @@ export function InsumosModule() {
                             >
                               Mov
                             </Button>
-                            <Button variant="outline" size="sm" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
+                            <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
                               Editar
                             </Button>
                           </div>
@@ -6886,12 +6899,12 @@ export function InsumosModule() {
           if (!v) setEditTarget(null)
         }}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-2xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Editar insumo</DialogTitle>
-            <DialogDescription>
-              {editTarget?.produto || '-'} • <span className="font-mono">{editTarget?.codigoBarras || '-'}</span>
-              {editTarget?.registro ? <span> • Reg {editTarget.registro}</span> : null}
+            <DialogDescription className="break-words">
+              {editTarget?.produto || '-'} • <span className="font-mono break-all">{editTarget?.codigoBarras || '-'}</span>
+              {editTarget?.registro ? <span className="break-all"> • Reg {editTarget.registro}</span> : null}
             </DialogDescription>
           </DialogHeader>
 
