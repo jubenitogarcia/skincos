@@ -1327,11 +1327,11 @@ export function InsumosModule() {
   const showOverviewLoadingProgress =
     overviewLoading || (canUseApi && isAuthed && shouldShowDashboardLoading)
 
-  const LoadingBadge = React.useCallback(
-    ({ active }: { active: boolean }) => {
+  const renderInlinePercent = React.useCallback(
+    (active: boolean, className = '') => {
       if (!active) return null
       return (
-        <div className="flex items-center gap-1.5 text-[11px] text-blue-100/70">
+        <div className={`inline-flex items-center gap-2 text-xs text-blue-200/70 ${className}`.trim()}>
           <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
           <span className="font-mono">{loadingPercent}%</span>
         </div>
@@ -5644,140 +5644,112 @@ export function InsumosModule() {
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-                Valor em estoque
-              </CardTitle>
-              <LoadingBadge active={overviewLoading} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">
-                {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
-              </div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
-              )}
-            </CardContent>
-          </Card>
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="flex items-center justify-between gap-2">
+	              <CardTitle className="text-white text-sm flex items-center gap-2">
+	                <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
+	                Valor em estoque
+	              </CardTitle>
+	            </CardHeader>
+	            <CardContent>
+	              <div className="text-lg text-blue-50 font-mono">
+	                {showOverviewLoadingProgress
+	                  ? renderInlinePercent(true)
+	                  : (overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-')}
+	              </div>
+	              {!showOverviewLoadingProgress ? (
+	                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+	              ) : null}
+	            </CardContent>
+	          </Card>
 
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-                Críticos
-              </CardTitle>
-              <LoadingBadge active={overviewLoading} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
-              )}
-            </CardContent>
-          </Card>
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="flex items-center justify-between gap-2">
+	              <CardTitle className="text-white text-sm flex items-center gap-2">
+	                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
+	                Críticos
+	              </CardTitle>
+	            </CardHeader>
+	            <CardContent>
+	              <div className="text-lg text-blue-50 font-mono">
+	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewResumo?.criticos ?? '-')}
+	              </div>
+	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">abaixo do mínimo</div> : null}
+	            </CardContent>
+	          </Card>
 
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-                Estoque baixo
-              </CardTitle>
-              <LoadingBadge active={overviewLoading} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">atenção</div>
-              )}
-            </CardContent>
-          </Card>
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="flex items-center justify-between gap-2">
+	              <CardTitle className="text-white text-sm flex items-center gap-2">
+	                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
+	                Estoque baixo
+	              </CardTitle>
+	            </CardHeader>
+	            <CardContent>
+	              <div className="text-lg text-blue-50 font-mono">
+	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.lowStock ?? '-')}
+	              </div>
+	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">atenção</div> : null}
+	            </CardContent>
+	          </Card>
 
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                Vencendo
-              </CardTitle>
-              <LoadingBadge active={overviewLoading} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">janela próxima</div>
-              )}
-            </CardContent>
-          </Card>
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="flex items-center justify-between gap-2">
+	              <CardTitle className="text-white text-sm flex items-center gap-2">
+	                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
+	                Vencendo
+	              </CardTitle>
+	            </CardHeader>
+	            <CardContent>
+	              <div className="text-lg text-blue-50 font-mono">
+	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.expiringSoon ?? '-')}
+	              </div>
+	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">janela próxima</div> : null}
+	            </CardContent>
+	          </Card>
 
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                Expirado c/ estoque
-              </CardTitle>
-              <LoadingBadge active={overviewLoading} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">risco imediato</div>
-              )}
-            </CardContent>
-          </Card>
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="flex items-center justify-between gap-2">
+	              <CardTitle className="text-white text-sm flex items-center gap-2">
+	                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
+	                Expirado c/ estoque
+	              </CardTitle>
+	            </CardHeader>
+	            <CardContent>
+	              <div className="text-lg text-blue-50 font-mono">
+	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.expiredWithStock ?? '-')}
+	              </div>
+	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">risco imediato</div> : null}
+	            </CardContent>
+	          </Card>
 
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
-                Movimentações
-              </CardTitle>
-              <LoadingBadge active={overviewLoading} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
-              <div className="text-sm text-blue-100/80">
-                <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
-                <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-              </div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">
-                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-                </div>
-              )}
-            </CardContent>
-	        </Card>
-        </div>
+	          <Card className="bg-black/20 border border-white/10">
+	            <CardHeader className="flex items-center justify-between gap-2">
+	              <CardTitle className="text-white text-sm flex items-center gap-2">
+	                <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
+	                Movimentações
+	              </CardTitle>
+	            </CardHeader>
+	            <CardContent>
+	              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
+	              <div className="text-sm text-blue-100/80">
+	                {showOverviewLoadingProgress ? (
+	                  renderInlinePercent(true, 'text-[11px]')
+	                ) : (
+	                  <>
+	                    <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
+	                    <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+	                  </>
+	                )}
+	              </div>
+	              {!showOverviewLoadingProgress ? (
+	                <div className="text-xs text-blue-200/60">
+	                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+	                </div>
+	              ) : null}
+	            </CardContent>
+		        </Card>
+	        </div>
 
         <div className="flex flex-col gap-3">
           <Droppable droppableId="overview-panels">
@@ -6071,14 +6043,13 @@ export function InsumosModule() {
                                       </span>
                                     </div>
                                   </div>
-                                </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-2">
-                                  <LoadingBadge active={overviewLoading || insightsLoading} />
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
+	                                </div>
+	                                <div className="absolute top-2 right-2 flex items-center gap-2">
+	                                  <Button
+	                                    size="icon"
+	                                    variant="ghost"
+	                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
                                     title={panelOpen ? 'Contrair' : 'Expandir'}
                                     aria-label={panelOpen ? 'Contrair' : 'Expandir'}
                                   >
@@ -6553,14 +6524,13 @@ export function InsumosModule() {
                                       </Button>
                                     </div>
                                   </div>
-                                </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-2">
-                                  <LoadingBadge active={overviewLoading || insightsLoading} />
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
+	                                </div>
+	                                <div className="absolute top-2 right-2 flex items-center gap-2">
+	                                  <Button
+	                                    size="icon"
+	                                    variant="ghost"
+	                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
                                     title={panelOpen ? 'Contrair' : 'Expandir'}
                                     aria-label={panelOpen ? 'Contrair' : 'Expandir'}
                                   >
@@ -6788,22 +6758,17 @@ export function InsumosModule() {
                               </SelectContent>
                             </Select>
                           ) : null}
-                        </div>
-                        <div className="flex justify-end">
-                          <LoadingBadge active={overviewLoading || insightsLoading} />
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
-                          <div className="mb-2 text-xs text-blue-200/70 inline-flex items-center gap-2">
-                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                            Carregando {loadingPercent}%
-                          </div>
-                        ) : null}
-                        {renderChart({ ...slot, view, metric, topN }, { height })}
-                      </CardContent>
-                    </Card>
-                  )
+	                        </div>
+	                        <div className="flex justify-end">{renderInlinePercent(overviewLoading || insightsLoading)}</div>
+	                      </CardHeader>
+	                      <CardContent>
+	                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
+	                          <div className="mb-2">{renderInlinePercent(true)}</div>
+	                        ) : null}
+	                        {renderChart({ ...slot, view, metric, topN }, { height })}
+	                      </CardContent>
+	                    </Card>
+	                  )
                 })}
               </div>
 
