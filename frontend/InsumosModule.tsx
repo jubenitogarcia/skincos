@@ -383,7 +383,7 @@ function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): E
 
 function estoqueStatusLabel(status: EstoqueStatus) {
   if (status === 'URGENTE') return 'Crítico'
-  if (status === 'ATENCAO') return 'Atenção'
+  if (status === 'ATENCAO') return 'Estoque baixo'
   return 'Ok'
 }
 
@@ -397,7 +397,7 @@ type AlertaStatusTag = 'URGENTE' | 'ATENCAO' | 'VENCENDO' | 'EXPIRADO'
 
 function alertaTagLabel(tag: AlertaStatusTag) {
   if (tag === 'URGENTE') return 'Crítico'
-  if (tag === 'ATENCAO') return 'Atenção'
+  if (tag === 'ATENCAO') return 'Estoque baixo'
   if (tag === 'VENCENDO') return 'Vencendo'
   return 'Expirado'
 }
@@ -1038,6 +1038,7 @@ export function InsumosModule() {
   const [createConcentracao, setCreateConcentracao] = React.useState('')
   const [createVolume, setCreateVolume] = React.useState('')
   const [createFonte, setCreateFonte] = React.useState('')
+  const [createHomologado, setCreateHomologado] = React.useState(false)
   const [createCalibre, setCreateCalibre] = React.useState('')
   const [createPrecoCusto, setCreatePrecoCusto] = React.useState('')
   const [createEstoqueInicial, setCreateEstoqueInicial] = React.useState('0')
@@ -1074,12 +1075,15 @@ export function InsumosModule() {
   type EditValidationKey =
     | 'codigoBarras'
     | 'produto'
+    | 'categoria'
+    | 'marca'
     | 'tipoUnidade'
     | 'lote'
     | 'dataValidade'
     | 'policy'
   type EditValidationErrors = Partial<Record<EditValidationKey, string>>
   const [editValidationErrors, setEditValidationErrors] = React.useState<EditValidationErrors>({})
+  const [editSaveError, setEditSaveError] = React.useState<string | null>(null)
   const clearEditValidationError = React.useCallback((key: EditValidationKey) => {
     setEditValidationErrors((prev) => {
       if (!prev[key]) return prev
@@ -1087,6 +1091,7 @@ export function InsumosModule() {
       delete next[key]
       return next
     })
+    setEditSaveError((prev) => (prev ? null : prev))
   }, [])
 
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
@@ -1382,6 +1387,21 @@ export function InsumosModule() {
       return <span>{emptyLabel}</span>
     },
     [loadingPercent, shouldShowDashboardLoading]
+  )
+
+  const renderLoadingTextLocal = React.useCallback(
+    (loading: boolean, emptyLabel: string) => {
+      if (loading) {
+        return (
+          <span className="inline-flex items-center gap-2 text-blue-100/70">
+            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+            {`Carregando ${loadingPercent}%`}
+          </span>
+        )
+      }
+      return <span>{emptyLabel}</span>
+    },
+    [loadingPercent]
   )
 
   const DashboardLoadingButton = React.useCallback(
@@ -1709,40 +1729,28 @@ export function InsumosModule() {
   React.useEffect(() => {
     if (!createOpen) return
     if (createPolicyTouched) return
-    const slug = slugifyCategoria(createCategoria)
-    if (!slug) {
-      setCreateCategoriaRequiresLot(false)
-      setCreateCategoriaRequiresExpiry(false)
-      setCreateCategoriaFefo(false)
-      return
-    }
-    const p = getPolicyForCategoria(createCategoria)
-    setCreateCategoriaRequiresLot(!!p.requiresLot)
-    setCreateCategoriaRequiresExpiry(!!p.requiresExpiry)
-    setCreateCategoriaFefo(!!p.fefo)
-  }, [createCategoria, createOpen, createPolicyTouched, getPolicyForCategoria])
+    setCreateCategoriaRequiresLot(false)
+    setCreateCategoriaRequiresExpiry(false)
+    setCreateCategoriaFefo(false)
+  }, [createOpen, createPolicyTouched])
 
   React.useEffect(() => {
     if (createOpen) return
     setCreatePolicyTouched(false)
   }, [createOpen])
 
-  const getPolicyForItem = React.useCallback(
-    (item?: Insumo | null, categoriaOverride?: string | null) => {
-      const hasExplicit =
-        item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
-      if (hasExplicit) {
-        return {
-          requiresLot: !!item?.policyRequiresLot,
-          requiresExpiry: !!item?.policyRequiresExpiry,
-          fefo: !!item?.policyFefo
-        }
+  const getPolicyForItem = React.useCallback((item?: Insumo | null) => {
+    const hasExplicit =
+      item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
+    if (hasExplicit) {
+      return {
+        requiresLot: !!item?.policyRequiresLot,
+        requiresExpiry: !!item?.policyRequiresExpiry,
+        fefo: !!item?.policyFefo
       }
-      const categoria = String(categoriaOverride || item?.categoria || '').trim()
-      return getPolicyForCategoria(categoria)
-    },
-    [getPolicyForCategoria]
-  )
+    }
+    return { requiresLot: false, requiresExpiry: false, fefo: false }
+  }, [])
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -1928,10 +1936,11 @@ export function InsumosModule() {
     if (!createConcentracao.trim() && (it as any).concentracao) setCreateConcentracao(String((it as any).concentracao))
     if (!createVolume.trim() && (it as any).volume) setCreateVolume(String((it as any).volume))
     if (!createFonte.trim() && (it as any).fonte) setCreateFonte(String((it as any).fonte))
+    if (!createHomologado && /homologad/i.test(String((it as any).fonte || '').trim())) setCreateHomologado(true)
     if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
     if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
     if (!createPolicyTouched) {
-      const policy = getPolicyForItem(it, it.categoria)
+      const policy = getPolicyForItem(it)
       setCreateCategoriaRequiresLot(!!policy.requiresLot)
       setCreateCategoriaRequiresExpiry(!!policy.requiresExpiry)
       setCreateCategoriaFefo(!!policy.fefo)
@@ -1942,6 +1951,7 @@ export function InsumosModule() {
     createConcentracao,
     createEspecificacao,
     createFonte,
+    createHomologado,
     createMarca,
     createPolicyTouched,
     createPrecoCusto,
@@ -1989,7 +1999,7 @@ export function InsumosModule() {
     if (!quickOp) return
     if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
     if (!quickAutoFefo) return
-    const policy = getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '')
+    const policy = getPolicyForItem(quickLookupItems?.[0] || null)
     if (!policy.fefo) return
     if (!quickLotes.length) return
     const suggested = quickLotes[0]?.registro
@@ -2092,6 +2102,17 @@ export function InsumosModule() {
     if (categorias.length || marcas.length) persistInsumosOptionsCache(categorias, marcas)
   }, [apiJson, canUseApi, isAuthed, categoryPolicies, persistInsumosOptionsCache])
 
+  const ensureInsumosOptions = React.useCallback((categoria?: string | null, marca?: string | null) => {
+    const nextCategoria = String(categoria || '').trim()
+    const nextMarca = String(marca || '').trim()
+    if (nextCategoria) {
+      setInsumosOptionsCategorias((prev) => uniqueSortedTextOptions([...prev, nextCategoria]))
+    }
+    if (nextMarca) {
+      setInsumosOptionsMarcas((prev) => uniqueSortedTextOptions([...prev, nextMarca]))
+    }
+  }, [])
+
   const loadAdminCategoryPolicies = React.useCallback(
     async (opts?: { includeSuggestions?: boolean }) => {
       if (!canUseApi || !isAuthed || !isManagerRole) return
@@ -2155,6 +2176,13 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
     void loadInsumosOptions()
   }, [canUseApi, isAuthed, loadInsumosOptions])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    if (!editOpen && !createOpen) return
+    if (insumosOptionsCategorias.length || insumosOptionsMarcas.length) return
+    void loadInsumosOptions()
+  }, [canUseApi, createOpen, editOpen, insumosOptionsCategorias.length, insumosOptionsMarcas.length, isAuthed, loadInsumosOptions])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed || !isManagerRole) return
@@ -2781,6 +2809,7 @@ export function InsumosModule() {
   const openEditDialog = React.useCallback((i: Insumo) => {
     setEditTarget(i)
     setEditValidationErrors({})
+    setEditSaveError(null)
     setEditCodigo(String(i.codigoBarras || ''))
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
@@ -2795,12 +2824,13 @@ export function InsumosModule() {
     setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
-    const policy = getPolicyForItem(i, i.categoria)
+    const policy = getPolicyForItem(i)
     setEditCategoriaRequiresLot(!!policy.requiresLot)
     setEditCategoriaRequiresExpiry(!!policy.requiresExpiry)
     setEditCategoriaFefo(!!policy.fefo)
+    ensureInsumosOptions(i.categoria || '', i.marca || '')
     setEditOpen(true)
-  }, [getPolicyForItem])
+  }, [ensureInsumosOptions, getPolicyForItem])
 
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
@@ -3228,11 +3258,15 @@ export function InsumosModule() {
       toast.error('Registro do insumo ausente.')
       return
     }
+    setEditSaveError(null)
+    setEditValidationErrors({})
     if (!isAuthed) {
+      setEditSaveError('Nao autenticado.')
       toast.error('Nao autenticado.')
       return
     }
     if (!canUseApi) {
+      setEditSaveError('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
       toast.error('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
       return
     }
@@ -3240,16 +3274,17 @@ export function InsumosModule() {
     const produto = editProduto.trim()
     if (!codigoBarras) {
       setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
+      setEditSaveError('Informe o código de barras para salvar.')
       return toast.error('Informe o código de barras')
     }
     if (!produto) {
       setEditValidationErrors({ produto: 'Obrigatorio.' })
+      setEditSaveError('Informe o produto para salvar.')
       return toast.error('Informe o produto')
     }
 
     setEditSaving(true)
     try {
-      setEditValidationErrors({})
       const categoria = editCategoria.trim()
       const policy = {
         requiresLot: !!editCategoriaRequiresLot,
@@ -3262,12 +3297,14 @@ export function InsumosModule() {
 
       if (!tipoUnidade) {
         setEditValidationErrors({ tipoUnidade: 'Selecione a unidade (medida).' })
+        setEditSaveError('Informe a unidade (medida) para salvar.')
         toast.error('Informe a unidade (medida) para salvar.')
         return
       }
 
       if (policy.fefo && !policy.requiresExpiry) {
         setEditValidationErrors({ policy: 'FEFO exige validade obrigatoria.' })
+        setEditSaveError('FEFO exige validade obrigatória. Ajuste a política do item.')
         toast.error('FEFO exige validade obrigatória')
         return
       }
@@ -3276,6 +3313,7 @@ export function InsumosModule() {
           policy: 'Lote obrigatorio pela politica.',
           lote: 'Obrigatorio (pela politica do item).'
         })
+        setEditSaveError('Este item exige Lote. Preencha o campo lote para salvar.')
         toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
         return
       }
@@ -3284,6 +3322,7 @@ export function InsumosModule() {
           policy: 'Validade obrigatoria pela politica.',
           dataValidade: 'Obrigatorio (pela politica do item).'
         })
+        setEditSaveError('Este item exige Data de validade. Preencha o campo validade para salvar.')
         toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
         return
       }
@@ -3313,6 +3352,7 @@ export function InsumosModule() {
       })
       toast.success('Insumo atualizado')
       setEditOpen(false)
+      setEditSaveError(null)
       await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
     } catch (e) {
       const policyCode = getPolicyErrorCode(e)
@@ -3323,14 +3363,17 @@ export function InsumosModule() {
             policy: 'Lote obrigatorio pela politica.',
             lote: 'Obrigatorio (pela politica do item).'
           })
+          setEditSaveError('Este item exige Lote. Preencha o campo lote para salvar.')
         } else {
           setEditValidationErrors({
             policy: 'Validade obrigatoria pela politica.',
             dataValidade: 'Obrigatorio (pela politica do item).'
           })
+          setEditSaveError('Este item exige Data de validade. Preencha o campo validade para salvar.')
         }
         return
       }
+      setEditSaveError(e instanceof Error ? e.message : String(e))
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
@@ -4256,7 +4299,7 @@ export function InsumosModule() {
 	    return ['bar', 'line']
 	  }, [])
 
-  const renderChart = React.useCallback(
+	  const renderChart = React.useCallback(
     (slot: ChartSlotConfig, opts?: { height?: number }) => {
       const presetId = slot.presetId
       const metric: ChartMetric = slot.metric === 'valor' ? 'valor' : 'qtd'
@@ -4277,7 +4320,7 @@ export function InsumosModule() {
         const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
         if (restValue > 0 && gb !== 'item') top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' } as any)
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
+        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingTextLocal(overviewLoading, 'Sem dados.')}</div>
         const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
         if (!hasAny) {
           return (
@@ -4338,7 +4381,7 @@ export function InsumosModule() {
         const gb: ChartGroupBy = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
 
         if (gb === 'tempo') {
-          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados para o período.')}</div>
+          if (!trendsSeries.length) return <div className="text-sm text-blue-100/70">{renderLoadingTextLocal(insightsLoading, 'Sem dados para o período.')}</div>
           const mode: MovementsMode =
             slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout' ? slot.mode : 'inout'
 
@@ -4442,7 +4485,7 @@ export function InsumosModule() {
         const mode: MovementsMode = slot.mode === 'entrada' ? 'entrada' : 'saida'
         const turnover = (mode === 'entrada' ? insightsTurnover?.entrada : insightsTurnover?.saida) || null
         const raw = Array.isArray(turnover?.categories) ? turnover.categories : []
-        if (!raw.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados para o período.')}</div>
+        if (!raw.length) return <div className="text-sm text-blue-100/70">{renderLoadingTextLocal(insightsLoading, 'Sem dados para o período.')}</div>
 
         const sorted = [...raw].sort((a: any, b: any) => {
           const av = metric === 'valor' ? Number(a?.valor || 0) : Number(a?.qtd || 0)
@@ -4457,7 +4500,7 @@ export function InsumosModule() {
         const restValue = sorted.slice(topN).reduce((acc: number, c: any) => acc + (metric === 'valor' ? Number(c?.valor || 0) : Number(c?.qtd || 0)), 0)
         if (restValue > 0) top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' })
 
-        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingText(insightsLoading, 'Sem dados.')}</div>
+        if (!top.length) return <div className="text-sm text-blue-100/70">{renderLoadingTextLocal(insightsLoading, 'Sem dados.')}</div>
         const hasAny = top.some((d) => (Number((d as any).value) || 0) > 0)
         if (!hasAny) {
           return (
@@ -4510,7 +4553,7 @@ export function InsumosModule() {
       }
 
 	      if (presetId === 'roi_risk') {
-	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
+	        if (!overviewRoi) return <div className="text-sm text-blue-100/70">{renderLoadingTextLocal(overviewLoading, 'Sem dados.')}</div>
 
 	        const perdas = (overviewRoi as any)?.perdas || {}
 	        const ruptura = (overviewRoi as any)?.ruptura || {}
@@ -4528,7 +4571,7 @@ export function InsumosModule() {
 	            ]
 
 	        const hasAny = data.some((d) => (Number(d.value) || 0) > 0)
-	        if (!hasAny) return <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem dados.')}</div>
+	        if (!hasAny) return <div className="text-sm text-blue-100/70">{renderLoadingTextLocal(overviewLoading, 'Sem dados.')}</div>
 
 	        return view === 'pie' ? (
 	          <div className="w-full" style={{ height }}>
@@ -4565,7 +4608,7 @@ export function InsumosModule() {
 
 	      return <div className="text-sm text-blue-100/70">Preset indisponível.</div>
 	    },
-	    [fmtBucketLabel, fmtChartValue, insightsLoading, insightsTurnover, overviewLoading, overviewRoi, stockAgg, trendsSeries]
+	    [fmtBucketLabel, fmtChartValue, insightsLoading, insightsTurnover, overviewLoading, overviewRoi, renderLoadingTextLocal, stockAgg, trendsSeries]
 	  )
 
   type AlertasLinha = {
@@ -4617,7 +4660,11 @@ export function InsumosModule() {
     for (const a of Array.isArray(insightsAlertas) ? insightsAlertas : []) {
       const estoqueAtual = Number(a?.estoqueAtual) || 0
       const estoqueMinimo = Number(a?.estoqueMinimo) || 0
-      const st = calcularStatusEstoque(estoqueAtual, estoqueMinimo)
+      const tipoAlerta = String((a as any)?.tipoAlerta || '').toUpperCase()
+      let st = tipoAlerta === 'QUEBRA_ESTOQUE' ? 'URGENTE' : calcularStatusEstoque(estoqueAtual, estoqueMinimo)
+      if (Number.isFinite(estoqueAtual) && Number.isFinite(estoqueMinimo) && estoqueAtual < estoqueMinimo) {
+        st = 'URGENTE'
+      }
       const tag: AlertaStatusTag | null = st === 'URGENTE' ? 'URGENTE' : st === 'ATENCAO' ? 'ATENCAO' : null
       if (!tag) continue
       upsert(
@@ -5171,7 +5218,7 @@ export function InsumosModule() {
                             especificacao: createEspecificacao.trim(),
                             concentracao: createConcentracao.trim(),
                             volume: createVolume.trim(),
-                            fonte: createFonte.trim(),
+                            fonte: createHomologado ? 'Homologado' : '',
                             calibre: createCalibre.trim(),
                             precoCusto: createPrecoCusto ? Number(createPrecoCusto) : undefined,
                             estoqueInicial: createEstoqueInicial ? Number(createEstoqueInicial) : undefined,
@@ -5485,7 +5532,7 @@ export function InsumosModule() {
                     <div className="text-xs text-blue-200/70">Lote/registro</div>
                     {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
                       quickLotesForPicker.length > 1 &&
-                      getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '').fefo ? (
+                      getPolicyForItem(quickLookupItems?.[0] || null).fefo ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -5879,7 +5926,7 @@ export function InsumosModule() {
 	              <div className="text-lg text-blue-50 font-mono">
 	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.lowStock ?? '-')}
 	              </div>
-	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">estoque baixo</div> : null}
+	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">Estoque baixo</div> : null}
 	            </CardContent>
 	          </Card>
 
@@ -6276,7 +6323,7 @@ export function InsumosModule() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="TODOS">Todos</SelectItem>
-                        <SelectItem value="ATENCAO">Atenção</SelectItem>
+                        <SelectItem value="ATENCAO">Estoque baixo</SelectItem>
                         <SelectItem value="URGENTE">Crítico</SelectItem>
                         <SelectItem value="VENCENDO">Vencendo</SelectItem>
                         <SelectItem value="EXPIRADO">Expirado</SelectItem>
@@ -6497,11 +6544,9 @@ export function InsumosModule() {
                       </button>
 	                    </>
 	                  ) : null}
-	                  {overviewLoading && !overviewQuality?.summary?.total && !overviewQuality?.issues?.length ? (
-	                    <span className="text-blue-100/70">{renderInlinePercent(true, 'text-[11px]')}</span>
-	                  ) : !overviewLoading && !overviewQuality?.summary?.total ? (
-	                    <span className="text-blue-100/70">Sem ocorrências.</span>
-	                  ) : null}
+                  {!overviewLoading && !overviewQuality?.summary?.total ? (
+                    <span className="text-blue-100/70">Sem ocorrências.</span>
+                  ) : null}
 	                </div>
 
                 {overviewQuality?.issues?.length ? (
@@ -6558,7 +6603,11 @@ export function InsumosModule() {
                       </tbody>
                     </table>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="text-sm text-blue-100/70">
+                    {overviewLoading ? renderLoadingTextLocal(true, 'Sem ocorrências.') : 'Sem ocorrências.'}
+                  </div>
+                )}
               </div>
             </details>
                                 </CardContent>
@@ -6665,6 +6714,7 @@ export function InsumosModule() {
 	                  const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
 	                  const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
 	                  const layout = (preset as any).layout as ChartLayout | undefined
+	                  const chartLoading = overviewLoading || insightsLoading
                   const baseH = chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
                   const height = layout === 'tall' ? baseH + (chartSlots.length === 1 ? 180 : 120) : baseH
                   const cardSpan = chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
@@ -6843,7 +6893,7 @@ export function InsumosModule() {
 		                        </div>
 	                      </CardHeader>
 	                      <CardContent>
-		                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
+		                        {chartLoading ? (
 		                          <div className="w-full flex items-center justify-center" style={{ height }}>
 		                            {renderInlinePercent(true)}
 		                          </div>
@@ -6959,7 +7009,11 @@ export function InsumosModule() {
         open={editOpen}
         onOpenChange={(v) => {
           setEditOpen(v)
-          if (!v) setEditTarget(null)
+          if (!v) {
+            setEditTarget(null)
+            setEditSaveError(null)
+            setEditValidationErrors({})
+          }
         }}
       >
         <DialogContent className="w-[calc(100vw-1.5rem)] max-w-2xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
@@ -6970,6 +7024,11 @@ export function InsumosModule() {
               {editTarget?.registro ? <span className="break-all"> • Reg {editTarget.registro}</span> : null}
             </DialogDescription>
           </DialogHeader>
+          {editSaveError ? (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+              {editSaveError}
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
@@ -7014,21 +7073,29 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-              <Select value={editCategoria || undefined} onValueChange={setEditCategoria}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a categoria" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editCategoria && !lotCategorias.includes(editCategoria) ? (
-                    <SelectItem value={editCategoria}>{editCategoria}</SelectItem>
-                  ) : null}
-                  {lotCategorias.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                value={editCategoria}
+                onChange={(e) => {
+                  setEditCategoria(e.target.value)
+                  clearEditValidationError('categoria')
+                }}
+                placeholder="Selecione a categoria"
+                list="insumos-categorias-edit"
+                aria-invalid={editValidationErrors.categoria ? true : undefined}
+                className={
+                  editValidationErrors.categoria
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              <datalist id="insumos-categorias-edit">
+                {lotCategorias.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              {editValidationErrors.categoria ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.categoria}</div>
+              ) : null}
             </div>
             <div
               className={`md:col-span-2 rounded-xl border p-3 ${
@@ -7087,21 +7154,29 @@ export function InsumosModule() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Marca</div>
-              <Select value={editMarca || undefined} onValueChange={setEditMarca}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a marca" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editMarca && !insumosMarcas.includes(editMarca) ? (
-                    <SelectItem value={editMarca}>{editMarca}</SelectItem>
-                  ) : null}
-                  {insumosMarcas.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                value={editMarca}
+                onChange={(e) => {
+                  setEditMarca(e.target.value)
+                  clearEditValidationError('marca')
+                }}
+                placeholder="Selecione a marca"
+                list="insumos-marcas-edit"
+                aria-invalid={editValidationErrors.marca ? true : undefined}
+                className={
+                  editValidationErrors.marca
+                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+                    : undefined
+                }
+              />
+              <datalist id="insumos-marcas-edit">
+                {insumosMarcas.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+              {editValidationErrors.marca ? (
+                <div className="mt-1 text-xs text-red-300">{editValidationErrors.marca}</div>
+              ) : null}
             </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
@@ -7265,8 +7340,10 @@ export function InsumosModule() {
                 ) : null}
                 {lotSelecionado.fonte ? (
                   <div>
-                    <div className="text-xs text-muted-foreground">Fonte</div>
-                    <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
+                    <div className="text-xs text-muted-foreground">Homologado</div>
+                    <div className="text-blue-100/80 truncate">
+                      {/homologad/i.test(String(lotSelecionado.fonte || '').trim()) ? 'Sim' : String(lotSelecionado.fonte || '')}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -7707,12 +7784,11 @@ export function InsumosModule() {
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Fonte</div>
-                  <Input
-                    value={createFonte}
-                    onChange={(e) => setCreateFonte(e.target.value)}
-                    placeholder="ex: Tabela 2025"
-                  />
+                  <div className="text-xs text-blue-200/70 mb-1">Homologado</div>
+                  <label className="flex items-center gap-2 text-sm text-blue-100/80 select-none">
+                    <Checkbox checked={createHomologado} onCheckedChange={(v) => setCreateHomologado(!!v)} />
+                    Produto homologado
+                  </label>
                 </div>
               </div>
             </details>
@@ -7777,7 +7853,7 @@ export function InsumosModule() {
                         especificacao: createEspecificacao.trim(),
                         concentracao: createConcentracao.trim(),
                         volume: createVolume.trim(),
-                        fonte: createFonte.trim(),
+                        fonte: createHomologado ? 'Homologado' : '',
                         calibre: createCalibre.trim(),
                         precoCusto: createPrecoCusto.trim(),
                         estoqueInicial: Number(createEstoqueInicial) || 0,
@@ -7799,6 +7875,7 @@ export function InsumosModule() {
                     setCreateConcentracao('')
                     setCreateVolume('')
                     setCreateFonte('')
+                    setCreateHomologado(false)
                     setCreateCalibre('')
                     setCreatePrecoCusto('')
                     setCreateEstoqueInicial('0')
@@ -7830,17 +7907,17 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-          <table className="min-w-full text-sm">
+        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
+          <table className="w-full table-fixed text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
                 <th className="text-left p-3">Produto</th>
-                <th className="text-left p-3">Categoria</th>
-                <th className="text-left p-3">Código</th>
+                <th className="text-left p-3 hidden md:table-cell">Categoria</th>
+                <th className="text-left p-3 hidden lg:table-cell">Código</th>
                 <th className="text-right p-3">Estoque</th>
-                <th className="text-right p-3">Mínimo</th>
-                <th className="text-left p-3">Validade</th>
-                <th className="text-right p-3">Valor</th>
+                <th className="text-right p-3 hidden sm:table-cell">Mín</th>
+                <th className="text-left p-3 hidden xl:table-cell">Validade</th>
+                <th className="text-right p-3 hidden xl:table-cell">Valor</th>
                 <th className="text-right p-3">Ações</th>
               </tr>
             </thead>
@@ -7874,7 +7951,7 @@ export function InsumosModule() {
                     key={`${i.registro || ''}-${i.codigoBarras || ''}`}
                     className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}
                   >
-                    <td className="p-3">
+                    <td className="p-3 align-top">
                       <button
                         type="button"
                         className="w-full text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 cursor-pointer group"
@@ -7895,17 +7972,24 @@ export function InsumosModule() {
                           {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
                         </div>
                         <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
+                        <div className="mt-1 space-y-0.5">
+                          <div className="text-xs text-blue-200/60 md:hidden break-words">{i.categoria || '-'}</div>
+                          <div className="text-xs text-blue-200/60 lg:hidden font-mono break-all">{i.codigoBarras || '-'}</div>
+                          <div className="text-xs text-blue-200/60 sm:hidden">mín: {min || '-'}</div>
+                          <div className="text-xs text-blue-200/60 xl:hidden">validade: {fmtDateOnlyBR(i.dataValidade || '') || '-'}</div>
+                          <div className="text-xs text-blue-200/60 xl:hidden">valor: {fmtMoneyBRL(valor)}</div>
+                        </div>
                         {isCritico || isLowStock || isVencendo || isExpirado ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {isCritico ? <Badge variant="destructive">Crítico</Badge> : null}
-                            {isLowStock ? <Badge variant="secondary">Atenção</Badge> : null}
+                            {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
                             {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
                             {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
                           </div>
                         ) : null}
                       </button>
                     </td>
-                    <td className="p-3 text-blue-100/80">
+                    <td className="p-3 text-blue-100/80 hidden md:table-cell align-top">
                       <div className="flex items-center gap-2">
                         <span
                           className="inline-block h-2.5 w-2.5 rounded-full"
@@ -7914,7 +7998,7 @@ export function InsumosModule() {
                         <span className="truncate">{i.categoria || '-'}</span>
                       </div>
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 hidden lg:table-cell align-top">
                       <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
                     </td>
                     <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
@@ -7923,11 +8007,11 @@ export function InsumosModule() {
                       </div>
                       {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
                     </td>
-                    <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
-                    <td className="p-3">
+                    <td className="p-3 text-right text-blue-100/70 hidden sm:table-cell align-top">{min || '-'}</td>
+                    <td className="p-3 hidden xl:table-cell align-top">
                       <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
                     </td>
-                    <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
+                    <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top">{fmtMoneyBRL(valor)}</td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button
