@@ -382,8 +382,8 @@ function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): E
 }
 
 function estoqueStatusLabel(status: EstoqueStatus) {
-  if (status === 'URGENTE') return 'Críticos'
-  if (status === 'ATENCAO') return 'Estoque baixo'
+  if (status === 'URGENTE') return 'Crítico'
+  if (status === 'ATENCAO') return 'Atenção'
   return 'Ok'
 }
 
@@ -5671,7 +5671,7 @@ export function InsumosModule() {
 	            <CardHeader className="flex items-center justify-between gap-2">
 	              <CardTitle className="text-white text-sm flex items-center gap-2">
 	                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-	                Críticos
+	                Crítico
 	              </CardTitle>
 	            </CardHeader>
 	            <CardContent>
@@ -5686,14 +5686,14 @@ export function InsumosModule() {
 	            <CardHeader className="flex items-center justify-between gap-2">
 	              <CardTitle className="text-white text-sm flex items-center gap-2">
 	                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-	                Estoque baixo
+	                Atenção
 	              </CardTitle>
 	            </CardHeader>
 	            <CardContent>
 	              <div className="text-lg text-blue-50 font-mono">
 	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.lowStock ?? '-')}
 	              </div>
-	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">atenção</div> : null}
+	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">estoque baixo</div> : null}
 	            </CardContent>
 	          </Card>
 
@@ -5716,7 +5716,7 @@ export function InsumosModule() {
 	            <CardHeader className="flex items-center justify-between gap-2">
 	              <CardTitle className="text-white text-sm flex items-center gap-2">
 	                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-	                Expirado c/ estoque
+	                Expirado
 	              </CardTitle>
 	            </CardHeader>
 	            <CardContent>
@@ -6078,7 +6078,7 @@ export function InsumosModule() {
               className="rounded-xl border border-white/10 bg-black/10 p-3"
             >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Estoque baixo
+                Atenção
               </summary>
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
@@ -6090,8 +6090,8 @@ export function InsumosModule() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="TODOS">Todos</SelectItem>
-                        <SelectItem value="ATENCAO">Estoque baixo</SelectItem>
-                        <SelectItem value="URGENTE">Críticos</SelectItem>
+                        <SelectItem value="ATENCAO">Atenção</SelectItem>
+                        <SelectItem value="URGENTE">Crítico</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -6239,7 +6239,7 @@ export function InsumosModule() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-sm text-blue-100/80 flex items-center gap-2">
                         <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                        Expirado c/ estoque
+                        Expirado
                       </div>
                       <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
                     </div>
@@ -6473,7 +6473,7 @@ export function InsumosModule() {
                                   onClick={() => openQualityFix(it)}
                                   disabled={!isAuthed || (!it.registro && !it.codigoBarras)}
                                 >
-                                  Edicao rapida
+                                  Editar
                                 </Button>
                               </td>
                             </tr>
@@ -7821,8 +7821,8 @@ export function InsumosModule() {
                         <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
                         {isCritico || isLowStock || isVencendo || isExpirado ? (
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {isCritico ? <Badge variant="destructive">Críticos</Badge> : null}
-                            {isLowStock ? <Badge variant="secondary">Estoque baixo</Badge> : null}
+                            {isCritico ? <Badge variant="destructive">Crítico</Badge> : null}
+                            {isLowStock ? <Badge variant="secondary">Atenção</Badge> : null}
                             {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
                             {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
                           </div>
