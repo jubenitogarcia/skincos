@@ -15,6 +15,10 @@ import { whatsappOrchestrator } from './services/whatsappOrchestrator.js'
 // Ponto (reconhecimento facial + batidas)
 import { registerPontoRoutes } from './server/pontoRoutes.js'
 
+// Harmonia (atendimento de leads via WhatsApp - Decision API)
+import { createHarmoniaRouter } from './server/harmonia/routes.js'
+import { startHarmoniaWorker } from './server/harmonia/worker.js'
+
 // Axios for facade requests to Unified System
 import axios from 'axios'
 
@@ -292,7 +296,12 @@ app.use((req, res, next) => {
 })
 
 // Enhanced body parser with larger limits and better error handling
-app.use(express.json({ limit: '10mb' }))
+app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => {
+        req.rawBody = buf
+    },
+}))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // -------------------------------------------------------------
@@ -304,6 +313,23 @@ try {
     console.log('✅ Ponto routes registered')
 } catch (e) {
     console.warn('⚠️  Ponto routes failed to register:', e?.message || String(e))
+}
+
+// -------------------------------------------------------------
+// Harmonia (Decision API for n8n executor)
+// -------------------------------------------------------------
+try {
+    app.use('/api/harmonia', createHarmoniaRouter({ varDir: VAR_DIR }))
+    console.log('✅ Harmonia routes registered')
+} catch (e) {
+    console.warn('⚠️  Harmonia routes failed to register:', e?.message || String(e))
+}
+
+try {
+    startHarmoniaWorker({ varDir: VAR_DIR })
+    console.log('✅ Harmonia worker initialized')
+} catch (e) {
+    console.warn('⚠️  Harmonia worker failed to start:', e?.message || String(e))
 }
 
 // -------------------------------------------------------------

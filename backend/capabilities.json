@@ -52,6 +52,16 @@
       "notes": "API legacy completa (/status, /qr.html, etc) + scripts e docker-compose"
     },
     {
+      "id": "harmonia",
+      "label": "Harmonia (WhatsApp Leads)",
+      "path": "backend/apps/crm-api",
+      "kind": "service",
+      "health": {
+        "path": "/api/harmonia/health"
+      },
+      "notes": "Decision + executor interno. Webhooks: POST /api/harmonia/webhook/official e /webhook/evolution. Endpoint principal: POST /api/harmonia/ingest"
+    },
+    {
       "id": "scraper",
       "label": "Scraper (Espaço Facial)",
       "path": "backend/apps/automations/scraper",
