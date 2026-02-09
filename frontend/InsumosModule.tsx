@@ -372,8 +372,12 @@ type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
 function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): EstoqueStatus {
   const atual = Number(estoqueAtual) || 0
   const minimo = Number(estoqueMinimo) || 0
-  if (atual === 0 || atual <= 0.5 * minimo) return 'URGENTE'
-  if (atual <= minimo) return 'ATENCAO'
+  if (atual < 0) return 'URGENTE'
+  if (minimo <= 0) return 'OK'
+  // "Critico" means strictly below the configured minimum.
+  if (atual < minimo) return 'URGENTE'
+  // "Atencao" is only at the limit (not below it).
+  if (atual === minimo) return 'ATENCAO'
   return 'OK'
 }
 
@@ -6074,7 +6078,7 @@ export function InsumosModule() {
               className="rounded-xl border border-white/10 bg-black/10 p-3"
             >
               <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Estoque abaixo do mínimo
+                Estoque baixo
               </summary>
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
