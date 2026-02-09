@@ -119,14 +119,9 @@ function readPolicyFromBody(body) {
 async function resolveItemPolicy(env, row, categoriaOverride) {
   const itemPolicy = readPolicyFromRow(row);
   if (itemPolicy.explicit) return itemPolicy;
-  const categoria = String(categoriaOverride || row?.categoria || '').trim();
-  const catPolicy = await getCategoryPolicy(env, categoria);
-  return {
-    explicit: false,
-    requiresLot: !!catPolicy.requiresLot,
-    requiresExpiry: !!catPolicy.requiresExpiry,
-    fefo: !!catPolicy.fefo,
-  };
+  // Policy is item-scoped. Category policies may exist for suggestions/analytics,
+  // but they do not enforce requirements unless explicitly set on the item.
+  return { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
 }
 
 function enforceLotExpiryPolicyOrError({ policy, lote, dataValidade }) {
@@ -607,7 +602,7 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
 
   const categoria = String(body?.categoria || '').trim();
   const bodyPolicy = readPolicyFromBody(body);
-  const policy = bodyPolicy.explicit ? bodyPolicy : await getCategoryPolicy(env, categoria);
+  const policy = bodyPolicy.explicit ? bodyPolicy : { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
   const policyCheck = enforceLotExpiryPolicyOrError({ policy, lote, dataValidade });
   if (!policyCheck.ok) return policyCheck;
 
@@ -676,7 +671,7 @@ export async function d1UpdateInsumo({ env, registro, body }) {
     ? bodyPolicy
     : existingPolicy.explicit
       ? existingPolicy
-      : await getCategoryPolicy(env, nextCategoria);
+      : { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
   const policyCheck = enforceLotExpiryPolicyOrError({ policy, lote: nextLote, dataValidade: nextValidade });
   if (!policyCheck.ok) return policyCheck;
 
