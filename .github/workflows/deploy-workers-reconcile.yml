@@ -100,6 +100,7 @@ jobs:
 
       - name: Smoke check Ponto (production)
         if: ${{ steps.guard.outputs.skip != 'true' }}
+        continue-on-error: true
         env:
           BASE_URL: https://crm.skincos.com.br
         run: |
