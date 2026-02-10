@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('insumos', () => {
-  test('edit modal uses datalist for categoria/marca and surfaces policy validation errors', async ({ page }) => {
+  test('edit modal shows categoria/marca options and surfaces policy validation errors', async ({ page }) => {
     await page.route('**/api/insumos/**', async (route) => {
       const reqUrl = new URL(route.request().url())
       const path = reqUrl.pathname
@@ -99,12 +99,20 @@ test.describe('insumos', () => {
     await page.getByRole('button', { name: 'Editar' }).first().click()
     await expect(page.getByText('Editar insumo')).toBeVisible()
 
-    const categoriaInput = page.locator('input[list="insumos-categorias-edit"]')
-    const marcaInput = page.locator('input[list="insumos-marcas-edit"]')
+    const categoriaInput = page.getByTestId('insumos-edit-categoria')
+    const marcaInput = page.getByTestId('insumos-edit-marca')
     await expect(categoriaInput).toBeVisible()
     await expect(marcaInput).toBeVisible()
-    await expect(page.locator('datalist#insumos-categorias-edit option[value="Preenchedor"]')).toHaveCount(1)
-    await expect(page.locator('datalist#insumos-marcas-edit option[value="Rennova"]')).toHaveCount(1)
+
+    await categoriaInput.focus()
+    await expect(page.getByRole('button', { name: 'Preenchedor' })).toBeVisible()
+    await page.getByRole('button', { name: 'Preenchedor' }).click()
+    await expect(categoriaInput).toHaveValue('Preenchedor')
+
+    await marcaInput.focus()
+    await expect(page.getByRole('button', { name: 'Rennova' })).toBeVisible()
+    await page.getByRole('button', { name: 'Rennova' }).click()
+    await expect(marcaInput).toHaveValue('Rennova')
 
     // Trip policy validation: require expiry but leave date empty.
     await page.getByText('Validade obrigatória').click()

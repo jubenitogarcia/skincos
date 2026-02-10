@@ -7031,6 +7031,7 @@ export function InsumosModule() {
 	                }}
 	                placeholder="ex: toxina"
 	                options={lotCategorias}
+	                inputTestId="insumos-edit-categoria"
 	                ariaInvalid={editValidationErrors.categoria ? true : undefined}
 	                inputClassName={
 	                  editValidationErrors.categoria
@@ -7107,6 +7108,7 @@ export function InsumosModule() {
 	                }}
 	                placeholder="ex: Allergan"
 	                options={insumosMarcas}
+	                inputTestId="insumos-edit-marca"
 	                ariaInvalid={editValidationErrors.marca ? true : undefined}
 	                inputClassName={
 	                  editValidationErrors.marca ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined

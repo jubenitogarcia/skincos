@@ -11,6 +11,7 @@ type AutocompleteInputProps = {
   placeholder?: string
   disabled?: boolean
   ariaInvalid?: boolean
+  inputTestId?: string
   className?: string
   inputClassName?: string
   maxItems?: number
@@ -30,6 +31,7 @@ export function AutocompleteInput({
   placeholder,
   disabled,
   ariaInvalid,
+  inputTestId,
   className,
   inputClassName,
   maxItems = 40
@@ -65,6 +67,7 @@ export function AutocompleteInput({
             placeholder={placeholder}
             disabled={disabled}
             aria-invalid={ariaInvalid ? true : undefined}
+            data-testid={inputTestId}
             className={cn('pr-9', inputClassName)}
           />
           <button
@@ -104,4 +107,3 @@ export function AutocompleteInput({
     </Popover>
   )
 }
-
