@@ -4,6 +4,7 @@ import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-p
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { BrDatePickerInput } from '@/br-date-picker'
+import { AutocompleteInput } from '@/autocomplete-input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Checkbox } from '@/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
@@ -2553,13 +2554,24 @@ export function InsumosModule() {
     setPolicyFormSuggestion('__NONE__')
   }, [])
 
-  const saveCategoryPolicy = React.useCallback(async () => {
-    if (!isManagerRole || !isAuthed) return
-    const label = String(policyFormLabel || '').trim()
-    const slugInput = String(policyFormSlug || '').trim()
-    const slug = slugifyCategoria(slugInput || label)
-    if (!slug) {
-      toast.error('Informe a categoria (nome)')
+	  const saveCategoryPolicy = React.useCallback(async () => {
+	    if (!isAuthed) {
+	      toast.error('Faça login para salvar a política.')
+	      return
+	    }
+	    if (!isManagerRole) {
+	      toast.error('Somente gestores podem alterar políticas.')
+	      return
+	    }
+	    if (!canUseApi) {
+	      toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
+	      return
+	    }
+	    const label = String(policyFormLabel || '').trim()
+	    const slugInput = String(policyFormSlug || '').trim()
+	    const slug = slugifyCategoria(slugInput || label)
+	    if (!slug) {
+	      toast.error('Informe a categoria (nome)')
       return
     }
     const requiresLot = !!policyFormRequiresLot
@@ -2599,12 +2611,13 @@ export function InsumosModule() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
-  }, [
-    isAuthed,
-    isManagerRole,
-    loadAdminCategoryPolicies,
-    loadCategoryPolicies,
-    mutateJson,
+	  }, [
+	    canUseApi,
+	    isAuthed,
+	    isManagerRole,
+	    loadAdminCategoryPolicies,
+	    loadCategoryPolicies,
+	    mutateJson,
     policyFormEditingSlug,
     policyFormFefo,
     policyFormLabel,
@@ -2614,11 +2627,22 @@ export function InsumosModule() {
     resetPolicyForm
   ])
 
-  const deleteCategoryPolicy = React.useCallback(
-    async (slugRaw: string) => {
-      if (!isManagerRole || !isAuthed) return
-      const slug = String(slugRaw || '').trim()
-      if (!slug) return
+	  const deleteCategoryPolicy = React.useCallback(
+	    async (slugRaw: string) => {
+	      if (!isAuthed) {
+	        toast.error('Faça login para excluir a política.')
+	        return
+	      }
+	      if (!isManagerRole) {
+	        toast.error('Somente gestores podem excluir políticas.')
+	        return
+	      }
+	      if (!canUseApi) {
+	        toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
+	        return
+	      }
+	      const slug = String(slugRaw || '').trim()
+	      if (!slug) return
       const ok = window.confirm(`Remover política da categoria "${slug}"?`)
       if (!ok) return
 
@@ -2641,11 +2665,12 @@ export function InsumosModule() {
         toast.error(e instanceof Error ? e.message : String(e))
       }
     },
-    [
-      isAuthed,
-      isManagerRole,
-      loadAdminCategoryPolicies,
-      loadCategoryPolicies,
+	    [
+	      canUseApi,
+	      isAuthed,
+	      isManagerRole,
+	      loadAdminCategoryPolicies,
+	      loadCategoryPolicies,
       mutateJson,
       policyFormEditingSlug,
       resetPolicyForm
@@ -6996,31 +7021,26 @@ export function InsumosModule() {
                 <div className="mt-1 text-xs text-red-300">{editValidationErrors.produto}</div>
               ) : null}
             </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-              <Input
-                value={editCategoria}
-                onChange={(e) => {
-                  setEditCategoria(e.target.value)
-                  clearEditValidationError('categoria')
-                }}
-                placeholder="ex: toxina"
-                list="insumos-categorias-edit"
-                aria-invalid={editValidationErrors.categoria ? true : undefined}
-                className={
-                  editValidationErrors.categoria
-                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
-                    : undefined
-                }
-              />
-              <datalist id="insumos-categorias-edit">
-                {lotCategorias.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
-              {editValidationErrors.categoria ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.categoria}</div>
-              ) : null}
+	            <div>
+	              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
+	              <AutocompleteInput
+	                value={editCategoria}
+	                onValueChange={(next) => {
+	                  setEditCategoria(next)
+	                  clearEditValidationError('categoria')
+	                }}
+	                placeholder="ex: toxina"
+	                options={lotCategorias}
+	                ariaInvalid={editValidationErrors.categoria ? true : undefined}
+	                inputClassName={
+	                  editValidationErrors.categoria
+	                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+	                    : undefined
+	                }
+	              />
+	              {editValidationErrors.categoria ? (
+	                <div className="mt-1 text-xs text-red-300">{editValidationErrors.categoria}</div>
+	              ) : null}
             </div>
             <div
               className={`md:col-span-2 rounded-xl border p-3 ${
@@ -7077,32 +7097,25 @@ export function InsumosModule() {
                 <div className="mt-2 text-xs text-red-300">{editValidationErrors.policy}</div>
               ) : null}
             </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Marca</div>
-              <Input
-                value={editMarca}
-                onChange={(e) => {
-                  setEditMarca(e.target.value)
-                  clearEditValidationError('marca')
-                }}
-                placeholder="ex: Allergan"
-                list="insumos-marcas-edit"
-                aria-invalid={editValidationErrors.marca ? true : undefined}
-                className={
-                  editValidationErrors.marca
-                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
-                    : undefined
-                }
-              />
-              <datalist id="insumos-marcas-edit">
-                {insumosMarcas.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-              {editValidationErrors.marca ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.marca}</div>
-              ) : null}
-            </div>
+	            <div>
+	              <div className="text-xs text-muted-foreground mb-1">Marca</div>
+	              <AutocompleteInput
+	                value={editMarca}
+	                onValueChange={(next) => {
+	                  setEditMarca(next)
+	                  clearEditValidationError('marca')
+	                }}
+	                placeholder="ex: Allergan"
+	                options={insumosMarcas}
+	                ariaInvalid={editValidationErrors.marca ? true : undefined}
+	                inputClassName={
+	                  editValidationErrors.marca ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined
+	                }
+	              />
+	              {editValidationErrors.marca ? (
+	                <div className="mt-1 text-xs text-red-300">{editValidationErrors.marca}</div>
+	              ) : null}
+	            </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
               <Select
