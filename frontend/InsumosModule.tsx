@@ -10,6 +10,7 @@ import { Checkbox } from '@/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 type InsumosHealth = {
@@ -35,6 +36,7 @@ type InsumosUser = {
 type Insumo = {
   registro?: string
   codigoBarras?: string
+  codigosBarras?: string[]
   categoria?: string
   marca?: string
   produto?: string
@@ -242,6 +244,26 @@ function normalizeTipoUnidadeToCanonical(raw: string): string {
   if (!normalized) return ''
   if (normalized === 'flaconete') return 'frasco'
   return CANONICAL_TIPOS_UNIDADE_SET.has(normalized) ? normalized : ''
+}
+
+function parseBarcodeInput(value: string): string[] {
+  return String(value || '')
+    .split(/[\n,;]+/g)
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+}
+
+function getInsumoBarcodes(item: Insumo | null | undefined): string[] {
+  const codes = new Set<string>();
+  const add = (v?: string) => {
+    const value = String(v || '').trim();
+    if (value) codes.add(value);
+  };
+  add(item?.codigoBarras);
+  if (Array.isArray(item?.codigosBarras)) {
+    for (const v of item?.codigosBarras || []) add(String(v || ''));
+  }
+  return Array.from(codes);
 }
 
 function fmtMoneyBRL(value: number) {
@@ -932,6 +954,7 @@ export function InsumosModule() {
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
+  const [quickSearch, setQuickSearch] = React.useState('')
   const [quickRegistro, setQuickRegistro] = React.useState('')
   const [quickRegistros, setQuickRegistros] = React.useState<string[]>([])
   const [quickCandidates, setQuickCandidates] = React.useState<Array<{ registro: string; lote: string; dataValidade: string | null; estoque: number }>>([])
@@ -1027,6 +1050,7 @@ export function InsumosModule() {
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createScanOpen, setCreateScanOpen] = React.useState(false)
   const [createCodigo, setCreateCodigo] = React.useState('')
+  const [createCodigosExtras, setCreateCodigosExtras] = React.useState('')
   const [createProduto, setCreateProduto] = React.useState('')
   const [createCategoria, setCreateCategoria] = React.useState('')
   const [createPolicyTouched, setCreatePolicyTouched] = React.useState(false)
@@ -1055,6 +1079,7 @@ export function InsumosModule() {
   const [editOpen, setEditOpen] = React.useState(false)
   const [editTarget, setEditTarget] = React.useState<Insumo | null>(null)
   const [editCodigo, setEditCodigo] = React.useState('')
+  const [editCodigosExtras, setEditCodigosExtras] = React.useState('')
   const [editProduto, setEditProduto] = React.useState('')
   const [editCategoria, setEditCategoria] = React.useState('')
   const [editCategoriaRequiresLot, setEditCategoriaRequiresLot] = React.useState(false)
@@ -1755,7 +1780,7 @@ export function InsumosModule() {
 
     const source = fromLookup ? quickLookupItems : (insumos || [])
     const items = source
-      .filter((i) => String(i.codigoBarras || '').trim() === codigo && String(i.registro || '').trim())
+      .filter((i) => getInsumoBarcodes(i).includes(codigo) && String(i.registro || '').trim())
       .map((i) => {
         const registro = String(i.registro || '').trim()
         const lote = String(i.lote || '').trim()
@@ -1784,6 +1809,48 @@ export function InsumosModule() {
     return list.sort(sortByValidade)
   }, [insumos, quickCodigo, quickOp, quickLookupCode, quickLookupCtxUnidade, quickLookupItems, transferFrom, unidade])
 
+  const quickSearchMatches = React.useMemo(() => {
+    const query = quickSearch.trim().toLowerCase()
+    if (!query) return []
+    const source = Array.isArray(insumos) ? insumos : []
+    const matches: Array<{ item: Insumo; matchedCode: string }> = []
+    for (const item of source) {
+      const codes = getInsumoBarcodes(item)
+      const produto = String(item?.produto || '').toLowerCase()
+      const categoria = String(item?.categoria || '').toLowerCase()
+      const marca = String(item?.marca || '').toLowerCase()
+      const hay = [produto, categoria, marca, ...codes].filter(Boolean).join(' ')
+      if (!hay.includes(query)) continue
+      const matchedCode = codes.find((c) => String(c || '').toLowerCase().includes(query)) || codes[0] || ''
+      matches.push({ item, matchedCode })
+      if (matches.length >= 8) break
+    }
+    return matches
+  }, [insumos, quickSearch])
+
+  const applyQuickSelection = React.useCallback((item: Insumo, preferredCode?: string) => {
+    const codes = getInsumoBarcodes(item)
+    const code = preferredCode && codes.includes(preferredCode) ? preferredCode : codes[0] || ''
+    if (!code) return
+    setQuickCodigo(code)
+    setQuickSearch(code)
+  }, [])
+
+  React.useEffect(() => {
+    const query = quickSearch.trim()
+    if (!query) {
+      if (quickCodigo) setQuickCodigo('')
+      return
+    }
+    if (query === quickCodigo) return
+    const looksLikeCode = /^[0-9]{4,}$/.test(query)
+    if (looksLikeCode) {
+      if (query !== quickCodigo) setQuickCodigo(query)
+      return
+    }
+    if (quickCodigo) setQuickCodigo('')
+  }, [quickSearch, quickCodigo])
+
   const quickLoteNeedsPick = (quickCandidates.length > 1) || (quickRegistros.length > 1) || (quickLotes.length > 1)
   const quickLotesForPicker = React.useMemo(() => {
     if (quickCandidates.length) return quickCandidates
@@ -1797,6 +1864,7 @@ export function InsumosModule() {
   }, [quickCandidates, quickLotes, quickRegistros.join('|')])
 
   const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
+    setQuickSearch('')
     setQuickCodigo('')
     setQuickRegistro('')
     setQuickRegistros([])
@@ -1828,7 +1896,11 @@ export function InsumosModule() {
       }
     ) => {
       resetQuickOperationState()
-      if (prefill?.codigoBarras) setQuickCodigo(String(prefill.codigoBarras).trim())
+      if (prefill?.codigoBarras) {
+        const code = String(prefill.codigoBarras).trim()
+        setQuickCodigo(code)
+        setQuickSearch(code)
+      }
       if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
       if (prefill?.obs) setQuickObs(String(prefill.obs))
       if (prefill?.fromUnidade) setTransferFrom(String(prefill.fromUnidade))
@@ -1864,7 +1936,7 @@ export function InsumosModule() {
       })
       const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
       const list = Array.isArray(out?.data) ? out.data : []
-      const exact = list.filter((i) => String(i.codigoBarras || '').trim() === codigo)
+      const exact = list.filter((i) => getInsumoBarcodes(i).includes(codigo))
       return exact.length ? exact : list
     },
     [apiJson]
@@ -2799,7 +2871,10 @@ export function InsumosModule() {
     setEditTarget(i)
     setEditValidationErrors({})
     setEditSaveError(null)
-    setEditCodigo(String(i.codigoBarras || ''))
+    const primary = String(i.codigoBarras || '')
+    setEditCodigo(primary)
+    const extras = getInsumoBarcodes(i).filter((code) => code !== primary)
+    setEditCodigosExtras(extras.join('\n'))
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
     setEditMarca(String(i.marca || ''))
@@ -3258,6 +3333,8 @@ export function InsumosModule() {
       return
     }
     const codigoBarras = editCodigo.trim()
+    const extraCodes = parseBarcodeInput(editCodigosExtras)
+    const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
     const produto = editProduto.trim()
     if (!codigoBarras) {
       setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
@@ -3321,6 +3398,7 @@ export function InsumosModule() {
         queueLabel: 'Edição de insumo',
         body: {
           codigoBarras,
+          codigosBarras,
           produto,
           categoria,
           marca: editMarca.trim(),
@@ -3859,28 +3937,30 @@ export function InsumosModule() {
     if (!Array.isArray(items) || !items.length) return
     let changed = false
     for (const it of items) {
-      const codigo = String(it?.codigoBarras || '').trim()
-      if (!codigo) continue
-      const registro = String(it?.registro || '').trim() || `__no_registro__:${codigo}`
-      let byRegistro = insumosCacheRef.current.get(codigo)
-      if (!byRegistro) {
-        byRegistro = new Map<string, Insumo>()
-        insumosCacheRef.current.set(codigo, byRegistro)
-      }
-      const prev = byRegistro.get(registro)
-      if (!prev) {
-        byRegistro.set(registro, it)
+      const codes = getInsumoBarcodes(it)
+      if (!codes.length) continue
+      const registro = String(it?.registro || '').trim() || `__no_registro__:${codes[0]}`
+      for (const codigo of codes) {
+        let byRegistro = insumosCacheRef.current.get(codigo)
+        if (!byRegistro) {
+          byRegistro = new Map<string, Insumo>()
+          insumosCacheRef.current.set(codigo, byRegistro)
+        }
+        const prev = byRegistro.get(registro)
+        if (!prev) {
+          byRegistro.set(registro, it)
+          changed = true
+          continue
+        }
+        const merged: Insumo = {
+          ...prev,
+          ...it,
+          estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
+          statusValidade: it.statusValidade || prev.statusValidade
+        }
+        byRegistro.set(registro, merged)
         changed = true
-        continue
       }
-      const merged: Insumo = {
-        ...prev,
-        ...it,
-        estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
-        statusValidade: it.statusValidade || prev.statusValidade
-      }
-      byRegistro.set(registro, merged)
-      changed = true
     }
     if (changed) setInsumosCacheVersion((v) => v + 1)
   }, [])
@@ -5006,6 +5086,19 @@ export function InsumosModule() {
                         </div>
                       ) : null}
                     </div>
+                    <div className="mt-2">
+                      <div className="text-xs text-blue-200/70 mb-1">Códigos adicionais</div>
+                      <Textarea
+                        value={createCodigosExtras}
+                        onChange={(e) => setCreateCodigosExtras(e.target.value)}
+                        placeholder="um por linha"
+                        rows={3}
+                        className="bg-white/[0.06] border-white/20 text-white"
+                      />
+                      <div className="mt-1 text-[10px] text-blue-200/50">
+                        Opcional. Use para variações de código do mesmo produto.
+                      </div>
+                    </div>
                   </div>
                   <div className="md:col-span-2">
                     <div className="text-xs text-blue-200/70 mb-1">Produto</div>
@@ -5159,7 +5252,9 @@ export function InsumosModule() {
                     onClick={async () => {
                       const codigoBarras = createCodigo.trim()
                       if (!codigoBarras) return toast.error('Informe o código de barras')
-                      const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                      const extraCodes = parseBarcodeInput(createCodigosExtras)
+                      const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
+                      const existing = (insumos || []).find((i) => getInsumoBarcodes(i).includes(codigoBarras))
                       const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
                       const policy = {
                         requiresLot: !!createCategoriaRequiresLot,
@@ -5193,6 +5288,7 @@ export function InsumosModule() {
                           queueLabel: 'Cadastro de insumo',
                           body: {
                             codigoBarras,
+                            codigosBarras,
                             produto,
                             allowDuplicateLot,
                             categoria,
@@ -5214,6 +5310,7 @@ export function InsumosModule() {
                           }
                         })
                         toast.success('Insumo cadastrado.')
+                        setCreateCodigosExtras('')
                         setCreateOpen(false)
                         await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
                       } catch (e) {
@@ -5461,14 +5558,49 @@ export function InsumosModule() {
 
           <div className="space-y-3">
             <div>
-              <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
+              <div className="text-xs text-blue-200/70 mb-1">Buscar por produto, marca, categoria ou código</div>
               <div className="flex items-center gap-2">
-                <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
+                <Input value={quickSearch} onChange={(e) => setQuickSearch(e.target.value)} placeholder="ex: Rennova, preenchedor, 789..." />
                 <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
                   {quickScanOpen ? 'Fechar' : 'Escanear'}
                 </Button>
               </div>
               <div className="mt-2">
+                {quickSearchMatches.length ? (
+                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                    <div className="text-[11px] text-blue-200/60 mb-2">Selecione o produto para lançar a operação:</div>
+                    <div className="space-y-2">
+                      {quickSearchMatches.map(({ item, matchedCode }) => {
+                        const code = matchedCode || item.codigoBarras || ''
+                        return (
+                          <button
+                            key={`${item.registro || ''}-${code}`}
+                            type="button"
+                            onClick={() => applyQuickSelection(item, code)}
+                            className="w-full rounded-md border border-white/5 bg-white/5 px-2 py-2 text-left hover:bg-white/10"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm text-blue-50 font-semibold">{String(item.produto || 'Insumo')}</div>
+                              <div className="text-xs text-blue-200/60 font-mono">{code}</div>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
+                              {item.categoria ? (
+                                <Badge style={buildTagStyle(getCategoriaBgColor(String(item.categoria)))} className="border">
+                                  {String(item.categoria)}
+                                </Badge>
+                              ) : null}
+                              {item.marca ? (
+                                <Badge style={buildTagStyle(getMarcaBgColor(String(item.marca)))} className="border">
+                                  {String(item.marca)}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 {quickLookupLoading ? (
                   <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
                 ) : quickLookupError ? (
@@ -5608,6 +5740,7 @@ export function InsumosModule() {
               <BarcodeScannerInline
                 onDetected={(code) => {
                   setQuickCodigo(code)
+                  setQuickSearch(code)
                   setQuickScanOpen(false)
                   toast.success('Código detectado')
                 }}
@@ -6332,7 +6465,10 @@ export function InsumosModule() {
                             key={`${a.key}-${idx}`}
                             className={`hover:bg-white/5 ${a.codigoBarras ? 'cursor-pointer' : ''}`}
                             onClick={() => {
-                              if (code) setQuickCodigo(code)
+                              if (code) {
+                                setQuickCodigo(code)
+                                setQuickSearch(code)
+                              }
                             }}
                             title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
                           >
@@ -7002,6 +7138,19 @@ export function InsumosModule() {
               ) : null}
             </div>
             <div className="md:col-span-2">
+              <div className="text-xs text-muted-foreground mb-1">Códigos adicionais</div>
+              <Textarea
+                value={editCodigosExtras}
+                onChange={(e) => setEditCodigosExtras(e.target.value)}
+                placeholder="um por linha"
+                rows={3}
+                className="bg-white/[0.06] border-white/20 text-white"
+              />
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                Opcional. Use para variações de código do mesmo produto.
+              </div>
+            </div>
+            <div className="md:col-span-2">
               <div className="text-xs text-muted-foreground mb-1">Produto</div>
               <Input
                 value={editProduto}
@@ -7545,6 +7694,19 @@ export function InsumosModule() {
                     </div>
                   ) : null}
                 </div>
+                <div className="mt-2">
+                  <div className="text-xs text-blue-200/70 mb-1">Códigos adicionais</div>
+                  <Textarea
+                    value={createCodigosExtras}
+                    onChange={(e) => setCreateCodigosExtras(e.target.value)}
+                    placeholder="um por linha"
+                    rows={3}
+                    className="bg-white/[0.06] border-white/20 text-white"
+                  />
+                  <div className="mt-1 text-[10px] text-blue-200/50">
+                    Opcional. Use para variações de código do mesmo produto.
+                  </div>
+                </div>
               </div>
               <div className="md:col-span-2">
                 <div className="text-xs text-blue-200/70 mb-1">Produto</div>
@@ -7750,7 +7912,9 @@ export function InsumosModule() {
                 onClick={async () => {
                   const codigoBarras = createCodigo.trim()
                   if (!codigoBarras) return toast.error('Informe o código de barras')
-                  const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                  const extraCodes = parseBarcodeInput(createCodigosExtras)
+                  const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
+                  const existing = (insumos || []).find((i) => getInsumoBarcodes(i).includes(codigoBarras))
                   const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
                   const policy = {
                     requiresLot: !!createCategoriaRequiresLot,
@@ -7784,6 +7948,7 @@ export function InsumosModule() {
                       queueLabel: 'Cadastro de insumo',
                       body: {
                         codigoBarras,
+                        codigosBarras,
                         produto,
                         allowDuplicateLot,
                         categoria,
@@ -7806,6 +7971,7 @@ export function InsumosModule() {
                     })
                     toast.success('Insumo cadastrado')
                     setCreateCodigo('')
+                    setCreateCodigosExtras('')
                     setCreateProduto('')
                     setCreateCategoria('')
                     setCreateMarca('')
@@ -7949,7 +8115,10 @@ export function InsumosModule() {
                           variant="secondary"
                           className="h-8 px-2 text-xs"
                           onClick={() => {
-                            if (i.codigoBarras) setQuickCodigo(i.codigoBarras)
+                            if (i.codigoBarras) {
+                              setQuickCodigo(i.codigoBarras)
+                              setQuickSearch(String(i.codigoBarras))
+                            }
                           }}
                         >
                           Usar
