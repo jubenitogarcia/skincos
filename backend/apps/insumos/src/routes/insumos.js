@@ -321,7 +321,12 @@ export async function handleInsumosRoutes({
             if (parts.length === 2 && maybeCodigo && !isReserved) {
                 try {
                     const items = await d1.listInsumos({ unidade });
-                    const byCodigo = items.filter((i) => String(i?.codigoBarras || '').trim() === maybeCodigo);
+                    const byCodigo = items.filter((i) => {
+                        const primary = String(i?.codigoBarras || '').trim();
+                        if (primary && primary === maybeCodigo) return true;
+                        const list = Array.isArray(i?.codigosBarras) ? i.codigosBarras : [];
+                        return list.some((code) => String(code || '').trim() === maybeCodigo);
+                    });
                     if (byCodigo.length === 1) {
                         return withCORS(JSON.stringify({ success: true, data: byCodigo[0] }), { status: 200 }, appOrigin);
                     }
