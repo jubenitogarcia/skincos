@@ -357,6 +357,17 @@ function buildTagStyle(bgColor?: string | null): React.CSSProperties {
   }
 }
 
+function useViewportSize() {
+  const [size, setSize] = React.useState({ width: 0, height: 0 })
+  React.useEffect(() => {
+    const update = () => setSize({ width: window.innerWidth, height: window.innerHeight })
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  return size
+}
+
 function slugifyCategoria(value?: string | null) {
   const s0 = String(value || '').trim().toLowerCase()
   if (!s0) return ''
@@ -927,6 +938,13 @@ async function apiJson<T>(
 
 export function InsumosModule() {
   const rootRef = React.useRef<HTMLDivElement | null>(null)
+  const { width: viewportWidth, height: viewportHeight } = useViewportSize()
+  const isCompactViewport = viewportWidth > 0 && viewportWidth < 1024
+  const dialogMaxHeight = viewportHeight > 0 && viewportHeight < 720 ? 'max-h-[88vh]' : 'max-h-[92vh]'
+  const dialogWideClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl'}`
+  const dialogLargeClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'w-[calc(100vw-1.5rem)] max-w-5xl'}`
+  const dialogMediumClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'max-w-4xl'}`
+  const dialogSmallClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'max-w-2xl'}`
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
@@ -5023,7 +5041,7 @@ export function InsumosModule() {
       ) : null}
       <DragDropContext onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
-        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-6xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className={dialogWideClass}>
           <DialogHeader>
             <DialogTitle>Insumos</DialogTitle>
             <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
@@ -5333,7 +5351,7 @@ export function InsumosModule() {
               onScroll={onInsumosModalScroll}
               className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10"
             >
-              <table className="w-full table-fixed text-sm">
+              <table className="w-full table-auto text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
                     <th className="text-left p-3">Produto</th>
@@ -5371,7 +5389,7 @@ export function InsumosModule() {
                         <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-top break-all">{i.codigoBarras || '-'}</td>
                         <td className="p-3 text-right text-blue-100/80 font-mono align-top">{Number.isFinite(estoque) ? estoque : '-'}</td>
                         <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-top">{min || '-'}</td>
-                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top">{fmtDateOnlyBR(i.dataValidade || '')}</td>
+                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top break-words">{fmtDateOnlyBR(i.dataValidade || '')}</td>
                         <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top">{fmtMoneyBRL(valor)}</td>
                         <td className="p-3 text-right">
                           <div className="flex flex-col sm:flex-row justify-end gap-2">
@@ -5417,7 +5435,7 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className={dialogSmallClass}>
           <DialogHeader>
             <DialogTitle>Pendências de sincronização</DialogTitle>
             <DialogDescription>
@@ -5526,7 +5544,7 @@ export function InsumosModule() {
           setQuickOp(null)
         }}
       >
-        <DialogContent className="max-w-xl dark bg-corporate-900 border-white/10 text-white">
+      <DialogContent className={`${dialogLargeClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">
               {quickOp === 'ENTRADA'
@@ -5821,7 +5839,7 @@ export function InsumosModule() {
           if (!open) setQuickActionFeedback(null)
         }}
       >
-        <DialogContent className="max-w-md dark bg-corporate-900 border-white/10 text-white">
+        <DialogContent className={`${dialogSmallClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">
               {quickActionFeedback?.type === 'success' ? 'Sucesso' : 'Falha'}
@@ -5844,7 +5862,7 @@ export function InsumosModule() {
       </Dialog>
 
       <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
-        <DialogContent className="max-w-3xl dark bg-corporate-900 border-white/10 text-white">
+        <DialogContent className={`${dialogMediumClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">Lista de compra</DialogTitle>
             <DialogDescription className="text-blue-100/70">
@@ -6442,17 +6460,17 @@ export function InsumosModule() {
                 </div>
 
                 <div className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
-                  <table className="w-full table-fixed text-sm">
+                  <table className="w-full table-auto text-sm">
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
                         <th className="text-left p-3">Produto</th>
-                        <th className="text-left p-3 w-44">Categoria</th>
-                        <th className="text-left p-3 w-44">Status</th>
-                        <th className="text-left p-3 w-52">Ação</th>
-                        <th className="text-right p-3 w-20">Atual</th>
-                        <th className="text-right p-3 w-20">Mín</th>
-                        <th className="hidden lg:table-cell text-right p-3 w-20">Dif</th>
-                        <th className="hidden lg:table-cell text-right p-3 w-16">%</th>
+                        <th className="text-left p-3">Categoria</th>
+                        <th className="text-left p-3">Status</th>
+                        <th className="text-left p-3">Ação</th>
+                        <th className="text-right p-3">Atual</th>
+                        <th className="text-right p-3">Mín</th>
+                        <th className="hidden lg:table-cell text-right p-3">Dif</th>
+                        <th className="hidden lg:table-cell text-right p-3">%</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -6473,8 +6491,8 @@ export function InsumosModule() {
                             title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
                           >
                             <td className="p-3 text-blue-50 align-top">
-                              <div className="text-blue-50 truncate">{a.produto || '-'}</div>
-                              <div className="hidden md:block text-xs text-blue-200/60 font-mono truncate">{a.codigoBarras || '-'}</div>
+                              <div className="text-blue-50 break-words">{a.produto || '-'}</div>
+                              <div className="hidden md:block text-xs text-blue-200/60 font-mono break-all">{a.codigoBarras || '-'}</div>
                               {a.dataValidade ? (
                                 <div className="mt-1 text-xs text-blue-200/60">
                                   validade: <span className="font-mono">{fmtDateOnlyBR(String(a.dataValidade))}</span>
@@ -6490,7 +6508,7 @@ export function InsumosModule() {
                             <td className="p-3 text-blue-100/80">
                               <div className="flex items-center gap-2">
                                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
-                                <span className="truncate">{a.categoria || '-'}</span>
+                                <span className="break-words">{a.categoria || '-'}</span>
                               </div>
                             </td>
                             <td className="p-3">
@@ -6645,13 +6663,13 @@ export function InsumosModule() {
 
                 {overviewQuality?.issues?.length ? (
                   <div className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
-                    <table className="w-full table-fixed text-sm">
+                    <table className="w-full table-auto text-sm">
                       <thead className="bg-black/30 text-blue-100/80">
                         <tr>
-                          <th className="text-left p-3 w-24">Nível</th>
-                          <th className="text-left p-3 w-44">Código</th>
+                          <th className="text-left p-3">Nível</th>
+                          <th className="text-left p-3">Código</th>
                           <th className="text-left p-3">Mensagem</th>
-                          <th className="text-left p-3 w-28">Ação</th>
+                          <th className="text-left p-3">Ação</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -7021,7 +7039,7 @@ export function InsumosModule() {
           }
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className={dialogMediumClass}>
           <DialogHeader>
             <DialogTitle>Duplicidade de código de barras</DialogTitle>
             <DialogDescription>
@@ -7036,7 +7054,7 @@ export function InsumosModule() {
               )}
             </DialogDescription>
           </DialogHeader>
-          <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+          <div className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
             <table className="min-w-full text-sm">
               <thead className="bg-black/30 text-blue-100/80">
                 <tr>
@@ -7101,7 +7119,7 @@ export function InsumosModule() {
           if (!v) setEditTarget(null)
         }}
       >
-        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-2xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className={dialogLargeClass}>
           <DialogHeader>
             <DialogTitle>Editar insumo</DialogTitle>
             <DialogDescription className="break-words">
@@ -7390,7 +7408,7 @@ export function InsumosModule() {
       </Dialog>
 
       <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className={dialogSmallClass}>
           <DialogHeader>
             <DialogTitle>Editar lote/validade</DialogTitle>
             <DialogDescription>
@@ -7430,7 +7448,7 @@ export function InsumosModule() {
                 {lotSelecionado.fonte ? (
                   <div>
                     <div className="text-xs text-muted-foreground">Fonte</div>
-                    <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
+                    <div className="text-blue-100/80 break-words">{lotSelecionado.fonte}</div>
                   </div>
                 ) : null}
               </div>
@@ -7548,7 +7566,7 @@ export function InsumosModule() {
                 </div>
               ) : null}
               {sharePayload.url ? (
-                <div className="truncate">
+                <div className="break-words">
                   <span className="text-blue-200/70">Link:</span>{' '}
                   <a className="underline" href={sharePayload.url} target="_blank" rel="noreferrer">
                     {sharePayload.url}
@@ -7604,11 +7622,11 @@ export function InsumosModule() {
                   {item.files && item.files.length ? (
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-blue-200/70">
                       {item.files.map((f, idx) => (
-                        <span key={`${item.id}-${idx}`} className="truncate">
-                          {f.url ? (
-                            <a className="underline" href={f.url} target="_blank" rel="noreferrer">
-                              {f.name}
-                            </a>
+                      <span key={`${item.id}-${idx}`} className="break-words">
+                        {f.url ? (
+                          <a className="underline" href={f.url} target="_blank" rel="noreferrer">
+                            {f.name}
+                          </a>
                           ) : (
                             f.name
                           )}
@@ -8012,17 +8030,17 @@ export function InsumosModule() {
         ) : null}
 
         <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
-          <table className="w-full table-fixed text-sm">
+          <table className="w-full table-auto text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
                 <th className="text-left p-3">Produto</th>
-                <th className="text-left p-3 w-44">Categoria</th>
-                <th className="hidden lg:table-cell text-left p-3 w-44">Código</th>
-                <th className="text-right p-3 w-20">Estoque</th>
-                <th className="text-right p-3 w-20">Mín</th>
-                <th className="hidden md:table-cell text-left p-3 w-32">Validade</th>
-                <th className="hidden xl:table-cell text-right p-3 w-28">Valor</th>
-                <th className="text-right p-3 w-40">Ações</th>
+                <th className="text-left p-3">Categoria</th>
+                <th className="hidden lg:table-cell text-left p-3">Código</th>
+                <th className="text-right p-3">Estoque</th>
+                <th className="text-right p-3">Mín</th>
+                <th className="hidden md:table-cell text-left p-3">Validade</th>
+                <th className="hidden xl:table-cell text-right p-3">Valor</th>
+                <th className="text-right p-3">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -8072,10 +8090,10 @@ export function InsumosModule() {
                         aria-pressed={isSelected}
                       >
                         <div className="flex items-center justify-between gap-2 min-w-0">
-                          <div className="text-blue-50 group-hover:underline truncate">{i.produto || '-'}</div>
+                          <div className="text-blue-50 group-hover:underline break-words">{i.produto || '-'}</div>
                           {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
                         </div>
-                        <div className="text-xs text-blue-200/60 truncate">{i.marca || ''}</div>
+                        <div className="text-xs text-blue-200/60 break-words">{i.marca || ''}</div>
                         {isCritico || isLowStock || isVencendo || isExpirado ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {isCritico ? <Badge variant="destructive">Crítico</Badge> : null}
@@ -8092,11 +8110,11 @@ export function InsumosModule() {
                           className="inline-block h-2.5 w-2.5 rounded-full"
                           style={{ backgroundColor: getCategoriaBgColor(i.categoria || 'Outros') }}
                         />
-                        <span className="truncate">{i.categoria || '-'}</span>
+                        <span className="break-words">{i.categoria || '-'}</span>
                       </div>
                     </td>
                     <td className="hidden lg:table-cell p-3">
-                      <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
+                      <div className="font-mono text-blue-100/80 break-all">{i.codigoBarras || '-'}</div>
                     </td>
                     <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
                       <div className="flex items-center justify-end gap-2">
