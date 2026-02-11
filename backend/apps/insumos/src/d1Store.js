@@ -15,7 +15,10 @@ function nowIso() {
 }
 
 // D1/SQLite can reject statements with many bound variables.
-// Keep this deliberately conservative to avoid `too many SQL variables`.
+// D1 can reject large IN(...) bind lists on some plans/regions.
+// Keep this low to avoid `too many SQL variables` on overview/insights loads.
+const MAX_SQL_BINDS = 80;
+
 function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
 }
@@ -36,6 +39,72 @@ function normalizeTipoUnidade(raw) {
   if (v === 'pacote') return 'pacote';
   if (v === 'rolo') return 'rolo';
   return '';
+}
+
+function normalizeBarcodeList(input) {
+  if (!input) return [];
+  if (Array.isArray(input)) {
+    return input.map((v) => String(v || '').trim()).filter(Boolean);
+  }
+  return String(input)
+    .split(/[\n,;]+/g)
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+}
+
+function mergeBarcodeList(primary, extras) {
+  const seen = new Set();
+  const out = [];
+  const add = (value) => {
+    const v = String(value || '').trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+  add(primary);
+  for (const v of extras || []) add(v);
+  return out;
+}
+
+async function loadBarcodesByRegistro(env, registros) {
+  const map = new Map();
+  if (!env?.DB) return map;
+  const list = (registros || []).map((r) => String(r || '').trim()).filter(Boolean);
+  if (!list.length) return map;
+  const queryChunk = async (chunk) => {
+    if (!chunk.length) return [];
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const res = await env.DB.prepare(
+        `SELECT registro, codigo_barras
+         FROM insumos_barcodes
+         WHERE registro IN (${placeholders})`
+      ).bind(...chunk).all();
+      return res?.results || [];
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (/too many sql variables/i.test(message) && chunk.length > 1) {
+        const splitAt = Math.max(1, Math.floor(chunk.length / 2));
+        const left = await queryChunk(chunk.slice(0, splitAt));
+        const right = await queryChunk(chunk.slice(splitAt));
+        return left.concat(right);
+      }
+      throw err;
+    }
+  };
+  for (let i = 0; i < list.length; i += MAX_SQL_BINDS) {
+    const chunk = list.slice(i, i + MAX_SQL_BINDS);
+    const rows = await queryChunk(chunk);
+    for (const row of rows) {
+      const reg = String(row?.registro || '').trim();
+      const code = String(row?.codigo_barras || '').trim();
+      if (!reg || !code) continue;
+      const current = map.get(reg) || [];
+      current.push(code);
+      map.set(reg, current);
+    }
+  }
+  return map;
 }
 
 function calcularStatusValidade(dataValidade) {
@@ -119,14 +188,9 @@ function readPolicyFromBody(body) {
 async function resolveItemPolicy(env, row, categoriaOverride) {
   const itemPolicy = readPolicyFromRow(row);
   if (itemPolicy.explicit) return itemPolicy;
-  const categoria = String(categoriaOverride || row?.categoria || '').trim();
-  const catPolicy = await getCategoryPolicy(env, categoria);
-  return {
-    explicit: false,
-    requiresLot: !!catPolicy.requiresLot,
-    requiresExpiry: !!catPolicy.requiresExpiry,
-    fefo: !!catPolicy.fefo,
-  };
+  // Policy is item-scoped. Category policies may exist for suggestions/analytics,
+  // but they do not enforce requirements unless explicitly set on the item.
+  return { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
 }
 
 function enforceLotExpiryPolicyOrError({ policy, lote, dataValidade }) {
@@ -141,9 +205,10 @@ function enforceLotExpiryPolicyOrError({ policy, lote, dataValidade }) {
 
 async function listRegistrosByCodigo(env, codigo) {
   const rows = await env.DB.prepare(
-    `SELECT registro, lote, data_validade
-     FROM insumos_items
-     WHERE codigo_barras = ?
+    `SELECT i.registro, i.lote, i.data_validade
+     FROM insumos_items i
+     JOIN insumos_barcodes b ON b.registro = i.registro
+     WHERE b.codigo_barras = ?
      ORDER BY (CASE WHEN data_validade IS NULL OR data_validade = '' THEN 1 ELSE 0 END),
               data_validade ASC,
               registro ASC`
@@ -163,9 +228,10 @@ async function listPickCandidates(env, { codigo, unidade }) {
             i.policy_requires_lot, i.policy_requires_expiry, i.policy_fefo,
             COALESCE(s.quantidade, 0) AS quantidade
      FROM insumos_items i
+     JOIN insumos_barcodes b ON b.registro = i.registro
      LEFT JOIN insumos_stocks s
        ON s.registro = i.registro AND s.unidade = ?
-     WHERE i.codigo_barras = ?
+     WHERE b.codigo_barras = ?
      ORDER BY (CASE WHEN i.data_validade IS NULL OR i.data_validade = '' THEN 1 ELSE 0 END),
               i.data_validade ASC,
               i.registro ASC`
@@ -203,14 +269,24 @@ async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFe
     if (!row?.registro) return { ok: false, code: 'NOT_FOUND', error: 'Registro não encontrado' };
 
     const match = await env.DB.prepare(
-      `SELECT registro, codigo_barras
-       FROM insumos_items
-       WHERE registro = ?`
+      `SELECT 1
+       FROM insumos_barcodes
+       WHERE registro = ? AND codigo_barras = ?
+       LIMIT 1`
     )
-      .bind(normRegistro)
+      .bind(normRegistro, normCodigo)
       .first();
-    if (match?.codigo_barras && String(match.codigo_barras).trim() !== normCodigo) {
-      return { ok: false, code: 'MISMATCH', error: 'Registro não corresponde ao código informado' };
+    if (!match) {
+      const primary = await env.DB.prepare(
+        `SELECT codigo_barras
+         FROM insumos_items
+         WHERE registro = ?`
+      )
+        .bind(normRegistro)
+        .first();
+      if (String(primary?.codigo_barras || '').trim() !== normCodigo) {
+        return { ok: false, code: 'MISMATCH', error: 'Registro não corresponde ao código informado' };
+      }
     }
     return { ok: true, registro: normRegistro };
   }
@@ -353,6 +429,8 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
      ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC`
   ).all();
   const items = itemsRes?.results || [];
+  const registros = items.map((it) => String(it?.registro || '').trim()).filter(Boolean);
+  const barcodesByRegistro = await loadBarcodesByRegistro(env, registros);
 
   const stocksRes = await env.DB.prepare(
     `SELECT registro, unidade, quantidade
@@ -374,9 +452,11 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
     const estoques = byRegistro.get(registro) || {};
     const estoqueAtual = toInt(estoques?.[unidade], 0);
     const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    const codigosBarras = mergeBarcodeList(String(it.codigo_barras || ''), barcodesByRegistro.get(registro));
     return {
       registro,
       codigoBarras: String(it.codigo_barras || ''),
+      codigosBarras,
       categoria: String(it.categoria || ''),
       marca: String(it.marca || ''),
       produto: String(it.produto || ''),
@@ -415,9 +495,14 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
       codigo_barras LIKE ? COLLATE NOCASE OR
       categoria LIKE ? COLLATE NOCASE OR
       marca LIKE ? COLLATE NOCASE OR
-      lote LIKE ? COLLATE NOCASE
+      lote LIKE ? COLLATE NOCASE OR
+      EXISTS (
+        SELECT 1 FROM insumos_barcodes b
+        WHERE b.registro = insumos_items.registro
+          AND b.codigo_barras LIKE ? COLLATE NOCASE
+      )
     )`);
-    binds.push(like, like, like, like, like);
+    binds.push(like, like, like, like, like, like);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -456,6 +541,8 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
     .bind(...binds, lim, offset)
     .all();
   const items = itemsRes?.results || [];
+  const registros = items.map((it) => String(it?.registro || '').trim()).filter(Boolean);
+  const barcodesByRegistro = await loadBarcodesByRegistro(env, registros);
 
   const byRegistro = new Map();
   if (items.length) {
@@ -487,9 +574,11 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
     const estoques = byRegistro.get(registro) || {};
     const estoqueAtual = toInt(estoques?.[unidade], 0);
     const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    const codigosBarras = mergeBarcodeList(String(it.codigo_barras || ''), barcodesByRegistro.get(registro));
     return {
       registro,
       codigoBarras: String(it.codigo_barras || ''),
+      codigosBarras,
       categoria: String(it.categoria || ''),
       marca: String(it.marca || ''),
       produto: String(it.produto || ''),
@@ -574,11 +663,21 @@ export async function d1GetInsumoByRegistro(env, registro) {
      FROM insumos_items
      WHERE registro = ?`
   ).bind(String(registro || '').trim()).first();
-  return row || null;
+  if (!row) return null;
+  const barcodes = await env.DB.prepare(
+    `SELECT codigo_barras FROM insumos_barcodes WHERE registro = ?`
+  ).bind(String(registro || '').trim()).all();
+  const codigosBarras = mergeBarcodeList(
+    String(row?.codigo_barras || ''),
+    (barcodes?.results || []).map((r) => r?.codigo_barras)
+  );
+  return { ...row, codigosBarras };
 }
 
 export async function d1CreateInsumo({ env, unidades, unidade, body }) {
-  const codigoBarras = String(body?.codigoBarras || '').trim();
+  const primaryCodigo = String(body?.codigoBarras || '').trim();
+  const codigosBarras = mergeBarcodeList(primaryCodigo, normalizeBarcodeList(body?.codigosBarras));
+  const codigoBarras = codigosBarras[0] || '';
   const produto = String(body?.produto || '').trim();
   if (!codigoBarras) return { ok: false, status: 400, error: 'Código de barras é obrigatório' };
   if (!produto) return { ok: false, status: 400, error: 'Produto é obrigatório' };
@@ -589,13 +688,23 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
   if (allowDuplicateLot && !lote) return { ok: false, status: 400, error: 'Lote é obrigatório para cadastrar novo lote' };
 
   if (!allowDuplicateLot) {
-    const exists = await env.DB.prepare('SELECT 1 FROM insumos_items WHERE codigo_barras = ? LIMIT 1').bind(codigoBarras).first();
-    if (exists) return { ok: false, status: 409, error: 'Código de barras já cadastrado' };
+    for (const code of codigosBarras) {
+      const exists = await env.DB.prepare(
+        'SELECT 1 FROM insumos_barcodes WHERE codigo_barras = ? LIMIT 1'
+      ).bind(code).first();
+      if (exists) return { ok: false, status: 409, error: 'Código de barras já cadastrado' };
+    }
   } else {
-    const existsSame = await env.DB.prepare(
-      'SELECT 1 FROM insumos_items WHERE codigo_barras = ? AND lote = ? LIMIT 1'
-    ).bind(codigoBarras, lote).first();
-    if (existsSame) return { ok: false, status: 409, error: 'Lote já cadastrado para este código de barras' };
+    for (const code of codigosBarras) {
+      const existsSame = await env.DB.prepare(
+        `SELECT 1
+         FROM insumos_barcodes b
+         JOIN insumos_items i ON i.registro = b.registro
+         WHERE b.codigo_barras = ? AND i.lote = ?
+         LIMIT 1`
+      ).bind(code, lote).first();
+      if (existsSame) return { ok: false, status: 409, error: 'Lote já cadastrado para este código de barras' };
+    }
   }
 
   const registro = await nextRegistro(env);
@@ -607,7 +716,7 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
 
   const categoria = String(body?.categoria || '').trim();
   const bodyPolicy = readPolicyFromBody(body);
-  const policy = bodyPolicy.explicit ? bodyPolicy : await getCategoryPolicy(env, categoria);
+  const policy = bodyPolicy.explicit ? bodyPolicy : { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
   const policyCheck = enforceLotExpiryPolicyOrError({ policy, lote, dataValidade });
   if (!policyCheck.ok) return policyCheck;
 
@@ -644,6 +753,15 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
     )
   );
 
+  for (const code of codigosBarras) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO insumos_barcodes (registro, codigo_barras, created_at)
+         VALUES (?, ?, ?)`
+      ).bind(registro, code, ts)
+    );
+  }
+
   // Stock only for selected unidade (others implied 0)
   statements.push(
     env.DB.prepare(
@@ -661,7 +779,7 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   if (!reg) return { ok: false, status: 400, error: 'Registro inválido' };
 
   const existing = await env.DB.prepare(
-    'SELECT registro, categoria, lote, data_validade, policy_requires_lot, policy_requires_expiry, policy_fefo FROM insumos_items WHERE registro = ?'
+    'SELECT registro, codigo_barras, categoria, lote, data_validade, policy_requires_lot, policy_requires_expiry, policy_fefo FROM insumos_items WHERE registro = ?'
   )
     .bind(reg)
     .first();
@@ -676,7 +794,7 @@ export async function d1UpdateInsumo({ env, registro, body }) {
     ? bodyPolicy
     : existingPolicy.explicit
       ? existingPolicy
-      : await getCategoryPolicy(env, nextCategoria);
+      : { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
   const policyCheck = enforceLotExpiryPolicyOrError({ policy, lote: nextLote, dataValidade: nextValidade });
   if (!policyCheck.ok) return policyCheck;
 
@@ -687,7 +805,14 @@ export async function d1UpdateInsumo({ env, registro, body }) {
     vals.push(v);
   };
 
-  if (body?.codigoBarras !== undefined) set('codigo_barras', String(body.codigoBarras || '').trim());
+  const nextPrimary = body?.codigoBarras !== undefined
+    ? String(body.codigoBarras || '').trim()
+    : String(existing?.codigo_barras || '').trim();
+  const nextCodigosBarras = body?.codigosBarras !== undefined
+    ? mergeBarcodeList(nextPrimary, normalizeBarcodeList(body.codigosBarras))
+    : mergeBarcodeList(nextPrimary, []);
+
+  if (body?.codigoBarras !== undefined) set('codigo_barras', nextPrimary);
   if (body?.produto !== undefined) set('produto', String(body.produto || '').trim());
   if (body?.categoria !== undefined) set('categoria', String(body.categoria || '').trim());
   if (body?.marca !== undefined) set('marca', String(body.marca || '').trim());
@@ -710,6 +835,23 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   const sql = `UPDATE insumos_items SET ${fields.join(', ')} WHERE registro = ?`;
   vals.push(reg);
   await env.DB.prepare(sql).bind(...vals).run();
+
+  if (body?.codigosBarras !== undefined) {
+    await env.DB.prepare('DELETE FROM insumos_barcodes WHERE registro = ?').bind(reg).run();
+    const ts = nowIso();
+    const inserts = nextCodigosBarras.map((code) =>
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO insumos_barcodes (registro, codigo_barras, created_at)
+         VALUES (?, ?, ?)`
+      ).bind(reg, code, ts)
+    );
+    if (inserts.length) await env.DB.batch(inserts);
+  } else if (body?.codigoBarras !== undefined && nextPrimary) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_barcodes (registro, codigo_barras, created_at)
+       VALUES (?, ?, ?)`
+    ).bind(reg, nextPrimary, nowIso()).run();
+  }
   return { ok: true };
 }
 
@@ -719,6 +861,7 @@ export async function d1DeleteInsumo({ env, registro }) {
   const exists = await env.DB.prepare('SELECT 1 FROM insumos_items WHERE registro = ?').bind(reg).first();
   if (!exists) return { ok: false, status: 404, error: 'Registro não encontrado' };
   await env.DB.prepare('DELETE FROM insumos_items WHERE registro = ?').bind(reg).run();
+  await env.DB.prepare('DELETE FROM insumos_barcodes WHERE registro = ?').bind(reg).run();
   return { ok: true };
 }
 

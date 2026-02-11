@@ -4,11 +4,13 @@ import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-p
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { BrDatePickerInput } from '@/br-date-picker'
+import { AutocompleteInput } from '@/autocomplete-input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Checkbox } from '@/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 type InsumosHealth = {
@@ -34,6 +36,7 @@ type InsumosUser = {
 type Insumo = {
   registro?: string
   codigoBarras?: string
+  codigosBarras?: string[]
   categoria?: string
   marca?: string
   produto?: string
@@ -243,6 +246,26 @@ function normalizeTipoUnidadeToCanonical(raw: string): string {
   return CANONICAL_TIPOS_UNIDADE_SET.has(normalized) ? normalized : ''
 }
 
+function parseBarcodeInput(value: string): string[] {
+  return String(value || '')
+    .split(/[\n,;]+/g)
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+}
+
+function getInsumoBarcodes(item: Insumo | null | undefined): string[] {
+  const codes = new Set<string>();
+  const add = (v?: string) => {
+    const value = String(v || '').trim();
+    if (value) codes.add(value);
+  };
+  add(item?.codigoBarras);
+  if (Array.isArray(item?.codigosBarras)) {
+    for (const v of item?.codigosBarras || []) add(String(v || ''));
+  }
+  return Array.from(codes);
+}
+
 function fmtMoneyBRL(value: number) {
   try {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -332,6 +355,17 @@ function buildTagStyle(bgColor?: string | null): React.CSSProperties {
     color: getContrastColor(bg),
     borderColor: 'rgba(255,255,255,0.25)'
   }
+}
+
+function useViewportSize() {
+  const [size, setSize] = React.useState({ width: 0, height: 0 })
+  React.useEffect(() => {
+    const update = () => setSize({ width: window.innerWidth, height: window.innerHeight })
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  return size
 }
 
 function slugifyCategoria(value?: string | null) {
@@ -515,6 +549,17 @@ function severityBadgeVariant(severity?: string): 'default' | 'secondary' | 'des
   if (s === 'CRITICAL') return 'destructive'
   if (s === 'WARN' || s === 'WARNING') return 'secondary'
   return 'default'
+}
+
+function severityLabel(severity?: string) {
+  const key = normalizeText(severity).toUpperCase()
+  if (!key) return 'Info'
+  if (key === 'CRITICAL' || key === 'CRITICO') return 'Crítico'
+  if (key === 'WARN' || key === 'WARNING' || key === 'ATENCAO') return 'Atenção'
+  if (key === 'INFO') return 'Info'
+  const raw = String(severity || '').trim()
+  if (!raw) return 'Info'
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
 }
 
 function BarcodeScannerInline({
@@ -904,6 +949,30 @@ async function apiJson<T>(
 
 export function InsumosModule() {
   const rootRef = React.useRef<HTMLDivElement | null>(null)
+  const { width: viewportWidth, height: viewportHeight } = useViewportSize()
+  const [isCoarsePointer, setIsCoarsePointer] = React.useState(false)
+  React.useEffect(() => {
+    const media = window.matchMedia('(pointer: coarse)')
+    const update = () => setIsCoarsePointer(!!media.matches)
+    update()
+    try {
+      media.addEventListener('change', update)
+      return () => media.removeEventListener('change', update)
+    } catch {
+      media.addListener(update)
+      return () => media.removeListener(update)
+    }
+  }, [])
+  const isPhoneViewport = viewportWidth > 0 && viewportWidth < 640
+  const isCompactViewport = viewportWidth > 0 && viewportWidth < 1024
+  const isAdaptiveCompact = isPhoneViewport || (isCompactViewport && isCoarsePointer)
+  const dialogMaxHeight = viewportHeight > 0 && viewportHeight < 720 ? 'max-h-[88vh]' : 'max-h-[92vh]'
+  const dialogPaddingClass = isAdaptiveCompact ? 'p-3' : 'p-4 sm:p-5'
+  const dialogBodyClass = `${dialogMaxHeight} min-w-0 overflow-auto`
+  const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-full'} ${dialogPaddingClass}`
+  const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl xl:max-w-7xl'} ${dialogPaddingClass}`
+  const dialogMediumClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-4xl'} ${dialogPaddingClass}`
+  const dialogSmallClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-2xl'} ${dialogPaddingClass}`
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
@@ -931,6 +1000,7 @@ export function InsumosModule() {
 
   const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
+  const [quickSearch, setQuickSearch] = React.useState('')
   const [quickRegistro, setQuickRegistro] = React.useState('')
   const [quickRegistros, setQuickRegistros] = React.useState<string[]>([])
   const [quickCandidates, setQuickCandidates] = React.useState<Array<{ registro: string; lote: string; dataValidade: string | null; estoque: number }>>([])
@@ -1026,6 +1096,7 @@ export function InsumosModule() {
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createScanOpen, setCreateScanOpen] = React.useState(false)
   const [createCodigo, setCreateCodigo] = React.useState('')
+  const [createCodigosExtras, setCreateCodigosExtras] = React.useState('')
   const [createProduto, setCreateProduto] = React.useState('')
   const [createCategoria, setCreateCategoria] = React.useState('')
   const [createPolicyTouched, setCreatePolicyTouched] = React.useState(false)
@@ -1054,6 +1125,7 @@ export function InsumosModule() {
   const [editOpen, setEditOpen] = React.useState(false)
   const [editTarget, setEditTarget] = React.useState<Insumo | null>(null)
   const [editCodigo, setEditCodigo] = React.useState('')
+  const [editCodigosExtras, setEditCodigosExtras] = React.useState('')
   const [editProduto, setEditProduto] = React.useState('')
   const [editCategoria, setEditCategoria] = React.useState('')
   const [editCategoriaRequiresLot, setEditCategoriaRequiresLot] = React.useState(false)
@@ -1074,12 +1146,15 @@ export function InsumosModule() {
   type EditValidationKey =
     | 'codigoBarras'
     | 'produto'
+    | 'categoria'
+    | 'marca'
     | 'tipoUnidade'
     | 'lote'
     | 'dataValidade'
     | 'policy'
   type EditValidationErrors = Partial<Record<EditValidationKey, string>>
   const [editValidationErrors, setEditValidationErrors] = React.useState<EditValidationErrors>({})
+  const [editSaveError, setEditSaveError] = React.useState<string | null>(null)
   const clearEditValidationError = React.useCallback((key: EditValidationKey) => {
     setEditValidationErrors((prev) => {
       if (!prev[key]) return prev
@@ -1087,6 +1162,7 @@ export function InsumosModule() {
       delete next[key]
       return next
     })
+    setEditSaveError((prev) => (prev ? null : prev))
   }, [])
 
   const [lotDialogOpen, setLotDialogOpen] = React.useState(false)
@@ -1105,6 +1181,7 @@ export function InsumosModule() {
   const [movFilterProduto, setMovFilterProduto] = React.useState('')
   const [movFilterCategoria, setMovFilterCategoria] = React.useState('')
   const [movFilterMarca, setMovFilterMarca] = React.useState('')
+  const [movSearch, setMovSearch] = React.useState('')
   const [movSortKey, setMovSortKey] = React.useState<
     'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
   >('dataHora')
@@ -1709,40 +1786,28 @@ export function InsumosModule() {
   React.useEffect(() => {
     if (!createOpen) return
     if (createPolicyTouched) return
-    const slug = slugifyCategoria(createCategoria)
-    if (!slug) {
-      setCreateCategoriaRequiresLot(false)
-      setCreateCategoriaRequiresExpiry(false)
-      setCreateCategoriaFefo(false)
-      return
-    }
-    const p = getPolicyForCategoria(createCategoria)
-    setCreateCategoriaRequiresLot(!!p.requiresLot)
-    setCreateCategoriaRequiresExpiry(!!p.requiresExpiry)
-    setCreateCategoriaFefo(!!p.fefo)
-  }, [createCategoria, createOpen, createPolicyTouched, getPolicyForCategoria])
+    setCreateCategoriaRequiresLot(false)
+    setCreateCategoriaRequiresExpiry(false)
+    setCreateCategoriaFefo(false)
+  }, [createOpen, createPolicyTouched])
 
   React.useEffect(() => {
     if (createOpen) return
     setCreatePolicyTouched(false)
   }, [createOpen])
 
-  const getPolicyForItem = React.useCallback(
-    (item?: Insumo | null, categoriaOverride?: string | null) => {
-      const hasExplicit =
-        item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
-      if (hasExplicit) {
-        return {
-          requiresLot: !!item?.policyRequiresLot,
-          requiresExpiry: !!item?.policyRequiresExpiry,
-          fefo: !!item?.policyFefo
-        }
+  const getPolicyForItem = React.useCallback((item?: Insumo | null) => {
+    const hasExplicit =
+      item?.policyRequiresLot != null || item?.policyRequiresExpiry != null || item?.policyFefo != null
+    if (hasExplicit) {
+      return {
+        requiresLot: !!item?.policyRequiresLot,
+        requiresExpiry: !!item?.policyRequiresExpiry,
+        fefo: !!item?.policyFefo
       }
-      const categoria = String(categoriaOverride || item?.categoria || '').trim()
-      return getPolicyForCategoria(categoria)
-    },
-    [getPolicyForCategoria]
-  )
+    }
+    return { requiresLot: false, requiresExpiry: false, fefo: false }
+  }, [])
 
   const allUnidades = React.useMemo(() => {
     const fromHealth = Array.isArray(health?.unidades) ? health!.unidades!.filter(Boolean) : []
@@ -1762,7 +1827,7 @@ export function InsumosModule() {
 
     const source = fromLookup ? quickLookupItems : (insumos || [])
     const items = source
-      .filter((i) => String(i.codigoBarras || '').trim() === codigo && String(i.registro || '').trim())
+      .filter((i) => getInsumoBarcodes(i).includes(codigo) && String(i.registro || '').trim())
       .map((i) => {
         const registro = String(i.registro || '').trim()
         const lote = String(i.lote || '').trim()
@@ -1791,6 +1856,48 @@ export function InsumosModule() {
     return list.sort(sortByValidade)
   }, [insumos, quickCodigo, quickOp, quickLookupCode, quickLookupCtxUnidade, quickLookupItems, transferFrom, unidade])
 
+  const quickSearchMatches = React.useMemo(() => {
+    const query = quickSearch.trim().toLowerCase()
+    if (!query) return []
+    const source = Array.isArray(insumos) ? insumos : []
+    const matches: Array<{ item: Insumo; matchedCode: string }> = []
+    for (const item of source) {
+      const codes = getInsumoBarcodes(item)
+      const produto = String(item?.produto || '').toLowerCase()
+      const categoria = String(item?.categoria || '').toLowerCase()
+      const marca = String(item?.marca || '').toLowerCase()
+      const hay = [produto, categoria, marca, ...codes].filter(Boolean).join(' ')
+      if (!hay.includes(query)) continue
+      const matchedCode = codes.find((c) => String(c || '').toLowerCase().includes(query)) || codes[0] || ''
+      matches.push({ item, matchedCode })
+      if (matches.length >= 8) break
+    }
+    return matches
+  }, [insumos, quickSearch])
+
+  const applyQuickSelection = React.useCallback((item: Insumo, preferredCode?: string) => {
+    const codes = getInsumoBarcodes(item)
+    const code = preferredCode && codes.includes(preferredCode) ? preferredCode : codes[0] || ''
+    if (!code) return
+    setQuickCodigo(code)
+    setQuickSearch(code)
+  }, [])
+
+  React.useEffect(() => {
+    const query = quickSearch.trim()
+    if (!query) {
+      if (quickCodigo) setQuickCodigo('')
+      return
+    }
+    if (query === quickCodigo) return
+    const looksLikeCode = /^[0-9]{4,}$/.test(query)
+    if (looksLikeCode) {
+      if (query !== quickCodigo) setQuickCodigo(query)
+      return
+    }
+    if (quickCodigo) setQuickCodigo('')
+  }, [quickSearch, quickCodigo])
+
   const quickLoteNeedsPick = (quickCandidates.length > 1) || (quickRegistros.length > 1) || (quickLotes.length > 1)
   const quickLotesForPicker = React.useMemo(() => {
     if (quickCandidates.length) return quickCandidates
@@ -1804,6 +1911,7 @@ export function InsumosModule() {
   }, [quickCandidates, quickLotes, quickRegistros.join('|')])
 
   const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
+    setQuickSearch('')
     setQuickCodigo('')
     setQuickRegistro('')
     setQuickRegistros([])
@@ -1835,7 +1943,11 @@ export function InsumosModule() {
       }
     ) => {
       resetQuickOperationState()
-      if (prefill?.codigoBarras) setQuickCodigo(String(prefill.codigoBarras).trim())
+      if (prefill?.codigoBarras) {
+        const code = String(prefill.codigoBarras).trim()
+        setQuickCodigo(code)
+        setQuickSearch(code)
+      }
       if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
       if (prefill?.obs) setQuickObs(String(prefill.obs))
       if (prefill?.fromUnidade) setTransferFrom(String(prefill.fromUnidade))
@@ -1871,7 +1983,7 @@ export function InsumosModule() {
       })
       const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
       const list = Array.isArray(out?.data) ? out.data : []
-      const exact = list.filter((i) => String(i.codigoBarras || '').trim() === codigo)
+      const exact = list.filter((i) => getInsumoBarcodes(i).includes(codigo))
       return exact.length ? exact : list
     },
     [apiJson]
@@ -1931,7 +2043,7 @@ export function InsumosModule() {
     if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
     if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
     if (!createPolicyTouched) {
-      const policy = getPolicyForItem(it, it.categoria)
+      const policy = getPolicyForItem(it)
       setCreateCategoriaRequiresLot(!!policy.requiresLot)
       setCreateCategoriaRequiresExpiry(!!policy.requiresExpiry)
       setCreateCategoriaFefo(!!policy.fefo)
@@ -1989,7 +2101,7 @@ export function InsumosModule() {
     if (!quickOp) return
     if (!(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA')) return
     if (!quickAutoFefo) return
-    const policy = getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '')
+    const policy = getPolicyForItem(quickLookupItems?.[0] || null)
     if (!policy.fefo) return
     if (!quickLotes.length) return
     const suggested = quickLotes[0]?.registro
@@ -2561,13 +2673,24 @@ export function InsumosModule() {
     setPolicyFormSuggestion('__NONE__')
   }, [])
 
-  const saveCategoryPolicy = React.useCallback(async () => {
-    if (!isManagerRole || !isAuthed) return
-    const label = String(policyFormLabel || '').trim()
-    const slugInput = String(policyFormSlug || '').trim()
-    const slug = slugifyCategoria(slugInput || label)
-    if (!slug) {
-      toast.error('Informe a categoria (nome)')
+	  const saveCategoryPolicy = React.useCallback(async () => {
+	    if (!isAuthed) {
+	      toast.error('Faça login para salvar a política.')
+	      return
+	    }
+	    if (!isManagerRole) {
+	      toast.error('Somente gestores podem alterar políticas.')
+	      return
+	    }
+	    if (!canUseApi) {
+	      toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
+	      return
+	    }
+	    const label = String(policyFormLabel || '').trim()
+	    const slugInput = String(policyFormSlug || '').trim()
+	    const slug = slugifyCategoria(slugInput || label)
+	    if (!slug) {
+	      toast.error('Informe a categoria (nome)')
       return
     }
     const requiresLot = !!policyFormRequiresLot
@@ -2607,12 +2730,13 @@ export function InsumosModule() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
-  }, [
-    isAuthed,
-    isManagerRole,
-    loadAdminCategoryPolicies,
-    loadCategoryPolicies,
-    mutateJson,
+	  }, [
+	    canUseApi,
+	    isAuthed,
+	    isManagerRole,
+	    loadAdminCategoryPolicies,
+	    loadCategoryPolicies,
+	    mutateJson,
     policyFormEditingSlug,
     policyFormFefo,
     policyFormLabel,
@@ -2622,11 +2746,22 @@ export function InsumosModule() {
     resetPolicyForm
   ])
 
-  const deleteCategoryPolicy = React.useCallback(
-    async (slugRaw: string) => {
-      if (!isManagerRole || !isAuthed) return
-      const slug = String(slugRaw || '').trim()
-      if (!slug) return
+	  const deleteCategoryPolicy = React.useCallback(
+	    async (slugRaw: string) => {
+	      if (!isAuthed) {
+	        toast.error('Faça login para excluir a política.')
+	        return
+	      }
+	      if (!isManagerRole) {
+	        toast.error('Somente gestores podem excluir políticas.')
+	        return
+	      }
+	      if (!canUseApi) {
+	        toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
+	        return
+	      }
+	      const slug = String(slugRaw || '').trim()
+	      if (!slug) return
       const ok = window.confirm(`Remover política da categoria "${slug}"?`)
       if (!ok) return
 
@@ -2649,11 +2784,12 @@ export function InsumosModule() {
         toast.error(e instanceof Error ? e.message : String(e))
       }
     },
-    [
-      isAuthed,
-      isManagerRole,
-      loadAdminCategoryPolicies,
-      loadCategoryPolicies,
+	    [
+	      canUseApi,
+	      isAuthed,
+	      isManagerRole,
+	      loadAdminCategoryPolicies,
+	      loadCategoryPolicies,
       mutateJson,
       policyFormEditingSlug,
       resetPolicyForm
@@ -2781,7 +2917,11 @@ export function InsumosModule() {
   const openEditDialog = React.useCallback((i: Insumo) => {
     setEditTarget(i)
     setEditValidationErrors({})
-    setEditCodigo(String(i.codigoBarras || ''))
+    setEditSaveError(null)
+    const primary = String(i.codigoBarras || '')
+    setEditCodigo(primary)
+    const extras = getInsumoBarcodes(i).filter((code) => code !== primary)
+    setEditCodigosExtras(extras.join('\n'))
     setEditProduto(String(i.produto || ''))
     setEditCategoria(String(i.categoria || ''))
     setEditMarca(String(i.marca || ''))
@@ -2795,7 +2935,7 @@ export function InsumosModule() {
     setEditEstoqueMinimo(i.estoqueMinimo != null ? String(i.estoqueMinimo) : '')
     setEditLote(String(i.lote || ''))
     setEditDataValidade(i.dataValidade ? fmtDateOnlyBR(i.dataValidade) : '')
-    const policy = getPolicyForItem(i, i.categoria)
+    const policy = getPolicyForItem(i)
     setEditCategoriaRequiresLot(!!policy.requiresLot)
     setEditCategoriaRequiresExpiry(!!policy.requiresExpiry)
     setEditCategoriaFefo(!!policy.fefo)
@@ -3225,30 +3365,38 @@ export function InsumosModule() {
   const saveEdit = React.useCallback(async () => {
     const registro = String(editTarget?.registro || '').trim()
     if (!registro) {
+      setEditSaveError('Registro do insumo ausente.')
       toast.error('Registro do insumo ausente.')
       return
     }
     if (!isAuthed) {
+      setEditSaveError('Nao autenticado.')
       toast.error('Nao autenticado.')
       return
     }
     if (!canUseApi) {
+      setEditSaveError('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
       toast.error('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
       return
     }
     const codigoBarras = editCodigo.trim()
+    const extraCodes = parseBarcodeInput(editCodigosExtras)
+    const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
     const produto = editProduto.trim()
     if (!codigoBarras) {
       setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
+      setEditSaveError('Informe o código de barras para salvar.')
       return toast.error('Informe o código de barras')
     }
     if (!produto) {
       setEditValidationErrors({ produto: 'Obrigatorio.' })
+      setEditSaveError('Informe o produto para salvar.')
       return toast.error('Informe o produto')
     }
 
     setEditSaving(true)
     try {
+      setEditSaveError(null)
       setEditValidationErrors({})
       const categoria = editCategoria.trim()
       const policy = {
@@ -3262,12 +3410,14 @@ export function InsumosModule() {
 
       if (!tipoUnidade) {
         setEditValidationErrors({ tipoUnidade: 'Selecione a unidade (medida).' })
+        setEditSaveError('Informe a unidade (medida) para salvar.')
         toast.error('Informe a unidade (medida) para salvar.')
         return
       }
 
       if (policy.fefo && !policy.requiresExpiry) {
         setEditValidationErrors({ policy: 'FEFO exige validade obrigatoria.' })
+        setEditSaveError('FEFO exige validade obrigatoria.')
         toast.error('FEFO exige validade obrigatória')
         return
       }
@@ -3276,6 +3426,7 @@ export function InsumosModule() {
           policy: 'Lote obrigatorio pela politica.',
           lote: 'Obrigatorio (pela politica do item).'
         })
+        setEditSaveError('Este item exige Lote. Preencha o campo lote para salvar.')
         toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
         return
       }
@@ -3284,6 +3435,7 @@ export function InsumosModule() {
           policy: 'Validade obrigatoria pela politica.',
           dataValidade: 'Obrigatorio (pela politica do item).'
         })
+        setEditSaveError('Este item exige Data de validade. Preencha o campo validade para salvar.')
         toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
         return
       }
@@ -3293,6 +3445,7 @@ export function InsumosModule() {
         queueLabel: 'Edição de insumo',
         body: {
           codigoBarras,
+          codigosBarras,
           produto,
           categoria,
           marca: editMarca.trim(),
@@ -3317,6 +3470,7 @@ export function InsumosModule() {
     } catch (e) {
       const policyCode = getPolicyErrorCode(e)
       if (policyCode) {
+        setEditSaveError(e instanceof Error ? e.message : String(e))
         policyErrorToast(e)
         if (policyCode === 'POLICY_REQUIRES_LOT') {
           setEditValidationErrors({
@@ -3331,6 +3485,7 @@ export function InsumosModule() {
         }
         return
       }
+      setEditSaveError(e instanceof Error ? e.message : String(e))
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setEditSaving(false)
@@ -3829,28 +3984,30 @@ export function InsumosModule() {
     if (!Array.isArray(items) || !items.length) return
     let changed = false
     for (const it of items) {
-      const codigo = String(it?.codigoBarras || '').trim()
-      if (!codigo) continue
-      const registro = String(it?.registro || '').trim() || `__no_registro__:${codigo}`
-      let byRegistro = insumosCacheRef.current.get(codigo)
-      if (!byRegistro) {
-        byRegistro = new Map<string, Insumo>()
-        insumosCacheRef.current.set(codigo, byRegistro)
-      }
-      const prev = byRegistro.get(registro)
-      if (!prev) {
-        byRegistro.set(registro, it)
+      const codes = getInsumoBarcodes(it)
+      if (!codes.length) continue
+      const registro = String(it?.registro || '').trim() || `__no_registro__:${codes[0]}`
+      for (const codigo of codes) {
+        let byRegistro = insumosCacheRef.current.get(codigo)
+        if (!byRegistro) {
+          byRegistro = new Map<string, Insumo>()
+          insumosCacheRef.current.set(codigo, byRegistro)
+        }
+        const prev = byRegistro.get(registro)
+        if (!prev) {
+          byRegistro.set(registro, it)
+          changed = true
+          continue
+        }
+        const merged: Insumo = {
+          ...prev,
+          ...it,
+          estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
+          statusValidade: it.statusValidade || prev.statusValidade
+        }
+        byRegistro.set(registro, merged)
         changed = true
-        continue
       }
-      const merged: Insumo = {
-        ...prev,
-        ...it,
-        estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
-        statusValidade: it.statusValidade || prev.statusValidade
-      }
-      byRegistro.set(registro, merged)
-      changed = true
     }
     if (changed) setInsumosCacheVersion((v) => v + 1)
   }, [])
@@ -4264,6 +4421,24 @@ export function InsumosModule() {
       const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
       const height = Math.max(220, Math.min(560, Number(opts?.height) || 260))
       const tooltipFormatter = (v: any) => fmtChartValue(metric, v)
+      const renderCategoriaLegend = (props: any) => {
+        const payload = Array.isArray(props?.payload) ? props.payload : []
+        if (!payload.length) return null
+        return (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {payload.map((entry: any, idx: number) => {
+              const label = String(entry?.value || entry?.payload?.name || '').trim()
+              if (!label) return null
+              const color = entry?.color || getCategoriaBgColor(label)
+              return (
+                <Badge key={`${label}-${idx}`} style={buildTagStyle(color)} className="border">
+                  {label}
+                </Badge>
+              )
+            })}
+          </div>
+        )
+      }
 
       if (presetId === 'distribution') {
         const gb: ChartGroupBy = slot.groupBy === 'marca' || slot.groupBy === 'item' || slot.groupBy === 'categoria' ? slot.groupBy : 'categoria'
@@ -4272,7 +4447,7 @@ export function InsumosModule() {
         const top = sorted.slice(0, topN).map((x) => ({
           name: x.name,
           value: metric === 'valor' ? x.valor : x.qtd,
-          color: gb === 'item' ? undefined : getCategoriaBgColor(x.name)
+          color: gb === 'item' ? undefined : gb === 'marca' ? getMarcaBgColor(x.name) : getCategoriaBgColor(x.name)
         }))
         const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
         if (restValue > 0 && gb !== 'item') top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' } as any)
@@ -4300,7 +4475,7 @@ export function InsumosModule() {
                     ))}
                   </Pie>
                   <Tooltip formatter={tooltipFormatter} />
-                  <Legend />
+                  <Legend content={renderCategoriaLegend} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -4518,11 +4693,11 @@ export function InsumosModule() {
 	        const isValor = metric === 'valor'
 	        const data = isValor
 	          ? [
-	              { name: 'Expirados', value: Number(perdas?.valorExpirado || 0), color: '#ef4444' },
+	              { name: 'Expirado', value: Number(perdas?.valorExpirado || 0), color: '#ef4444' },
 	              { name: 'Vencendo', value: Number(perdas?.valorRiscoVencendo || 0), color: '#f59e0b' }
 	            ]
 	          : [
-	              { name: 'Expirados', value: Number(perdas?.itensExpirados || 0), color: '#ef4444' },
+	              { name: 'Expirado', value: Number(perdas?.itensExpirados || 0), color: '#ef4444' },
 	              { name: 'Vencendo', value: Number(perdas?.itensVencendo || 0), color: '#f59e0b' },
 	              { name: 'Rupturas', value: Number(ruptura?.itensRuptura || 0), color: '#60a5fa' }
 	            ]
@@ -4540,7 +4715,7 @@ export function InsumosModule() {
 	                  ))}
 	                </Pie>
 	                <Tooltip formatter={tooltipFormatter} />
-	                <Legend />
+                <Legend content={renderCategoriaLegend} />
 	              </PieChart>
 	            </ResponsiveContainer>
 	          </div>
@@ -4573,6 +4748,7 @@ export function InsumosModule() {
     codigoBarras?: string
     produto?: string
     categoria?: string
+    marca?: string
     estoqueAtual?: number
     estoqueMinimo?: number
     diferenca?: number
@@ -4585,10 +4761,11 @@ export function InsumosModule() {
   const alertasLinhas = React.useMemo<AlertasLinha[]>(() => {
     const byKey = new Map<string, { base: Omit<AlertasLinha, 'tags' | 'key'>; tags: Set<AlertaStatusTag> }>()
 
-    const upsert = (id: { codigoBarras?: string; produto?: string; categoria?: string }, patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>, tag?: AlertaStatusTag) => {
+    const upsert = (id: { codigoBarras?: string; produto?: string; categoria?: string; marca?: string }, patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>, tag?: AlertaStatusTag) => {
       const code = String(id.codigoBarras || '').trim()
       const produto = String(id.produto || '').trim()
       const categoria = String(id.categoria || '').trim()
+      const marca = String(id.marca || '').trim()
       const key = code || `${produto}::${categoria}` || `${Math.random()}`
       const prev = byKey.get(key)
       if (!prev) {
@@ -4596,6 +4773,7 @@ export function InsumosModule() {
           codigoBarras: code || undefined,
           produto: produto || undefined,
           categoria: categoria || undefined,
+          marca: marca || undefined,
           estoqueAtual: undefined,
           estoqueMinimo: undefined,
           diferenca: undefined,
@@ -4658,6 +4836,25 @@ export function InsumosModule() {
 
     const rows: AlertasLinha[] = []
     for (const [key, v] of byKey.entries()) {
+      if (!v.base.marca) {
+        const code = String(v.base.codigoBarras || '').trim()
+        const produto = String(v.base.produto || '').trim()
+        const categoria = String(v.base.categoria || '').trim()
+        let found: Insumo | undefined
+        if (code) {
+          found = (insumosRef.current || []).find((i) => getInsumoBarcodes(i).includes(code))
+        }
+        if (!found && produto) {
+          const produtoKey = normalizeText(produto)
+          const categoriaKey = normalizeText(categoria)
+          found = (insumosRef.current || []).find((i) => {
+            if (normalizeText(String(i.produto || '').trim()) !== produtoKey) return false
+            if (categoriaKey && normalizeText(String(i.categoria || '').trim()) !== categoriaKey) return false
+            return true
+          })
+        }
+        if (found?.marca) v.base.marca = String(found.marca || '').trim()
+      }
       rows.push({ key, ...v.base, tags: normalizeAlertTags(v.tags) })
     }
 
@@ -4751,11 +4948,26 @@ export function InsumosModule() {
     const filterProduto = normalizeText(movFilterProduto)
     const filterCategoria = normalizeText(movFilterCategoria)
     const filterMarca = normalizeText(movFilterMarca)
+    const filterSearch = normalizeText(movSearch)
 
     const applyFiltersAndSort = (base: Movimentacao[]) => {
       const filtered = base.filter((m) => {
         if (selectedCode) {
           if (String(m?.codigoBarras || '').trim() !== selectedCode) return false
+        } else if (filterSearch) {
+          const insumo = pickInsumoForMov(m)
+          const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
+          const categoriaNome = normalizeText(insumo?.categoria || '')
+          const codigoBarras = normalizeText(String(m?.codigoBarras || insumo?.codigoBarras || '').trim())
+          if (
+            !(
+              (produtoNome && produtoNome.includes(filterSearch)) ||
+              (categoriaNome && categoriaNome.includes(filterSearch)) ||
+              (codigoBarras && codigoBarras.includes(filterSearch))
+            )
+          ) {
+            return false
+          }
         } else if (filterProduto) {
           const insumo = pickInsumoForMov(m)
           const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
@@ -4871,6 +5083,7 @@ export function InsumosModule() {
     movFilterCategoria,
     movFilterMarca,
     movFilterProduto,
+    movSearch,
     movimentacoes,
     pickInsumoForMov,
     selectedCodigoBarras
@@ -4881,7 +5094,7 @@ export function InsumosModule() {
   }, [movimentacoes])
 
   return (
-    <div ref={rootRef} className="p-6 space-y-6">
+    <div ref={rootRef} className="px-3 py-4 sm:p-6 space-y-4 sm:space-y-6">
       {autoSyncSuspended ? (
         <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-amber-100 flex flex-wrap items-center gap-3">
           <div className="text-sm">
@@ -4913,7 +5126,7 @@ export function InsumosModule() {
       ) : null}
       <DragDropContext onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
-        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-6xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent size="wideTable" className={dialogWideClass}>
           <DialogHeader>
             <DialogTitle>Insumos</DialogTitle>
             <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
@@ -4921,7 +5134,7 @@ export function InsumosModule() {
 
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   value={insumosQuery}
                   onChange={(e) => setInsumosQuery(e.target.value)}
@@ -4959,7 +5172,7 @@ export function InsumosModule() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
                       <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
                         {createScanOpen ? 'Fechar' : 'Escanear'}
@@ -4975,6 +5188,19 @@ export function InsumosModule() {
                           Encontrado no histórico: <span className="font-mono">{createLookupItems.length}</span> variação(ões)
                         </div>
                       ) : null}
+                    </div>
+                    <div className="mt-2">
+                      <div className="text-xs text-blue-200/70 mb-1">Códigos adicionais</div>
+                      <Textarea
+                        value={createCodigosExtras}
+                        onChange={(e) => setCreateCodigosExtras(e.target.value)}
+                        placeholder="um por linha"
+                        rows={3}
+                        className="bg-white/[0.06] border-white/20 text-white"
+                      />
+                      <div className="mt-1 text-[10px] text-blue-200/50">
+                        Opcional. Use para variações de código do mesmo produto.
+                      </div>
                     </div>
                   </div>
                   <div className="md:col-span-2">
@@ -5129,7 +5355,9 @@ export function InsumosModule() {
                     onClick={async () => {
                       const codigoBarras = createCodigo.trim()
                       if (!codigoBarras) return toast.error('Informe o código de barras')
-                      const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                      const extraCodes = parseBarcodeInput(createCodigosExtras)
+                      const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
+                      const existing = (insumos || []).find((i) => getInsumoBarcodes(i).includes(codigoBarras))
                       const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
                       const policy = {
                         requiresLot: !!createCategoriaRequiresLot,
@@ -5163,6 +5391,7 @@ export function InsumosModule() {
                           queueLabel: 'Cadastro de insumo',
                           body: {
                             codigoBarras,
+                            codigosBarras,
                             produto,
                             allowDuplicateLot,
                             categoria,
@@ -5184,6 +5413,7 @@ export function InsumosModule() {
                           }
                         })
                         toast.success('Insumo cadastrado.')
+                        setCreateCodigosExtras('')
                         setCreateOpen(false)
                         await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
                       } catch (e) {
@@ -5204,19 +5434,19 @@ export function InsumosModule() {
             <div
               ref={insumosModalListContainerRef}
               onScroll={onInsumosModalScroll}
-              className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10"
+              className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
             >
               <table className="w-full table-fixed text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
-                    <th className="text-left p-3">Produto</th>
-                    <th className="text-left p-3 hidden md:table-cell">Categoria</th>
-                    <th className="text-left p-3 hidden lg:table-cell">Código</th>
-                    <th className="text-right p-3">Estoque</th>
-                    <th className="text-right p-3 hidden sm:table-cell">Mín</th>
-                    <th className="text-left p-3 hidden xl:table-cell">Validade</th>
-                    <th className="text-right p-3 hidden xl:table-cell">Valor</th>
-                    <th className="text-right p-3">Ações</th>
+                    <th className="text-left p-3 w-[26%] xl:w-[24%]">Produto</th>
+                    <th className="text-left p-3 hidden md:table-cell w-[20%] xl:w-[18%]">Categoria</th>
+                    <th className="text-left p-3 hidden lg:table-cell w-[20%] xl:w-[18%]">Código</th>
+                    <th className="text-right p-3 w-[6.5rem] whitespace-nowrap">Estoque</th>
+                    <th className="text-right p-3 hidden sm:table-cell w-[5.5rem] whitespace-nowrap">Mín</th>
+                    <th className="text-left p-3 hidden xl:table-cell w-[7.5rem] whitespace-nowrap">Validade</th>
+                    <th className="text-right p-3 hidden xl:table-cell w-[8.5rem] whitespace-nowrap">Valor</th>
+                    <th className="text-right p-3 w-[7.5rem] whitespace-nowrap">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -5238,29 +5468,17 @@ export function InsumosModule() {
                             </div>
                           </div>
                         </td>
-                        <td className="p-3 text-blue-100/80 hidden md:table-cell align-top">
+                        <td className="p-3 text-blue-100/80 hidden md:table-cell align-middle">
                           <div className="break-words">{i.categoria || '-'}</div>
                         </td>
-                        <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-top break-all">{i.codigoBarras || '-'}</td>
-                        <td className="p-3 text-right text-blue-100/80 font-mono align-top">{Number.isFinite(estoque) ? estoque : '-'}</td>
-                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-top">{min || '-'}</td>
-                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top">{fmtDateOnlyBR(i.dataValidade || '')}</td>
-                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top">{fmtMoneyBRL(valor)}</td>
-                        <td className="p-3 text-right">
-                          <div className="flex flex-col sm:flex-row justify-end gap-2">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              className="h-8 px-2 text-xs"
-                              onClick={() => {
-                                if (codigoBarras) setSelectedCodigoBarras(codigoBarras)
-                                setInsumosListModalOpen(false)
-                              }}
-                              disabled={!codigoBarras}
-                            >
-                              Mov
-                            </Button>
-                            <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
+                        <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-middle break-all">{i.codigoBarras || '-'}</td>
+                        <td className="p-3 text-right text-blue-100/80 font-mono align-middle whitespace-nowrap">{Number.isFinite(estoque) ? estoque : '-'}</td>
+                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-middle whitespace-nowrap">{min || '-'}</td>
+                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-middle whitespace-nowrap">{fmtDateOnlyBR(i.dataValidade || '')}</td>
+                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-middle whitespace-nowrap">{fmtMoneyBRL(valor)}</td>
+                        <td className="p-3 text-right align-middle whitespace-nowrap">
+                          <div className="flex items-center justify-end">
+                            <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
                               Editar
                             </Button>
                           </div>
@@ -5290,7 +5508,7 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
       <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className={dialogSmallClass}>
           <DialogHeader>
             <DialogTitle>Pendências de sincronização</DialogTitle>
             <DialogDescription>
@@ -5399,7 +5617,7 @@ export function InsumosModule() {
           setQuickOp(null)
         }}
       >
-        <DialogContent className="max-w-xl dark bg-corporate-900 border-white/10 text-white">
+      <DialogContent className={`${dialogLargeClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">
               {quickOp === 'ENTRADA'
@@ -5431,14 +5649,54 @@ export function InsumosModule() {
 
           <div className="space-y-3">
             <div>
-              <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-              <div className="flex items-center gap-2">
-                <Input value={quickCodigo} onChange={(e) => setQuickCodigo(e.target.value)} placeholder="ex: 789..." />
+              <div className="text-xs text-blue-200/70 mb-1">Buscar por produto, marca, categoria ou código</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  value={quickSearch}
+                  onChange={(e) => setQuickSearch(e.target.value)}
+                  placeholder="ex: Rennova, preenchedor, 789..."
+                  className="w-full sm:flex-1 sm:min-w-[240px]"
+                />
                 <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
                   {quickScanOpen ? 'Fechar' : 'Escanear'}
                 </Button>
               </div>
               <div className="mt-2">
+                {quickSearchMatches.length ? (
+                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                    <div className="text-[11px] text-blue-200/60 mb-2">Selecione o produto para lançar a operação:</div>
+                    <div className="space-y-2">
+                      {quickSearchMatches.map(({ item, matchedCode }) => {
+                        const code = matchedCode || item.codigoBarras || ''
+                        return (
+                          <button
+                            key={`${item.registro || ''}-${code}`}
+                            type="button"
+                            onClick={() => applyQuickSelection(item, code)}
+                            className="w-full min-w-0 rounded-md border border-white/5 bg-white/5 px-2 py-2 text-left hover:bg-white/10"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm text-blue-50 font-semibold break-words">{String(item.produto || 'Insumo')}</div>
+                              <div className="text-xs text-blue-200/60 font-mono break-all">{code}</div>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
+                              {item.categoria ? (
+                                <Badge style={buildTagStyle(getCategoriaBgColor(String(item.categoria)))} className="border">
+                                  {String(item.categoria)}
+                                </Badge>
+                              ) : null}
+                              {item.marca ? (
+                                <Badge style={buildTagStyle(getMarcaBgColor(String(item.marca)))} className="border">
+                                  {String(item.marca)}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 {quickLookupLoading ? (
                   <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
                 ) : quickLookupError ? (
@@ -5485,7 +5743,7 @@ export function InsumosModule() {
                     <div className="text-xs text-blue-200/70">Lote/registro</div>
                     {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
                       quickLotesForPicker.length > 1 &&
-                      getPolicyForItem(quickLookupItems?.[0] || null, quickLookupItems?.[0]?.categoria || '').fefo ? (
+                      getPolicyForItem(quickLookupItems?.[0] || null).fefo ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -5528,7 +5786,7 @@ export function InsumosModule() {
               </div>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
                 <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
@@ -5540,7 +5798,7 @@ export function InsumosModule() {
             </div>
 
             {quickOp === 'TRANSFERENCIA' ? (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <div className="text-xs text-blue-200/70 mb-1">Origem</div>
                   <Select value={transferFrom} onValueChange={setTransferFrom}>
@@ -5578,6 +5836,7 @@ export function InsumosModule() {
               <BarcodeScannerInline
                 onDetected={(code) => {
                   setQuickCodigo(code)
+                  setQuickSearch(code)
                   setQuickScanOpen(false)
                   toast.success('Código detectado')
                 }}
@@ -5658,7 +5917,7 @@ export function InsumosModule() {
           if (!open) setQuickActionFeedback(null)
         }}
       >
-        <DialogContent className="max-w-md dark bg-corporate-900 border-white/10 text-white">
+        <DialogContent className={`${dialogSmallClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">
               {quickActionFeedback?.type === 'success' ? 'Sucesso' : 'Falha'}
@@ -5681,7 +5940,7 @@ export function InsumosModule() {
       </Dialog>
 
       <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
-        <DialogContent className="max-w-3xl dark bg-corporate-900 border-white/10 text-white">
+        <DialogContent size="wideTable" className={`${dialogMediumClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">Lista de compra</DialogTitle>
             <DialogDescription className="text-blue-100/70">
@@ -5769,8 +6028,8 @@ export function InsumosModule() {
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
                         <th className="text-left p-3">Produto</th>
-                        <th className="text-left p-3">Categoria</th>
-                        <th className="text-left p-3">Código</th>
+                        <th className="text-left p-3 hidden md:table-cell">Categoria</th>
+                        <th className="text-left p-3 hidden sm:table-cell">Código</th>
                         <th className="text-right p-3">Qtd sugerida</th>
                         <th className="text-right p-3">Valor</th>
                         <th className="text-right p-3">Ação</th>
@@ -5783,8 +6042,8 @@ export function InsumosModule() {
                             <td className="p-3 text-blue-50">
                               <div className="font-medium">{it.produto || '-'}</div>
                             </td>
-                            <td className="p-3 text-blue-100/80">{it.categoria || cat}</td>
-                            <td className="p-3 font-mono text-blue-100/80">{it.codigoBarras || ''}</td>
+                            <td className="p-3 text-blue-100/80 hidden md:table-cell">{it.categoria || cat}</td>
+                            <td className="p-3 font-mono text-blue-100/80 hidden sm:table-cell break-all">{it.codigoBarras || ''}</td>
                             <td className="p-3 text-right font-mono text-blue-100/80">{it.suggestedPurchaseQty ?? 0}</td>
                             <td className="p-3 text-right font-mono text-blue-100/80">
                               {fmtMoneyBRL(Number(it.estimatedValue) || 0)}
@@ -5833,7 +6092,7 @@ export function InsumosModule() {
       </Dialog>
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
 	          <Card className="bg-black/20 border border-white/10">
 	            <CardHeader className="flex items-center justify-between gap-2">
 	              <CardTitle className="text-white text-sm flex items-center gap-2">
@@ -5880,36 +6139,6 @@ export function InsumosModule() {
 	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.lowStock ?? '-')}
 	              </div>
 	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">estoque baixo</div> : null}
-	            </CardContent>
-	          </Card>
-
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex items-center justify-between gap-2">
-	              <CardTitle className="text-white text-sm flex items-center gap-2">
-	                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-	                Vencendo
-	              </CardTitle>
-	            </CardHeader>
-	            <CardContent>
-	              <div className="text-lg text-blue-50 font-mono">
-	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.expiringSoon ?? '-')}
-	              </div>
-	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">janela próxima</div> : null}
-	            </CardContent>
-	          </Card>
-
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex items-center justify-between gap-2">
-	              <CardTitle className="text-white text-sm flex items-center gap-2">
-	                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-	                Expirado
-	              </CardTitle>
-	            </CardHeader>
-	            <CardContent>
-	              <div className="text-lg text-blue-50 font-mono">
-	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.expiredWithStock ?? '-')}
-	              </div>
-	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">risco imediato</div> : null}
 	            </CardContent>
 	          </Card>
 
@@ -6309,17 +6538,17 @@ export function InsumosModule() {
                 </div>
 
                 <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                  <table className="min-w-full text-sm">
+                  <table className="w-full table-auto text-sm">
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
                         <th className="text-left p-3">Produto</th>
                         <th className="text-left p-3">Categoria</th>
                         <th className="text-left p-3">Status</th>
-                        <th className="text-left p-3">Ação recomendada</th>
+                        <th className="text-left p-3">Ação</th>
                         <th className="text-right p-3">Atual</th>
-                        <th className="text-right p-3">Mín</th>
-                        <th className="text-right p-3">Dif</th>
-                        <th className="text-right p-3">%</th>
+                        <th className="text-right p-3 hidden sm:table-cell">Mín</th>
+                        <th className="hidden lg:table-cell text-right p-3">Dif</th>
+                        <th className="hidden lg:table-cell text-right p-3">%</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -6332,13 +6561,23 @@ export function InsumosModule() {
                             key={`${a.key}-${idx}`}
                             className={`hover:bg-white/5 ${a.codigoBarras ? 'cursor-pointer' : ''}`}
                             onClick={() => {
-                              if (code) setQuickCodigo(code)
+                              if (code) {
+                                setQuickCodigo(code)
+                                setQuickSearch(code)
+                              }
                             }}
                             title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
                           >
-                            <td className="p-3 text-blue-50">
-                              <div className="text-blue-50">{a.produto || '-'}</div>
-                              <div className="text-xs text-blue-200/60 font-mono">{a.codigoBarras || '-'}</div>
+                            <td className="p-3 text-blue-50 align-top">
+                              <div className="text-blue-50 break-words">{a.produto || '-'}</div>
+                              <div className="hidden md:block text-xs text-blue-200/60 font-mono break-all">{a.codigoBarras || '-'}</div>
+                              {a.marca ? (
+                                <div className="mt-1">
+                                  <Badge style={buildTagStyle(getMarcaBgColor(a.marca))} className="border">
+                                    {a.marca}
+                                  </Badge>
+                                </div>
+                              ) : null}
                               {a.dataValidade ? (
                                 <div className="mt-1 text-xs text-blue-200/60">
                                   validade: <span className="font-mono">{fmtDateOnlyBR(String(a.dataValidade))}</span>
@@ -6351,11 +6590,10 @@ export function InsumosModule() {
                                 </div>
                               ) : null}
                             </td>
-                            <td className="p-3 text-blue-100/80">
-                              <div className="flex items-center gap-2">
-                                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
-                                <span className="truncate">{a.categoria || '-'}</span>
-                              </div>
+                            <td className="p-3 text-blue-100/80 hidden sm:table-cell">
+                              <Badge style={buildTagStyle(getCategoriaBgColor(a.categoria || 'Outros'))} className="border">
+                                {a.categoria || 'Outros'}
+                              </Badge>
                             </td>
                             <td className="p-3">
                               <div className="flex flex-wrap gap-1">
@@ -6427,9 +6665,9 @@ export function InsumosModule() {
                               </div>
                             </td>
                             <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
-                            <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
-                            <td className="p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
-                            <td className="p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
+                            <td className="p-3 text-right text-blue-100/70 hidden sm:table-cell">{a.estoqueMinimo ?? '-'}</td>
+                            <td className="hidden lg:table-cell p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
+                            <td className="hidden lg:table-cell p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
                           </tr>
                         )
                       })}
@@ -6442,85 +6680,6 @@ export function InsumosModule() {
                       ) : null}
                     </tbody>
                   </table>
-                </div>
-              </div>
-            </details>
-
-            <details
-              data-pref-key="insumos.details.alerts.actionables"
-              open={detailsOpen['insumos.details.alerts.actionables'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.actionables', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Ações recomendadas
-              </summary>
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm text-blue-100/80">Reposição</div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPurchaseDialogOpen(true)}
-                      disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                      title="Ver lista de compra completa"
-                    >
-                      Lista de compra
-                    </Button>
-                  </div>
-                  {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-                    <button
-                      key={String(r.codigoBarras)}
-                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                      onClick={() => {
-                        openQuickOperation('ENTRADA', {
-                          codigoBarras: r.codigoBarras ? String(r.codigoBarras) : '',
-                          quantidade: r.suggestedPurchaseQty ?? null,
-                          obs: 'Reposição sugerida'
-                        })
-                      }}
-                    >
-                      <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-                      <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-                      <div className="text-xs text-blue-100/70 mt-1">
-                        sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-                        {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-                      </div>
-                    </button>
-                  ))}
-                  {!overviewActionables?.reposicao?.length ? (
-                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem recomendações.')}</div>
-                  ) : null}
-                </div>
-                <div className="space-y-2">
-                  <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-                  {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-                    <button
-                      key={`${t.codigoBarras}-${t.from}-${t.to}`}
-                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                      onClick={() => {
-                        openQuickOperation('TRANSFERENCIA', {
-                          codigoBarras: t.codigoBarras ? String(t.codigoBarras) : '',
-                          quantidade: t.qty ?? null,
-                          fromUnidade: t.from ? String(t.from) : null,
-                          toUnidade: t.to ? String(t.to) : null,
-                          obs: 'Transferência sugerida'
-                        })
-                      }}
-                    >
-                      <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-                      <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-                      <div className="text-xs text-blue-100/70 mt-1">
-                        <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-                        <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-                        <span className="font-mono">{t.qty ?? '-'}</span>
-                      </div>
-                    </button>
-                  ))}
-                  {!overviewActionables?.transferencias?.length ? (
-                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem sugestões.')}</div>
-                  ) : null}
                 </div>
               </div>
             </details>
@@ -6546,10 +6705,10 @@ export function InsumosModule() {
                         className="cursor-pointer"
                         onClick={() => setOverviewQualitySeverity((cur) => (cur === 'CRITICAL' ? 'ALL' : 'CRITICAL'))}
                         aria-pressed={overviewQualitySeverity === 'CRITICAL'}
-                        title="Filtrar CRÍTICOS"
+                        title="Filtrar Crítico"
                       >
                         <Badge variant="destructive" className={overviewQualitySeverity === 'CRITICAL' ? 'ring-2 ring-white/20' : ''}>
-                          CRÍT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}
+                          Crítico {overviewQuality.summary.bySeverity.CRITICAL ?? 0}
                         </Badge>
                       </button>
                       <button
@@ -6557,10 +6716,10 @@ export function InsumosModule() {
                         className="cursor-pointer"
                         onClick={() => setOverviewQualitySeverity((cur) => (cur === 'WARN' ? 'ALL' : 'WARN'))}
                         aria-pressed={overviewQualitySeverity === 'WARN'}
-                        title="Filtrar ALERTAS"
+                        title="Filtrar Atenção"
                       >
                         <Badge variant="secondary" className={overviewQualitySeverity === 'WARN' ? 'ring-2 ring-white/20' : ''}>
-                          WARN {overviewQuality.summary.bySeverity.WARN ?? 0}
+                          Atenção {overviewQuality.summary.bySeverity.WARN ?? 0}
                         </Badge>
                       </button>
                       <button
@@ -6576,22 +6735,25 @@ export function InsumosModule() {
                       </button>
 	                    </>
 	                  ) : null}
-	                  {overviewLoading && !overviewQuality?.summary?.total && !overviewQuality?.issues?.length ? (
-	                    <span className="text-blue-100/70">{renderInlinePercent(true, 'text-[11px]')}</span>
-	                  ) : !overviewLoading && !overviewQuality?.summary?.total ? (
-	                    <span className="text-blue-100/70">Sem ocorrências.</span>
-	                  ) : null}
 	                </div>
+
+                  {overviewLoading && !overviewQuality?.issues?.length ? (
+                    <div className="text-xs text-blue-100/70">
+                      {renderInlinePercent(true, 'text-[11px]')}
+                    </div>
+                  ) : !overviewLoading && !overviewQuality?.issues?.length ? (
+                    <div className="text-xs text-blue-100/70">Sem ocorrências.</div>
+                  ) : null}
 
                 {overviewQuality?.issues?.length ? (
                   <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                    <table className="min-w-full text-sm">
+                    <table className="w-full table-auto text-sm">
                       <thead className="bg-black/30 text-blue-100/80">
                         <tr>
                           <th className="text-left p-3">Nível</th>
-                          <th className="text-left p-3">Código</th>
+                          <th className="text-left p-3 hidden sm:table-cell">Código</th>
                           <th className="text-left p-3">Mensagem</th>
-                          <th className="text-left p-3">Ação</th>
+                          <th className="text-left p-3 w-[1%] whitespace-nowrap">Ação</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -6603,15 +6765,16 @@ export function InsumosModule() {
                           })
                           .slice(0, 30)
                           .map((it, idx) => {
-                          const sev = String(it.severity || '').toUpperCase()
-                          const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+                          const sev = String(it.severity || '').trim()
+                          const badgeVariant = severityBadgeVariant(sev)
+                          const sevLabel = severityLabel(sev)
                           return (
                             <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
                               <td className="p-3">
-                                <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+                                <Badge variant={badgeVariant as any}>{sevLabel}</Badge>
                               </td>
-                              <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
-                              <td className="p-3 text-blue-50">
+                              <td className="p-3 font-mono text-blue-100/70 hidden sm:table-cell break-all">{it.code || '-'}</td>
+                              <td className="p-3 text-blue-50 break-words">
                                 {it.message || '-'}
                                 {(it.codigoBarras || it.produto) ? (
                                   <div className="text-xs text-blue-200/60 mt-1">
@@ -6961,7 +7124,7 @@ export function InsumosModule() {
           }
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent size="wideTable" className={dialogMediumClass}>
           <DialogHeader>
             <DialogTitle>Duplicidade de código de barras</DialogTitle>
             <DialogDescription>
@@ -6982,8 +7145,8 @@ export function InsumosModule() {
                 <tr>
                   <th className="text-left p-3">Registro</th>
                   <th className="text-left p-3">Produto</th>
-                  <th className="text-left p-3">Lote</th>
-                  <th className="text-left p-3">Estoque ({unidadeLabel(unidade)})</th>
+                        <th className="text-left p-3 hidden md:table-cell">Lote</th>
+                        <th className="text-left p-3 hidden sm:table-cell">Estoque ({unidadeLabel(unidade)})</th>
                   <th className="text-left p-3">Ações</th>
                 </tr>
               </thead>
@@ -6995,10 +7158,10 @@ export function InsumosModule() {
                     <tr key={registro || String(item?.codigoBarras || '')} className="hover:bg-white/5">
                       <td className="p-3 font-mono text-blue-100/80">{registro || '-'}</td>
                       <td className="p-3 text-blue-50">{String(item?.produto || '-')}</td>
-                      <td className="p-3 text-blue-100/70">{String(item?.lote || '-')}</td>
-                      <td className="p-3 text-blue-100/70">{Number(item?.estoqueAtual || 0)}</td>
+                      <td className="p-3 text-blue-100/70 hidden md:table-cell">{String(item?.lote || '-')}</td>
+                      <td className="p-3 text-blue-100/70 hidden sm:table-cell">{Number(item?.estoqueAtual || 0)}</td>
                       <td className="p-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                           <Button
                             size="sm"
                             variant="outline"
@@ -7041,7 +7204,7 @@ export function InsumosModule() {
           if (!v) setEditTarget(null)
         }}
       >
-        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-2xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className={dialogLargeClass}>
           <DialogHeader>
             <DialogTitle>Editar insumo</DialogTitle>
             <DialogDescription className="break-words">
@@ -7049,6 +7212,12 @@ export function InsumosModule() {
               {editTarget?.registro ? <span className="break-all"> • Reg {editTarget.registro}</span> : null}
             </DialogDescription>
           </DialogHeader>
+
+          {editSaveError ? (
+            <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-100">
+              {editSaveError}
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
@@ -7072,6 +7241,19 @@ export function InsumosModule() {
               ) : null}
             </div>
             <div className="md:col-span-2">
+              <div className="text-xs text-muted-foreground mb-1">Códigos adicionais</div>
+              <Textarea
+                value={editCodigosExtras}
+                onChange={(e) => setEditCodigosExtras(e.target.value)}
+                placeholder="um por linha"
+                rows={3}
+                className="bg-white/[0.06] border-white/20 text-white"
+              />
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                Opcional. Use para variações de código do mesmo produto.
+              </div>
+            </div>
+            <div className="md:col-span-2">
               <div className="text-xs text-muted-foreground mb-1">Produto</div>
               <Input
                 value={editProduto}
@@ -7091,23 +7273,27 @@ export function InsumosModule() {
                 <div className="mt-1 text-xs text-red-300">{editValidationErrors.produto}</div>
               ) : null}
             </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-              <Select value={editCategoria || undefined} onValueChange={setEditCategoria}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a categoria" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editCategoria && !lotCategorias.includes(editCategoria) ? (
-                    <SelectItem value={editCategoria}>{editCategoria}</SelectItem>
-                  ) : null}
-                  {lotCategorias.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+	            <div>
+	              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
+	              <AutocompleteInput
+	                value={editCategoria}
+	                onValueChange={(next) => {
+	                  setEditCategoria(next)
+	                  clearEditValidationError('categoria')
+	                }}
+	                placeholder="ex: toxina"
+	                options={lotCategorias}
+	                inputTestId="insumos-edit-categoria"
+	                ariaInvalid={editValidationErrors.categoria ? true : undefined}
+	                inputClassName={
+	                  editValidationErrors.categoria
+	                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
+	                    : undefined
+	                }
+	              />
+	              {editValidationErrors.categoria ? (
+	                <div className="mt-1 text-xs text-red-300">{editValidationErrors.categoria}</div>
+	              ) : null}
             </div>
             <div
               className={`md:col-span-2 rounded-xl border p-3 ${
@@ -7164,24 +7350,26 @@ export function InsumosModule() {
                 <div className="mt-2 text-xs text-red-300">{editValidationErrors.policy}</div>
               ) : null}
             </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Marca</div>
-              <Select value={editMarca || undefined} onValueChange={setEditMarca}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a marca" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editMarca && !insumosMarcas.includes(editMarca) ? (
-                    <SelectItem value={editMarca}>{editMarca}</SelectItem>
-                  ) : null}
-                  {insumosMarcas.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+	            <div>
+	              <div className="text-xs text-muted-foreground mb-1">Marca</div>
+	              <AutocompleteInput
+	                value={editMarca}
+	                onValueChange={(next) => {
+	                  setEditMarca(next)
+	                  clearEditValidationError('marca')
+	                }}
+	                placeholder="ex: Allergan"
+	                options={insumosMarcas}
+	                inputTestId="insumos-edit-marca"
+	                ariaInvalid={editValidationErrors.marca ? true : undefined}
+	                inputClassName={
+	                  editValidationErrors.marca ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined
+	                }
+	              />
+	              {editValidationErrors.marca ? (
+	                <div className="mt-1 text-xs text-red-300">{editValidationErrors.marca}</div>
+	              ) : null}
+	            </div>
             <div>
               <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
               <Select
@@ -7305,7 +7493,7 @@ export function InsumosModule() {
       </Dialog>
 
       <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className={dialogSmallClass}>
           <DialogHeader>
             <DialogTitle>Editar lote/validade</DialogTitle>
             <DialogDescription>
@@ -7345,7 +7533,7 @@ export function InsumosModule() {
                 {lotSelecionado.fonte ? (
                   <div>
                     <div className="text-xs text-muted-foreground">Fonte</div>
-                    <div className="text-blue-100/80 truncate">{lotSelecionado.fonte}</div>
+                    <div className="text-blue-100/80 break-words">{lotSelecionado.fonte}</div>
                   </div>
                 ) : null}
               </div>
@@ -7463,7 +7651,7 @@ export function InsumosModule() {
                 </div>
               ) : null}
               {sharePayload.url ? (
-                <div className="truncate">
+                <div className="break-words">
                   <span className="text-blue-200/70">Link:</span>{' '}
                   <a className="underline" href={sharePayload.url} target="_blank" rel="noreferrer">
                     {sharePayload.url}
@@ -7519,11 +7707,11 @@ export function InsumosModule() {
                   {item.files && item.files.length ? (
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-blue-200/70">
                       {item.files.map((f, idx) => (
-                        <span key={`${item.id}-${idx}`} className="truncate">
-                          {f.url ? (
-                            <a className="underline" href={f.url} target="_blank" rel="noreferrer">
-                              {f.name}
-                            </a>
+                      <span key={`${item.id}-${idx}`} className="break-words">
+                        {f.url ? (
+                          <a className="underline" href={f.url} target="_blank" rel="noreferrer">
+                            {f.name}
+                          </a>
                           ) : (
                             f.name
                           )}
@@ -7608,6 +7796,19 @@ export function InsumosModule() {
                       Encontramos um cadastro para este código e pré-preenchemos alguns campos (produto/categoria/marca). Se quiser, você pode cadastrar um novo lote.
                     </div>
                   ) : null}
+                </div>
+                <div className="mt-2">
+                  <div className="text-xs text-blue-200/70 mb-1">Códigos adicionais</div>
+                  <Textarea
+                    value={createCodigosExtras}
+                    onChange={(e) => setCreateCodigosExtras(e.target.value)}
+                    placeholder="um por linha"
+                    rows={3}
+                    className="bg-white/[0.06] border-white/20 text-white"
+                  />
+                  <div className="mt-1 text-[10px] text-blue-200/50">
+                    Opcional. Use para variações de código do mesmo produto.
+                  </div>
                 </div>
               </div>
               <div className="md:col-span-2">
@@ -7814,7 +8015,9 @@ export function InsumosModule() {
                 onClick={async () => {
                   const codigoBarras = createCodigo.trim()
                   if (!codigoBarras) return toast.error('Informe o código de barras')
-                  const existing = (insumos || []).find((i) => String(i.codigoBarras || '').trim() === codigoBarras)
+                  const extraCodes = parseBarcodeInput(createCodigosExtras)
+                  const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
+                  const existing = (insumos || []).find((i) => getInsumoBarcodes(i).includes(codigoBarras))
                   const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
                   const policy = {
                     requiresLot: !!createCategoriaRequiresLot,
@@ -7848,6 +8051,7 @@ export function InsumosModule() {
                       queueLabel: 'Cadastro de insumo',
                       body: {
                         codigoBarras,
+                        codigosBarras,
                         produto,
                         allowDuplicateLot,
                         categoria,
@@ -7870,6 +8074,7 @@ export function InsumosModule() {
                     })
                     toast.success('Insumo cadastrado')
                     setCreateCodigo('')
+                    setCreateCodigosExtras('')
                     setCreateProduto('')
                     setCreateCategoria('')
                     setCreateMarca('')
@@ -7910,16 +8115,16 @@ export function InsumosModule() {
         ) : null}
 
         <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-          <table className="min-w-full text-sm">
+          <table className="w-full table-auto text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
                 <th className="text-left p-3">Produto</th>
                 <th className="text-left p-3">Categoria</th>
-                <th className="text-left p-3">Código</th>
+                <th className="hidden lg:table-cell text-left p-3">Código</th>
                 <th className="text-right p-3">Estoque</th>
-                <th className="text-right p-3">Mínimo</th>
-                <th className="text-left p-3">Validade</th>
-                <th className="text-right p-3">Valor</th>
+                <th className="text-right p-3">Mín</th>
+                <th className="hidden md:table-cell text-left p-3">Validade</th>
+                <th className="hidden xl:table-cell text-right p-3">Valor</th>
                 <th className="text-right p-3">Ações</th>
               </tr>
             </thead>
@@ -7953,7 +8158,7 @@ export function InsumosModule() {
                     key={`${i.registro || ''}-${i.codigoBarras || ''}`}
                     className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}
                   >
-                    <td className="p-3">
+                    <td className="p-3 min-w-0">
                       <button
                         type="button"
                         className="w-full text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 cursor-pointer group"
@@ -7969,11 +8174,11 @@ export function InsumosModule() {
                         title={codigoBarras ? 'Ver movimentações deste insumo' : undefined}
                         aria-pressed={isSelected}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-blue-50 group-hover:underline">{i.produto || '-'}</div>
+                        <div className="flex items-center justify-between gap-2 min-w-0">
+                          <div className="text-blue-50 group-hover:underline break-words">{i.produto || '-'}</div>
                           {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
                         </div>
-                        <div className="text-xs text-blue-200/60">{i.marca || ''}</div>
+                        <div className="text-xs text-blue-200/60 break-words">{i.marca || ''}</div>
                         {isCritico || isLowStock || isVencendo || isExpirado ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {isCritico ? <Badge variant="destructive">Crítico</Badge> : null}
@@ -7990,11 +8195,11 @@ export function InsumosModule() {
                           className="inline-block h-2.5 w-2.5 rounded-full"
                           style={{ backgroundColor: getCategoriaBgColor(i.categoria || 'Outros') }}
                         />
-                        <span className="truncate">{i.categoria || '-'}</span>
+                        <span className="break-words">{i.categoria || '-'}</span>
                       </div>
                     </td>
-                    <td className="p-3">
-                      <div className="font-mono text-blue-100/80">{i.codigoBarras || '-'}</div>
+                    <td className="hidden lg:table-cell p-3">
+                      <div className="font-mono text-blue-100/80 break-all">{i.codigoBarras || '-'}</div>
                     </td>
                     <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
                       <div className="flex items-center justify-end gap-2">
@@ -8003,17 +8208,20 @@ export function InsumosModule() {
                       {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
                     </td>
                     <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
-                    <td className="p-3">
+                    <td className="hidden md:table-cell p-3">
                       <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
                     </td>
-                    <td className="p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
+                    <td className="hidden xl:table-cell p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button
                           variant="secondary"
                           className="h-8 px-2 text-xs"
                           onClick={() => {
-                            if (i.codigoBarras) setQuickCodigo(i.codigoBarras)
+                            if (i.codigoBarras) {
+                              setQuickCodigo(i.codigoBarras)
+                              setQuickSearch(String(i.codigoBarras))
+                            }
                           }}
                         >
                           Usar
@@ -8151,7 +8359,7 @@ export function InsumosModule() {
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 
-        {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? (
+        {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim() || movSearch.trim()) ? (
           <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <span className="text-blue-200/70">Filtrando por:</span>{' '}
@@ -8177,6 +8385,12 @@ export function InsumosModule() {
                   <span className="text-blue-50 font-semibold">{movFilterMarca.trim()}</span>
                 </>
               ) : null}
+              {movSearch.trim() ? (
+                <>
+                  {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  <span className="text-blue-50 font-semibold">{movSearch.trim()}</span>
+                </>
+              ) : null}
             </div>
             <Button
               variant="outline"
@@ -8186,6 +8400,7 @@ export function InsumosModule() {
                 setMovFilterProduto('')
                 setMovFilterCategoria('')
                 setMovFilterMarca('')
+                setMovSearch('')
               }}
             >
               Limpar
@@ -8216,6 +8431,15 @@ export function InsumosModule() {
             <div className="text-xs text-blue-200/70 mb-1">Até</div>
             <BrDatePickerInput value={movAte} onChange={setMovAte} placeholder="DD/MM/AA" ariaLabel="Até" />
           </div>
+          <div className="min-w-[220px] flex-1">
+            <div className="text-xs text-blue-200/70 mb-1">Buscar insumo</div>
+            <Input
+              value={movSearch}
+              onChange={(e) => setMovSearch(e.target.value)}
+              placeholder="nome, codigo, categoria"
+              className="w-full"
+            />
+          </div>
         </div>
 
         <div className="flex items-center justify-end" />
@@ -8241,22 +8465,22 @@ export function InsumosModule() {
 	              <tr>
                   {(
                     [
-                      { key: 'dataHora', label: 'Data', compact: true },
+                      { key: 'dataHora', label: 'Data', compact: true, className: '' },
                       { key: 'produto', label: 'Produto' },
-                      { key: 'categoria', label: 'Categoria', compact: true },
-                      { key: 'marca', label: 'Marca', compact: true },
+                      { key: 'categoria', label: 'Categoria', compact: true, className: 'hidden md:table-cell' },
+                      { key: 'marca', label: 'Marca', compact: true, className: 'hidden lg:table-cell' },
                       { key: 'estoque', label: 'Estoque', compact: true },
                       { key: 'valor', label: 'Valor', compact: true },
-                      { key: 'usuario', label: 'Usuário', compact: true },
-                      { key: 'observacao', label: 'Observação' },
+                      { key: 'usuario', label: 'Usuário', compact: true, className: 'hidden xl:table-cell' },
+                      { key: 'observacao', label: 'Observação', className: 'hidden md:table-cell' },
                       { key: null, label: 'Ações', compact: true }
-                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean }>
+                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string }>
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
                     return (
 	                      <th
 	                        key={col.label}
-	                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
+	                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
 	                      >
 	                        <div className="flex items-center justify-center gap-2">
                             {col.key ? (
@@ -8321,7 +8545,7 @@ export function InsumosModule() {
                   const valorEstoqueTotal = preco && estoqueDepois != null && Number.isFinite(Number(estoqueDepois)) ? preco * Number(estoqueDepois) : null
                   const produtoNome = String(insumo?.produto || m.produto || '').trim() || '-'
                   const categoriaNome = String(insumo?.categoria || '').trim() || '-'
-                  const marcaNome = String(insumo?.marca || '').trim() || '-'
+                  const marcaNome = String(insumo?.marca || m.marca || '').trim() || '-'
 		                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
 
                   const rowTone = isEntrada
@@ -8337,29 +8561,36 @@ export function InsumosModule() {
                           <div className="text-blue-50">{fmtMovDateShort(m.dataHora) || '-'}</div>
                           <div className="text-xs text-blue-200/60">{fmtMovTimeShort(m.dataHora) || ''}</div>
                         </td>
-	                    <td className="p-3 text-center align-middle">
-	                      <button
-	                        type="button"
-	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
-	                        onClick={() => {
-                            const p = String(produtoNome || '').trim()
-                            if (!p || p === '-') return
-                            setSelectedCodigoBarras('')
-                            setMovFilterCategoria('')
-                            setMovFilterMarca('')
-                            setMovFilterProduto((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
-	                        }}
-	                        title="Filtrar por produto"
-	                        aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
-	                      >
-	                        {produtoNome}
-	                      </button>
-		                    </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                    <td className="p-3 text-center align-middle">
+                      <button
+                        type="button"
+                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer break-words"
+                        onClick={() => {
+                          const p = String(produtoNome || '').trim()
+                          if (!p || p === '-') return
+                          setSelectedCodigoBarras('')
+                          setMovFilterCategoria('')
+                          setMovFilterMarca('')
+                          setMovFilterProduto((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
+                        }}
+                        title="Filtrar por produto"
+                        aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
+                      >
+                        {produtoNome}
+                      </button>
+                      {marcaNome && marcaNome !== '-' ? (
+                        <div className="mt-1 flex flex-wrap justify-center gap-1 lg:hidden">
+                          <Badge style={buildTagStyle(getMarcaBgColor(marcaNome))} className="border">
+                            {marcaNome}
+                          </Badge>
+                        </div>
+                      ) : null}
+                    </td>
+                      <td className="p-3 text-center align-middle whitespace-nowrap hidden md:table-cell">
                         {categoriaNome && categoriaNome !== '-' ? (
                           <button
                             type="button"
-                            className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
                             onClick={() => {
                               const c = String(categoriaNome || '').trim()
                               if (!c || c === '-') return
@@ -8370,17 +8601,19 @@ export function InsumosModule() {
                             title="Filtrar por categoria"
                             aria-pressed={normalizeText(movFilterCategoria) === normalizeText(categoriaNome)}
                           >
-                            {categoriaNome}
+                            <Badge style={buildTagStyle(getCategoriaBgColor(categoriaNome))} className="border">
+                              {categoriaNome}
+                            </Badge>
                           </button>
                         ) : (
                           <span className="text-blue-100/70">-</span>
                         )}
                       </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                      <td className="p-3 text-center align-middle whitespace-nowrap hidden lg:table-cell">
                         {marcaNome && marcaNome !== '-' ? (
                           <button
                             type="button"
-                            className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
                             onClick={() => {
                               const b = String(marcaNome || '').trim()
                               if (!b || b === '-') return
@@ -8391,7 +8624,9 @@ export function InsumosModule() {
                             title="Filtrar por marca"
                             aria-pressed={normalizeText(movFilterMarca) === normalizeText(marcaNome)}
                           >
-                            {marcaNome}
+                            <Badge style={buildTagStyle(getMarcaBgColor(marcaNome))} className="border">
+                              {marcaNome}
+                            </Badge>
                           </button>
                         ) : (
                           <span className="text-blue-100/70">-</span>
@@ -8410,8 +8645,8 @@ export function InsumosModule() {
                           {valorEstoqueTotal != null ? fmtMoneyBRL0(valorEstoqueTotal) : ''}
                         </div>
                       </td>
-	                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap">{m.usuario || '-'}</td>
-	                    <td className="p-3 text-center align-middle text-blue-100/60">
+	                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap hidden xl:table-cell">{m.usuario || '-'}</td>
+	                    <td className="p-3 text-center align-middle text-blue-100/60 hidden md:table-cell">
 	                      <div className="space-y-1">
 	                        {m.transferId ? (
 	                          <div>

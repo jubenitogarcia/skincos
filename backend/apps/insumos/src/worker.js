@@ -791,15 +791,18 @@ function computeNotificationsForUnidade(insumos, unidade) {
     for (const i of insumos) {
         const estoqueAtual = Number(i.estoqueAtual) || 0;
         const estoqueMinimo = Number(i.estoqueMinimo) || 0;
-        const isBreakage = estoqueAtual < 0;
-        if (isBreakage || (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo)) {
+        // "lowStock" is for attention-level items only (at the limit).
+        // Critical items (below minimum or negative stock) are handled elsewhere (overview resumo/criticos).
+        const isCritical = estoqueAtual < 0 || (estoqueMinimo > 0 && estoqueAtual < estoqueMinimo);
+        const isLowStock = !isCritical && estoqueMinimo > 0 && estoqueAtual === estoqueMinimo;
+        if (isLowStock) {
             lowStock.push({
                 codigoBarras: i.codigoBarras,
                 produto: i.produto,
                 categoria: i.categoria,
                 estoqueAtual,
                 estoqueMinimo,
-                tipoAlerta: isBreakage ? 'QUEBRA_ESTOQUE' : 'ESTOQUE_BAIXO',
+                tipoAlerta: 'ESTOQUE_BAIXO',
             });
         }
 

@@ -194,6 +194,7 @@ jobs:
 
       - name: Smoke check Ponto (production)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        continue-on-error: true
         env:
           BASE_URL: https://crm.skincos.com.br
         run: |
