@@ -129,6 +129,17 @@ function toDateTimeLocalValue(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function FaceModelsBadge({ state }: { state: 'idle' | 'loading' | 'ready' | 'error' }) {
+  if (state === 'ready') return <Badge variant="outline">Modelos: OK</Badge>
+  if (state === 'loading') return <Badge variant="secondary">Modelos: carregando…</Badge>
+  if (state === 'error') return <Badge variant="destructive">Modelos: erro</Badge>
+  return <Badge variant="secondary">Modelos: não carregados</Badge>
+}
+
+function CameraStatusBadge({ active }: { active: boolean }) {
+  return active ? <Badge>Camera: ativa</Badge> : <Badge variant="secondary">Camera: desligada</Badge>
+}
+
 function createRequestMeta() {
   return {
     requestId: (globalThis.crypto?.randomUUID?.() || String(Date.now())),
@@ -1322,10 +1333,19 @@ export function PontoModule() {
                     <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
                     <Button onClick={mePunchFace} disabled={loading || !stream}>Registrar por Face</Button>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CameraStatusBadge active={!!stream && cameraOwner === 'employee'} />
+                    <FaceModelsBadge state={modelsReady} />
+                  </div>
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
                   </div>
                   {modelsError ? <div className="text-sm text-red-600">{modelsError}</div> : null}
+                  {modelsReady === 'idle' ? (
+                    <div className="text-sm text-muted-foreground">
+                      Carregue os modelos faciais antes de registrar por Face.
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1461,25 +1481,27 @@ export function PontoModule() {
                   </div>
                 ) : null}
 
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
-                  <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                  <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
-                  <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
-                    Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
-                  </Button>
-                </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
+                <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
+                <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
+                <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
+                  Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
+                </Button>
+              </div>
 
-                <div className="rounded-xl overflow-hidden border bg-black">
-                  <video ref={deviceVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                </div>
+              <div className="rounded-xl overflow-hidden border bg-black">
+                <video ref={deviceVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+              </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {identifyResult?.match ? (
-                    <>
-                      <Badge>Reconhecido: {identifyResult.match.name}</Badge>
-                      <Badge variant="outline">dist: {identifyResult.match.distance.toFixed(3)}</Badge>
-                    </>
+              <div className="flex flex-wrap items-center gap-2">
+                <CameraStatusBadge active={!!stream && cameraOwner === 'device'} />
+                <FaceModelsBadge state={modelsReady} />
+                {identifyResult?.match ? (
+                  <>
+                    <Badge>Reconhecido: {identifyResult.match.name}</Badge>
+                    <Badge variant="outline">dist: {identifyResult.match.distance.toFixed(3)}</Badge>
+                  </>
                   ) : (
                     <Badge variant="secondary">Nenhum reconhecimento</Badge>
                   )}
@@ -1650,6 +1672,11 @@ export function PontoModule() {
 
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CameraStatusBadge active={!!stream && cameraOwner === 'admin'} />
+                    <FaceModelsBadge state={modelsReady} />
                   </div>
 
                   <label className="flex items-start gap-2 text-sm">
