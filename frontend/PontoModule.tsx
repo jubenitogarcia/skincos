@@ -384,8 +384,6 @@ export function PontoModule() {
   const [newEmployeePin, setNewEmployeePin] = useState('')
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
-  const [selectedEmployeeLoginEmail, setSelectedEmployeeLoginEmail] = useState('')
-  const [pinAdminValue, setPinAdminValue] = useState('')
 
   const [enrollCount, setEnrollCount] = useState(5)
   const [enrollReplace, setEnrollReplace] = useState(true)
@@ -419,10 +417,6 @@ export function PontoModule() {
   useEffect(() => {
     try { localStorage.setItem(LS_DEV_ACTOR_EMAIL, devActorEmail) } catch { /* ignore */ }
   }, [devActorEmail])
-
-  useEffect(() => {
-    setSelectedEmployeeLoginEmail(selectedEmployee?.loginEmail || '')
-  }, [selectedEmployeeId, selectedEmployee])
 
   useEffect(() => {
     if (meRecordsFrom || meRecordsTo) return
@@ -961,52 +955,6 @@ export function PontoModule() {
       } else {
         toast.error(e?.message || String(e))
       }
-      toastErrorMeta(e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function adminSaveLoginEmail() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
-    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
-    setLoading(true)
-    try {
-      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
-        method: 'PATCH',
-        body: { loginEmail: selectedEmployeeLoginEmail.trim() }
-      })
-      await adminRefreshAll()
-      toast.success('Vínculo atualizado')
-    } catch (e: any) {
-      const details = e?.details as any
-      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
-        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
-      } else {
-        toast.error(e?.message || String(e))
-      }
-      toastErrorMeta(e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function adminSetPin() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
-    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
-    const pin = pinAdminValue.trim()
-    if (pin.length < 4) return toast.error('PIN deve ter pelo menos 4 dígitos')
-    setLoading(true)
-    try {
-      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/pin', {
-        method: 'POST',
-        body: { pin }
-      })
-      setPinAdminValue('')
-      await adminRefreshAll()
-      toast.success('PIN atualizado')
-    } catch (e: any) {
-      toast.error(e?.message || String(e))
       toastErrorMeta(e)
     } finally {
       setLoading(false)
@@ -1652,30 +1600,6 @@ export function PontoModule() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Email (vínculo login)</Label>
-                    <Input
-                      value={selectedEmployeeLoginEmail}
-                      onChange={(e) => setSelectedEmployeeLoginEmail(e.target.value)}
-                      placeholder="ex: funcionario@empresa.com"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={adminSaveLoginEmail} disabled={loading || !canAdminActions || !selectedEmployeeId}>Salvar vínculo</Button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Novo PIN (min. 4)</Label>
-                    <Input value={pinAdminValue} onChange={(e) => setPinAdminValue(e.target.value)} inputMode="numeric" placeholder="••••" />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={adminSetPin} disabled={loading || !canAdminActions || !selectedEmployeeId}>Salvar PIN</Button>
-                  </div>
                 </div>
 
                 <div className="rounded-xl border p-3 space-y-3">
