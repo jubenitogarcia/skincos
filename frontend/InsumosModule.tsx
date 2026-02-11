@@ -958,7 +958,7 @@ export function InsumosModule() {
   const dialogMaxHeight = viewportHeight > 0 && viewportHeight < 720 ? 'max-h-[88vh]' : 'max-h-[92vh]'
   const dialogPaddingClass = isAdaptiveCompact ? 'p-3' : 'p-4 sm:p-5'
   const dialogBodyClass = `${dialogMaxHeight} min-w-0 overflow-auto`
-  const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl'} ${dialogPaddingClass}`
+  const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-full'} ${dialogPaddingClass}`
   const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-5xl'} ${dialogPaddingClass}`
   const dialogMediumClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-4xl'} ${dialogPaddingClass}`
   const dialogSmallClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-2xl'} ${dialogPaddingClass}`
@@ -5058,7 +5058,7 @@ export function InsumosModule() {
       ) : null}
       <DragDropContext onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
-        <DialogContent className={dialogWideClass}>
+        <DialogContent size="wideTable" className={dialogWideClass}>
           <DialogHeader>
             <DialogTitle>Insumos</DialogTitle>
             <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
@@ -5368,17 +5368,17 @@ export function InsumosModule() {
               onScroll={onInsumosModalScroll}
               className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
             >
-              <table className="w-full table-auto text-sm">
+              <table className="w-full table-fixed text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
-                    <th className="text-left p-3">Produto</th>
-                    <th className="text-left p-3 hidden md:table-cell">Categoria</th>
-                    <th className="text-left p-3 hidden lg:table-cell">Código</th>
-                    <th className="text-right p-3">Estoque</th>
-                    <th className="text-right p-3 hidden sm:table-cell">Mín</th>
-                    <th className="text-left p-3 hidden xl:table-cell">Validade</th>
-                    <th className="text-right p-3 hidden xl:table-cell">Valor</th>
-                    <th className="text-right p-3">Ações</th>
+                    <th className="text-left p-3 w-[34%]">Produto</th>
+                    <th className="text-left p-3 hidden md:table-cell w-[16%]">Categoria</th>
+                    <th className="text-left p-3 hidden lg:table-cell w-[18%]">Código</th>
+                    <th className="text-right p-3 w-[1%] whitespace-nowrap">Estoque</th>
+                    <th className="text-right p-3 hidden sm:table-cell w-[1%] whitespace-nowrap">Mín</th>
+                    <th className="text-left p-3 hidden xl:table-cell w-[1%] whitespace-nowrap">Validade</th>
+                    <th className="text-right p-3 hidden xl:table-cell w-[1%] whitespace-nowrap">Valor</th>
+                    <th className="text-right p-3 w-[1%] whitespace-nowrap">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -5404,11 +5404,11 @@ export function InsumosModule() {
                           <div className="break-words">{i.categoria || '-'}</div>
                         </td>
                         <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-top break-all">{i.codigoBarras || '-'}</td>
-                        <td className="p-3 text-right text-blue-100/80 font-mono align-top">{Number.isFinite(estoque) ? estoque : '-'}</td>
-                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-top">{min || '-'}</td>
-                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top break-words">{fmtDateOnlyBR(i.dataValidade || '')}</td>
-                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top">{fmtMoneyBRL(valor)}</td>
-                        <td className="p-3 text-right">
+                        <td className="p-3 text-right text-blue-100/80 font-mono align-top whitespace-nowrap">{Number.isFinite(estoque) ? estoque : '-'}</td>
+                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-top whitespace-nowrap">{min || '-'}</td>
+                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top whitespace-nowrap">{fmtDateOnlyBR(i.dataValidade || '')}</td>
+                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top whitespace-nowrap">{fmtMoneyBRL(valor)}</td>
+                        <td className="p-3 text-right whitespace-nowrap">
                           <div className="flex flex-col sm:flex-row justify-end gap-2">
                             <Button
                               variant="secondary"
@@ -5884,7 +5884,7 @@ export function InsumosModule() {
       </Dialog>
 
       <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
-        <DialogContent className={`${dialogMediumClass} dark bg-corporate-900 border-white/10 text-white`}>
+        <DialogContent size="wideTable" className={`${dialogMediumClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">Lista de compra</DialogTitle>
             <DialogDescription className="text-blue-100/70">
@@ -7061,7 +7061,7 @@ export function InsumosModule() {
           }
         }}
       >
-        <DialogContent className={dialogMediumClass}>
+        <DialogContent size="wideTable" className={dialogMediumClass}>
           <DialogHeader>
             <DialogTitle>Duplicidade de código de barras</DialogTitle>
             <DialogDescription>
