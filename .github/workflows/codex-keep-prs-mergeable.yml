@@ -1,0 +1,193 @@
+name: codex-keep-prs-mergeable
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: codex-keep-prs-mergeable
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  keep_mergeable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep codex PRs up-to-date (update-branch) + label conflicts
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const LABELS = {
+              updated: {
+                name: "automerge/updated-branch",
+                color: "0E8A16",
+                description: "Auto-updated branch to satisfy strict up-to-date requirement.",
+              },
+              conflict: {
+                name: "automerge/conflict",
+                color: "B60205",
+                description: "PR has merge conflicts (needs conflict resolution).",
+              },
+              pending: {
+                name: "automerge/pending-mergeability",
+                color: "FBCA04",
+                description: "GitHub mergeability state still computing/unknown.",
+              },
+            };
+
+            const COMMENT_MARKERS = {
+              updated: "<!-- codex-keep-prs-mergeable:updated -->",
+              conflict: "<!-- codex-keep-prs-mergeable:conflict -->",
+            };
+
+            async function ensureLabel(label) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label.name });
+                return;
+              } catch (err) {
+                if (err?.status !== 404) throw err;
+              }
+              try {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: label.name,
+                  color: label.color,
+                  description: label.description,
+                });
+                core.info(`Created label: ${label.name}`);
+              } catch (err) {
+                // Race-safe: label could have been created by another run.
+                core.warning(`Could not create label ${label.name}: ${err?.message || err}`);
+              }
+            }
+
+            async function addLabel(issue_number, labelName) {
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [labelName] });
+              } catch (err) {
+                core.warning(`addLabels failed for #${issue_number} label=${labelName}: ${err?.message || err}`);
+              }
+            }
+
+            async function removeLabel(issue_number, labelName) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name: labelName });
+              } catch (err) {
+                // Ignore if label not present.
+                if (err?.status !== 404) core.warning(`removeLabel failed for #${issue_number} label=${labelName}: ${err?.message || err}`);
+              }
+            }
+
+            async function ensureCommentOnce(issue_number, marker, body) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+              const has = comments.some((c) => String(c?.body || "").includes(marker));
+              if (has) return;
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: `${marker}\n${body}`,
+              });
+            }
+
+            // Ensure labels exist (best-effort).
+            await ensureLabel(LABELS.updated);
+            await ensureLabel(LABELS.conflict);
+            await ensureLabel(LABELS.pending);
+
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              base: "main",
+              sort: "updated",
+              direction: "desc",
+              per_page: 100,
+            });
+
+            const candidates = pulls.filter((pr) => {
+              if (pr.head?.repo?.full_name !== `${owner}/${repo}`) return false;
+              if (!String(pr.head?.ref || "").startsWith("codex/")) return false;
+              if (String(pr.user?.login || "") !== "jubenitogarcia") return false;
+              return true;
+            }).slice(0, 50);
+
+            core.info(`Found ${candidates.length} open codex PR(s) to evaluate.`);
+
+            for (const pr of candidates) {
+              const prNumber = pr.number;
+              let full;
+              try {
+                const resp = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+                full = resp.data;
+              } catch (err) {
+                core.warning(`Failed to fetch PR #${prNumber}: ${err?.message || err}`);
+                continue;
+              }
+
+              const mergeableState = full.mergeable_state; // behind | dirty | clean | unknown | blocked | unstable | ...
+              const headSha = full.head?.sha || "";
+              core.info(`PR #${prNumber}: mergeable_state=${mergeableState} head=${headSha.slice(0, 7)}`);
+
+              // GitHub may return null while computing mergeability.
+              if (!mergeableState || mergeableState === "unknown") {
+                await addLabel(prNumber, LABELS.pending.name);
+                continue;
+              }
+
+              if (mergeableState === "behind") {
+                // Keep strict up-to-date requirement satisfied.
+                try {
+                  await github.rest.pulls.updateBranch({
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                    expected_head_sha: headSha || undefined,
+                  });
+                  core.info(`Updated branch for PR #${prNumber}`);
+                  await addLabel(prNumber, LABELS.updated.name);
+                  await removeLabel(prNumber, LABELS.pending.name);
+                  await ensureCommentOnce(
+                    prNumber,
+                    COMMENT_MARKERS.updated,
+                    "Atualizei a branch para ficar up-to-date com a `main` (exigência do strict). Checks devem rodar novamente."
+                  );
+                } catch (err) {
+                  core.warning(`update-branch failed for PR #${prNumber}: ${err?.message || err}`);
+                }
+                continue;
+              }
+
+              if (mergeableState === "dirty") {
+                await addLabel(prNumber, LABELS.conflict.name);
+                await removeLabel(prNumber, LABELS.pending.name);
+                await ensureCommentOnce(
+                  prNumber,
+                  COMMENT_MARKERS.conflict,
+                  "Conflito detectado. O resolvedor (automação local do Codex) vai tentar destravar com merge/PR de correção."
+                );
+                continue;
+              }
+
+              // PR is not behind/dirty/unknown. Best-effort cleanup.
+              await removeLabel(prNumber, LABELS.pending.name);
+              // Keep conflict label unless it is clearly clean.
+              if (mergeableState === "clean") {
+                await removeLabel(prNumber, LABELS.conflict.name);
+              }
+            }
