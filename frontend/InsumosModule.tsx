@@ -1170,6 +1170,7 @@ export function InsumosModule() {
   const [movFilterProduto, setMovFilterProduto] = React.useState('')
   const [movFilterCategoria, setMovFilterCategoria] = React.useState('')
   const [movFilterMarca, setMovFilterMarca] = React.useState('')
+  const [movSearch, setMovSearch] = React.useState('')
   const [movSortKey, setMovSortKey] = React.useState<
     'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
   >('dataHora')
@@ -4896,11 +4897,26 @@ export function InsumosModule() {
     const filterProduto = normalizeText(movFilterProduto)
     const filterCategoria = normalizeText(movFilterCategoria)
     const filterMarca = normalizeText(movFilterMarca)
+    const filterSearch = normalizeText(movSearch)
 
     const applyFiltersAndSort = (base: Movimentacao[]) => {
       const filtered = base.filter((m) => {
         if (selectedCode) {
           if (String(m?.codigoBarras || '').trim() !== selectedCode) return false
+        } else if (filterSearch) {
+          const insumo = pickInsumoForMov(m)
+          const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
+          const categoriaNome = normalizeText(insumo?.categoria || '')
+          const codigoBarras = normalizeText(String(m?.codigoBarras || insumo?.codigoBarras || '').trim())
+          if (
+            !(
+              (produtoNome && produtoNome.includes(filterSearch)) ||
+              (categoriaNome && categoriaNome.includes(filterSearch)) ||
+              (codigoBarras && codigoBarras.includes(filterSearch))
+            )
+          ) {
+            return false
+          }
         } else if (filterProduto) {
           const insumo = pickInsumoForMov(m)
           const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
@@ -5016,6 +5032,7 @@ export function InsumosModule() {
     movFilterCategoria,
     movFilterMarca,
     movFilterProduto,
+    movSearch,
     movimentacoes,
     pickInsumoForMov,
     selectedCodigoBarras
@@ -5378,7 +5395,7 @@ export function InsumosModule() {
                     <th className="text-right p-3 hidden sm:table-cell w-[5.5rem] whitespace-nowrap">Mín</th>
                     <th className="text-left p-3 hidden xl:table-cell w-[7.5rem] whitespace-nowrap">Validade</th>
                     <th className="text-right p-3 hidden xl:table-cell w-[8.5rem] whitespace-nowrap">Valor</th>
-                    <th className="text-right p-3 w-[11.5rem] whitespace-nowrap">Ações</th>
+                    <th className="text-right p-3 w-[7.5rem] whitespace-nowrap">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -5409,20 +5426,8 @@ export function InsumosModule() {
                         <td className="p-3 text-blue-100/70 hidden xl:table-cell align-middle whitespace-nowrap">{fmtDateOnlyBR(i.dataValidade || '')}</td>
                         <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-middle whitespace-nowrap">{fmtMoneyBRL(valor)}</td>
                         <td className="p-3 text-right align-middle whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              className="h-8 px-2 text-xs"
-                              onClick={() => {
-                                if (codigoBarras) setSelectedCodigoBarras(codigoBarras)
-                                setInsumosListModalOpen(false)
-                              }}
-                              disabled={!codigoBarras}
-                            >
-                              Mov
-                            </Button>
-                            <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
+                          <div className="flex items-center justify-end">
+                            <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
                               Editar
                             </Button>
                           </div>
@@ -8296,7 +8301,7 @@ export function InsumosModule() {
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 
-        {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? (
+        {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim() || movSearch.trim()) ? (
           <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <span className="text-blue-200/70">Filtrando por:</span>{' '}
@@ -8322,6 +8327,12 @@ export function InsumosModule() {
                   <span className="text-blue-50 font-semibold">{movFilterMarca.trim()}</span>
                 </>
               ) : null}
+              {movSearch.trim() ? (
+                <>
+                  {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  <span className="text-blue-50 font-semibold">{movSearch.trim()}</span>
+                </>
+              ) : null}
             </div>
             <Button
               variant="outline"
@@ -8331,6 +8342,7 @@ export function InsumosModule() {
                 setMovFilterProduto('')
                 setMovFilterCategoria('')
                 setMovFilterMarca('')
+                setMovSearch('')
               }}
             >
               Limpar
@@ -8360,6 +8372,15 @@ export function InsumosModule() {
           <div className="w-48">
             <div className="text-xs text-blue-200/70 mb-1">Até</div>
             <BrDatePickerInput value={movAte} onChange={setMovAte} placeholder="DD/MM/AA" ariaLabel="Até" />
+          </div>
+          <div className="min-w-[220px] flex-1">
+            <div className="text-xs text-blue-200/70 mb-1">Buscar insumo</div>
+            <Input
+              value={movSearch}
+              onChange={(e) => setMovSearch(e.target.value)}
+              placeholder="nome, codigo, categoria"
+              className="w-full"
+            />
           </div>
         </div>
 
