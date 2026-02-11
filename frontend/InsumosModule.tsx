@@ -939,12 +939,29 @@ async function apiJson<T>(
 export function InsumosModule() {
   const rootRef = React.useRef<HTMLDivElement | null>(null)
   const { width: viewportWidth, height: viewportHeight } = useViewportSize()
+  const [isCoarsePointer, setIsCoarsePointer] = React.useState(false)
+  React.useEffect(() => {
+    const media = window.matchMedia('(pointer: coarse)')
+    const update = () => setIsCoarsePointer(!!media.matches)
+    update()
+    try {
+      media.addEventListener('change', update)
+      return () => media.removeEventListener('change', update)
+    } catch {
+      media.addListener(update)
+      return () => media.removeListener(update)
+    }
+  }, [])
+  const isPhoneViewport = viewportWidth > 0 && viewportWidth < 640
   const isCompactViewport = viewportWidth > 0 && viewportWidth < 1024
+  const isAdaptiveCompact = isPhoneViewport || (isCompactViewport && isCoarsePointer)
   const dialogMaxHeight = viewportHeight > 0 && viewportHeight < 720 ? 'max-h-[88vh]' : 'max-h-[92vh]'
-  const dialogWideClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl'}`
-  const dialogLargeClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'w-[calc(100vw-1.5rem)] max-w-5xl'}`
-  const dialogMediumClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'max-w-4xl'}`
-  const dialogSmallClass = `${dialogMaxHeight} overflow-y-auto overflow-x-hidden ${isCompactViewport ? 'w-[calc(100vw-1rem)] max-w-[96vw]' : 'max-w-2xl'}`
+  const dialogPaddingClass = isAdaptiveCompact ? 'p-3' : 'p-4 sm:p-5'
+  const dialogBodyClass = `${dialogMaxHeight} min-w-0 overflow-auto`
+  const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl'} ${dialogPaddingClass}`
+  const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-5xl'} ${dialogPaddingClass}`
+  const dialogMediumClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-4xl'} ${dialogPaddingClass}`
+  const dialogSmallClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-2xl'} ${dialogPaddingClass}`
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
@@ -5009,7 +5026,7 @@ export function InsumosModule() {
   }, [movimentacoes])
 
   return (
-    <div ref={rootRef} className="p-6 space-y-6">
+    <div ref={rootRef} className="px-3 py-4 sm:p-6 space-y-4 sm:space-y-6">
       {autoSyncSuspended ? (
         <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-amber-100 flex flex-wrap items-center gap-3">
           <div className="text-sm">
@@ -5049,7 +5066,7 @@ export function InsumosModule() {
 
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   value={insumosQuery}
                   onChange={(e) => setInsumosQuery(e.target.value)}
@@ -5087,7 +5104,7 @@ export function InsumosModule() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
                       <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
                         {createScanOpen ? 'Fechar' : 'Escanear'}
@@ -5349,7 +5366,7 @@ export function InsumosModule() {
             <div
               ref={insumosModalListContainerRef}
               onScroll={onInsumosModalScroll}
-              className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10"
+              className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
             >
               <table className="w-full table-auto text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
@@ -5577,8 +5594,13 @@ export function InsumosModule() {
           <div className="space-y-3">
             <div>
               <div className="text-xs text-blue-200/70 mb-1">Buscar por produto, marca, categoria ou código</div>
-              <div className="flex items-center gap-2">
-                <Input value={quickSearch} onChange={(e) => setQuickSearch(e.target.value)} placeholder="ex: Rennova, preenchedor, 789..." />
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  value={quickSearch}
+                  onChange={(e) => setQuickSearch(e.target.value)}
+                  placeholder="ex: Rennova, preenchedor, 789..."
+                  className="w-full sm:flex-1 sm:min-w-[240px]"
+                />
                 <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
                   {quickScanOpen ? 'Fechar' : 'Escanear'}
                 </Button>
@@ -5595,11 +5617,11 @@ export function InsumosModule() {
                             key={`${item.registro || ''}-${code}`}
                             type="button"
                             onClick={() => applyQuickSelection(item, code)}
-                            className="w-full rounded-md border border-white/5 bg-white/5 px-2 py-2 text-left hover:bg-white/10"
+                            className="w-full min-w-0 rounded-md border border-white/5 bg-white/5 px-2 py-2 text-left hover:bg-white/10"
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="text-sm text-blue-50 font-semibold">{String(item.produto || 'Insumo')}</div>
-                              <div className="text-xs text-blue-200/60 font-mono">{code}</div>
+                              <div className="text-sm text-blue-50 font-semibold break-words">{String(item.produto || 'Insumo')}</div>
+                              <div className="text-xs text-blue-200/60 font-mono break-all">{code}</div>
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
                               {item.categoria ? (
@@ -5708,7 +5730,7 @@ export function InsumosModule() {
               </div>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
                 <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
@@ -5720,7 +5742,7 @@ export function InsumosModule() {
             </div>
 
             {quickOp === 'TRANSFERENCIA' ? (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <div className="text-xs text-blue-200/70 mb-1">Origem</div>
                   <Select value={transferFrom} onValueChange={setTransferFrom}>
@@ -5950,8 +5972,8 @@ export function InsumosModule() {
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
                         <th className="text-left p-3">Produto</th>
-                        <th className="text-left p-3">Categoria</th>
-                        <th className="text-left p-3">Código</th>
+                        <th className="text-left p-3 hidden md:table-cell">Categoria</th>
+                        <th className="text-left p-3 hidden sm:table-cell">Código</th>
                         <th className="text-right p-3">Qtd sugerida</th>
                         <th className="text-right p-3">Valor</th>
                         <th className="text-right p-3">Ação</th>
@@ -5964,8 +5986,8 @@ export function InsumosModule() {
                             <td className="p-3 text-blue-50">
                               <div className="font-medium">{it.produto || '-'}</div>
                             </td>
-                            <td className="p-3 text-blue-100/80">{it.categoria || cat}</td>
-                            <td className="p-3 font-mono text-blue-100/80">{it.codigoBarras || ''}</td>
+                            <td className="p-3 text-blue-100/80 hidden md:table-cell">{it.categoria || cat}</td>
+                            <td className="p-3 font-mono text-blue-100/80 hidden sm:table-cell break-all">{it.codigoBarras || ''}</td>
                             <td className="p-3 text-right font-mono text-blue-100/80">{it.suggestedPurchaseQty ?? 0}</td>
                             <td className="p-3 text-right font-mono text-blue-100/80">
                               {fmtMoneyBRL(Number(it.estimatedValue) || 0)}
@@ -6459,7 +6481,7 @@ export function InsumosModule() {
                   </div>
                 </div>
 
-                <div className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
+                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                   <table className="w-full table-auto text-sm">
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
@@ -6468,7 +6490,7 @@ export function InsumosModule() {
                         <th className="text-left p-3">Status</th>
                         <th className="text-left p-3">Ação</th>
                         <th className="text-right p-3">Atual</th>
-                        <th className="text-right p-3">Mín</th>
+                        <th className="text-right p-3 hidden sm:table-cell">Mín</th>
                         <th className="hidden lg:table-cell text-right p-3">Dif</th>
                         <th className="hidden lg:table-cell text-right p-3">%</th>
                       </tr>
@@ -6505,7 +6527,7 @@ export function InsumosModule() {
                                 </div>
                               ) : null}
                             </td>
-                            <td className="p-3 text-blue-100/80">
+                            <td className="p-3 text-blue-100/80 hidden sm:table-cell">
                               <div className="flex items-center gap-2">
                                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
                                 <span className="break-words">{a.categoria || '-'}</span>
@@ -6581,7 +6603,7 @@ export function InsumosModule() {
                               </div>
                             </td>
                             <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
-                            <td className="p-3 text-right text-blue-100/70">{a.estoqueMinimo ?? '-'}</td>
+                            <td className="p-3 text-right text-blue-100/70 hidden sm:table-cell">{a.estoqueMinimo ?? '-'}</td>
                             <td className="hidden lg:table-cell p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
                             <td className="hidden lg:table-cell p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
                           </tr>
@@ -6662,14 +6684,14 @@ export function InsumosModule() {
                   ) : null}
 
                 {overviewQuality?.issues?.length ? (
-                  <div className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
+                  <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                     <table className="w-full table-auto text-sm">
                       <thead className="bg-black/30 text-blue-100/80">
                         <tr>
                           <th className="text-left p-3">Nível</th>
-                          <th className="text-left p-3">Código</th>
+                          <th className="text-left p-3 hidden sm:table-cell">Código</th>
                           <th className="text-left p-3">Mensagem</th>
-                          <th className="text-left p-3">Ação</th>
+                          <th className="text-left p-3 w-[1%] whitespace-nowrap">Ação</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -6688,7 +6710,7 @@ export function InsumosModule() {
                               <td className="p-3">
                                 <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
                               </td>
-                              <td className="p-3 font-mono text-blue-100/70">{it.code || '-'}</td>
+                              <td className="p-3 font-mono text-blue-100/70 hidden sm:table-cell break-all">{it.code || '-'}</td>
                               <td className="p-3 text-blue-50 break-words">
                                 {it.message || '-'}
                                 {(it.codigoBarras || it.produto) ? (
@@ -7054,14 +7076,14 @@ export function InsumosModule() {
               )}
             </DialogDescription>
           </DialogHeader>
-          <div className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
+          <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
             <table className="min-w-full text-sm">
               <thead className="bg-black/30 text-blue-100/80">
                 <tr>
                   <th className="text-left p-3">Registro</th>
                   <th className="text-left p-3">Produto</th>
-                  <th className="text-left p-3">Lote</th>
-                  <th className="text-left p-3">Estoque ({unidadeLabel(unidade)})</th>
+                        <th className="text-left p-3 hidden md:table-cell">Lote</th>
+                        <th className="text-left p-3 hidden sm:table-cell">Estoque ({unidadeLabel(unidade)})</th>
                   <th className="text-left p-3">Ações</th>
                 </tr>
               </thead>
@@ -7073,10 +7095,10 @@ export function InsumosModule() {
                     <tr key={registro || String(item?.codigoBarras || '')} className="hover:bg-white/5">
                       <td className="p-3 font-mono text-blue-100/80">{registro || '-'}</td>
                       <td className="p-3 text-blue-50">{String(item?.produto || '-')}</td>
-                      <td className="p-3 text-blue-100/70">{String(item?.lote || '-')}</td>
-                      <td className="p-3 text-blue-100/70">{Number(item?.estoqueAtual || 0)}</td>
+                      <td className="p-3 text-blue-100/70 hidden md:table-cell">{String(item?.lote || '-')}</td>
+                      <td className="p-3 text-blue-100/70 hidden sm:table-cell">{Number(item?.estoqueAtual || 0)}</td>
                       <td className="p-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                           <Button
                             size="sm"
                             variant="outline"
@@ -8029,7 +8051,7 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-y-auto overflow-x-hidden max-h-[60vh] rounded-xl border border-white/10">
+        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="w-full table-auto text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
@@ -8364,22 +8386,22 @@ export function InsumosModule() {
 	              <tr>
                   {(
                     [
-                      { key: 'dataHora', label: 'Data', compact: true },
+                      { key: 'dataHora', label: 'Data', compact: true, className: '' },
                       { key: 'produto', label: 'Produto' },
-                      { key: 'categoria', label: 'Categoria', compact: true },
-                      { key: 'marca', label: 'Marca', compact: true },
+                      { key: 'categoria', label: 'Categoria', compact: true, className: 'hidden md:table-cell' },
+                      { key: 'marca', label: 'Marca', compact: true, className: 'hidden lg:table-cell' },
                       { key: 'estoque', label: 'Estoque', compact: true },
                       { key: 'valor', label: 'Valor', compact: true },
-                      { key: 'usuario', label: 'Usuário', compact: true },
-                      { key: 'observacao', label: 'Observação' },
+                      { key: 'usuario', label: 'Usuário', compact: true, className: 'hidden xl:table-cell' },
+                      { key: 'observacao', label: 'Observação', className: 'hidden md:table-cell' },
                       { key: null, label: 'Ações', compact: true }
-                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean }>
+                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string }>
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
                     return (
 	                      <th
 	                        key={col.label}
-	                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
+	                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
 	                      >
 	                        <div className="flex items-center justify-center gap-2">
                             {col.key ? (
@@ -8463,7 +8485,7 @@ export function InsumosModule() {
 	                    <td className="p-3 text-center align-middle">
 	                      <button
 	                        type="button"
-	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer break-words"
 	                        onClick={() => {
                             const p = String(produtoNome || '').trim()
                             if (!p || p === '-') return
@@ -8478,7 +8500,7 @@ export function InsumosModule() {
 	                        {produtoNome}
 	                      </button>
 		                    </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                      <td className="p-3 text-center align-middle whitespace-nowrap hidden md:table-cell">
                         {categoriaNome && categoriaNome !== '-' ? (
                           <button
                             type="button"
@@ -8499,7 +8521,7 @@ export function InsumosModule() {
                           <span className="text-blue-100/70">-</span>
                         )}
                       </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                      <td className="p-3 text-center align-middle whitespace-nowrap hidden lg:table-cell">
                         {marcaNome && marcaNome !== '-' ? (
                           <button
                             type="button"
@@ -8533,8 +8555,8 @@ export function InsumosModule() {
                           {valorEstoqueTotal != null ? fmtMoneyBRL0(valorEstoqueTotal) : ''}
                         </div>
                       </td>
-	                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap">{m.usuario || '-'}</td>
-	                    <td className="p-3 text-center align-middle text-blue-100/60">
+	                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap hidden xl:table-cell">{m.usuario || '-'}</td>
+	                    <td className="p-3 text-center align-middle text-blue-100/60 hidden md:table-cell">
 	                      <div className="space-y-1">
 	                        {m.transferId ? (
 	                          <div>
