@@ -389,6 +389,7 @@ export function PontoModule() {
   const [enrollReplace, setEnrollReplace] = useState(true)
   const [enrollConsent, setEnrollConsent] = useState(false)
   const [enrollProgress, setEnrollProgress] = useState<{ total: number; done: number } | null>(null)
+  const [enrollOpen, setEnrollOpen] = useState(false)
 
   const [newDeviceUnit, setNewDeviceUnit] = useState('')
   const [newDeviceLabel, setNewDeviceLabel] = useState('')
@@ -406,6 +407,17 @@ export function PontoModule() {
   const [adminPunchType, setAdminPunchType] = useState<'AUTO' | 'IN' | 'OUT'>('AUTO')
   const [adminPunchUnit, setAdminPunchUnit] = useState('')
   const [adminPunchNote, setAdminPunchNote] = useState('')
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editCode, setEditCode] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [editActive, setEditActive] = useState(true)
+
+  const [recordsOpen, setRecordsOpen] = useState(false)
+  const [selectedRecords, setSelectedRecords] = useState<PontoPunchRecord[]>([])
+  const [selectedRecordsLoading, setSelectedRecordsLoading] = useState(false)
+  const [selectedRecordsError, setSelectedRecordsError] = useState<string | null>(null)
 
   const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string } } | null>(null)
   const [crmMeLoading, setCrmMeLoading] = useState(false)
@@ -769,6 +781,14 @@ export function PontoModule() {
   }, [tab, canAdminActions])
 
   useEffect(() => {
+    if (!selectedEmployee) return
+    setEditName(selectedEmployee.name || '')
+    setEditCode(selectedEmployee.code || '')
+    setEditEmail(selectedEmployee.loginEmail || '')
+    setEditActive(selectedEmployee.active !== false)
+  }, [selectedEmployee])
+
+  useEffect(() => {
     if (tab !== 'employee') return
     if (!me || !('linked' in me) || !me.linked) return
     if (!meRecordsFrom || !meRecordsTo) return
@@ -1000,6 +1020,64 @@ export function PontoModule() {
       toast.error(e?.message || String(e))
     } finally {
       setEnrollProgress(null)
+    }
+  }
+
+  async function adminSaveEmployeeEdit() {
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+    const name = editName.trim()
+    if (!name) return toast.error('Nome é obrigatório')
+    const email = editEmail.trim()
+    if (email && !email.includes('@')) return toast.error('Email inválido')
+    setLoading(true)
+    try {
+      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
+        method: 'PATCH',
+        body: {
+          name,
+          code: editCode.trim(),
+          loginEmail: email || '',
+          active: !!editActive
+        }
+      })
+      await adminRefreshAll()
+      toast.success('Cadastro atualizado')
+      setEditOpen(false)
+    } catch (e: any) {
+      const details = e?.details as any
+      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
+        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
+      toastErrorMeta(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function adminLoadSelectedRecords() {
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+    setSelectedRecordsLoading(true)
+    setSelectedRecordsError(null)
+    try {
+      const qs = new URLSearchParams()
+      qs.set('employeeId', selectedEmployeeId)
+      qs.set('limit', '200')
+      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
+        '/api/ponto/admin/records?' + qs.toString(),
+        {}
+      )
+      setSelectedRecords(res.data || [])
+    } catch (e: any) {
+      const msg = e?.message || String(e)
+      setSelectedRecordsError(msg)
+      toast.error(msg)
+      toastErrorMeta(e)
+    } finally {
+      setSelectedRecordsLoading(false)
     }
   }
 
@@ -1608,63 +1686,38 @@ export function PontoModule() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="rounded-xl border p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium">Cadastro facial</div>
-                      <div className="text-sm text-muted-foreground">
-                        {selectedEmployee ? (
-                          <>Atual: {selectedEmployee.faceDescriptorsCount || 0} templates • Último: {fmtDate(selectedEmployee.lastEnrolledAt)}</>
-                        ) : (
-                          <>Selecione um funcionário.</>
-                        )}
-                      </div>
-                    </div>
-                    {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-2">
-                      <Label>Amostras</Label>
-                      <Input value={String(enrollCount)} onChange={(e) => setEnrollCount(Number(e.target.value))} inputMode="numeric" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Modo</Label>
-                      <Select value={enrollReplace ? 'replace' : 'append'} onValueChange={(v) => setEnrollReplace(v === 'replace')}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="replace">Substituir</SelectItem>
-                          <SelectItem value="append">Adicionar</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
-                      <Button onClick={() => startCameraFor('admin')} disabled={loading}>Ativar câmera</Button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl overflow-hidden border bg-black">
-                    <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <CameraStatusBadge active={!!stream && cameraOwner === 'admin'} />
-                    <FaceModelsBadge state={modelsReady} />
-                  </div>
-
-                  <label className="flex items-start gap-2 text-sm">
-                    <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
-                    <span>Confirmo que o consentimento para biometria (rosto) foi obtido no cadastro do usuário.</span>
-                  </label>
-
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                    <Button onClick={adminEnrollFace} disabled={loading || !canAdminActions || !selectedEmployeeId}>
-                      Capturar & salvar biometria
-                    </Button>
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                      setEnrollOpen(true)
+                    }}
+                    disabled={loading || !canAdminActions || !selectedEmployeeId}
+                  >
+                    Cadastrar Biometria
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                      setEditOpen(true)
+                    }}
+                    disabled={loading || !canAdminActions || !selectedEmployeeId}
+                  >
+                    Editar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                      setRecordsOpen(true)
+                      void adminLoadSelectedRecords()
+                    }}
+                    disabled={loading || !canAdminActions || !selectedEmployeeId}
+                  >
+                    Registros
+                  </Button>
                 </div>
 
                 <div className="border rounded-xl overflow-hidden">
@@ -1698,6 +1751,169 @@ export function PontoModule() {
                     </TableBody>
                   </Table>
                 </div>
+
+                <Dialog
+                  open={enrollOpen}
+                  onOpenChange={(open) => {
+                    setEnrollOpen(open)
+                    if (!open) {
+                      setEnrollConsent(false)
+                      void stopCameraUI({ silent: true })
+                    }
+                  }}
+                >
+                  <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                      <DialogTitle>Cadastro facial</DialogTitle>
+                      <DialogDescription>
+                        {selectedEmployee
+                          ? `Funcionário: ${selectedEmployee.name}`
+                          : 'Selecione um funcionário.'}
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm text-muted-foreground">
+                          {selectedEmployee ? (
+                            <>Atual: {selectedEmployee.faceDescriptorsCount || 0} templates • Último: {fmtDate(selectedEmployee.lastEnrolledAt)}</>
+                          ) : null}
+                        </div>
+                        {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="space-y-2">
+                          <Label>Amostras</Label>
+                          <Input value={String(enrollCount)} onChange={(e) => setEnrollCount(Number(e.target.value))} inputMode="numeric" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Modo</Label>
+                          <Select value={enrollReplace ? 'replace' : 'append'} onValueChange={(v) => setEnrollReplace(v === 'replace')}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="replace">Substituir</SelectItem>
+                              <SelectItem value="append">Adicionar</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex items-end gap-2">
+                          <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
+                          <Button onClick={() => startCameraFor('admin')} disabled={loading}>Ativar câmera</Button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl overflow-hidden border bg-black">
+                        <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <CameraStatusBadge active={!!stream && cameraOwner === 'admin'} />
+                        <FaceModelsBadge state={modelsReady} />
+                      </div>
+
+                      <label className="flex items-start gap-2 text-sm">
+                        <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
+                        <span>Confirmo que o consentimento para biometria (rosto) foi obtido no cadastro do usuário.</span>
+                      </label>
+
+                      <div className="flex gap-2">
+                        <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
+                        <Button onClick={adminEnrollFace} disabled={loading || !canAdminActions || !selectedEmployeeId}>
+                          Capturar & salvar biometria
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog
+                  open={editOpen}
+                  onOpenChange={(open) => setEditOpen(open)}
+                >
+                  <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                      <DialogTitle>Editar cadastro</DialogTitle>
+                      <DialogDescription>Atualize nome, codigo, email e status do funcionario.</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="space-y-2">
+                        <Label>Nome</Label>
+                        <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Nome" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Codigo</Label>
+                        <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} placeholder="Matricula" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Email (vinculo login)</Label>
+                        <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="ex: funcionario@empresa.com" />
+                      </div>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} />
+                        <span>Funcionario ativo</span>
+                      </label>
+                    </div>
+                    <DialogFooter className="gap-2">
+                      <Button variant="outline" onClick={() => setEditOpen(false)} disabled={loading}>Cancelar</Button>
+                      <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId}>Salvar</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog
+                  open={recordsOpen}
+                  onOpenChange={(open) => setRecordsOpen(open)}
+                >
+                  <DialogContent className="max-w-4xl">
+                    <DialogHeader>
+                      <DialogTitle>Registros do funcionario</DialogTitle>
+                      <DialogDescription>
+                        {selectedEmployee ? `Funcionario: ${selectedEmployee.name}` : 'Selecione um funcionario.'}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Button onClick={adminLoadSelectedRecords} disabled={selectedRecordsLoading || !selectedEmployeeId}>Atualizar</Button>
+                        {selectedRecordsLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                        {selectedRecordsError ? <Badge variant="destructive">Erro</Badge> : null}
+                      </div>
+                      {selectedRecordsError ? (
+                        <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
+                          <div className="font-medium">Falha ao carregar registros</div>
+                          <div className="opacity-80">{selectedRecordsError}</div>
+                        </div>
+                      ) : null}
+                      <div className="border rounded-xl overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Quando</TableHead>
+                              <TableHead>Tipo</TableHead>
+                              <TableHead>Unidade</TableHead>
+                              <TableHead>Metodo</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedRecords.map(r => (
+                              <TableRow key={r.id}>
+                                <TableCell className="text-sm">{fmtDate(r.at)}</TableCell>
+                                <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
+                                <TableCell className="text-sm">{r.unit || '-'}</TableCell>
+                                <TableCell className="text-sm">{r.method || '-'}</TableCell>
+                              </TableRow>
+                            ))}
+                            {!selectedRecords.length ? (
+                              <TableRow>
+                                <TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
+                              </TableRow>
+                            ) : null}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
 
