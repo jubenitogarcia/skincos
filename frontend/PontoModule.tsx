@@ -129,6 +129,17 @@ function toDateTimeLocalValue(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function FaceModelsBadge({ state }: { state: 'idle' | 'loading' | 'ready' | 'error' }) {
+  if (state === 'ready') return <Badge variant="outline">Modelos: OK</Badge>
+  if (state === 'loading') return <Badge variant="secondary">Modelos: carregando…</Badge>
+  if (state === 'error') return <Badge variant="destructive">Modelos: erro</Badge>
+  return <Badge variant="secondary">Modelos: não carregados</Badge>
+}
+
+function CameraStatusBadge({ active }: { active: boolean }) {
+  return active ? <Badge>Camera: ativa</Badge> : <Badge variant="secondary">Camera: desligada</Badge>
+}
+
 function createRequestMeta() {
   return {
     requestId: (globalThis.crypto?.randomUUID?.() || String(Date.now())),
@@ -369,6 +380,8 @@ export function PontoModule() {
 
   const [newEmployeeName, setNewEmployeeName] = useState('')
   const [newEmployeeCode, setNewEmployeeCode] = useState('')
+  const [newEmployeeLoginEmail, setNewEmployeeLoginEmail] = useState('')
+  const [newEmployeePin, setNewEmployeePin] = useState('')
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
   const [selectedEmployeeLoginEmail, setSelectedEmployeeLoginEmail] = useState('')
@@ -920,19 +933,34 @@ export function PontoModule() {
     if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     const name = newEmployeeName.trim()
     if (!name) return toast.error('Nome é obrigatório')
+    const loginEmail = newEmployeeLoginEmail.trim()
+    if (!loginEmail || !loginEmail.includes('@')) return toast.error('Email inválido')
+    const pin = newEmployeePin.trim()
+    if (pin.length < 4) return toast.error('PIN deve ter pelo menos 4 dígitos')
     setLoading(true)
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
         '/api/ponto/admin/employees',
-        { method: 'POST', body: { name, code: newEmployeeCode.trim() } }
+        { method: 'POST', body: { name, code: newEmployeeCode.trim(), loginEmail } }
       )
+      await apiJson('/api/ponto/admin/employees/' + res.data.id + '/pin', {
+        method: 'POST',
+        body: { pin }
+      })
       setNewEmployeeName('')
       setNewEmployeeCode('')
+      setNewEmployeeLoginEmail('')
+      setNewEmployeePin('')
       await adminRefreshAll()
       setSelectedEmployeeId(res.data.id)
-      toast.success('Funcionário criado')
+      toast.success('Funcionário criado e configurado')
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const details = e?.details as any
+      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
+        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
       toastErrorMeta(e)
     } finally {
       setLoading(false)
@@ -1322,10 +1350,19 @@ export function PontoModule() {
                     <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
                     <Button onClick={mePunchFace} disabled={loading || !stream}>Registrar por Face</Button>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CameraStatusBadge active={!!stream && cameraOwner === 'employee'} />
+                    <FaceModelsBadge state={modelsReady} />
+                  </div>
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
                   </div>
                   {modelsError ? <div className="text-sm text-red-600">{modelsError}</div> : null}
+                  {modelsReady === 'idle' ? (
+                    <div className="text-sm text-muted-foreground">
+                      Carregue os modelos faciais antes de registrar por Face.
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1461,25 +1498,27 @@ export function PontoModule() {
                   </div>
                 ) : null}
 
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
-                  <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                  <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
-                  <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
-                    Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
-                  </Button>
-                </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
+                <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
+                <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
+                <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
+                  Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
+                </Button>
+              </div>
 
-                <div className="rounded-xl overflow-hidden border bg-black">
-                  <video ref={deviceVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                </div>
+              <div className="rounded-xl overflow-hidden border bg-black">
+                <video ref={deviceVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+              </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {identifyResult?.match ? (
-                    <>
-                      <Badge>Reconhecido: {identifyResult.match.name}</Badge>
-                      <Badge variant="outline">dist: {identifyResult.match.distance.toFixed(3)}</Badge>
-                    </>
+              <div className="flex flex-wrap items-center gap-2">
+                <CameraStatusBadge active={!!stream && cameraOwner === 'device'} />
+                <FaceModelsBadge state={modelsReady} />
+                {identifyResult?.match ? (
+                  <>
+                    <Badge>Reconhecido: {identifyResult.match.name}</Badge>
+                    <Badge variant="outline">dist: {identifyResult.match.distance.toFixed(3)}</Badge>
+                  </>
                   ) : (
                     <Badge variant="secondary">Nenhum reconhecimento</Badge>
                   )}
@@ -1567,8 +1606,35 @@ export function PontoModule() {
                     <Label>Código (opcional)</Label>
                     <Input value={newEmployeeCode} onChange={(e) => setNewEmployeeCode(e.target.value)} placeholder="Matrícula..." />
                   </div>
-                  <div className="flex items-end">
-                    <Button onClick={adminCreateEmployee} disabled={loading || !canAdminActions}>Criar</Button>
+                  <div className="space-y-2">
+                    <Label>Email (vínculo login)</Label>
+                    <Input
+                      value={newEmployeeLoginEmail}
+                      onChange={(e) => setNewEmployeeLoginEmail(e.target.value)}
+                      placeholder="ex: funcionario@empresa.com"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <Label>PIN (min. 4)</Label>
+                    <Input value={newEmployeePin} onChange={(e) => setNewEmployeePin(e.target.value)} inputMode="numeric" placeholder="••••" />
+                  </div>
+                  <div className="md:col-span-2 flex items-end">
+                    <Button
+                      onClick={adminCreateEmployee}
+                      disabled={
+                        loading ||
+                        !canAdminActions ||
+                        !newEmployeeName.trim() ||
+                        !newEmployeeLoginEmail.trim() ||
+                        !newEmployeeLoginEmail.includes('@') ||
+                        newEmployeePin.trim().length < 4
+                      }
+                    >
+                      Cadastrar
+                    </Button>
                   </div>
                 </div>
 
@@ -1650,6 +1716,11 @@ export function PontoModule() {
 
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CameraStatusBadge active={!!stream && cameraOwner === 'admin'} />
+                    <FaceModelsBadge state={modelsReady} />
                   </div>
 
                   <label className="flex items-start gap-2 text-sm">
