@@ -551,6 +551,17 @@ function severityBadgeVariant(severity?: string): 'default' | 'secondary' | 'des
   return 'default'
 }
 
+function severityLabel(severity?: string) {
+  const key = normalizeText(severity).toUpperCase()
+  if (!key) return 'Info'
+  if (key === 'CRITICAL' || key === 'CRITICO') return 'Crítico'
+  if (key === 'WARN' || key === 'WARNING' || key === 'ATENCAO') return 'Atenção'
+  if (key === 'INFO') return 'Info'
+  const raw = String(severity || '').trim()
+  if (!raw) return 'Info'
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+}
+
 function BarcodeScannerInline({
   onDetected,
   onClose
@@ -6694,10 +6705,10 @@ export function InsumosModule() {
                         className="cursor-pointer"
                         onClick={() => setOverviewQualitySeverity((cur) => (cur === 'CRITICAL' ? 'ALL' : 'CRITICAL'))}
                         aria-pressed={overviewQualitySeverity === 'CRITICAL'}
-                        title="Filtrar CRÍTICOS"
+                        title="Filtrar Crítico"
                       >
                         <Badge variant="destructive" className={overviewQualitySeverity === 'CRITICAL' ? 'ring-2 ring-white/20' : ''}>
-                          CRÍT {overviewQuality.summary.bySeverity.CRITICAL ?? 0}
+                          Crítico {overviewQuality.summary.bySeverity.CRITICAL ?? 0}
                         </Badge>
                       </button>
                       <button
@@ -6705,10 +6716,10 @@ export function InsumosModule() {
                         className="cursor-pointer"
                         onClick={() => setOverviewQualitySeverity((cur) => (cur === 'WARN' ? 'ALL' : 'WARN'))}
                         aria-pressed={overviewQualitySeverity === 'WARN'}
-                        title="Filtrar ALERTAS"
+                        title="Filtrar Atenção"
                       >
                         <Badge variant="secondary" className={overviewQualitySeverity === 'WARN' ? 'ring-2 ring-white/20' : ''}>
-                          WARN {overviewQuality.summary.bySeverity.WARN ?? 0}
+                          Atenção {overviewQuality.summary.bySeverity.WARN ?? 0}
                         </Badge>
                       </button>
                       <button
@@ -6754,12 +6765,13 @@ export function InsumosModule() {
                           })
                           .slice(0, 30)
                           .map((it, idx) => {
-                          const sev = String(it.severity || '').toUpperCase()
-                          const badgeVariant = sev === 'CRITICAL' ? 'destructive' : sev === 'WARN' ? 'secondary' : 'default'
+                          const sev = String(it.severity || '').trim()
+                          const badgeVariant = severityBadgeVariant(sev)
+                          const sevLabel = severityLabel(sev)
                           return (
                             <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
                               <td className="p-3">
-                                <Badge variant={badgeVariant as any}>{sev || 'INFO'}</Badge>
+                                <Badge variant={badgeVariant as any}>{sevLabel}</Badge>
                               </td>
                               <td className="p-3 font-mono text-blue-100/70 hidden sm:table-cell break-all">{it.code || '-'}</td>
                               <td className="p-3 text-blue-50 break-words">
@@ -8533,7 +8545,7 @@ export function InsumosModule() {
                   const valorEstoqueTotal = preco && estoqueDepois != null && Number.isFinite(Number(estoqueDepois)) ? preco * Number(estoqueDepois) : null
                   const produtoNome = String(insumo?.produto || m.produto || '').trim() || '-'
                   const categoriaNome = String(insumo?.categoria || '').trim() || '-'
-                  const marcaNome = String(insumo?.marca || '').trim() || '-'
+                  const marcaNome = String(insumo?.marca || m.marca || '').trim() || '-'
 		                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
 
                   const rowTone = isEntrada
@@ -8549,24 +8561,31 @@ export function InsumosModule() {
                           <div className="text-blue-50">{fmtMovDateShort(m.dataHora) || '-'}</div>
                           <div className="text-xs text-blue-200/60">{fmtMovTimeShort(m.dataHora) || ''}</div>
                         </td>
-	                    <td className="p-3 text-center align-middle">
-	                      <button
-	                        type="button"
-	                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer break-words"
-	                        onClick={() => {
-                            const p = String(produtoNome || '').trim()
-                            if (!p || p === '-') return
-                            setSelectedCodigoBarras('')
-                            setMovFilterCategoria('')
-                            setMovFilterMarca('')
-                            setMovFilterProduto((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
-	                        }}
-	                        title="Filtrar por produto"
-	                        aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
-	                      >
-	                        {produtoNome}
-	                      </button>
-		                    </td>
+                    <td className="p-3 text-center align-middle">
+                      <button
+                        type="button"
+                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer break-words"
+                        onClick={() => {
+                          const p = String(produtoNome || '').trim()
+                          if (!p || p === '-') return
+                          setSelectedCodigoBarras('')
+                          setMovFilterCategoria('')
+                          setMovFilterMarca('')
+                          setMovFilterProduto((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
+                        }}
+                        title="Filtrar por produto"
+                        aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
+                      >
+                        {produtoNome}
+                      </button>
+                      {marcaNome && marcaNome !== '-' ? (
+                        <div className="mt-1 flex flex-wrap justify-center gap-1 lg:hidden">
+                          <Badge style={buildTagStyle(getMarcaBgColor(marcaNome))} className="border">
+                            {marcaNome}
+                          </Badge>
+                        </div>
+                      ) : null}
+                    </td>
                       <td className="p-3 text-center align-middle whitespace-nowrap hidden md:table-cell">
                         {categoriaNome && categoriaNome !== '-' ? (
                           <button
