@@ -15,8 +15,9 @@ function nowIso() {
 }
 
 // D1/SQLite can reject statements with many bound variables.
-// Keep this deliberately conservative to avoid `too many SQL variables`.
-const MAX_SQL_BINDS = 400;
+// D1 can reject large IN(...) bind lists on some plans/regions.
+// Keep this low to avoid `too many SQL variables` on overview/insights loads.
+const MAX_SQL_BINDS = 80;
 
 function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
@@ -70,15 +71,31 @@ async function loadBarcodesByRegistro(env, registros) {
   if (!env?.DB) return map;
   const list = (registros || []).map((r) => String(r || '').trim()).filter(Boolean);
   if (!list.length) return map;
+  const queryChunk = async (chunk) => {
+    if (!chunk.length) return [];
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const res = await env.DB.prepare(
+        `SELECT registro, codigo_barras
+         FROM insumos_barcodes
+         WHERE registro IN (${placeholders})`
+      ).bind(...chunk).all();
+      return res?.results || [];
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (/too many sql variables/i.test(message) && chunk.length > 1) {
+        const splitAt = Math.max(1, Math.floor(chunk.length / 2));
+        const left = await queryChunk(chunk.slice(0, splitAt));
+        const right = await queryChunk(chunk.slice(splitAt));
+        return left.concat(right);
+      }
+      throw err;
+    }
+  };
   for (let i = 0; i < list.length; i += MAX_SQL_BINDS) {
     const chunk = list.slice(i, i + MAX_SQL_BINDS);
-    const placeholders = chunk.map(() => '?').join(',');
-    const res = await env.DB.prepare(
-      `SELECT registro, codigo_barras
-       FROM insumos_barcodes
-       WHERE registro IN (${placeholders})`
-    ).bind(...chunk).all();
-    for (const row of res?.results || []) {
+    const rows = await queryChunk(chunk);
+    for (const row of rows) {
       const reg = String(row?.registro || '').trim();
       const code = String(row?.codigo_barras || '').trim();
       if (!reg || !code) continue;
