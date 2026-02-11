@@ -4410,6 +4410,24 @@ export function InsumosModule() {
       const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
       const height = Math.max(220, Math.min(560, Number(opts?.height) || 260))
       const tooltipFormatter = (v: any) => fmtChartValue(metric, v)
+      const renderCategoriaLegend = (props: any) => {
+        const payload = Array.isArray(props?.payload) ? props.payload : []
+        if (!payload.length) return null
+        return (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {payload.map((entry: any, idx: number) => {
+              const label = String(entry?.value || entry?.payload?.name || '').trim()
+              if (!label) return null
+              const color = entry?.color || getCategoriaBgColor(label)
+              return (
+                <Badge key={`${label}-${idx}`} style={buildTagStyle(color)} className="border">
+                  {label}
+                </Badge>
+              )
+            })}
+          </div>
+        )
+      }
 
       if (presetId === 'distribution') {
         const gb: ChartGroupBy = slot.groupBy === 'marca' || slot.groupBy === 'item' || slot.groupBy === 'categoria' ? slot.groupBy : 'categoria'
@@ -4446,7 +4464,7 @@ export function InsumosModule() {
                     ))}
                   </Pie>
                   <Tooltip formatter={tooltipFormatter} />
-                  <Legend />
+                  <Legend content={renderCategoriaLegend} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -4686,7 +4704,7 @@ export function InsumosModule() {
 	                  ))}
 	                </Pie>
 	                <Tooltip formatter={tooltipFormatter} />
-	                <Legend />
+                <Legend content={renderCategoriaLegend} />
 	              </PieChart>
 	            </ResponsiveContainer>
 	          </div>
@@ -6533,10 +6551,9 @@ export function InsumosModule() {
                               ) : null}
                             </td>
                             <td className="p-3 text-blue-100/80 hidden sm:table-cell">
-                              <div className="flex items-center gap-2">
-                                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getCategoriaBgColor(a.categoria || 'Outros') }} />
-                                <span className="break-words">{a.categoria || '-'}</span>
-                              </div>
+                              <Badge style={buildTagStyle(getCategoriaBgColor(a.categoria || 'Outros'))} className="border">
+                                {a.categoria || 'Outros'}
+                              </Badge>
                             </td>
                             <td className="p-3">
                               <div className="flex flex-wrap gap-1">
@@ -8525,7 +8542,7 @@ export function InsumosModule() {
                         {categoriaNome && categoriaNome !== '-' ? (
                           <button
                             type="button"
-                            className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
                             onClick={() => {
                               const c = String(categoriaNome || '').trim()
                               if (!c || c === '-') return
@@ -8536,7 +8553,9 @@ export function InsumosModule() {
                             title="Filtrar por categoria"
                             aria-pressed={normalizeText(movFilterCategoria) === normalizeText(categoriaNome)}
                           >
-                            {categoriaNome}
+                            <Badge style={buildTagStyle(getCategoriaBgColor(categoriaNome))} className="border">
+                              {categoriaNome}
+                            </Badge>
                           </button>
                         ) : (
                           <span className="text-blue-100/70">-</span>
