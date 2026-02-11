@@ -4436,7 +4436,7 @@ export function InsumosModule() {
         const top = sorted.slice(0, topN).map((x) => ({
           name: x.name,
           value: metric === 'valor' ? x.valor : x.qtd,
-          color: gb === 'item' ? undefined : getCategoriaBgColor(x.name)
+          color: gb === 'item' ? undefined : gb === 'marca' ? getMarcaBgColor(x.name) : getCategoriaBgColor(x.name)
         }))
         const restValue = sorted.slice(topN).reduce((acc, x) => acc + (metric === 'valor' ? x.valor : x.qtd), 0)
         if (restValue > 0 && gb !== 'item') top.push({ name: 'Outros', value: restValue, color: '#9aa5b1' } as any)
@@ -4737,6 +4737,7 @@ export function InsumosModule() {
     codigoBarras?: string
     produto?: string
     categoria?: string
+    marca?: string
     estoqueAtual?: number
     estoqueMinimo?: number
     diferenca?: number
@@ -4749,10 +4750,11 @@ export function InsumosModule() {
   const alertasLinhas = React.useMemo<AlertasLinha[]>(() => {
     const byKey = new Map<string, { base: Omit<AlertasLinha, 'tags' | 'key'>; tags: Set<AlertaStatusTag> }>()
 
-    const upsert = (id: { codigoBarras?: string; produto?: string; categoria?: string }, patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>, tag?: AlertaStatusTag) => {
+    const upsert = (id: { codigoBarras?: string; produto?: string; categoria?: string; marca?: string }, patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>, tag?: AlertaStatusTag) => {
       const code = String(id.codigoBarras || '').trim()
       const produto = String(id.produto || '').trim()
       const categoria = String(id.categoria || '').trim()
+      const marca = String(id.marca || '').trim()
       const key = code || `${produto}::${categoria}` || `${Math.random()}`
       const prev = byKey.get(key)
       if (!prev) {
@@ -4760,6 +4762,7 @@ export function InsumosModule() {
           codigoBarras: code || undefined,
           produto: produto || undefined,
           categoria: categoria || undefined,
+          marca: marca || undefined,
           estoqueAtual: undefined,
           estoqueMinimo: undefined,
           diferenca: undefined,
@@ -4822,6 +4825,25 @@ export function InsumosModule() {
 
     const rows: AlertasLinha[] = []
     for (const [key, v] of byKey.entries()) {
+      if (!v.base.marca) {
+        const code = String(v.base.codigoBarras || '').trim()
+        const produto = String(v.base.produto || '').trim()
+        const categoria = String(v.base.categoria || '').trim()
+        let found: Insumo | undefined
+        if (code) {
+          found = (insumosRef.current || []).find((i) => getInsumoBarcodes(i).includes(code))
+        }
+        if (!found && produto) {
+          const produtoKey = normalizeText(produto)
+          const categoriaKey = normalizeText(categoria)
+          found = (insumosRef.current || []).find((i) => {
+            if (normalizeText(String(i.produto || '').trim()) !== produtoKey) return false
+            if (categoriaKey && normalizeText(String(i.categoria || '').trim()) !== categoriaKey) return false
+            return true
+          })
+        }
+        if (found?.marca) v.base.marca = String(found.marca || '').trim()
+      }
       rows.push({ key, ...v.base, tags: normalizeAlertTags(v.tags) })
     }
 
@@ -6538,6 +6560,13 @@ export function InsumosModule() {
                             <td className="p-3 text-blue-50 align-top">
                               <div className="text-blue-50 break-words">{a.produto || '-'}</div>
                               <div className="hidden md:block text-xs text-blue-200/60 font-mono break-all">{a.codigoBarras || '-'}</div>
+                              {a.marca ? (
+                                <div className="mt-1">
+                                  <Badge style={buildTagStyle(getMarcaBgColor(a.marca))} className="border">
+                                    {a.marca}
+                                  </Badge>
+                                </div>
+                              ) : null}
                               {a.dataValidade ? (
                                 <div className="mt-1 text-xs text-blue-200/60">
                                   validade: <span className="font-mono">{fmtDateOnlyBR(String(a.dataValidade))}</span>
@@ -8565,7 +8594,7 @@ export function InsumosModule() {
                         {marcaNome && marcaNome !== '-' ? (
                           <button
                             type="button"
-                            className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer"
+                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
                             onClick={() => {
                               const b = String(marcaNome || '').trim()
                               if (!b || b === '-') return
@@ -8576,7 +8605,9 @@ export function InsumosModule() {
                             title="Filtrar por marca"
                             aria-pressed={normalizeText(movFilterMarca) === normalizeText(marcaNome)}
                           >
-                            {marcaNome}
+                            <Badge style={buildTagStyle(getMarcaBgColor(marcaNome))} className="border">
+                              {marcaNome}
+                            </Badge>
                           </button>
                         ) : (
                           <span className="text-blue-100/70">-</span>
