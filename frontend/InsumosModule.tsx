@@ -5371,14 +5371,14 @@ export function InsumosModule() {
               <table className="w-full table-fixed text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
-                    <th className="text-left p-3 w-[34%]">Produto</th>
-                    <th className="text-left p-3 hidden md:table-cell w-[16%]">Categoria</th>
-                    <th className="text-left p-3 hidden lg:table-cell w-[18%]">Código</th>
-                    <th className="text-right p-3 w-[1%] whitespace-nowrap">Estoque</th>
-                    <th className="text-right p-3 hidden sm:table-cell w-[1%] whitespace-nowrap">Mín</th>
-                    <th className="text-left p-3 hidden xl:table-cell w-[1%] whitespace-nowrap">Validade</th>
-                    <th className="text-right p-3 hidden xl:table-cell w-[1%] whitespace-nowrap">Valor</th>
-                    <th className="text-right p-3 w-[1%] whitespace-nowrap">Ações</th>
+                    <th className="text-left p-3 w-[26%] xl:w-[24%]">Produto</th>
+                    <th className="text-left p-3 hidden md:table-cell w-[20%] xl:w-[18%]">Categoria</th>
+                    <th className="text-left p-3 hidden lg:table-cell w-[20%] xl:w-[18%]">Código</th>
+                    <th className="text-right p-3 w-[6.5rem] whitespace-nowrap">Estoque</th>
+                    <th className="text-right p-3 hidden sm:table-cell w-[5.5rem] whitespace-nowrap">Mín</th>
+                    <th className="text-left p-3 hidden xl:table-cell w-[7.5rem] whitespace-nowrap">Validade</th>
+                    <th className="text-right p-3 hidden xl:table-cell w-[8.5rem] whitespace-nowrap">Valor</th>
+                    <th className="text-right p-3 w-[11.5rem] whitespace-nowrap">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -5400,16 +5400,16 @@ export function InsumosModule() {
                             </div>
                           </div>
                         </td>
-                        <td className="p-3 text-blue-100/80 hidden md:table-cell align-top">
+                        <td className="p-3 text-blue-100/80 hidden md:table-cell align-middle">
                           <div className="break-words">{i.categoria || '-'}</div>
                         </td>
-                        <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-top break-all">{i.codigoBarras || '-'}</td>
-                        <td className="p-3 text-right text-blue-100/80 font-mono align-top whitespace-nowrap">{Number.isFinite(estoque) ? estoque : '-'}</td>
-                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-top whitespace-nowrap">{min || '-'}</td>
-                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-top whitespace-nowrap">{fmtDateOnlyBR(i.dataValidade || '')}</td>
-                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-top whitespace-nowrap">{fmtMoneyBRL(valor)}</td>
-                        <td className="p-3 text-right whitespace-nowrap">
-                          <div className="flex flex-col sm:flex-row justify-end gap-2">
+                        <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-middle break-all">{i.codigoBarras || '-'}</td>
+                        <td className="p-3 text-right text-blue-100/80 font-mono align-middle whitespace-nowrap">{Number.isFinite(estoque) ? estoque : '-'}</td>
+                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-middle whitespace-nowrap">{min || '-'}</td>
+                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-middle whitespace-nowrap">{fmtDateOnlyBR(i.dataValidade || '')}</td>
+                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-middle whitespace-nowrap">{fmtMoneyBRL(valor)}</td>
+                        <td className="p-3 text-right align-middle whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-2">
                             <Button
                               variant="secondary"
                               size="sm"
