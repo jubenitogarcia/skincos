@@ -762,6 +762,13 @@ export function PontoModule() {
   }, [tab])
 
   useEffect(() => {
+    if (tab !== 'admin') return
+    if (!canAdminActions) return
+    void adminRefreshAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, canAdminActions])
+
+  useEffect(() => {
     if (tab !== 'employee') return
     if (!me || !('linked' in me) || !me.linked) return
     if (!meRecordsFrom || !meRecordsTo) return
