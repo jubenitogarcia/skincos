@@ -15,8 +15,9 @@ function nowIso() {
 }
 
 // D1/SQLite can reject statements with many bound variables.
-// Keep this deliberately conservative to avoid `too many SQL variables`.
-const MAX_SQL_BINDS = 200;
+// D1 can reject large IN(...) bind lists on some plans/regions.
+// Keep this low to avoid `too many SQL variables` on overview/insights loads.
+const MAX_SQL_BINDS = 80;
 
 function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
