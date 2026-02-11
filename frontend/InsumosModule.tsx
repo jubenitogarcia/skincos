@@ -959,7 +959,7 @@ export function InsumosModule() {
   const dialogPaddingClass = isAdaptiveCompact ? 'p-3' : 'p-4 sm:p-5'
   const dialogBodyClass = `${dialogMaxHeight} min-w-0 overflow-auto`
   const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-full'} ${dialogPaddingClass}`
-  const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-5xl'} ${dialogPaddingClass}`
+  const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl xl:max-w-7xl'} ${dialogPaddingClass}`
   const dialogMediumClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-4xl'} ${dialogPaddingClass}`
   const dialogSmallClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-2xl'} ${dialogPaddingClass}`
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
