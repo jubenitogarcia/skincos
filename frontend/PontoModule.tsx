@@ -623,8 +623,16 @@ export function PontoModule() {
     enrollAbortRef.current = false
     setEnrollHint('Preparando câmera…')
     void ensureModelsUI(faceDetectorMode, { message: 'Preparando análise facial…' })
-    void startCameraFor('admin', { silent: true })
+    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400, suppressMissingVideoToast: true })
   }, [enrollOpen, faceDetectorMode])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    if (!enrollConsent) return
+    if (stream && cameraOwner === 'admin') return
+    setEnrollHint('Preparando câmera…')
+    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400 })
+  }, [enrollOpen, enrollConsent, stream, cameraOwner])
 
   useEffect(() => {
     if (!enrollOpen) return
@@ -770,13 +778,30 @@ export function PontoModule() {
     if (faceFailCount) setFaceFailCount(0)
   }
 
-  async function startCameraFor(owner: 'employee' | 'device' | 'admin', opts: { silent?: boolean } = {}) {
-    const videoEl = owner === 'employee'
-      ? employeeVideoRef.current
-      : owner === 'device'
-        ? deviceVideoRef.current
-        : adminVideoRef.current
-    if (!videoEl) return toast.error('Vídeo não disponível')
+  async function startCameraFor(
+    owner: 'employee' | 'device' | 'admin',
+    opts: { silent?: boolean; waitForVideoMs?: number; suppressMissingVideoToast?: boolean } = {}
+  ) {
+    const getVideoEl = () => (
+      owner === 'employee'
+        ? employeeVideoRef.current
+        : owner === 'device'
+          ? deviceVideoRef.current
+          : adminVideoRef.current
+    )
+    let videoEl = getVideoEl()
+    const waitForVideoMs = Math.max(0, Number(opts.waitForVideoMs || 0))
+    if (!videoEl && waitForVideoMs > 0) {
+      const deadline = Date.now() + waitForVideoMs
+      while (!videoEl && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 80))
+        videoEl = getVideoEl()
+      }
+    }
+    if (!videoEl) {
+      if (!opts.suppressMissingVideoToast) toast.error('Vídeo não disponível')
+      return false
+    }
     setLoading(true)
     try {
       stopCamera(streamRef.current)
@@ -784,6 +809,7 @@ export function PontoModule() {
       setStream(s)
       setCameraOwner(owner)
       if (!opts.silent) toast.success('Câmera ativa')
+      return true
     } catch (e: any) {
       const errName = String(e?.name || '')
       if (errName === 'NotAllowedError') {
@@ -796,6 +822,7 @@ export function PontoModule() {
         toast.error(e?.message || String(e))
       }
       toastErrorMeta(e)
+      return false
     } finally {
       setLoading(false)
     }
