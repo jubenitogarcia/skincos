@@ -123,6 +123,11 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Fetch face models
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        run: npm run fetch-face-models
+        working-directory: frontend
+
       - name: Build frontend
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         env:
