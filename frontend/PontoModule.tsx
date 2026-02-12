@@ -597,6 +597,16 @@ export function PontoModule() {
   const showAdminTab = canAdmin || isDev
   const canAdminActions = canAdmin || isDev
 
+  function closeEnrollDialog() {
+    enrollAbortRef.current = true
+    setEnrollOpen(false)
+    setEnrollConsent(false)
+    setEnrollAutoRunning(false)
+    setEnrollProgress(null)
+    setEnrollHint('Posicione o rosto no centro')
+    if (cameraOwner === 'admin') void stopCameraUI({ silent: true })
+  }
+
   const loadCrmMe = React.useCallback(async () => {
     setCrmMeLoading(true)
     try {
@@ -620,11 +630,26 @@ export function PontoModule() {
 
   useEffect(() => {
     if (!enrollOpen) return
+    if (enrollAutoRunning) return
     enrollAbortRef.current = false
     setEnrollHint('Preparando câmera…')
     void ensureModelsUI(faceDetectorMode, { message: 'Preparando análise facial…' })
-    void startCameraFor('admin', { silent: true })
-  }, [enrollOpen, faceDetectorMode])
+    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400, suppressMissingVideoToast: true })
+  }, [enrollOpen, faceDetectorMode, enrollAutoRunning])
+
+  useEffect(() => {
+    if (enrollOpen) return
+    if (cameraOwner !== 'admin') return
+    void stopCameraUI({ silent: true })
+  }, [enrollOpen, cameraOwner])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    if (!enrollConsent) return
+    if (stream && cameraOwner === 'admin') return
+    setEnrollHint('Preparando câmera…')
+    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400 })
+  }, [enrollOpen, enrollConsent, stream, cameraOwner])
 
   useEffect(() => {
     if (!enrollOpen) return
@@ -770,13 +795,30 @@ export function PontoModule() {
     if (faceFailCount) setFaceFailCount(0)
   }
 
-  async function startCameraFor(owner: 'employee' | 'device' | 'admin', opts: { silent?: boolean } = {}) {
-    const videoEl = owner === 'employee'
-      ? employeeVideoRef.current
-      : owner === 'device'
-        ? deviceVideoRef.current
-        : adminVideoRef.current
-    if (!videoEl) return toast.error('Vídeo não disponível')
+  async function startCameraFor(
+    owner: 'employee' | 'device' | 'admin',
+    opts: { silent?: boolean; waitForVideoMs?: number; suppressMissingVideoToast?: boolean } = {}
+  ) {
+    const getVideoEl = () => (
+      owner === 'employee'
+        ? employeeVideoRef.current
+        : owner === 'device'
+          ? deviceVideoRef.current
+          : adminVideoRef.current
+    )
+    let videoEl = getVideoEl()
+    const waitForVideoMs = Math.max(0, Number(opts.waitForVideoMs || 0))
+    if (!videoEl && waitForVideoMs > 0) {
+      const deadline = Date.now() + waitForVideoMs
+      while (!videoEl && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 80))
+        videoEl = getVideoEl()
+      }
+    }
+    if (!videoEl) {
+      if (!opts.suppressMissingVideoToast) toast.error('Vídeo não disponível')
+      return false
+    }
     setLoading(true)
     try {
       stopCamera(streamRef.current)
@@ -784,6 +826,7 @@ export function PontoModule() {
       setStream(s)
       setCameraOwner(owner)
       if (!opts.silent) toast.success('Câmera ativa')
+      return true
     } catch (e: any) {
       const errName = String(e?.name || '')
       if (errName === 'NotAllowedError') {
@@ -796,6 +839,7 @@ export function PontoModule() {
         toast.error(e?.message || String(e))
       }
       toastErrorMeta(e)
+      return false
     } finally {
       setLoading(false)
     }
@@ -1222,8 +1266,19 @@ export function PontoModule() {
       return
     }
     if (!stream || cameraOwner !== 'admin') return
-    const videoEl = adminVideoRef.current
-    if (!videoEl) return
+    let videoEl = adminVideoRef.current
+    if (!videoEl) {
+      const deadline = Date.now() + 2400
+      while (!videoEl && Date.now() < deadline) {
+        if (enrollAbortRef.current) return
+        await new Promise(r => setTimeout(r, 80))
+        videoEl = adminVideoRef.current
+      }
+      if (!videoEl) {
+        setEnrollHint('Não foi possível iniciar a câmera. Feche e tente novamente.')
+        return
+      }
+    }
 
     enrollAbortRef.current = false
     resetFaceFailures()
@@ -1248,7 +1303,8 @@ export function PontoModule() {
           descriptors.push(info.descriptor)
           if (typeof info.score === 'number') scores.push(info.score)
           setEnrollProgress({ total: maxSamples, done: descriptors.length })
-          setEnrollHint(getEnrollHint(info, videoEl))
+          const guide = getEnrollHint(info, videoEl)
+          setEnrollHint(`Leitura ${descriptors.length}/${maxSamples} capturada. ${guide}`)
 
           if (descriptors.length >= minSamples) {
             const avgScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0.9
@@ -1270,12 +1326,13 @@ export function PontoModule() {
       if (enrollAbortRef.current) return
       if (descriptors.length < minSamples) {
         toast.error('Não foi possível capturar biometria com qualidade suficiente')
+        setEnrollHint('Qualidade insuficiente. Ajuste posição e iluminação e tente novamente.')
         return
       }
 
       await saveEnroll(descriptors, replace)
       toast.success('Biometria cadastrada')
-      setEnrollHint('Captura concluída com sucesso')
+      setEnrollHint('Biometria salva com sucesso.')
     } catch (e: any) {
       toast.error(e?.message || String(e))
     } finally {
@@ -2034,15 +2091,8 @@ export function PontoModule() {
                 <Dialog
                   open={enrollOpen}
                   onOpenChange={(open) => {
-                    setEnrollOpen(open)
-                    if (!open) {
-                      enrollAbortRef.current = true
-                      setEnrollConsent(false)
-                      setEnrollAutoRunning(false)
-                      setEnrollProgress(null)
-                      setEnrollHint('Posicione o rosto no centro')
-                      void stopCameraUI({ silent: true })
-                    }
+                    if (!open) return closeEnrollDialog()
+                    setEnrollOpen(true)
                   }}
                 >
                   <DialogContent className="max-w-3xl">
@@ -2091,7 +2141,7 @@ export function PontoModule() {
                       </label>
 
                       <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setEnrollOpen(false)} disabled={loading}>Fechar</Button>
+                        <Button variant="outline" onClick={closeEnrollDialog} disabled={loading}>Fechar</Button>
                       </div>
                     </div>
                   </DialogContent>
