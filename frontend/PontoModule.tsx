@@ -146,11 +146,11 @@ function FaceModelsBadge({ state, mode }: { state: 'idle' | 'loading' | 'ready' 
   if (state === 'ready') return <Badge variant="outline">Modelos: OK{mode === 'ssd' ? ' (robusto)' : ''}</Badge>
   if (state === 'loading') return <Badge variant="secondary">Modelos: carregando…</Badge>
   if (state === 'error') return <Badge variant="destructive">Modelos: erro</Badge>
-  return <Badge variant="secondary">Modelos: não carregados</Badge>
+  return null
 }
 
 function CameraStatusBadge({ active }: { active: boolean }) {
-  return active ? <Badge>Camera: ativa</Badge> : <Badge variant="secondary">Camera: desligada</Badge>
+  return active ? <Badge>Camera: ativa</Badge> : null
 }
 
 function createRequestMeta() {
@@ -363,6 +363,91 @@ async function captureDescriptor(videoEl: HTMLVideoElement, mode: FaceDetectorMo
   return Array.from(detection.descriptor)
 }
 
+async function detectDescriptorWithInfo(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+  await ensureFaceModels(mode)
+  const faceapi = await getFaceApi()
+  const detector =
+    mode === 'ssd'
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })
+      : new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
+  const detection = await faceapi
+    .detectSingleFace(videoEl, detector)
+    .withFaceLandmarks()
+    .withFaceDescriptor()
+  const score = detection?.detection?.score
+  if (!detection?.descriptor) {
+    const err = new Error('Nenhum rosto detectado')
+    ;(err as any).code = 'FACE_DETECTION_FAILED'
+    throw err
+  }
+  if (typeof score === 'number' && score < 0.7) {
+    const err = new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
+    ;(err as any).code = 'FACE_LOW_QUALITY'
+    throw err
+  }
+  return {
+    descriptor: Array.from(detection.descriptor),
+    score: typeof score === 'number' ? score : null,
+    box: detection?.detection?.box || null,
+    landmarks: detection?.landmarks || null,
+  }
+}
+
+async function detectFaceRaw(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+  await ensureFaceModels(mode)
+  const faceapi = await getFaceApi()
+  const detector =
+    mode === 'ssd'
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })
+      : new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
+  const detection = await faceapi
+    .detectSingleFace(videoEl, detector)
+    .withFaceLandmarks()
+  return detection
+}
+
+function averagePoint(points: Array<{ x: number; y: number }>) {
+  if (!points?.length) return null
+  const sum = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 })
+  return { x: sum.x / points.length, y: sum.y / points.length }
+}
+
+function getEnrollHint(detection: any, videoEl: HTMLVideoElement) {
+  if (!detection) return 'Posicione o rosto no centro'
+  const box = detection?.box
+  const vw = videoEl.videoWidth || 1
+  const vh = videoEl.videoHeight || 1
+  if (box) {
+    const size = Math.min(box.width / vw, box.height / vh)
+    if (size < 0.25) return 'Aproxime o rosto da câmera'
+    if (size > 0.7) return 'Afaste um pouco o rosto'
+    const cx = box.x + box.width / 2
+    const cy = box.y + box.height / 2
+    if (cx < vw * 0.35) return 'Mova o rosto para a direita'
+    if (cx > vw * 0.65) return 'Mova o rosto para a esquerda'
+    if (cy < vh * 0.35) return 'Mova o rosto para baixo'
+    if (cy > vh * 0.65) return 'Mova o rosto para cima'
+  }
+  try {
+    const lm = detection?.landmarks
+    const leftEye = averagePoint(lm?.getLeftEye?.() || [])
+    const rightEye = averagePoint(lm?.getRightEye?.() || [])
+    const nose = averagePoint(lm?.getNose?.() || [])
+    if (leftEye && rightEye && nose) {
+      const leftDist = nose.x - leftEye.x
+      const rightDist = rightEye.x - nose.x
+      if (leftDist > 0 && rightDist > 0) {
+        const ratio = leftDist / rightDist
+        if (ratio > 1.35) return 'Gire um pouco o rosto para a esquerda'
+        if (ratio < 0.75) return 'Gire um pouco o rosto para a direita'
+      }
+    }
+  } catch {
+    // ignore hint errors
+  }
+  return 'Mantenha o rosto centralizado'
+}
+
 async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220, mode: FaceDetectorMode) {
   const n = Math.max(1, Math.min(4, samples))
   const all: number[][] = []
@@ -452,11 +537,12 @@ export function PontoModule() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
 
-  const [enrollCount, setEnrollCount] = useState(5)
-  const [enrollReplace, setEnrollReplace] = useState(true)
   const [enrollConsent, setEnrollConsent] = useState(false)
   const [enrollProgress, setEnrollProgress] = useState<{ total: number; done: number } | null>(null)
   const [enrollOpen, setEnrollOpen] = useState(false)
+  const [enrollHint, setEnrollHint] = useState<string>('Posicione o rosto no centro')
+  const [enrollAutoRunning, setEnrollAutoRunning] = useState(false)
+  const enrollAbortRef = useRef(false)
 
   const [newDeviceUnit, setNewDeviceUnit] = useState('')
   const [newDeviceLabel, setNewDeviceLabel] = useState('')
@@ -531,6 +617,21 @@ export function PontoModule() {
   useEffect(() => {
     if (!showAdminTab && tab === 'admin') setTab('employee')
   }, [showAdminTab, tab])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    enrollAbortRef.current = false
+    setEnrollHint('Preparando câmera…')
+    void ensureModelsUI(faceDetectorMode, { message: 'Preparando análise facial…' })
+    void startCameraFor('admin', { silent: true })
+  }, [enrollOpen, faceDetectorMode])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    if (!enrollConsent) return
+    if (!stream || cameraOwner !== 'admin') return
+    void autoEnrollFace()
+  }, [enrollOpen, enrollConsent, stream, cameraOwner])
 
   useEffect(() => {
     streamRef.current = stream
@@ -669,7 +770,7 @@ export function PontoModule() {
     if (faceFailCount) setFaceFailCount(0)
   }
 
-  async function startCameraFor(owner: 'employee' | 'device' | 'admin') {
+  async function startCameraFor(owner: 'employee' | 'device' | 'admin', opts: { silent?: boolean } = {}) {
     const videoEl = owner === 'employee'
       ? employeeVideoRef.current
       : owner === 'device'
@@ -682,7 +783,7 @@ export function PontoModule() {
       const s = await startUserCamera(videoEl)
       setStream(s)
       setCameraOwner(owner)
-      toast.success('Câmera ativa')
+      if (!opts.silent) toast.success('Câmera ativa')
     } catch (e: any) {
       const errName = String(e?.name || '')
       if (errName === 'NotAllowedError') {
@@ -1104,43 +1205,81 @@ export function PontoModule() {
     }
   }
 
-  async function adminEnrollFace() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
-    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
-    if (!enrollConsent) return toast.error('Confirme o consentimento para biometria')
-    if (!stream || cameraOwner !== 'admin') return toast.error('Ative a câmera (admin)')
-    const videoEl = adminVideoRef.current
-    if (!videoEl) return toast.error('Câmera não inicializada')
+  async function saveEnroll(descriptors: number[][], replace: boolean) {
+    await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/enroll', {
+      method: 'POST',
+      body: { descriptors, replace, consentConfirmed: true }
+    })
+    await adminRefreshAll()
+    resetFaceFailures()
+  }
 
-    const ok = await ensureModelsUI()
+  async function autoEnrollFace() {
+    if (enrollAutoRunning) return
+    if (!canAdminActions || !selectedEmployeeId) return
+    if (!enrollConsent) {
+      setEnrollHint('Confirme o consentimento para iniciar')
+      return
+    }
+    if (!stream || cameraOwner !== 'admin') return
+    const videoEl = adminVideoRef.current
+    if (!videoEl) return
+
+    enrollAbortRef.current = false
+    resetFaceFailures()
+    const ok = await ensureModelsUI(faceDetectorMode)
     if (!ok) return toast.error('Modelos faciais indisponíveis (use PIN)')
 
-    const total = Math.max(1, Math.min(10, Number(enrollCount) || 5))
-    setEnrollProgress({ total, done: 0 })
+    const minSamples = 3
+    const maxSamples = 7
+    const targetScore = 0.85
     const descriptors: number[][] = []
+    const scores: number[] = []
+    const replace = (selectedEmployee?.faceDescriptorsCount || 0) >= 5
+
+    setEnrollAutoRunning(true)
+    setEnrollProgress({ total: maxSamples, done: 0 })
+    setEnrollHint('Centralize o rosto e aguarde')
 
     try {
-      for (let i = 0; i < total; i++) {
-        const d = await captureDescriptorStable(videoEl, 2, 180, faceDetectorMode)
-        descriptors.push(d)
-        setEnrollProgress({ total, done: i + 1 })
-        await new Promise(r => setTimeout(r, 650))
+      while (!enrollAbortRef.current && descriptors.length < maxSamples) {
+        try {
+          const info = await detectDescriptorWithInfo(videoEl, faceDetectorMode)
+          descriptors.push(info.descriptor)
+          if (typeof info.score === 'number') scores.push(info.score)
+          setEnrollProgress({ total: maxSamples, done: descriptors.length })
+          setEnrollHint(getEnrollHint(info, videoEl))
+
+          if (descriptors.length >= minSamples) {
+            const avgScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0.9
+            if (avgScore >= targetScore) break
+          }
+          await new Promise(r => setTimeout(r, 500))
+        } catch (e: any) {
+          if (isFaceDetectionError(e)) {
+            noteFaceFailure()
+            const raw = await detectFaceRaw(videoEl, faceDetectorMode).catch(() => null)
+            setEnrollHint(getEnrollHint(raw, videoEl))
+            await new Promise(r => setTimeout(r, 350))
+            continue
+          }
+          throw e
+        }
       }
-      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/enroll', {
-        method: 'POST',
-        body: { descriptors, replace: enrollReplace, consentConfirmed: true }
-      })
-      await adminRefreshAll()
-      resetFaceFailures()
-      toast.success('Rosto cadastrado')
+
+      if (enrollAbortRef.current) return
+      if (descriptors.length < minSamples) {
+        toast.error('Não foi possível capturar biometria com qualidade suficiente')
+        return
+      }
+
+      await saveEnroll(descriptors, replace)
+      toast.success('Biometria cadastrada')
+      setEnrollHint('Captura concluída com sucesso')
     } catch (e: any) {
-      if (isFaceDetectionError(e)) {
-        noteFaceFailure()
-        toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
-      } else {
-        toast.error(e?.message || String(e))
-      }
+      toast.error(e?.message || String(e))
     } finally {
+      setEnrollAutoRunning(false)
       setEnrollProgress(null)
     }
   }
@@ -1897,14 +2036,18 @@ export function PontoModule() {
                   onOpenChange={(open) => {
                     setEnrollOpen(open)
                     if (!open) {
+                      enrollAbortRef.current = true
                       setEnrollConsent(false)
+                      setEnrollAutoRunning(false)
+                      setEnrollProgress(null)
+                      setEnrollHint('Posicione o rosto no centro')
                       void stopCameraUI({ silent: true })
                     }
                   }}
                 >
                   <DialogContent className="max-w-3xl">
                     <DialogHeader>
-                      <DialogTitle>Cadastro facial</DialogTitle>
+                      <DialogTitle>Biometria facial</DialogTitle>
                       <DialogDescription>
                         {selectedEmployee
                           ? `Funcionário: ${selectedEmployee.name}`
@@ -1916,41 +2059,22 @@ export function PontoModule() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-sm text-muted-foreground">
                           {selectedEmployee ? (
-                            <>Atual: {selectedEmployee.faceDescriptorsCount || 0} templates • Último: {fmtDate(selectedEmployee.lastEnrolledAt)}</>
+                            <>Biometrias cadastradas: {selectedEmployee.faceDescriptorsCount || 0} • Última atualização: {fmtDate(selectedEmployee.lastEnrolledAt)}</>
                           ) : null}
                         </div>
                         {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="space-y-2">
-                          <Label>Amostras</Label>
-                          <Input value={String(enrollCount)} onChange={(e) => setEnrollCount(Number(e.target.value))} inputMode="numeric" />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Modo</Label>
-                          <Select value={enrollReplace ? 'replace' : 'append'} onValueChange={(v) => setEnrollReplace(v === 'replace')}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="replace">Substituir</SelectItem>
-                              <SelectItem value="append">Adicionar</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="flex items-end gap-2">
-                          <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
-                          <Button onClick={() => startCameraFor('admin')} disabled={loading}>Ativar câmera</Button>
-                        </div>
                       </div>
 
                       <div className="rounded-xl overflow-hidden border bg-black">
                         <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <CameraStatusBadge active={!!stream && cameraOwner === 'admin'} />
-                        <FaceModelsBadge state={modelsReady} mode={faceDetectorMode} />
+                      <div className="text-sm text-muted-foreground">
+                        {enrollConsent ? enrollHint : 'Confirme o consentimento para iniciar a captura.'}
                       </div>
+                      {enrollAutoRunning ? (
+                        <div className="text-xs text-muted-foreground">Capturando automaticamente…</div>
+                      ) : null}
                       {modelsReady === 'loading' ? (
                         <div className="space-y-1">
                           <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
@@ -1963,14 +2087,11 @@ export function PontoModule() {
 
                       <label className="flex items-start gap-2 text-sm">
                         <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
-                        <span>Confirmo que o consentimento para biometria (rosto) foi obtido no cadastro do usuário.</span>
+                        <span>Confirmo que o usuário autorizou a coleta de biometria facial.</span>
                       </label>
 
-                      <div className="flex gap-2">
-                        <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                        <Button onClick={adminEnrollFace} disabled={loading || !canAdminActions || !selectedEmployeeId}>
-                          Capturar & salvar biometria
-                        </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setEnrollOpen(false)} disabled={loading}>Fechar</Button>
                       </div>
                     </div>
                   </DialogContent>
