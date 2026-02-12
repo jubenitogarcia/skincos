@@ -67,6 +67,8 @@ type PontoMeResponse =
     suggestedNextMethod?: 'FACE' | 'PIN'
   }
 
+type FaceDetectorMode = 'tiny' | 'ssd'
+
 const LS_DEVICE_TOKEN = 'skincos.ponto.deviceToken.v1'
 const LS_DEV_ACTOR_EMAIL = 'skincos.ponto.devActorEmail.v1'
 
@@ -76,6 +78,17 @@ function errorMetaString(meta: { code?: string; requestId?: string; cfRay?: stri
   if (meta.requestId) parts.push(`req:${meta.requestId}`)
   if (meta.cfRay) parts.push(`cf:${meta.cfRay}`)
   return parts.length ? parts.join(' • ') : ''
+}
+
+const FACE_FALLBACK_THRESHOLD = 3
+const FACE_FALLBACK_MESSAGE =
+  'Condições ruins detectadas. Estamos melhorando a análise do rosto, aguarde alguns segundos.'
+
+function isFaceDetectionError(err: any) {
+  const code = String(err?.code || err?.details?.error || err?.details?.code || '').trim()
+  if (code === 'FACE_DETECTION_FAILED' || code === 'FACE_LOW_QUALITY') return true
+  const msg = String(err?.message || '').toLowerCase()
+  return msg.includes('nenhum rosto') || msg.includes('baixa qualidade')
 }
 
 function extractErrorMeta(err: any) {
@@ -129,8 +142,8 @@ function toDateTimeLocalValue(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function FaceModelsBadge({ state }: { state: 'idle' | 'loading' | 'ready' | 'error' }) {
-  if (state === 'ready') return <Badge variant="outline">Modelos: OK</Badge>
+function FaceModelsBadge({ state, mode }: { state: 'idle' | 'loading' | 'ready' | 'error'; mode?: FaceDetectorMode }) {
+  if (state === 'ready') return <Badge variant="outline">Modelos: OK{mode === 'ssd' ? ' (robusto)' : ''}</Badge>
   if (state === 'loading') return <Badge variant="secondary">Modelos: carregando…</Badge>
   if (state === 'error') return <Badge variant="destructive">Modelos: erro</Badge>
   return <Badge variant="secondary">Modelos: não carregados</Badge>
@@ -244,7 +257,9 @@ async function fetchJsonWithMeta(
 }
 
 let faceLibPromise: Promise<any> | null = null
-let faceInitPromise: Promise<void> | null = null
+let faceBasePromise: Promise<void> | null = null
+let faceTinyPromise: Promise<void> | null = null
+let faceSsdPromise: Promise<void> | null = null
 
 async function getFaceApi() {
   if (faceLibPromise) return faceLibPromise
@@ -256,20 +271,55 @@ async function getFaceApi() {
   return faceLibPromise
 }
 
-async function ensureFaceModels() {
-  if (faceInitPromise) return faceInitPromise
-  faceInitPromise = (async () => {
-    const faceapi = await getFaceApi()
-    const tf = faceapi?.tf as any
-    if (tf?.setBackend) {
-      try { await tf.setBackend('webgl') } catch { /* ignore */ }
-      await tf.ready()
+async function ensureFaceModels(
+  mode: FaceDetectorMode,
+  onProgress?: (done: number, total: number, label?: string) => void
+) {
+  const total = 3
+  let done = 0
+  const report = (label?: string) => onProgress?.(done, total, label)
+
+  const faceapi = await getFaceApi()
+  if (!faceBasePromise) {
+    faceBasePromise = (async () => {
+      const tf = faceapi?.tf as any
+      if (tf?.setBackend) {
+        try { await tf.setBackend('webgl') } catch { /* ignore */ }
+        await tf.ready()
+      }
+      await faceapi.nets.faceLandmark68Net.loadFromUri('/face-models')
+      done = Math.min(done + 1, total)
+      report('landmarks')
+      await faceapi.nets.faceRecognitionNet.loadFromUri('/face-models')
+      done = Math.min(done + 1, total)
+      report('recognition')
+    })()
+  }
+
+  report('init')
+  await faceBasePromise
+  done = Math.max(done, 2)
+  report('base')
+
+  if (mode === 'ssd') {
+    if (!faceSsdPromise) {
+      faceSsdPromise = (async () => {
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('/face-models')
+      })()
     }
-    await faceapi.nets.tinyFaceDetector.loadFromUri('/face-models')
-    await faceapi.nets.faceLandmark68Net.loadFromUri('/face-models')
-    await faceapi.nets.faceRecognitionNet.loadFromUri('/face-models')
-  })()
-  return faceInitPromise
+    await faceSsdPromise
+    done = Math.min(done + 1, total)
+    report('ssd')
+  } else {
+    if (!faceTinyPromise) {
+      faceTinyPromise = (async () => {
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/face-models')
+      })()
+    }
+    await faceTinyPromise
+    done = Math.min(done + 1, total)
+    report('tiny')
+  }
 }
 
 async function startUserCamera(videoEl: HTMLVideoElement) {
@@ -288,24 +338,36 @@ function stopCamera(stream: MediaStream | null) {
   } catch { /* ignore */ }
 }
 
-async function captureDescriptor(videoEl: HTMLVideoElement) {
-  await ensureFaceModels()
+async function captureDescriptor(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+  await ensureFaceModels(mode)
   const faceapi = await getFaceApi()
+  const detector =
+    mode === 'ssd'
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })
+      : new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
   const detection = await faceapi
-    .detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+    .detectSingleFace(videoEl, detector)
     .withFaceLandmarks()
     .withFaceDescriptor()
   const score = detection?.detection?.score
-  if (!detection?.descriptor) throw new Error('Nenhum rosto detectado')
-  if (typeof score === 'number' && score < 0.7) throw new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
+  if (!detection?.descriptor) {
+    const err = new Error('Nenhum rosto detectado')
+    ;(err as any).code = 'FACE_DETECTION_FAILED'
+    throw err
+  }
+  if (typeof score === 'number' && score < 0.7) {
+    const err = new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
+    ;(err as any).code = 'FACE_LOW_QUALITY'
+    throw err
+  }
   return Array.from(detection.descriptor)
 }
 
-async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220) {
+async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220, mode: FaceDetectorMode) {
   const n = Math.max(1, Math.min(4, samples))
   const all: number[][] = []
   for (let i = 0; i < n; i++) {
-    all.push(await captureDescriptor(videoEl))
+    all.push(await captureDescriptor(videoEl, mode))
     if (i < n - 1) await new Promise(r => setTimeout(r, waitMs))
   }
   if (all.length === 1) return all[0]
@@ -346,6 +408,11 @@ export function PontoModule() {
 
   const [modelsReady, setModelsReady] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelsProgress, setModelsProgress] = useState(0)
+  const [modelsMessage, setModelsMessage] = useState<string | null>(null)
+  const [modelsLoaded, setModelsLoaded] = useState<FaceDetectorMode | null>(null)
+  const [faceDetectorMode, setFaceDetectorMode] = useState<FaceDetectorMode>('tiny')
+  const [faceFailCount, setFaceFailCount] = useState(0)
 
   const [loading, setLoading] = useState(false)
 
@@ -552,19 +619,54 @@ export function PontoModule() {
     }
   }, [qrScanOpen, stopQrScan, stream])
 
-  async function ensureModelsUI() {
-    if (modelsReady === 'ready') return true
+  async function ensureModelsUI(nextMode?: FaceDetectorMode, opts?: { message?: string }) {
+    const mode = nextMode || faceDetectorMode
+    if (modelsReady === 'ready' && modelsLoaded === mode) return true
     setModelsReady('loading')
     setModelsError(null)
+    setModelsProgress(0)
+    setModelsMessage(
+      opts?.message ||
+      (mode === 'ssd' ? 'Carregando modelos robustos…' : 'Carregando modelos faciais…')
+    )
     try {
-      await ensureFaceModels()
+      await ensureFaceModels(mode, (done, total) => {
+        const pct = total ? Math.round((done / total) * 100) : 0
+        setModelsProgress(Math.min(100, Math.max(0, pct)))
+      })
       setModelsReady('ready')
+      setModelsLoaded(mode)
+      setModelsMessage(null)
+      setModelsProgress(100)
       return true
     } catch (e: any) {
       setModelsReady('error')
       setModelsError(e?.message || String(e))
+      setModelsMessage(null)
       return false
     }
+  }
+
+  async function upgradeToSsd() {
+    if (faceDetectorMode === 'ssd') return true
+    setFaceDetectorMode('ssd')
+    setFaceFailCount(0)
+    return await ensureModelsUI('ssd', { message: FACE_FALLBACK_MESSAGE })
+  }
+
+  function noteFaceFailure() {
+    if (faceDetectorMode === 'ssd') return
+    setFaceFailCount((cur) => {
+      const next = cur + 1
+      if (next >= FACE_FALLBACK_THRESHOLD && faceDetectorMode !== 'ssd') {
+        void upgradeToSsd()
+      }
+      return next
+    })
+  }
+
+  function resetFaceFailures() {
+    if (faceFailCount) setFaceFailCount(0)
   }
 
   async function startCameraFor(owner: 'employee' | 'device' | 'admin') {
@@ -675,7 +777,9 @@ export function PontoModule() {
 
     setLoading(true)
     try {
-      const descriptor = await captureDescriptorStable(videoEl, 2, 220)
+      const descriptor = await captureDescriptorStable(videoEl, 2, 220, faceDetectorMode)
+      resetFaceFailures()
+      resetFaceFailures()
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
@@ -688,6 +792,12 @@ export function PontoModule() {
       await meRefresh()
       await meLoadRecords()
     } catch (e: any) {
+      if (isFaceDetectionError(e)) {
+        noteFaceFailure()
+        toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
+        toastErrorMeta(e)
+        return
+      }
       const details = e?.details as any
       const code = String(details?.error || details?.code || '')
       if (code === 'COOLDOWN') {
@@ -824,7 +934,7 @@ export function PontoModule() {
         if (!videoEl) return
         const ok = await ensureModelsUI()
         if (!ok) return
-        const descriptor = await captureDescriptor(videoEl)
+        const descriptor = await captureDescriptor(videoEl, faceDetectorMode)
         const res = await apiJson<{
           ok: boolean
           match: { employeeId: string; name: string; distance: number } | null
@@ -874,7 +984,7 @@ export function PontoModule() {
         const okConfirm = window.confirm(`Confirmar registrar o ponto agora?\n\nReconhecido: ${identifyResult.match.name}`)
         if (!okConfirm) return
       }
-      const descriptor = await captureDescriptorStable(videoEl, 2, 220)
+      const descriptor = await captureDescriptorStable(videoEl, 2, 220, faceDetectorMode)
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/device/punch/face',
@@ -882,6 +992,12 @@ export function PontoModule() {
       )
       toast.success(`Ponto registrado: ${res.data.employeeName} (${res.data.type})`)
     } catch (e: any) {
+      if (isFaceDetectionError(e)) {
+        noteFaceFailure()
+        toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
+        toastErrorMeta(e)
+        return
+      }
       const details = e?.details as any
       const code = String(details?.error || e?.message || '')
       if (code === 'NOT_RECOGNIZED' || code === 'DESCRIPTOR_INVALID' || code === 'EMPLOYEE_INACTIVE') {
@@ -1005,7 +1121,7 @@ export function PontoModule() {
 
     try {
       for (let i = 0; i < total; i++) {
-        const d = await captureDescriptorStable(videoEl, 2, 180)
+        const d = await captureDescriptorStable(videoEl, 2, 180, faceDetectorMode)
         descriptors.push(d)
         setEnrollProgress({ total, done: i + 1 })
         await new Promise(r => setTimeout(r, 650))
@@ -1015,9 +1131,15 @@ export function PontoModule() {
         body: { descriptors, replace: enrollReplace, consentConfirmed: true }
       })
       await adminRefreshAll()
+      resetFaceFailures()
       toast.success('Rosto cadastrado')
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      if (isFaceDetectionError(e)) {
+        noteFaceFailure()
+        toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
+      } else {
+        toast.error(e?.message || String(e))
+      }
     } finally {
       setEnrollProgress(null)
     }
@@ -1385,12 +1507,21 @@ export function PontoModule() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <CameraStatusBadge active={!!stream && cameraOwner === 'employee'} />
-                    <FaceModelsBadge state={modelsReady} />
+                    <FaceModelsBadge state={modelsReady} mode={faceDetectorMode} />
                   </div>
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
                   </div>
                   {modelsError ? <div className="text-sm text-red-600">{modelsError}</div> : null}
+                  {modelsReady === 'loading' ? (
+                    <div className="space-y-1">
+                      <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                      <div className="h-2 rounded bg-muted/40 overflow-hidden">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
+                      </div>
+                      <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
+                    </div>
+                  ) : null}
                   {modelsReady === 'idle' ? (
                     <div className="text-sm text-muted-foreground">
                       Carregue os modelos faciais antes de registrar por Face.
@@ -1530,6 +1661,15 @@ export function PontoModule() {
                     </div>
                   </div>
                 ) : null}
+                {modelsReady === 'loading' ? (
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                    <div className="h-2 rounded bg-muted/40 overflow-hidden">
+                      <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
+                    </div>
+                    <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
+                  </div>
+                ) : null}
 
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
@@ -1546,7 +1686,7 @@ export function PontoModule() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <CameraStatusBadge active={!!stream && cameraOwner === 'device'} />
-                <FaceModelsBadge state={modelsReady} />
+                <FaceModelsBadge state={modelsReady} mode={faceDetectorMode} />
                 {identifyResult?.match ? (
                   <>
                     <Badge>Reconhecido: {identifyResult.match.name}</Badge>
@@ -1809,8 +1949,17 @@ export function PontoModule() {
 
                       <div className="flex flex-wrap items-center gap-2">
                         <CameraStatusBadge active={!!stream && cameraOwner === 'admin'} />
-                        <FaceModelsBadge state={modelsReady} />
+                        <FaceModelsBadge state={modelsReady} mode={faceDetectorMode} />
                       </div>
+                      {modelsReady === 'loading' ? (
+                        <div className="space-y-1">
+                          <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                          <div className="h-2 rounded bg-muted/40 overflow-hidden">
+                            <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
+                          </div>
+                          <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
+                        </div>
+                      ) : null}
 
                       <label className="flex items-start gap-2 text-sm">
                         <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
