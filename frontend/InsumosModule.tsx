@@ -13,6 +13,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
+function LoadingBadge({ active }: { active: boolean }) {
+  if (!active) return null
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/20 px-2 py-0.5 text-[10px] text-blue-100/80">
+      <span className="inline-flex h-2 w-2 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+      Carregando
+    </span>
+  )
+}
+
 type InsumosHealth = {
   ok?: boolean
   ready?: boolean
@@ -367,7 +377,6 @@ function useViewportSize() {
   }, [])
   return size
 }
-
 function slugifyCategoria(value?: string | null) {
   const s0 = String(value || '').trim().toLowerCase()
   if (!s0) return ''
@@ -5908,6 +5917,12 @@ export function InsumosModule() {
               </Button>
             )}
           </DialogFooter>
+          {quickActionFeedback ? (
+            <div className={`text-xs ${quickActionFeedback.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
+              {quickActionFeedback.type === 'success' ? 'Sucesso: ' : 'Falha: '}
+              {quickActionFeedback.message}
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -6092,83 +6107,141 @@ export function InsumosModule() {
       </Dialog>
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex items-center justify-between gap-2">
-	              <CardTitle className="text-white text-sm flex items-center gap-2">
-	                <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-	                Valor em estoque
-	              </CardTitle>
-	            </CardHeader>
-	            <CardContent>
-	              <div className="text-lg text-blue-50 font-mono">
-	                {showOverviewLoadingProgress
-	                  ? renderInlinePercent(true)
-	                  : (overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-')}
-	              </div>
-	              {!showOverviewLoadingProgress ? (
-	                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
-	              ) : null}
-	            </CardContent>
-	          </Card>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
+                Valor em estoque
+              </CardTitle>
+              <LoadingBadge active={overviewLoading} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">
+                {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
+              </div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
+              )}
+            </CardContent>
+          </Card>
 
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex items-center justify-between gap-2">
-	              <CardTitle className="text-white text-sm flex items-center gap-2">
-	                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-	                Crítico
-	              </CardTitle>
-	            </CardHeader>
-	            <CardContent>
-	              <div className="text-lg text-blue-50 font-mono">
-	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewResumo?.criticos ?? '-')}
-	              </div>
-	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">abaixo do mínimo</div> : null}
-	            </CardContent>
-	          </Card>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
+                Críticos
+              </CardTitle>
+              <LoadingBadge active={overviewLoading} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
+              )}
+            </CardContent>
+          </Card>
 
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex items-center justify-between gap-2">
-	              <CardTitle className="text-white text-sm flex items-center gap-2">
-	                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-	                Atenção
-	              </CardTitle>
-	            </CardHeader>
-	            <CardContent>
-	              <div className="text-lg text-blue-50 font-mono">
-	                {showOverviewLoadingProgress ? renderInlinePercent(true) : (overviewNotifications?.counts?.lowStock ?? '-')}
-	              </div>
-	              {!showOverviewLoadingProgress ? <div className="text-xs text-blue-200/60">estoque baixo</div> : null}
-	            </CardContent>
-	          </Card>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
+                Estoque baixo
+              </CardTitle>
+              <LoadingBadge active={overviewLoading} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">atenção</div>
+              )}
+            </CardContent>
+          </Card>
 
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex items-center justify-between gap-2">
-	              <CardTitle className="text-white text-sm flex items-center gap-2">
-	                <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
-	                Movimentações
-	              </CardTitle>
-	            </CardHeader>
-	            <CardContent>
-	              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
-	              <div className="text-sm text-blue-100/80">
-	                {showOverviewLoadingProgress ? (
-	                  renderInlinePercent(true, 'text-[11px]')
-	                ) : (
-	                  <>
-	                    <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
-	                    <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-	                  </>
-	                )}
-	              </div>
-	              {!showOverviewLoadingProgress ? (
-	                <div className="text-xs text-blue-200/60">
-	                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-	                </div>
-	              ) : null}
-	            </CardContent>
-		        </Card>
-	        </div>
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
+                Vencendo
+              </CardTitle>
+              <LoadingBadge active={overviewLoading} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">janela próxima</div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
+                Expirado c/ estoque
+              </CardTitle>
+              <LoadingBadge active={overviewLoading} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">risco imediato</div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/20 border border-white/10">
+            <CardHeader className="flex items-center justify-between gap-2">
+              <CardTitle className="text-white text-sm flex items-center gap-2">
+                <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
+                Movimentações
+              </CardTitle>
+              <LoadingBadge active={overviewLoading} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
+              <div className="text-sm text-blue-100/80">
+                <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
+                <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+              </div>
+              {showOverviewLoadingProgress ? (
+                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
+                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                  Carregando {loadingPercent}%
+                </div>
+              ) : (
+                <div className="text-xs text-blue-200/60">
+                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
+                </div>
+              )}
+            </CardContent>
+	        </Card>
+        </div>
 
         <div className="flex flex-col gap-3">
           <Droppable droppableId="overview-panels">
@@ -6684,20 +6757,219 @@ export function InsumosModule() {
               </div>
             </details>
 
-	            <details
-	              data-pref-key="insumos.details.alerts.quality"
-	              open={detailsOpen['insumos.details.alerts.quality'] ?? true}
-	              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
-	              className="rounded-xl border border-white/10 bg-black/10 p-3"
-	            >
-	              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-	                Qualidade do cadastro{' '}
-	                <span className="text-xs text-blue-200/60">
-	                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : '—'}
-	                </span>
-	              </summary>
-	              <div className="mt-3 space-y-2">
-	                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
+            <details
+              data-pref-key="insumos.details.alerts.validity"
+              open={detailsOpen['insumos.details.alerts.validity'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.validity', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
+              <div className="mt-3 space-y-3">
+                <div className="text-xs text-blue-200/60">
+                  Lista resumida (até 50 itens) gerada automaticamente para a unidade.
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
+                        <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
+                        Vencendo
+                      </div>
+                      <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
+                    </div>
+                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-left p-3">Validade</th>
+                            <th className="text-right p-3">Estoque</th>
+                            <th className="text-right p-3">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-blue-50/90">
+                          {(overviewNotifications?.expiringSoon || []).map((it: any, idx: number) => (
+                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3">
+                                <div className="font-medium">{it.produto || '-'}</div>
+                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
+                              </td>
+                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
+                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
+                              <td className="p-3 text-right">
+                                <Button
+                                  variant="secondary"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => {
+                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
+                                  }}
+                                  disabled={!isAuthed}
+                                >
+                                  Usar
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                          {!(overviewNotifications?.expiringSoon || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {renderLoadingText(overviewLoading, 'Sem itens.')}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
+                        <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
+                        Expirado c/ estoque
+                      </div>
+                      <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
+                    </div>
+                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-black/30 text-blue-100/80">
+                          <tr>
+                            <th className="text-left p-3">Produto</th>
+                            <th className="text-left p-3">Validade</th>
+                            <th className="text-right p-3">Estoque</th>
+                            <th className="text-right p-3">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-blue-50/90">
+                          {(overviewNotifications?.expiredWithStock || []).map((it: any, idx: number) => (
+                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
+                              <td className="p-3">
+                                <div className="font-medium">{it.produto || '-'}</div>
+                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
+                              </td>
+                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
+                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
+                              <td className="p-3 text-right">
+                                <Button
+                                  variant="secondary"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => {
+                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
+                                  }}
+                                  disabled={!isAuthed}
+                                >
+                                  Usar
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                          {!(overviewNotifications?.expiredWithStock || []).length ? (
+                            <tr>
+                              <td className="p-3 text-blue-100/70" colSpan={4}>
+                                {renderLoadingText(overviewLoading, 'Sem itens.')}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <details
+              data-pref-key="insumos.details.alerts.actionables"
+              open={detailsOpen['insumos.details.alerts.actionables'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.actionables', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+                Ações recomendadas
+              </summary>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm text-blue-100/80">Reposição</div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPurchaseDialogOpen(true)}
+                      disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                      title="Ver lista de compra completa"
+                    >
+                      Lista de compra
+                    </Button>
+                  </div>
+                  {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
+                    <button
+                      key={String(r.codigoBarras)}
+                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                      onClick={() => {
+                        openQuickOperation('ENTRADA', {
+                          codigoBarras: r.codigoBarras ? String(r.codigoBarras) : '',
+                          quantidade: r.suggestedPurchaseQty ?? null,
+                          obs: 'Reposição sugerida'
+                        })
+                      }}
+                    >
+                      <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
+                      <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
+                      <div className="text-xs text-blue-100/70 mt-1">
+                        sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
+                        {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
+                      </div>
+                    </button>
+                  ))}
+                  {!overviewActionables?.reposicao?.length ? (
+                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem recomendações.')}</div>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
+                  {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
+                    <button
+                      key={`${t.codigoBarras}-${t.from}-${t.to}`}
+                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
+                      onClick={() => {
+                        openQuickOperation('TRANSFERENCIA', {
+                          codigoBarras: t.codigoBarras ? String(t.codigoBarras) : '',
+                          quantidade: t.qty ?? null,
+                          fromUnidade: t.from ? String(t.from) : null,
+                          toUnidade: t.to ? String(t.to) : null,
+                          obs: 'Transferência sugerida'
+                        })
+                      }}
+                    >
+                      <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
+                      <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
+                      <div className="text-xs text-blue-100/70 mt-1">
+                        <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
+                        <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
+                        <span className="font-mono">{t.qty ?? '-'}</span>
+                      </div>
+                    </button>
+                  ))}
+                  {!overviewActionables?.transferencias?.length ? (
+                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem sugestões.')}</div>
+                  ) : null}
+                </div>
+              </div>
+            </details>
+
+            <details
+              data-pref-key="insumos.details.alerts.quality"
+              open={detailsOpen['insumos.details.alerts.quality'] ?? true}
+              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
+              className="rounded-xl border border-white/10 bg-black/10 p-3"
+            >
+              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
+                Qualidade do cadastro{' '}
+                <span className="text-xs text-blue-200/60">
+                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : renderLoadingText(overviewLoading, '—')}
+                </span>
+              </summary>
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
                   {overviewQuality?.summary?.bySeverity ? (
                     <>
                       <button
@@ -7082,20 +7354,23 @@ export function InsumosModule() {
                               </SelectContent>
                             </Select>
                           ) : null}
-		                        </div>
-	                      </CardHeader>
-	                      <CardContent>
-		                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
-		                          <div className="w-full flex items-center justify-center" style={{ height }}>
-		                            {renderInlinePercent(true)}
-		                          </div>
-		                        ) : (
-		                          renderChart({ ...slot, view, metric, topN }, { height })
-		                        )}
-	                      </CardContent>
-	                    </Card>
-	                  )
-	                })}
+                        </div>
+                        <div className="flex justify-end">
+                          <LoadingBadge active={overviewLoading || insightsLoading} />
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
+                          <div className="mb-2 text-xs text-blue-200/70 inline-flex items-center gap-2">
+                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                            Carregando {loadingPercent}%
+                          </div>
+                        ) : null}
+                        {renderChart({ ...slot, view, metric, topN }, { height })}
+                      </CardContent>
+                    </Card>
+                  )
+                })}
               </div>
 
 	                              </CardContent>
