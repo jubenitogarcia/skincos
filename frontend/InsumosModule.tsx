@@ -13,6 +13,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
+function LoadingBadge({ active }: { active: boolean }) {
+  if (!active) return null
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/20 px-2 py-0.5 text-[10px] text-blue-100/80">
+      <span className="inline-flex h-2 w-2 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+      Carregando
+    </span>
+  )
+}
+
 type InsumosHealth = {
   ok?: boolean
   ready?: boolean
