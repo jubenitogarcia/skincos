@@ -66,12 +66,17 @@ export async function onRequest(context: any): Promise<Response> {
 
         const getSetCookie = (upstream.headers as any).getSetCookie
         const getSetCookieMethod = (upstream.headers as any).getSetCookie?.bind?.(upstream.headers)
+        const host = url.hostname
+        const sharedDomain = host === 'skincos.com.br' || host.endsWith('.skincos.com.br')
+          ? '.skincos.com.br'
+          : ''
         const rewriteCookie = (cookie: string) => {
             if (!cookie) return cookie
             const parts = cookie.split(';').map(part => part.trim()).filter(Boolean)
             if (!parts.length) return cookie
             const [nameValue, ...attrs] = parts
             const filtered = attrs.filter(attr => !attr.toLowerCase().startsWith('domain='))
+            if (sharedDomain) filtered.push(`Domain=${sharedDomain}`)
             return [nameValue, ...filtered].join('; ')
         }
         const applyCookies = (cookies: string[]) => {

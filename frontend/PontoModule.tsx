@@ -539,7 +539,6 @@ export function PontoModule() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
 
-  const [enrollConsent, setEnrollConsent] = useState(false)
   const [enrollProgress, setEnrollProgress] = useState<{ total: number; done: number } | null>(null)
   const [enrollOpen, setEnrollOpen] = useState(false)
   const [enrollHint, setEnrollHint] = useState<string>('Posicione o rosto no centro')
@@ -621,11 +620,10 @@ export function PontoModule() {
   function closeEnrollDialog() {
     enrollAbortRef.current = true
     setEnrollOpen(false)
-    setEnrollConsent(false)
     setEnrollAutoRunning(false)
     setEnrollProgress(null)
     setEnrollHint('Posicione o rosto no centro')
-    if (cameraOwner === 'admin') void stopCameraUI({ silent: true })
+    void stopCameraUI({ silent: true })
   }
 
   const loadCrmMe = React.useCallback(async () => {
@@ -660,24 +658,14 @@ export function PontoModule() {
 
   useEffect(() => {
     if (enrollOpen) return
-    if (cameraOwner !== 'admin') return
     void stopCameraUI({ silent: true })
-  }, [enrollOpen, cameraOwner])
+  }, [enrollOpen])
 
   useEffect(() => {
     if (!enrollOpen) return
-    if (!enrollConsent) return
-    if (stream && cameraOwner === 'admin') return
-    setEnrollHint('Preparando câmera…')
-    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400 })
-  }, [enrollOpen, enrollConsent, stream, cameraOwner])
-
-  useEffect(() => {
-    if (!enrollOpen) return
-    if (!enrollConsent) return
     if (!stream || cameraOwner !== 'admin') return
     void autoEnrollFace()
-  }, [enrollOpen, enrollConsent, stream, cameraOwner])
+  }, [enrollOpen, stream, cameraOwner])
 
   useEffect(() => {
     streamRef.current = stream
@@ -776,21 +764,34 @@ export function PontoModule() {
       opts?.message ||
       (mode === 'ssd' ? 'Carregando modelos robustos…' : 'Carregando modelos faciais…')
     )
+    let progress = 0
+    let timer: any = null
+    const setProgress = (value: number) => {
+      progress = Math.max(progress, Math.min(100, value))
+      setModelsProgress(progress)
+    }
+    timer = setInterval(() => {
+      if (progress >= 90) return
+      progress = Math.min(90, progress + 3)
+      setModelsProgress(progress)
+    }, 500)
     try {
       await ensureFaceModels(mode, (done, total) => {
         const pct = total ? Math.round((done / total) * 100) : 0
-        setModelsProgress(Math.min(100, Math.max(0, pct)))
+        setProgress(Math.max(0, pct))
       })
       setModelsReady('ready')
       setModelsLoaded(mode)
       setModelsMessage(null)
-      setModelsProgress(100)
+      setProgress(100)
       return true
     } catch (e: any) {
       setModelsReady('error')
       setModelsError(e?.message || String(e))
       setModelsMessage(null)
       return false
+    } finally {
+      if (timer) clearInterval(timer)
     }
   }
 
@@ -1321,10 +1322,6 @@ export function PontoModule() {
   async function autoEnrollFace() {
     if (enrollAutoRunning) return
     if (!canAdminActions || !selectedEmployeeId) return
-    if (!enrollConsent) {
-      setEnrollHint('Confirme o consentimento para iniciar')
-      return
-    }
     if (!stream || cameraOwner !== 'admin') return
     let videoEl = adminVideoRef.current
     if (!videoEl) {
@@ -2210,9 +2207,7 @@ export function PontoModule() {
                         <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
                       </div>
 
-                      <div className="text-sm text-muted-foreground">
-                        {enrollConsent ? enrollHint : 'Confirme o consentimento para iniciar a captura.'}
-                      </div>
+                      <div className="text-sm text-muted-foreground">{enrollHint}</div>
                       {enrollAutoRunning ? (
                         <div className="text-xs text-muted-foreground">Capturando automaticamente…</div>
                       ) : null}
@@ -2225,11 +2220,6 @@ export function PontoModule() {
                           <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
                         </div>
                       ) : null}
-
-                      <label className="flex items-start gap-2 text-sm">
-                        <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
-                        <span>Confirmo que o usuário autorizou a coleta de biometria facial.</span>
-                      </label>
 
                       <div className="flex justify-end gap-2">
                         <Button variant="outline" onClick={closeEnrollDialog} disabled={loading}>Fechar</Button>
