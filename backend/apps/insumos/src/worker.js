@@ -14,6 +14,7 @@ import { handleInsightsRoutes } from './routes/insights.js';
 import { handleShareRoutes } from './routes/share.js';
 import { handleCategoriasRoutes } from './routes/categorias.js';
 import { handlePrefsRoutes } from './routes/prefs.js';
+import { handlePontoRoutes } from './routes/ponto.js';
 import {
     d1ListInsumos,
     d1CreateInsumo,
@@ -1047,6 +1048,11 @@ export default {
         if (url.pathname === "/api/metrics" || url.pathname === "/metrics") {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
         }
+
+        // Ponto (Relógio-Ponto) — handled here to avoid depending on Insumos auth/session.
+        // Important: run this before any Insumos-specific storage guards or auth gates.
+        const pontoResponse = await handlePontoRoutes({ request, url, env, appOrigin, withCORS });
+        if (pontoResponse) return pontoResponse;
 
         // D1-only: reject any non-d1 storage mode explicitly.
         if (!storageOk) {
