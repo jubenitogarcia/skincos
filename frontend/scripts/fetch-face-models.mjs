@@ -8,6 +8,9 @@ const DEFAULT_BASE =
 const FILES = [
   'tiny_face_detector_model-weights_manifest.json',
   'tiny_face_detector_model-shard1',
+  'ssd_mobilenetv1_model-weights_manifest.json',
+  'ssd_mobilenetv1_model-shard1',
+  'ssd_mobilenetv1_model-shard2',
   'face_landmark_68_model-weights_manifest.json',
   'face_landmark_68_model-shard1',
   'face_recognition_model-weights_manifest.json',
@@ -45,4 +48,3 @@ main().catch((err) => {
   console.error(err)
   process.exit(1)
 })
-

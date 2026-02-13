@@ -5,26 +5,24 @@ Este documento descreve **como validar, diagnosticar e operar** o módulo **Pont
 ## 1) Arquitetura (3 camadas)
 1. **CRM (frontend)**: `frontend/PontoModule.tsx`
 2. **Proxy Pages Functions**: `frontend/functions/api/ponto/[[path]].ts`
-3. **Worker Ponto (Insumos)**: `backend/apps/insumos/src/routes/ponto.js`
+3. **CRM API (backend central)**: `backend/apps/crm-api/server/pontoRoutes.js`
 
 ---
 
 ## 2) Variáveis e secrets (produção)
 
 ### Cloudflare Pages (CRM)
-- `PONTO_API_TARGET` → URL do backend (ex.: `https://api.skincos.com.br`) (**recomendado**)
-- `INSUMOS_API_TARGET` → fallback de target caso `PONTO_API_TARGET` não exista (mesmo target usado por `/api/auth/*` e `/api/insumos/*`)
+- `PONTO_API_TARGET` → URL do backend (ex.: `https://crm-api.seudominio.com`) (**obrigatório**)
 - `PONTO_PROXY_TOKEN` → secret de autenticação do proxy
-- `PONTO_ACTOR_HMAC_KEY` → **obrigatório**: secret para assinatura do actor (employee) (não há fallback para `PONTO_PROXY_TOKEN`)
+- `PONTO_ACTOR_HMAC_KEY` → **obrigatório**: secret para assinatura do actor (employee). Recomenda‑se não reutilizar o `PONTO_PROXY_TOKEN`.
 - `PONTO_ADMIN_TOKEN` → secret para rotas admin (injeção no proxy)
 
-### Cloudflare Workers (API/Insumos)
+### CRM API (backend)
 - `PONTO_ADMIN_TOKEN`
 - `PONTO_PROXY_TOKEN`
 - `PONTO_ACTOR_HMAC_KEY`
 - `PONTO_AUDIT_HMAC_KEY` (opcional, mas recomendado)
-- `PONTO_TEMPLATES_KEY` (opcional; necessário se criptografar biometria)
-- `PONTO_TEMPLATES_CACHE_TTL_MS` (opcional; TTL do cache de templates faciais no Kiosk; default 30000)
+- `PONTO_TEMPLATES_KEY` (**obrigatório em produção**; criptografa biometria)
 
 ---
 
@@ -36,33 +34,21 @@ GET https://crm.skincos.com.br/api/ponto/_proxy-status
 ```
 Esperado:
 - `ok: true`
-- `effectiveTargetConfigured: true`
+- `targetConfigured: true`
 - `adminTokenConfigured: true`
 - `proxyTokenConfigured: true`
 - `actorKeyConfigured: true`
 Observação:
-- `targetConfigured: true` indica `PONTO_API_TARGET` explícito; se `false`, o proxy pode estar usando `INSUMOS_API_TARGET` como fallback.
+`targetConfigured: true` indica `PONTO_API_TARGET` explícito; sem isso o proxy não encaminha.
 
-### 3.2 Worker
+### 3.2 CRM API
 ```
 GET https://crm.skincos.com.br/api/ponto/health
 ```
 Esperado:
 - `ok: true`
-- `storage: "d1"`
-- `templatesCacheTtlMs` coerente com a configuração esperada (ex.: `30000`)
-- `templatesCache` com contadores (`hits/misses`) e `ageMs` (útil para confirmar cache aquecido)
-
-### 3.3 Validar cache do Kiosk (headers)
-Para confirmar que o Kiosk está realmente usando cache de templates (e não refazendo query completa no D1 a cada chamada), use um token de dispositivo válido e faça 2 chamadas seguidas:
-```
-POST https://crm.skincos.com.br/api/ponto/device/identify
-```
-Verifique os headers:
-- `x-ponto-templates-cache: hit|miss`
-- `x-ponto-templates-cache-age-ms`
-- `x-ponto-templates-cache-ttl-ms`
-- `x-ponto-templates-cache-size`
+- `cryptoTemplates: true` (biometria criptografada)
+- `cryptoAuditHmac: true` (quando `PONTO_AUDIT_HMAC_KEY` estiver configurado)
 
 ---
 
@@ -105,7 +91,7 @@ Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/
 - Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
 - Diagnóstico carrega (`/_proxy-status` e `/health`).
 - Invariantes de UI (admin sem campo de token; PIN fallback do Kiosk oculto por padrão).
-- (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, e limpa em seguida.
+- (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, faz punch por PIN, valida `audit/verify`, exporta CSV e limpa em seguida.
 
 ---
 
@@ -113,9 +99,10 @@ Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/
 1) Admin cria funcionário  
 2) Admin define PIN  
 3) Admin (opcional) cadastra face  
-4) Funcionário bate ponto (Face → PIN)  
-5) Admin exporta CSV  
-6) Admin valida audit:
+4) Funcionário seleciona unidade (quando houver mais de uma permitida)  
+5) Funcionário bate ponto (Face → PIN)  
+6) Admin exporta CSV  
+7) Admin valida audit:
 ```
 GET /api/ponto/admin/audit/verify
 ```
@@ -131,6 +118,14 @@ GET /api/ponto/admin/audit/verify
 ### Admin não acessa
 **Sinal:** erro `ADMIN_TOKEN_NOT_CONFIGURED`.  
 **Ação:** validar secrets do Pages em `_proxy-status`.
+
+### Unidade não permitida (Funcionário)
+**Sinal:** erro `UNIT_ACCESS_NOT_CONFIGURED`, `UNIT_REQUIRED` ou `UNIT_FORBIDDEN`.  
+**Ação:** garantir que o usuário tem `allowedUnits` no CRM e selecionar a unidade correta no Ponto.
+
+### Biometria indisponível
+**Sinal:** erro `TEMPLATES_KEY_NOT_CONFIGURED` no enroll.  
+**Ação:** configurar `PONTO_TEMPLATES_KEY` no backend do CRM API.
 
 ### Vínculo de login não salva
 **Sinal:** erro `LOGIN_EMAIL_ALREADY_IN_USE`.  

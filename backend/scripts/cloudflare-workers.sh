@@ -58,12 +58,24 @@ resolve_insumos_db_name() {
   fi
 }
 
+resolve_build_var_flag() {
+  local sha="${WORKER_BUILD_SHA:-${GITHUB_SHA:-}}"
+  if [[ -z "${sha:-}" ]]; then
+    sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  fi
+  if [[ -n "${sha:-}" ]]; then
+    BUILD_VAR_FLAG=(--var "PONTO_BUILD_SHA:${sha}")
+  else
+    BUILD_VAR_FLAG=()
+  fi
+}
+
 deploy_api() {
   echo "[workers] Deploying skincos-api..."
   (
     cd "$BACKEND_DIR"
     # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
-    run_pnpm -F @skincos/api-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}"
+    run_pnpm -F @skincos/api-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}" "${BUILD_VAR_FLAG[@]}"
   )
 }
 
@@ -78,7 +90,7 @@ deploy_insumos() {
   echo "[workers] Deploying skincos-insumos..."
   (
     cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/insumos-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}"
+    run_pnpm -F @skincos/insumos-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}" "${BUILD_VAR_FLAG[@]}"
   )
 }
 
@@ -141,6 +153,7 @@ shift || true
 ENV_NAME="${DEPLOY_ENV:-}"
 ENV_FLAG=()
 INSUMOS_DB_NAME=""
+BUILD_VAR_FLAG=()
 
 ensure_backend_deps
 
@@ -159,6 +172,7 @@ case "$cmd" in
     done
     resolve_env_flag
     resolve_insumos_db_name
+    resolve_build_var_flag
     deploy_by_changes "$before" "$after"
     ;;
   deploy-all)
@@ -171,6 +185,7 @@ case "$cmd" in
     done
     resolve_env_flag
     resolve_insumos_db_name
+    resolve_build_var_flag
     deploy_api
     deploy_insumos
     ;;

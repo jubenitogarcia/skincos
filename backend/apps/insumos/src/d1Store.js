@@ -15,21 +15,96 @@ function nowIso() {
 }
 
 // D1/SQLite can reject statements with many bound variables.
-// Keep this deliberately conservative to avoid `too many SQL variables`.
-const MAX_SQL_VARIABLES_PER_STATEMENT = 80;
-
-function chunkArray(items, size) {
-  if (!Array.isArray(items) || !items.length) return [];
-  const chunkSize = Math.max(1, toInt(size, 1) || 1);
-  const out = [];
-  for (let index = 0; index < items.length; index += chunkSize) {
-    out.push(items.slice(index, index + chunkSize));
-  }
-  return out;
-}
+// D1 can reject large IN(...) bind lists on some plans/regions.
+// Keep this low to avoid `too many SQL variables` on overview/insights loads.
+const MAX_SQL_BINDS = 80;
 
 function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
+}
+
+function normalizeTipoUnidade(raw) {
+  const v = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\(s\)\s*/g, '')
+    .trim();
+  if (!v) return '';
+  if (v === 'flaconete') return 'frasco';
+  if (v === 'unidade') return 'unidade';
+  if (v === 'frasco') return 'frasco';
+  if (v === 'seringa') return 'seringa';
+  if (v === 'caixa') return 'caixa';
+  if (v === 'ampola') return 'ampola';
+  if (v === 'pacote') return 'pacote';
+  if (v === 'rolo') return 'rolo';
+  return '';
+}
+
+function normalizeBarcodeList(input) {
+  if (!input) return [];
+  if (Array.isArray(input)) {
+    return input.map((v) => String(v || '').trim()).filter(Boolean);
+  }
+  return String(input)
+    .split(/[\n,;]+/g)
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+}
+
+function mergeBarcodeList(primary, extras) {
+  const seen = new Set();
+  const out = [];
+  const add = (value) => {
+    const v = String(value || '').trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+  add(primary);
+  for (const v of extras || []) add(v);
+  return out;
+}
+
+async function loadBarcodesByRegistro(env, registros) {
+  const map = new Map();
+  if (!env?.DB) return map;
+  const list = (registros || []).map((r) => String(r || '').trim()).filter(Boolean);
+  if (!list.length) return map;
+  const queryChunk = async (chunk) => {
+    if (!chunk.length) return [];
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const res = await env.DB.prepare(
+        `SELECT registro, codigo_barras
+         FROM insumos_barcodes
+         WHERE registro IN (${placeholders})`
+      ).bind(...chunk).all();
+      return res?.results || [];
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (/too many sql variables/i.test(message) && chunk.length > 1) {
+        const splitAt = Math.max(1, Math.floor(chunk.length / 2));
+        const left = await queryChunk(chunk.slice(0, splitAt));
+        const right = await queryChunk(chunk.slice(splitAt));
+        return left.concat(right);
+      }
+      throw err;
+    }
+  };
+  for (let i = 0; i < list.length; i += MAX_SQL_BINDS) {
+    const chunk = list.slice(i, i + MAX_SQL_BINDS);
+    const rows = await queryChunk(chunk);
+    for (const row of rows) {
+      const reg = String(row?.registro || '').trim();
+      const code = String(row?.codigo_barras || '').trim();
+      if (!reg || !code) continue;
+      const current = map.get(reg) || [];
+      current.push(code);
+      map.set(reg, current);
+    }
+  }
+  return map;
 }
 
 function calcularStatusValidade(dataValidade) {
@@ -78,21 +153,62 @@ async function getCategoryPolicy(env, categoria) {
   }
 }
 
+function normalizePolicyFlag(value) {
+  if (value === null || value === undefined) return null;
+  return Number(value) ? true : false;
+}
+
+function readPolicyFromRow(row) {
+  const requiresLot = normalizePolicyFlag(row?.policy_requires_lot ?? row?.policyRequiresLot);
+  const requiresExpiry = normalizePolicyFlag(row?.policy_requires_expiry ?? row?.policyRequiresExpiry);
+  const fefo = normalizePolicyFlag(row?.policy_fefo ?? row?.policyFefo);
+  const explicit = requiresLot !== null || requiresExpiry !== null || fefo !== null;
+  return {
+    explicit,
+    requiresLot: !!requiresLot,
+    requiresExpiry: !!requiresExpiry,
+    fefo: !!fefo,
+  };
+}
+
+function readPolicyFromBody(body) {
+  const hasAny =
+    body?.policyRequiresLot !== undefined ||
+    body?.policyRequiresExpiry !== undefined ||
+    body?.policyFefo !== undefined;
+  if (!hasAny) return { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
+  return {
+    explicit: true,
+    requiresLot: !!body?.policyRequiresLot,
+    requiresExpiry: !!body?.policyRequiresExpiry,
+    fefo: !!body?.policyFefo,
+  };
+}
+
+async function resolveItemPolicy(env, row, categoriaOverride) {
+  const itemPolicy = readPolicyFromRow(row);
+  if (itemPolicy.explicit) return itemPolicy;
+  // Policy is item-scoped. Category policies may exist for suggestions/analytics,
+  // but they do not enforce requirements unless explicitly set on the item.
+  return { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
+}
+
 function enforceLotExpiryPolicyOrError({ policy, lote, dataValidade }) {
   if (policy?.requiresLot && !String(lote || '').trim()) {
-    return { ok: false, status: 400, code: 'POLICY_REQUIRES_LOT', error: 'Este item exige Lote pela política da categoria.' };
+    return { ok: false, status: 400, code: 'POLICY_REQUIRES_LOT', error: 'Este item exige Lote pela política do item.' };
   }
   if (policy?.requiresExpiry && !String(dataValidade || '').trim()) {
-    return { ok: false, status: 400, code: 'POLICY_REQUIRES_EXPIRY', error: 'Este item exige Data de validade pela política da categoria.' };
+    return { ok: false, status: 400, code: 'POLICY_REQUIRES_EXPIRY', error: 'Este item exige Data de validade pela política do item.' };
   }
   return { ok: true };
 }
 
 async function listRegistrosByCodigo(env, codigo) {
   const rows = await env.DB.prepare(
-    `SELECT registro, lote, data_validade
-     FROM insumos_items
-     WHERE codigo_barras = ?
+    `SELECT i.registro, i.lote, i.data_validade
+     FROM insumos_items i
+     JOIN insumos_barcodes b ON b.registro = i.registro
+     WHERE b.codigo_barras = ?
      ORDER BY (CASE WHEN data_validade IS NULL OR data_validade = '' THEN 1 ELSE 0 END),
               data_validade ASC,
               registro ASC`
@@ -109,11 +225,13 @@ async function listPickCandidates(env, { codigo, unidade }) {
 
   const rows = await env.DB.prepare(
     `SELECT i.registro, i.lote, i.data_validade, i.categoria,
+            i.policy_requires_lot, i.policy_requires_expiry, i.policy_fefo,
             COALESCE(s.quantidade, 0) AS quantidade
      FROM insumos_items i
+     JOIN insumos_barcodes b ON b.registro = i.registro
      LEFT JOIN insumos_stocks s
        ON s.registro = i.registro AND s.unidade = ?
-     WHERE i.codigo_barras = ?
+     WHERE b.codigo_barras = ?
      ORDER BY (CASE WHEN i.data_validade IS NULL OR i.data_validade = '' THEN 1 ELSE 0 END),
               i.data_validade ASC,
               i.registro ASC`
@@ -127,6 +245,9 @@ async function listPickCandidates(env, { codigo, unidade }) {
       lote: String(r.lote || '').trim(),
       dataValidade: r.data_validade ? String(r.data_validade) : null,
       categoria: String(r.categoria || '').trim(),
+      policyRequiresLot: normalizePolicyFlag(r.policy_requires_lot),
+      policyRequiresExpiry: normalizePolicyFlag(r.policy_requires_expiry),
+      policyFefo: normalizePolicyFlag(r.policy_fefo),
       estoque: toInt(r.quantidade, 0),
     }))
     .filter((r) => r.registro);
@@ -148,14 +269,24 @@ async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFe
     if (!row?.registro) return { ok: false, code: 'NOT_FOUND', error: 'Registro não encontrado' };
 
     const match = await env.DB.prepare(
-      `SELECT registro, codigo_barras
-       FROM insumos_items
-       WHERE registro = ?`
+      `SELECT 1
+       FROM insumos_barcodes
+       WHERE registro = ? AND codigo_barras = ?
+       LIMIT 1`
     )
-      .bind(normRegistro)
+      .bind(normRegistro, normCodigo)
       .first();
-    if (match?.codigo_barras && String(match.codigo_barras).trim() !== normCodigo) {
-      return { ok: false, code: 'MISMATCH', error: 'Registro não corresponde ao código informado' };
+    if (!match) {
+      const primary = await env.DB.prepare(
+        `SELECT codigo_barras
+         FROM insumos_items
+         WHERE registro = ?`
+      )
+        .bind(normRegistro)
+        .first();
+      if (String(primary?.codigo_barras || '').trim() !== normCodigo) {
+        return { ok: false, code: 'MISMATCH', error: 'Registro não corresponde ao código informado' };
+      }
     }
     return { ok: true, registro: normRegistro };
   }
@@ -163,12 +294,18 @@ async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFe
   const candidates = await listPickCandidates(env, { codigo: normCodigo, unidade });
   if (!candidates.length) return { ok: false, code: 'NOT_FOUND', error: 'Insumo não encontrado' };
   if (candidates.length > 1) {
-    const categoria = String(candidates.find((c) => c.categoria)?.categoria || '').trim();
-    const policy = categoria
-      ? await getCategoryPolicy(env, categoria)
-      : { slug: '', requiresLot: false, requiresExpiry: false, fefo: false };
+    let fefoEnabled = false;
+    if (allowFefo) {
+      for (const c of candidates) {
+        const policy = await resolveItemPolicy(env, c, c?.categoria);
+        if (policy?.fefo) {
+          fefoEnabled = true;
+          break;
+        }
+      }
+    }
 
-    if (allowFefo && policy?.fefo) {
+    if (allowFefo && fefoEnabled) {
       const pool = candidates.filter((c) => toInt(c?.estoque, 0) > 0);
       const source = pool.length ? pool : candidates;
       const picked = source
@@ -283,12 +420,17 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
         estoque_minimo,
         lote,
         data_validade,
+        policy_requires_lot,
+        policy_requires_expiry,
+        policy_fefo,
         data_cadastro,
         data_atualizacao
      FROM insumos_items
      ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC`
   ).all();
   const items = itemsRes?.results || [];
+  const registros = items.map((it) => String(it?.registro || '').trim()).filter(Boolean);
+  const barcodesByRegistro = await loadBarcodesByRegistro(env, registros);
 
   const stocksRes = await env.DB.prepare(
     `SELECT registro, unidade, quantidade
@@ -310,9 +452,11 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
     const estoques = byRegistro.get(registro) || {};
     const estoqueAtual = toInt(estoques?.[unidade], 0);
     const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    const codigosBarras = mergeBarcodeList(String(it.codigo_barras || ''), barcodesByRegistro.get(registro));
     return {
       registro,
       codigoBarras: String(it.codigo_barras || ''),
+      codigosBarras,
       categoria: String(it.categoria || ''),
       marca: String(it.marca || ''),
       produto: String(it.produto || ''),
@@ -328,6 +472,9 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
       estoqueMinimo: toInt(it.estoque_minimo, 0),
       dataValidade: dataValidade || null,
       statusValidade: calcularStatusValidade(dataValidade),
+      policyRequiresLot: normalizePolicyFlag(it.policy_requires_lot),
+      policyRequiresExpiry: normalizePolicyFlag(it.policy_requires_expiry),
+      policyFefo: normalizePolicyFlag(it.policy_fefo),
       estoques: Object.fromEntries((unidades || []).map((u) => [u, toInt(estoques?.[u], 0)])),
     };
   });
@@ -348,9 +495,14 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
       codigo_barras LIKE ? COLLATE NOCASE OR
       categoria LIKE ? COLLATE NOCASE OR
       marca LIKE ? COLLATE NOCASE OR
-      lote LIKE ? COLLATE NOCASE
+      lote LIKE ? COLLATE NOCASE OR
+      EXISTS (
+        SELECT 1 FROM insumos_barcodes b
+        WHERE b.registro = insumos_items.registro
+          AND b.codigo_barras LIKE ? COLLATE NOCASE
+      )
     )`);
-    binds.push(like, like, like, like, like);
+    binds.push(like, like, like, like, like, like);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -376,6 +528,9 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
         estoque_minimo,
         lote,
         data_validade,
+        policy_requires_lot,
+        policy_requires_expiry,
+        policy_fefo,
         data_cadastro,
         data_atualizacao
      FROM insumos_items
@@ -386,28 +541,31 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
     .bind(...binds, lim, offset)
     .all();
   const items = itemsRes?.results || [];
+  const registros = items.map((it) => String(it?.registro || '').trim()).filter(Boolean);
+  const barcodesByRegistro = await loadBarcodesByRegistro(env, registros);
 
-  const registros = items.map((it) => String(it.registro || '').trim()).filter(Boolean);
   const byRegistro = new Map();
-  if (registros.length) {
-    const registroChunks = chunkArray(registros, MAX_SQL_VARIABLES_PER_STATEMENT);
-    for (const registroChunk of registroChunks) {
-      const placeholders = registroChunk.map(() => '?').join(',');
-      const stocksRes = await env.DB.prepare(
-        `SELECT registro, unidade, quantidade
-         FROM insumos_stocks
-         WHERE registro IN (${placeholders})`
-      )
-        .bind(...registroChunk)
-        .all();
-      const stocks = stocksRes?.results || [];
-      for (const s of stocks) {
-        const reg = String(s.registro || '').trim();
-        if (!reg) continue;
-        const map = byRegistro.get(reg) || {};
-        map[String(s.unidade || '').trim()] = toInt(s.quantidade, 0);
-        byRegistro.set(reg, map);
-      }
+  if (items.length) {
+    const stocksRes = await env.DB.prepare(
+      `SELECT s.registro, s.unidade, s.quantidade
+       FROM insumos_stocks s
+       WHERE s.registro IN (
+         SELECT registro
+         FROM insumos_items
+         ${whereSql}
+         ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC
+         LIMIT ? OFFSET ?
+       )`
+    )
+      .bind(...binds, lim, offset)
+      .all();
+    const stocks = stocksRes?.results || [];
+    for (const s of stocks) {
+      const reg = String(s.registro || '').trim();
+      if (!reg) continue;
+      const map = byRegistro.get(reg) || {};
+      map[String(s.unidade || '').trim()] = toInt(s.quantidade, 0);
+      byRegistro.set(reg, map);
     }
   }
 
@@ -416,9 +574,11 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
     const estoques = byRegistro.get(registro) || {};
     const estoqueAtual = toInt(estoques?.[unidade], 0);
     const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    const codigosBarras = mergeBarcodeList(String(it.codigo_barras || ''), barcodesByRegistro.get(registro));
     return {
       registro,
       codigoBarras: String(it.codigo_barras || ''),
+      codigosBarras,
       categoria: String(it.categoria || ''),
       marca: String(it.marca || ''),
       produto: String(it.produto || ''),
@@ -434,6 +594,9 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
       estoqueMinimo: toInt(it.estoque_minimo, 0),
       dataValidade: dataValidade || null,
       statusValidade: calcularStatusValidade(dataValidade),
+      policyRequiresLot: normalizePolicyFlag(it.policy_requires_lot),
+      policyRequiresExpiry: normalizePolicyFlag(it.policy_requires_expiry),
+      policyFefo: normalizePolicyFlag(it.policy_fefo),
       estoques: Object.fromEntries((unidades || []).map((u) => [u, toInt(estoques?.[u], 0)])),
     };
   });
@@ -442,6 +605,36 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
     items: mapped,
     resumo: { total, pagina: page, limite: lim, q: query || null }
   };
+}
+
+export async function d1ListInsumosOptions({ env, limite }) {
+  const lim = Math.max(50, Math.min(500, toInt(limite, 250) || 250));
+
+  const [categoriasRes, marcasRes] = await Promise.all([
+    env.DB.prepare(
+      `SELECT DISTINCT categoria
+       FROM insumos_items
+       WHERE categoria IS NOT NULL AND TRIM(categoria) != ''
+       ORDER BY categoria COLLATE NOCASE ASC
+       LIMIT ?`
+    ).bind(lim).all(),
+    env.DB.prepare(
+      `SELECT DISTINCT marca
+       FROM insumos_items
+       WHERE marca IS NOT NULL AND TRIM(marca) != ''
+       ORDER BY marca COLLATE NOCASE ASC
+       LIMIT ?`
+    ).bind(lim).all()
+  ]);
+
+  const categorias = (categoriasRes?.results || [])
+    .map((row) => String(row?.categoria || '').trim())
+    .filter(Boolean);
+  const marcas = (marcasRes?.results || [])
+    .map((row) => String(row?.marca || '').trim())
+    .filter(Boolean);
+
+  return { categorias, marcas };
 }
 
 export async function d1GetInsumoByRegistro(env, registro) {
@@ -462,16 +655,29 @@ export async function d1GetInsumoByRegistro(env, registro) {
         estoque_minimo,
         lote,
         data_validade,
+        policy_requires_lot,
+        policy_requires_expiry,
+        policy_fefo,
         data_cadastro,
         data_atualizacao
      FROM insumos_items
      WHERE registro = ?`
   ).bind(String(registro || '').trim()).first();
-  return row || null;
+  if (!row) return null;
+  const barcodes = await env.DB.prepare(
+    `SELECT codigo_barras FROM insumos_barcodes WHERE registro = ?`
+  ).bind(String(registro || '').trim()).all();
+  const codigosBarras = mergeBarcodeList(
+    String(row?.codigo_barras || ''),
+    (barcodes?.results || []).map((r) => r?.codigo_barras)
+  );
+  return { ...row, codigosBarras };
 }
 
 export async function d1CreateInsumo({ env, unidades, unidade, body }) {
-  const codigoBarras = String(body?.codigoBarras || '').trim();
+  const primaryCodigo = String(body?.codigoBarras || '').trim();
+  const codigosBarras = mergeBarcodeList(primaryCodigo, normalizeBarcodeList(body?.codigosBarras));
+  const codigoBarras = codigosBarras[0] || '';
   const produto = String(body?.produto || '').trim();
   if (!codigoBarras) return { ok: false, status: 400, error: 'Código de barras é obrigatório' };
   if (!produto) return { ok: false, status: 400, error: 'Produto é obrigatório' };
@@ -482,13 +688,23 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
   if (allowDuplicateLot && !lote) return { ok: false, status: 400, error: 'Lote é obrigatório para cadastrar novo lote' };
 
   if (!allowDuplicateLot) {
-    const exists = await env.DB.prepare('SELECT 1 FROM insumos_items WHERE codigo_barras = ? LIMIT 1').bind(codigoBarras).first();
-    if (exists) return { ok: false, status: 409, error: 'Código de barras já cadastrado' };
+    for (const code of codigosBarras) {
+      const exists = await env.DB.prepare(
+        'SELECT 1 FROM insumos_barcodes WHERE codigo_barras = ? LIMIT 1'
+      ).bind(code).first();
+      if (exists) return { ok: false, status: 409, error: 'Código de barras já cadastrado' };
+    }
   } else {
-    const existsSame = await env.DB.prepare(
-      'SELECT 1 FROM insumos_items WHERE codigo_barras = ? AND lote = ? LIMIT 1'
-    ).bind(codigoBarras, lote).first();
-    if (existsSame) return { ok: false, status: 409, error: 'Lote já cadastrado para este código de barras' };
+    for (const code of codigosBarras) {
+      const existsSame = await env.DB.prepare(
+        `SELECT 1
+         FROM insumos_barcodes b
+         JOIN insumos_items i ON i.registro = b.registro
+         WHERE b.codigo_barras = ? AND i.lote = ?
+         LIMIT 1`
+      ).bind(code, lote).first();
+      if (existsSame) return { ok: false, status: 409, error: 'Lote já cadastrado para este código de barras' };
+    }
   }
 
   const registro = await nextRegistro(env);
@@ -499,7 +715,8 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
   const estoqueInicial = toInt(body?.estoqueInicial, 0);
 
   const categoria = String(body?.categoria || '').trim();
-  const policy = await getCategoryPolicy(env, categoria);
+  const bodyPolicy = readPolicyFromBody(body);
+  const policy = bodyPolicy.explicit ? bodyPolicy : { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
   const policyCheck = enforceLotExpiryPolicyOrError({ policy, lote, dataValidade });
   if (!policyCheck.ok) return policyCheck;
 
@@ -508,8 +725,10 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
     env.DB.prepare(
       `INSERT INTO insumos_items (
           registro, codigo_barras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade,
-          fonte, preco_custo, estoque_minimo, lote, data_validade, data_cadastro, data_atualizacao
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          fonte, preco_custo, estoque_minimo, lote, data_validade,
+          policy_requires_lot, policy_requires_expiry, policy_fefo,
+          data_cadastro, data_atualizacao
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       registro,
       codigoBarras,
@@ -520,16 +739,28 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
       String(body?.concentracao || '').trim(),
       String(body?.volume || '').trim(),
       String(body?.calibre || '').trim(),
-      String(body?.tipoUnidade || body?.unidade || '').trim(),
+      normalizeTipoUnidade(String(body?.tipoUnidade || body?.unidade || '').trim()),
       String(body?.fonte || '').trim(),
       precoCusto,
       estoqueMinimo,
       lote,
       dataValidade,
+      bodyPolicy.explicit ? (bodyPolicy.requiresLot ? 1 : 0) : null,
+      bodyPolicy.explicit ? (bodyPolicy.requiresExpiry ? 1 : 0) : null,
+      bodyPolicy.explicit ? (bodyPolicy.fefo ? 1 : 0) : null,
       ts,
       ts
     )
   );
+
+  for (const code of codigosBarras) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO insumos_barcodes (registro, codigo_barras, created_at)
+         VALUES (?, ?, ?)`
+      ).bind(registro, code, ts)
+    );
+  }
 
   // Stock only for selected unidade (others implied 0)
   statements.push(
@@ -548,7 +779,7 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   if (!reg) return { ok: false, status: 400, error: 'Registro inválido' };
 
   const existing = await env.DB.prepare(
-    'SELECT registro, categoria, lote, data_validade FROM insumos_items WHERE registro = ?'
+    'SELECT registro, codigo_barras, categoria, lote, data_validade, policy_requires_lot, policy_requires_expiry, policy_fefo FROM insumos_items WHERE registro = ?'
   )
     .bind(reg)
     .first();
@@ -557,7 +788,13 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   const nextCategoria = body?.categoria !== undefined ? String(body?.categoria || '').trim() : String(existing?.categoria || '').trim();
   const nextLote = body?.lote !== undefined ? String(body?.lote || '').trim() : String(existing?.lote || '').trim();
   const nextValidade = body?.dataValidade !== undefined ? String(body?.dataValidade || '').trim() : String(existing?.data_validade || '').trim();
-  const policy = await getCategoryPolicy(env, nextCategoria);
+  const bodyPolicy = readPolicyFromBody(body);
+  const existingPolicy = readPolicyFromRow(existing);
+  const policy = bodyPolicy.explicit
+    ? bodyPolicy
+    : existingPolicy.explicit
+      ? existingPolicy
+      : { explicit: false, requiresLot: false, requiresExpiry: false, fefo: false };
   const policyCheck = enforceLotExpiryPolicyOrError({ policy, lote: nextLote, dataValidade: nextValidade });
   if (!policyCheck.ok) return policyCheck;
 
@@ -568,7 +805,14 @@ export async function d1UpdateInsumo({ env, registro, body }) {
     vals.push(v);
   };
 
-  if (body?.codigoBarras !== undefined) set('codigo_barras', String(body.codigoBarras || '').trim());
+  const nextPrimary = body?.codigoBarras !== undefined
+    ? String(body.codigoBarras || '').trim()
+    : String(existing?.codigo_barras || '').trim();
+  const nextCodigosBarras = body?.codigosBarras !== undefined
+    ? mergeBarcodeList(nextPrimary, normalizeBarcodeList(body.codigosBarras))
+    : mergeBarcodeList(nextPrimary, []);
+
+  if (body?.codigoBarras !== undefined) set('codigo_barras', nextPrimary);
   if (body?.produto !== undefined) set('produto', String(body.produto || '').trim());
   if (body?.categoria !== undefined) set('categoria', String(body.categoria || '').trim());
   if (body?.marca !== undefined) set('marca', String(body.marca || '').trim());
@@ -576,18 +820,38 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   if (body?.concentracao !== undefined) set('concentracao', String(body.concentracao || '').trim());
   if (body?.volume !== undefined) set('volume', String(body.volume || '').trim());
   if (body?.calibre !== undefined) set('calibre', String(body.calibre || '').trim());
-  if (body?.tipoUnidade !== undefined) set('tipo_unidade', String(body.tipoUnidade || '').trim());
+  if (body?.tipoUnidade !== undefined) set('tipo_unidade', normalizeTipoUnidade(String(body.tipoUnidade || '').trim()));
   if (body?.fonte !== undefined) set('fonte', String(body.fonte || '').trim());
   if (body?.precoCusto !== undefined) set('preco_custo', toNumber(body.precoCusto, 0));
   if (body?.estoqueMinimo !== undefined) set('estoque_minimo', toInt(body.estoqueMinimo, 0));
   if (body?.lote !== undefined) set('lote', String(body.lote || '').trim());
   if (body?.dataValidade !== undefined) set('data_validade', String(body.dataValidade || '').trim());
+  if (body?.policyRequiresLot !== undefined) set('policy_requires_lot', body.policyRequiresLot ? 1 : 0);
+  if (body?.policyRequiresExpiry !== undefined) set('policy_requires_expiry', body.policyRequiresExpiry ? 1 : 0);
+  if (body?.policyFefo !== undefined) set('policy_fefo', body.policyFefo ? 1 : 0);
 
   set('data_atualizacao', nowIso());
 
   const sql = `UPDATE insumos_items SET ${fields.join(', ')} WHERE registro = ?`;
   vals.push(reg);
   await env.DB.prepare(sql).bind(...vals).run();
+
+  if (body?.codigosBarras !== undefined) {
+    await env.DB.prepare('DELETE FROM insumos_barcodes WHERE registro = ?').bind(reg).run();
+    const ts = nowIso();
+    const inserts = nextCodigosBarras.map((code) =>
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO insumos_barcodes (registro, codigo_barras, created_at)
+         VALUES (?, ?, ?)`
+      ).bind(reg, code, ts)
+    );
+    if (inserts.length) await env.DB.batch(inserts);
+  } else if (body?.codigoBarras !== undefined && nextPrimary) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_barcodes (registro, codigo_barras, created_at)
+       VALUES (?, ?, ?)`
+    ).bind(reg, nextPrimary, nowIso()).run();
+  }
   return { ok: true };
 }
 
@@ -597,6 +861,7 @@ export async function d1DeleteInsumo({ env, registro }) {
   const exists = await env.DB.prepare('SELECT 1 FROM insumos_items WHERE registro = ?').bind(reg).first();
   if (!exists) return { ok: false, status: 404, error: 'Registro não encontrado' };
   await env.DB.prepare('DELETE FROM insumos_items WHERE registro = ?').bind(reg).run();
+  await env.DB.prepare('DELETE FROM insumos_barcodes WHERE registro = ?').bind(reg).run();
   return { ok: true };
 }
 
@@ -617,12 +882,13 @@ export async function d1EntradaBaixa({ env, unidade, body, kind }) {
   const reg = pick.registro;
 
   const item = await env.DB.prepare(
-    `SELECT registro, codigo_barras, produto, categoria, lote, data_validade, estoque_minimo
+    `SELECT registro, codigo_barras, produto, categoria, lote, data_validade, estoque_minimo,
+            policy_requires_lot, policy_requires_expiry, policy_fefo
      FROM insumos_items WHERE registro = ?`
   ).bind(reg).first();
   if (!item) return { ok: false, status: 404, error: 'Insumo não encontrado' };
 
-  const policy = await getCategoryPolicy(env, item?.categoria || '');
+  const policy = await resolveItemPolicy(env, item, item?.categoria || '');
   const policyCheck = enforceLotExpiryPolicyOrError({
     policy,
     lote: String(item?.lote || ''),
@@ -698,12 +964,13 @@ export async function d1Ajuste({ env, unidade, body }) {
   const reg = pick.registro;
 
   const item = await env.DB.prepare(
-    `SELECT registro, codigo_barras, produto, categoria, lote, data_validade
+    `SELECT registro, codigo_barras, produto, categoria, lote, data_validade,
+            policy_requires_lot, policy_requires_expiry, policy_fefo
      FROM insumos_items WHERE registro = ?`
   ).bind(reg).first();
   if (!item) return { ok: false, status: 404, error: 'Insumo não encontrado' };
 
-  const policy = await getCategoryPolicy(env, item?.categoria || '');
+  const policy = await resolveItemPolicy(env, item, item?.categoria || '');
   const policyCheck = enforceLotExpiryPolicyOrError({
     policy,
     lote: String(item?.lote || ''),
@@ -777,12 +1044,13 @@ export async function d1Transfer({ env, body }) {
   const reg = pick.registro;
 
   const item = await env.DB.prepare(
-    `SELECT registro, codigo_barras, produto, categoria, lote, data_validade
+    `SELECT registro, codigo_barras, produto, categoria, lote, data_validade,
+            policy_requires_lot, policy_requires_expiry, policy_fefo
      FROM insumos_items WHERE registro = ?`
   ).bind(reg).first();
   if (!item) return { ok: false, status: 404, error: 'Insumo não encontrado' };
 
-  const policy = await getCategoryPolicy(env, item?.categoria || '');
+  const policy = await resolveItemPolicy(env, item, item?.categoria || '');
   const policyCheck = enforceLotExpiryPolicyOrError({
     policy,
     lote: String(item?.lote || ''),

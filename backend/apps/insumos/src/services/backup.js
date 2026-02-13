@@ -84,7 +84,9 @@ export async function buildBackupPayload({ env }) {
         try {
             const it = await env.DB.prepare(
                 `SELECT registro, codigo_barras as codigoBarras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade as tipoUnidade,
-                        fonte, preco_custo as precoCusto, estoque_minimo as estoqueMinimo, lote, data_validade as dataValidade, data_cadastro as dataCadastro, data_atualizacao as dataAtualizacao
+                        fonte, preco_custo as precoCusto, estoque_minimo as estoqueMinimo, lote, data_validade as dataValidade,
+                        policy_requires_lot as policyRequiresLot, policy_requires_expiry as policyRequiresExpiry, policy_fefo as policyFefo,
+                        data_cadastro as dataCadastro, data_atualizacao as dataAtualizacao
                  FROM insumos_items`
             ).all();
             d1Dump.insumosItems = it?.results || [];

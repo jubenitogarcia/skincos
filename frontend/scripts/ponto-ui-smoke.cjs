@@ -306,17 +306,16 @@ async function main() {
     if (!diag.proxy || diag.proxy.ok !== true) {
       throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
     }
-    if (!diag.proxy.effectiveTargetConfigured) throw new Error('Proxy status: effectiveTargetConfigured=false')
-    if (!diag.proxy.targetConfigured) {
-      // Not a hard failure: the proxy can fall back to INSUMOS_API_TARGET. We still require an effective target above.
-      console.log('[ponto-ui-smoke] WARN: Proxy status: targetConfigured=false (PONTO_API_TARGET missing; using fallback target)')
-    }
+    if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
     if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
     if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
     if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
 
     if (!diag.health || diag.health.ok !== true) {
       throw new Error(`Health failed: HTTP ${diag.healthStatus} body=${String(diag.healthText || '').slice(0, 260)}`)
+    }
+    if (diag.health.cryptoTemplates !== true) {
+      throw new Error('Health: cryptoTemplates=false (biometria não configurada)')
     }
 
     await page.keyboard.press('Escape')
@@ -369,6 +368,20 @@ async function main() {
         .catch(() => false)
       if (adminTokenTextVisible || adminTokenInputVisible) {
         throw new Error('Admin tab still prompts for admin token (expected role-based).')
+      }
+
+      const enrollButton = page.locator('button:has-text("Cadastrar Biometria")').first()
+      const enrollEnabled = await enrollButton.isEnabled().catch(() => false)
+      if (enrollEnabled) {
+        await enrollButton.click({ timeout: 15_000 })
+        await page.locator('text=Biometria facial').first().waitFor({ timeout: 10_000 })
+        await maybeScreenshot('biometria-modal')
+        await page.locator('button:has-text("Fechar")').first().click({ timeout: 10_000 })
+        await page.waitForTimeout(600)
+        const stillOpen = await page.locator('text=Biometria facial').first().isVisible().catch(() => false)
+        if (stillOpen) throw new Error('Biometria modal did not close properly.')
+      } else {
+        console.log('[ponto-ui-smoke] Biometria modal skipped (no employee selected).')
       }
 
       if (MUTATE_ADMIN) {
@@ -470,14 +483,19 @@ async function main() {
           if (String(me1?.employee?.id || '') !== employeeId) {
             throw new Error(`me employee mismatch: expected=${employeeId} got=${String(me1?.employee?.id || '')}`)
           }
+          const allowedUnits = Array.isArray(me1?.allowedUnits) ? me1.allowedUnits.map((u) => String(u || '').trim()).filter(Boolean) : []
+          const unit = allowedUnits[0] || ''
 
           let punch = null
           if (doPunch) {
+            if (!unit) {
+              throw new Error('employee unit not configured (allowedUnits empty)')
+            }
             const punchRes = await fetch('/api/ponto/me/punch', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               credentials: 'include',
-              body: JSON.stringify({ pin, type: 'AUTO', clientTime: new Date().toISOString() }),
+              body: JSON.stringify({ pin, type: 'AUTO', unit, clientTime: new Date().toISOString() }),
             })
             const punchText = await punchRes.text()
             let punchJson = null
@@ -487,6 +505,47 @@ async function main() {
             }
             punch = punchJson?.data || null
 
+            const recordsRes = await fetch(`/api/ponto/me/records?limit=5&unit=${encodeURIComponent(unit)}`, { credentials: 'include' })
+            const recordsText = await recordsRes.text()
+            let recordsJson = null
+            try { recordsJson = recordsText ? JSON.parse(recordsText) : null } catch {}
+            if (!recordsRes.ok || !recordsJson?.ok || !Array.isArray(recordsJson?.data)) {
+              throw new Error(`me records failed: HTTP ${recordsRes.status} body=${recordsText.slice(0, 400)}`)
+            }
+            if (!recordsJson.data.some((r) => String(r.id || '') === String(punch?.id || ''))) {
+              throw new Error(`me records missing punch (punchId=${String(punch?.id || '')})`)
+            }
+
+            const csvRes = await fetch('/api/ponto/admin/records.csv?limit=5', { credentials: 'include' })
+            const csvText = await csvRes.text()
+            const csvType = String(csvRes.headers.get('content-type') || '')
+            if (!csvRes.ok || !csvType.includes('text/csv')) {
+              throw new Error(`admin records csv failed: HTTP ${csvRes.status} type=${csvType} body=${csvText.slice(0, 200)}`)
+            }
+            if (!csvText.includes('id,employeeId')) {
+              throw new Error('admin records csv missing header row')
+            }
+            if (punch?.id && !csvText.includes(String(punch.id))) {
+              throw new Error(`admin records csv missing punch (punchId=${String(punch.id)})`)
+            }
+
+            const cooldownRes = await fetch('/api/ponto/me/punch', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ pin, type: 'AUTO', unit, clientTime: new Date().toISOString() }),
+            })
+            const cooldownText = await cooldownRes.text()
+            let cooldownJson = null
+            try { cooldownJson = cooldownText ? JSON.parse(cooldownText) : null } catch {}
+            if (cooldownRes.status === 409) {
+              if (cooldownJson?.error !== 'COOLDOWN') {
+                throw new Error(`cooldown mismatch: HTTP ${cooldownRes.status} body=${cooldownText.slice(0, 240)}`)
+              }
+            } else if (!cooldownRes.ok) {
+              throw new Error(`cooldown check failed: HTTP ${cooldownRes.status} body=${cooldownText.slice(0, 240)}`)
+            }
+
             // Verify audit chain is still consistent after a punch write.
             const auditRes = await fetch('/api/ponto/admin/audit/verify', { credentials: 'include' })
             const auditText = await auditRes.text()
@@ -495,6 +554,7 @@ async function main() {
             if (!auditRes.ok || !auditJson?.ok) {
               throw new Error(`audit verify failed: HTTP ${auditRes.status} body=${auditText.slice(0, 400)}`)
             }
+
           }
 
           const delRes = await fetch(`/api/ponto/admin/employees/${encodeURIComponent(employeeId)}`, {

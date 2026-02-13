@@ -26,6 +26,25 @@ function normalizeEmail(value) {
   return raw
 }
 
+function normalizeUnit(value) {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (!raw) return ''
+  // Keep this conservative: treat units as opaque slugs.
+  // (UI/auth should provide canonical unit ids like "novo-hamburgo".)
+  return raw
+}
+
+function normalizeUnits(values) {
+  if (!Array.isArray(values)) return []
+  const out = []
+  for (const v of values) {
+    const unit = normalizeUnit(v)
+    if (unit) out.push(unit)
+  }
+  // Unique + stable order
+  return Array.from(new Set(out)).sort()
+}
+
 function getClientIp(request) {
   const xf = String(request.headers.get('x-forwarded-for') || '').trim()
   if (xf) return xf.split(',')[0].trim()
@@ -601,6 +620,7 @@ async function requireEmployee({ request, env, withCORS, appOrigin, actorSkewMs 
   if (!email) {
     return { ok: false, response: withCORS(JSON.stringify({ ok: false, error: 'UNAUTHORIZED', code: 'ACTOR_EMAIL_MISSING' }), { status: 401 }, appOrigin) }
   }
+  const allowedUnits = normalizeUnits(actor.allowedUnits)
 
   const actorHmacKey = String(env?.PONTO_ACTOR_HMAC_KEY || '').trim()
   if (!actorHmacKey) {
@@ -614,7 +634,7 @@ async function requireEmployee({ request, env, withCORS, appOrigin, actorSkewMs 
     return { ok: false, response: withCORS(JSON.stringify({ ok: false, error: 'UNAUTHORIZED', code: 'ACTOR_SIG_INVALID' }), { status: 401 }, appOrigin) }
   }
 
-  return { ok: true, email, actor: actorFromRequest(request, { kind: 'employee', id: email, label: email }) }
+  return { ok: true, email, allowedUnits, actor: actorFromRequest(request, { kind: 'employee', id: email, label: email }) }
 }
 
 async function findEmployeeByLoginEmail(db, email) {
@@ -928,10 +948,12 @@ export async function handlePontoRoutes({
       const records = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_records`).first()
       const audit = await db.prepare(`SELECT COUNT(*) AS n FROM ponto_audit`).first()
       const cacheAgeMs = allTemplatesCache?.ts ? Math.max(0, Date.now() - allTemplatesCache.ts) : null
+      const workerBuild = String(env?.PONTO_BUILD_SHA || env?.WORKER_BUILD_SHA || '').trim()
       return json(200, {
         ok: true,
         version: 2,
         storage: 'd1',
+        workerBuild: workerBuild || null,
         cryptoAuditHmac: !!String(env?.PONTO_AUDIT_HMAC_KEY || '').trim(),
         cryptoTemplates: !!String(env?.PONTO_TEMPLATES_KEY || '').trim(),
         templatesCacheTtlMs,
@@ -1378,6 +1400,7 @@ export async function handlePontoRoutes({
         ok: true,
         linked: false,
         actorEmail: auth.email,
+        allowedUnits: auth.allowedUnits || [],
         hint: 'Seu usuário ainda não está vinculado a um funcionário. Peça ao admin para definir o email no cadastro do funcionário.'
       })
     }
@@ -1388,6 +1411,7 @@ export async function handlePontoRoutes({
       ok: true,
       linked: true,
       actorEmail: auth.email,
+      allowedUnits: auth.allowedUnits || [],
       employee: publicEmployee(employee),
       hasFace,
       pinSet: !!employee.pin_hash,
@@ -1404,9 +1428,17 @@ export async function handlePontoRoutes({
     if (!employee) return json(404, { ok: false, error: 'EMPLOYEE_NOT_LINKED' })
     const from = safeText(url.searchParams.get('from'), 30)
     const to = safeText(url.searchParams.get('to'), 30)
+    const unitParam = normalizeUnit(url.searchParams.get('unit'))
     const limit = clampInt(url.searchParams.get('limit'), 1, 2000, 200)
     let sql = `SELECT * FROM ponto_records WHERE kind='PUNCH' AND employee_id=?`
     const binds = [employee.id]
+    const allowedUnits = Array.isArray(auth.allowedUnits) ? auth.allowedUnits : []
+    if (allowedUnits.length > 1 && !unitParam) return json(400, { ok: false, error: 'UNIT_REQUIRED' })
+    const resolvedUnit = unitParam || (allowedUnits.length === 1 ? normalizeUnit(allowedUnits[0]) : '')
+    if (allowedUnits.length && resolvedUnit && !allowedUnits.map(normalizeUnit).includes(resolvedUnit)) {
+      return json(403, { ok: false, error: 'UNIT_FORBIDDEN' })
+    }
+    if (resolvedUnit) { sql += ` AND lower(unit) = lower(?)`; binds.push(resolvedUnit) }
     if (from) { sql += ` AND at>=?`; binds.push(new Date(from).toISOString()) }
     if (to) { sql += ` AND at<=?`; binds.push(new Date(to).toISOString()) }
     sql += ` ORDER BY at DESC LIMIT ?`; binds.push(limit)
@@ -1427,6 +1459,13 @@ export async function handlePontoRoutes({
 
     const cooldown = await enforceCooldown(db, employee.id, punchCooldownSeconds)
     if (!cooldown.ok) return json(409, { ok: false, error: 'COOLDOWN', secondsRemaining: cooldown.secondsRemaining, last: cooldown.last })
+
+    const allowedUnits = Array.isArray(auth.allowedUnits) ? auth.allowedUnits.map(normalizeUnit).filter(Boolean) : []
+    const unitFromBody = normalizeUnit(safeText(body?.unit, 80))
+    if (!unitFromBody) return json(400, { ok: false, error: 'UNIT_REQUIRED' })
+    if (allowedUnits.length && !allowedUnits.includes(unitFromBody)) {
+      return json(403, { ok: false, error: 'UNIT_FORBIDDEN' })
+    }
 
     const descriptor = body?.descriptor
     const pin = safeText(body?.pin, 20)
@@ -1489,7 +1528,7 @@ export async function handlePontoRoutes({
 
     const last = await findLastEmployeePunch(db, employee.id)
     const type = computePunchType(body?.type, last?.type)
-    const unit = null
+    const unit = unitFromBody
     const note = safeText(body?.note, 240) || null
     const now = new Date().toISOString()
     const client = getClientTimeMeta(body)

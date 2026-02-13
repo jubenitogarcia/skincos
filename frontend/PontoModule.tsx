@@ -54,11 +54,12 @@ type PontoPunchRecord = {
 }
 
 type PontoMeResponse =
-  | { ok: true; linked: false; actorEmail?: string; hint?: string }
+  | { ok: true; linked: false; actorEmail?: string; hint?: string; allowedUnits?: string[] }
   | {
     ok: true
     linked: true
     actorEmail?: string
+    allowedUnits?: string[]
     employee: PontoEmployeePublic
     hasFace: boolean
     pinSet: boolean
@@ -66,6 +67,8 @@ type PontoMeResponse =
     cooldown?: { active: boolean; secondsRemaining?: number }
     suggestedNextMethod?: 'FACE' | 'PIN'
   }
+
+type FaceDetectorMode = 'tiny' | 'ssd'
 
 const LS_DEVICE_TOKEN = 'skincos.ponto.deviceToken.v1'
 const LS_DEV_ACTOR_EMAIL = 'skincos.ponto.devActorEmail.v1'
@@ -76,6 +79,17 @@ function errorMetaString(meta: { code?: string; requestId?: string; cfRay?: stri
   if (meta.requestId) parts.push(`req:${meta.requestId}`)
   if (meta.cfRay) parts.push(`cf:${meta.cfRay}`)
   return parts.length ? parts.join(' • ') : ''
+}
+
+const FACE_FALLBACK_THRESHOLD = 3
+const FACE_FALLBACK_MESSAGE =
+  'Condições ruins detectadas. Estamos melhorando a análise do rosto, aguarde alguns segundos.'
+
+function isFaceDetectionError(err: any) {
+  const code = String(err?.code || err?.details?.error || err?.details?.code || '').trim()
+  if (code === 'FACE_DETECTION_FAILED' || code === 'FACE_LOW_QUALITY') return true
+  const msg = String(err?.message || '').toLowerCase()
+  return msg.includes('nenhum rosto') || msg.includes('baixa qualidade')
 }
 
 function extractErrorMeta(err: any) {
@@ -127,6 +141,17 @@ function fmtDate(value?: string | null) {
 function toDateTimeLocalValue(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function FaceModelsBadge({ state, mode }: { state: 'idle' | 'loading' | 'ready' | 'error'; mode?: FaceDetectorMode }) {
+  if (state === 'ready') return <Badge variant="outline">Modelos: OK{mode === 'ssd' ? ' (robusto)' : ''}</Badge>
+  if (state === 'loading') return <Badge variant="secondary">Modelos: carregando…</Badge>
+  if (state === 'error') return <Badge variant="destructive">Modelos: erro</Badge>
+  return null
+}
+
+function CameraStatusBadge({ active }: { active: boolean }) {
+  return active ? <Badge>Camera: ativa</Badge> : null
 }
 
 function createRequestMeta() {
@@ -233,7 +258,9 @@ async function fetchJsonWithMeta(
 }
 
 let faceLibPromise: Promise<any> | null = null
-let faceInitPromise: Promise<void> | null = null
+let faceBasePromise: Promise<void> | null = null
+let faceTinyPromise: Promise<void> | null = null
+let faceSsdPromise: Promise<void> | null = null
 
 async function getFaceApi() {
   if (faceLibPromise) return faceLibPromise
@@ -245,20 +272,55 @@ async function getFaceApi() {
   return faceLibPromise
 }
 
-async function ensureFaceModels() {
-  if (faceInitPromise) return faceInitPromise
-  faceInitPromise = (async () => {
-    const faceapi = await getFaceApi()
-    const tf = faceapi?.tf as any
-    if (tf?.setBackend) {
-      try { await tf.setBackend('webgl') } catch { /* ignore */ }
-      await tf.ready()
+async function ensureFaceModels(
+  mode: FaceDetectorMode,
+  onProgress?: (done: number, total: number, label?: string) => void
+) {
+  const total = 3
+  let done = 0
+  const report = (label?: string) => onProgress?.(done, total, label)
+
+  const faceapi = await getFaceApi()
+  if (!faceBasePromise) {
+    faceBasePromise = (async () => {
+      const tf = faceapi?.tf as any
+      if (tf?.setBackend) {
+        try { await tf.setBackend('webgl') } catch { /* ignore */ }
+        await tf.ready()
+      }
+      await faceapi.nets.faceLandmark68Net.loadFromUri('/face-models')
+      done = Math.min(done + 1, total)
+      report('landmarks')
+      await faceapi.nets.faceRecognitionNet.loadFromUri('/face-models')
+      done = Math.min(done + 1, total)
+      report('recognition')
+    })()
+  }
+
+  report('init')
+  await faceBasePromise
+  done = Math.max(done, 2)
+  report('base')
+
+  if (mode === 'ssd') {
+    if (!faceSsdPromise) {
+      faceSsdPromise = (async () => {
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('/face-models')
+      })()
     }
-    await faceapi.nets.tinyFaceDetector.loadFromUri('/face-models')
-    await faceapi.nets.faceLandmark68Net.loadFromUri('/face-models')
-    await faceapi.nets.faceRecognitionNet.loadFromUri('/face-models')
-  })()
-  return faceInitPromise
+    await faceSsdPromise
+    done = Math.min(done + 1, total)
+    report('ssd')
+  } else {
+    if (!faceTinyPromise) {
+      faceTinyPromise = (async () => {
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/face-models')
+      })()
+    }
+    await faceTinyPromise
+    done = Math.min(done + 1, total)
+    report('tiny')
+  }
 }
 
 async function startUserCamera(videoEl: HTMLVideoElement) {
@@ -277,24 +339,121 @@ function stopCamera(stream: MediaStream | null) {
   } catch { /* ignore */ }
 }
 
-async function captureDescriptor(videoEl: HTMLVideoElement) {
-  await ensureFaceModels()
+async function captureDescriptor(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+  await ensureFaceModels(mode)
   const faceapi = await getFaceApi()
+  const detector =
+    mode === 'ssd'
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })
+      : new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
   const detection = await faceapi
-    .detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+    .detectSingleFace(videoEl, detector)
     .withFaceLandmarks()
     .withFaceDescriptor()
   const score = detection?.detection?.score
-  if (!detection?.descriptor) throw new Error('Nenhum rosto detectado')
-  if (typeof score === 'number' && score < 0.7) throw new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
+  if (!detection?.descriptor) {
+    const err = new Error('Nenhum rosto detectado')
+    ;(err as any).code = 'FACE_DETECTION_FAILED'
+    throw err
+  }
+  if (typeof score === 'number' && score < 0.7) {
+    const err = new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
+    ;(err as any).code = 'FACE_LOW_QUALITY'
+    throw err
+  }
   return Array.from(detection.descriptor)
 }
 
-async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220) {
+async function detectDescriptorWithInfo(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+  await ensureFaceModels(mode)
+  const faceapi = await getFaceApi()
+  const detector =
+    mode === 'ssd'
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })
+      : new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
+  const detection = await faceapi
+    .detectSingleFace(videoEl, detector)
+    .withFaceLandmarks()
+    .withFaceDescriptor()
+  const score = detection?.detection?.score
+  if (!detection?.descriptor) {
+    const err = new Error('Nenhum rosto detectado')
+    ;(err as any).code = 'FACE_DETECTION_FAILED'
+    throw err
+  }
+  if (typeof score === 'number' && score < 0.7) {
+    const err = new Error('Rosto com baixa qualidade (aproxime e evite contra-luz)')
+    ;(err as any).code = 'FACE_LOW_QUALITY'
+    throw err
+  }
+  return {
+    descriptor: Array.from(detection.descriptor),
+    score: typeof score === 'number' ? score : null,
+    box: detection?.detection?.box || null,
+    landmarks: detection?.landmarks || null,
+  }
+}
+
+async function detectFaceRaw(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+  await ensureFaceModels(mode)
+  const faceapi = await getFaceApi()
+  const detector =
+    mode === 'ssd'
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })
+      : new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
+  const detection = await faceapi
+    .detectSingleFace(videoEl, detector)
+    .withFaceLandmarks()
+  return detection
+}
+
+function averagePoint(points: Array<{ x: number; y: number }>) {
+  if (!points?.length) return null
+  const sum = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 })
+  return { x: sum.x / points.length, y: sum.y / points.length }
+}
+
+function getEnrollHint(detection: any, videoEl: HTMLVideoElement) {
+  if (!detection) return 'Posicione o rosto no centro'
+  const box = detection?.box
+  const vw = videoEl.videoWidth || 1
+  const vh = videoEl.videoHeight || 1
+  if (box) {
+    const size = Math.min(box.width / vw, box.height / vh)
+    if (size < 0.25) return 'Aproxime o rosto da câmera'
+    if (size > 0.7) return 'Afaste um pouco o rosto'
+    const cx = box.x + box.width / 2
+    const cy = box.y + box.height / 2
+    if (cx < vw * 0.35) return 'Mova o rosto para a direita'
+    if (cx > vw * 0.65) return 'Mova o rosto para a esquerda'
+    if (cy < vh * 0.35) return 'Mova o rosto para baixo'
+    if (cy > vh * 0.65) return 'Mova o rosto para cima'
+  }
+  try {
+    const lm = detection?.landmarks
+    const leftEye = averagePoint(lm?.getLeftEye?.() || [])
+    const rightEye = averagePoint(lm?.getRightEye?.() || [])
+    const nose = averagePoint(lm?.getNose?.() || [])
+    if (leftEye && rightEye && nose) {
+      const leftDist = nose.x - leftEye.x
+      const rightDist = rightEye.x - nose.x
+      if (leftDist > 0 && rightDist > 0) {
+        const ratio = leftDist / rightDist
+        if (ratio > 1.35) return 'Gire um pouco o rosto para a esquerda'
+        if (ratio < 0.75) return 'Gire um pouco o rosto para a direita'
+      }
+    }
+  } catch {
+    // ignore hint errors
+  }
+  return 'Mantenha o rosto centralizado'
+}
+
+async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220, mode: FaceDetectorMode) {
   const n = Math.max(1, Math.min(4, samples))
   const all: number[][] = []
   for (let i = 0; i < n; i++) {
-    all.push(await captureDescriptor(videoEl))
+    all.push(await captureDescriptor(videoEl, mode))
     if (i < n - 1) await new Promise(r => setTimeout(r, waitMs))
   }
   if (all.length === 1) return all[0]
@@ -335,6 +494,11 @@ export function PontoModule() {
 
   const [modelsReady, setModelsReady] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelsProgress, setModelsProgress] = useState(0)
+  const [modelsMessage, setModelsMessage] = useState<string | null>(null)
+  const [modelsLoaded, setModelsLoaded] = useState<FaceDetectorMode | null>(null)
+  const [faceDetectorMode, setFaceDetectorMode] = useState<FaceDetectorMode>('tiny')
+  const [faceFailCount, setFaceFailCount] = useState(0)
 
   const [loading, setLoading] = useState(false)
 
@@ -344,6 +508,7 @@ export function PontoModule() {
   const [mePunchOpen, setMePunchOpen] = useState(false)
   const [meStep, setMeStep] = useState<'face' | 'pin'>('face')
   const [mePin, setMePin] = useState('')
+  const [meUnit, setMeUnit] = useState('')
   const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
   const [meRecordsFrom, setMeRecordsFrom] = useState('')
   const [meRecordsTo, setMeRecordsTo] = useState('')
@@ -369,15 +534,17 @@ export function PontoModule() {
 
   const [newEmployeeName, setNewEmployeeName] = useState('')
   const [newEmployeeCode, setNewEmployeeCode] = useState('')
+  const [newEmployeeLoginEmail, setNewEmployeeLoginEmail] = useState('')
+  const [newEmployeePin, setNewEmployeePin] = useState('')
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
-  const [selectedEmployeeLoginEmail, setSelectedEmployeeLoginEmail] = useState('')
-  const [pinAdminValue, setPinAdminValue] = useState('')
 
-  const [enrollCount, setEnrollCount] = useState(5)
-  const [enrollReplace, setEnrollReplace] = useState(true)
   const [enrollConsent, setEnrollConsent] = useState(false)
   const [enrollProgress, setEnrollProgress] = useState<{ total: number; done: number } | null>(null)
+  const [enrollOpen, setEnrollOpen] = useState(false)
+  const [enrollHint, setEnrollHint] = useState<string>('Posicione o rosto no centro')
+  const [enrollAutoRunning, setEnrollAutoRunning] = useState(false)
+  const enrollAbortRef = useRef(false)
 
   const [newDeviceUnit, setNewDeviceUnit] = useState('')
   const [newDeviceLabel, setNewDeviceLabel] = useState('')
@@ -396,8 +563,30 @@ export function PontoModule() {
   const [adminPunchUnit, setAdminPunchUnit] = useState('')
   const [adminPunchNote, setAdminPunchNote] = useState('')
 
-  const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string } } | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editCode, setEditCode] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [editActive, setEditActive] = useState(true)
+
+  const [recordsOpen, setRecordsOpen] = useState(false)
+  const [selectedRecords, setSelectedRecords] = useState<PontoPunchRecord[]>([])
+  const [selectedRecordsLoading, setSelectedRecordsLoading] = useState(false)
+  const [selectedRecordsError, setSelectedRecordsError] = useState<string | null>(null)
+
+  const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string; allowedUnits?: string[] } } | null>(null)
   const [crmMeLoading, setCrmMeLoading] = useState(false)
+
+  const allowedUnits = useMemo(() => {
+    const fromCrm = crmMe?.user?.allowedUnits
+    const fromMe = me && 'allowedUnits' in me ? me.allowedUnits : undefined
+    const raw = Array.isArray(fromCrm) && fromCrm.length ? fromCrm : (Array.isArray(fromMe) ? fromMe : [])
+    return raw.map((u) => String(u || '').trim()).filter(Boolean)
+  }, [crmMe, me])
+
+  const resolvedMeUnit = allowedUnits.length === 1 ? allowedUnits[0] : (meUnit || '')
+  const unitSelectionRequired = allowedUnits.length > 1
+  const unitMissing = allowedUnits.length === 0 || (unitSelectionRequired && !resolvedMeUnit)
 
   useEffect(() => {
     try { localStorage.setItem(LS_DEVICE_TOKEN, deviceToken) } catch { /* ignore */ }
@@ -408,10 +597,6 @@ export function PontoModule() {
   }, [devActorEmail])
 
   useEffect(() => {
-    setSelectedEmployeeLoginEmail(selectedEmployee?.loginEmail || '')
-  }, [selectedEmployeeId, selectedEmployee])
-
-  useEffect(() => {
     if (meRecordsFrom || meRecordsTo) return
     const now = new Date()
     const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
@@ -419,11 +604,29 @@ export function PontoModule() {
     setMeRecordsTo(toDateTimeLocalValue(now))
   }, [meRecordsFrom, meRecordsTo])
 
+  useEffect(() => {
+    if (allowedUnits.length === 1) {
+      setMeUnit(allowedUnits[0])
+    } else if (allowedUnits.length === 0) {
+      setMeUnit('')
+    }
+  }, [allowedUnits])
+
   const isDev = import.meta.env.DEV
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
   const canAdmin = crmRole === 'ADMIN' || crmRole === 'GESTOR' || crmRole === 'GERENTE'
   const showAdminTab = canAdmin || isDev
   const canAdminActions = canAdmin || isDev
+
+  function closeEnrollDialog() {
+    enrollAbortRef.current = true
+    setEnrollOpen(false)
+    setEnrollConsent(false)
+    setEnrollAutoRunning(false)
+    setEnrollProgress(null)
+    setEnrollHint('Posicione o rosto no centro')
+    if (cameraOwner === 'admin') void stopCameraUI({ silent: true })
+  }
 
   const loadCrmMe = React.useCallback(async () => {
     setCrmMeLoading(true)
@@ -445,6 +648,36 @@ export function PontoModule() {
   useEffect(() => {
     if (!showAdminTab && tab === 'admin') setTab('employee')
   }, [showAdminTab, tab])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    if (enrollAutoRunning) return
+    enrollAbortRef.current = false
+    setEnrollHint('Preparando câmera…')
+    void ensureModelsUI(faceDetectorMode, { message: 'Preparando análise facial…' })
+    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400, suppressMissingVideoToast: true })
+  }, [enrollOpen, faceDetectorMode, enrollAutoRunning])
+
+  useEffect(() => {
+    if (enrollOpen) return
+    if (cameraOwner !== 'admin') return
+    void stopCameraUI({ silent: true })
+  }, [enrollOpen, cameraOwner])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    if (!enrollConsent) return
+    if (stream && cameraOwner === 'admin') return
+    setEnrollHint('Preparando câmera…')
+    void startCameraFor('admin', { silent: true, waitForVideoMs: 2400 })
+  }, [enrollOpen, enrollConsent, stream, cameraOwner])
+
+  useEffect(() => {
+    if (!enrollOpen) return
+    if (!enrollConsent) return
+    if (!stream || cameraOwner !== 'admin') return
+    void autoEnrollFace()
+  }, [enrollOpen, enrollConsent, stream, cameraOwner])
 
   useEffect(() => {
     streamRef.current = stream
@@ -533,35 +766,88 @@ export function PontoModule() {
     }
   }, [qrScanOpen, stopQrScan, stream])
 
-  async function ensureModelsUI() {
-    if (modelsReady === 'ready') return true
+  async function ensureModelsUI(nextMode?: FaceDetectorMode, opts?: { message?: string }) {
+    const mode = nextMode || faceDetectorMode
+    if (modelsReady === 'ready' && modelsLoaded === mode) return true
     setModelsReady('loading')
     setModelsError(null)
+    setModelsProgress(0)
+    setModelsMessage(
+      opts?.message ||
+      (mode === 'ssd' ? 'Carregando modelos robustos…' : 'Carregando modelos faciais…')
+    )
     try {
-      await ensureFaceModels()
+      await ensureFaceModels(mode, (done, total) => {
+        const pct = total ? Math.round((done / total) * 100) : 0
+        setModelsProgress(Math.min(100, Math.max(0, pct)))
+      })
       setModelsReady('ready')
+      setModelsLoaded(mode)
+      setModelsMessage(null)
+      setModelsProgress(100)
       return true
     } catch (e: any) {
       setModelsReady('error')
       setModelsError(e?.message || String(e))
+      setModelsMessage(null)
       return false
     }
   }
 
-  async function startCameraFor(owner: 'employee' | 'device' | 'admin') {
-    const videoEl = owner === 'employee'
-      ? employeeVideoRef.current
-      : owner === 'device'
-        ? deviceVideoRef.current
-        : adminVideoRef.current
-    if (!videoEl) return toast.error('Vídeo não disponível')
+  async function upgradeToSsd() {
+    if (faceDetectorMode === 'ssd') return true
+    setFaceDetectorMode('ssd')
+    setFaceFailCount(0)
+    return await ensureModelsUI('ssd', { message: FACE_FALLBACK_MESSAGE })
+  }
+
+  function noteFaceFailure() {
+    if (faceDetectorMode === 'ssd') return
+    setFaceFailCount((cur) => {
+      const next = cur + 1
+      if (next >= FACE_FALLBACK_THRESHOLD && faceDetectorMode !== 'ssd') {
+        void upgradeToSsd()
+      }
+      return next
+    })
+  }
+
+  function resetFaceFailures() {
+    if (faceFailCount) setFaceFailCount(0)
+  }
+
+  async function startCameraFor(
+    owner: 'employee' | 'device' | 'admin',
+    opts: { silent?: boolean; waitForVideoMs?: number; suppressMissingVideoToast?: boolean } = {}
+  ) {
+    const getVideoEl = () => (
+      owner === 'employee'
+        ? employeeVideoRef.current
+        : owner === 'device'
+          ? deviceVideoRef.current
+          : adminVideoRef.current
+    )
+    let videoEl = getVideoEl()
+    const waitForVideoMs = Math.max(0, Number(opts.waitForVideoMs || 0))
+    if (!videoEl && waitForVideoMs > 0) {
+      const deadline = Date.now() + waitForVideoMs
+      while (!videoEl && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 80))
+        videoEl = getVideoEl()
+      }
+    }
+    if (!videoEl) {
+      if (!opts.suppressMissingVideoToast) toast.error('Vídeo não disponível')
+      return false
+    }
     setLoading(true)
     try {
       stopCamera(streamRef.current)
       const s = await startUserCamera(videoEl)
       setStream(s)
       setCameraOwner(owner)
-      toast.success('Câmera ativa')
+      if (!opts.silent) toast.success('Câmera ativa')
+      return true
     } catch (e: any) {
       const errName = String(e?.name || '')
       if (errName === 'NotAllowedError') {
@@ -574,6 +860,7 @@ export function PontoModule() {
         toast.error(e?.message || String(e))
       }
       toastErrorMeta(e)
+      return false
     } finally {
       setLoading(false)
     }
@@ -617,12 +904,30 @@ export function PontoModule() {
     }
   }
 
+  function ensureEmployeeUnitSelected() {
+    if (!allowedUnits.length) {
+      toast.error('Unidade não configurada')
+      return null
+    }
+    if (allowedUnits.length && !resolvedMeUnit) {
+      toast.error('Selecione a unidade')
+      return null
+    }
+    return resolvedMeUnit || null
+  }
+
   async function meLoadRecords() {
     setMeLoading(true)
     try {
+      const unit = ensureEmployeeUnitSelected()
+      if (allowedUnits.length && !unit) {
+        setMeLoading(false)
+        return
+      }
       const qs = new URLSearchParams()
       if (meRecordsFrom) qs.set('from', new Date(meRecordsFrom).toISOString())
       if (meRecordsTo) qs.set('to', new Date(meRecordsTo).toISOString())
+      if (unit) qs.set('unit', unit)
       qs.set('limit', '500')
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
         '/api/ponto/me/records?' + qs.toString(),
@@ -633,6 +938,10 @@ export function PontoModule() {
       const details = e?.details as any
       if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
         toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else if (details?.error === 'UNIT_ACCESS_NOT_CONFIGURED') {
+        toast.error('Unidade não configurada para este usuário')
+      } else if (details?.error === 'UNIT_FORBIDDEN') {
+        toast.error('Unidade não permitida')
       } else {
         toast.error(e?.message || String(e))
       }
@@ -648,6 +957,8 @@ export function PontoModule() {
     if (!stream || cameraOwner !== 'employee') return toast.error('Ative a câmera')
     const videoEl = employeeVideoRef.current
     if (!videoEl) return toast.error('Câmera não disponível')
+    const unit = ensureEmployeeUnitSelected()
+    if (allowedUnits.length && !unit) return
     const ok = await ensureModelsUI()
     if (!ok) {
       setMeStep('pin')
@@ -656,11 +967,13 @@ export function PontoModule() {
 
     setLoading(true)
     try {
-      const descriptor = await captureDescriptorStable(videoEl, 2, 220)
+      const descriptor = await captureDescriptorStable(videoEl, 2, 220, faceDetectorMode)
+      resetFaceFailures()
+      resetFaceFailures()
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { descriptor, ...meta }, headers: getDevEmployeeActorHeaders() }
+        { method: 'POST', body: { descriptor, unit, ...meta }, headers: getDevEmployeeActorHeaders() }
       )
       toast.success(`Ponto registrado (${res.data.type})`)
       setMePunchOpen(false)
@@ -669,10 +982,22 @@ export function PontoModule() {
       await meRefresh()
       await meLoadRecords()
     } catch (e: any) {
+      if (isFaceDetectionError(e)) {
+        noteFaceFailure()
+        toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
+        toastErrorMeta(e)
+        return
+      }
       const details = e?.details as any
       const code = String(details?.error || details?.code || '')
       if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else if (code === 'UNIT_ACCESS_NOT_CONFIGURED') {
+        toast.error('Unidade não configurada para este usuário')
+      } else if (code === 'UNIT_REQUIRED') {
+        toast.error('Selecione a unidade')
+      } else if (code === 'UNIT_FORBIDDEN') {
+        toast.error('Unidade não permitida')
       } else if (code === 'FACE_NOT_RECOGNIZED' || code === 'FACE_NOT_ENROLLED') {
         toast.error('Rosto não reconhecido. Use PIN.')
         setMeStep('pin')
@@ -691,12 +1016,14 @@ export function PontoModule() {
     if (!me || !('linked' in me) || !me.linked) return toast.error('Usuário não vinculado a funcionário')
     const pin = mePin.trim()
     if (!pin) return toast.error('Informe o PIN')
+    const unit = ensureEmployeeUnitSelected()
+    if (allowedUnits.length && !unit) return
     setLoading(true)
     try {
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { pin, ...meta }, headers: getDevEmployeeActorHeaders() }
+        { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders() }
       )
       setMePin('')
       toast.success(`Ponto registrado (${res.data.type})`)
@@ -713,6 +1040,12 @@ export function PontoModule() {
         toast.error('PIN não configurado para este funcionário')
       } else if (code === 'PIN_LOCKED') {
         toast.error(`PIN bloqueado. Aguarde ${details?.secondsRemaining || '?'}s e tente novamente.`)
+      } else if (code === 'UNIT_ACCESS_NOT_CONFIGURED') {
+        toast.error('Unidade não configurada para este usuário')
+      } else if (code === 'UNIT_REQUIRED') {
+        toast.error('Selecione a unidade')
+      } else if (code === 'UNIT_FORBIDDEN') {
+        toast.error('Unidade não permitida')
       } else if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
       } else {
@@ -755,12 +1088,28 @@ export function PontoModule() {
   }, [tab])
 
   useEffect(() => {
+    if (tab !== 'admin') return
+    if (!canAdminActions) return
+    void adminRefreshAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, canAdminActions])
+
+  useEffect(() => {
+    if (!selectedEmployee) return
+    setEditName(selectedEmployee.name || '')
+    setEditCode(selectedEmployee.code || '')
+    setEditEmail(selectedEmployee.loginEmail || '')
+    setEditActive(selectedEmployee.active !== false)
+  }, [selectedEmployee])
+
+  useEffect(() => {
     if (tab !== 'employee') return
     if (!me || !('linked' in me) || !me.linked) return
     if (!meRecordsFrom || !meRecordsTo) return
+    if (unitMissing) return
     void meLoadRecords()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, me, meRecordsFrom, meRecordsTo])
+  }, [tab, me, meRecordsFrom, meRecordsTo, unitMissing])
 
   useEffect(() => {
     if (tab !== 'device') return
@@ -790,7 +1139,7 @@ export function PontoModule() {
         if (!videoEl) return
         const ok = await ensureModelsUI()
         if (!ok) return
-        const descriptor = await captureDescriptor(videoEl)
+        const descriptor = await captureDescriptor(videoEl, faceDetectorMode)
         const res = await apiJson<{
           ok: boolean
           match: { employeeId: string; name: string; distance: number } | null
@@ -840,7 +1189,7 @@ export function PontoModule() {
         const okConfirm = window.confirm(`Confirmar registrar o ponto agora?\n\nReconhecido: ${identifyResult.match.name}`)
         if (!okConfirm) return
       }
-      const descriptor = await captureDescriptorStable(videoEl, 2, 220)
+      const descriptor = await captureDescriptorStable(videoEl, 2, 220, faceDetectorMode)
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/device/punch/face',
@@ -848,6 +1197,12 @@ export function PontoModule() {
       )
       toast.success(`Ponto registrado: ${res.data.employeeName} (${res.data.type})`)
     } catch (e: any) {
+      if (isFaceDetectionError(e)) {
+        noteFaceFailure()
+        toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
+        toastErrorMeta(e)
+        return
+      }
       const details = e?.details as any
       const code = String(details?.error || e?.message || '')
       if (code === 'NOT_RECOGNIZED' || code === 'DESCRIPTOR_INVALID' || code === 'EMPLOYEE_INACTIVE') {
@@ -920,36 +1275,27 @@ export function PontoModule() {
     if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     const name = newEmployeeName.trim()
     if (!name) return toast.error('Nome é obrigatório')
+    const loginEmail = newEmployeeLoginEmail.trim()
+    if (!loginEmail || !loginEmail.includes('@')) return toast.error('Email inválido')
+    const pin = newEmployeePin.trim()
+    if (pin.length < 4) return toast.error('PIN deve ter pelo menos 4 dígitos')
     setLoading(true)
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
         '/api/ponto/admin/employees',
-        { method: 'POST', body: { name, code: newEmployeeCode.trim() } }
+        { method: 'POST', body: { name, code: newEmployeeCode.trim(), loginEmail } }
       )
+      await apiJson('/api/ponto/admin/employees/' + res.data.id + '/pin', {
+        method: 'POST',
+        body: { pin }
+      })
       setNewEmployeeName('')
       setNewEmployeeCode('')
+      setNewEmployeeLoginEmail('')
+      setNewEmployeePin('')
       await adminRefreshAll()
       setSelectedEmployeeId(res.data.id)
-      toast.success('Funcionário criado')
-    } catch (e: any) {
-      toast.error(e?.message || String(e))
-      toastErrorMeta(e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function adminSaveLoginEmail() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
-    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
-    setLoading(true)
-    try {
-      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
-        method: 'PATCH',
-        body: { loginEmail: selectedEmployeeLoginEmail.trim() }
-      })
-      await adminRefreshAll()
-      toast.success('Vínculo atualizado')
+      toast.success('Funcionário criado e configurado')
     } catch (e: any) {
       const details = e?.details as any
       if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
@@ -963,60 +1309,153 @@ export function PontoModule() {
     }
   }
 
-  async function adminSetPin() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
-    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
-    const pin = pinAdminValue.trim()
-    if (pin.length < 4) return toast.error('PIN deve ter pelo menos 4 dígitos')
-    setLoading(true)
+  async function saveEnroll(descriptors: number[][], replace: boolean) {
+    await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/enroll', {
+      method: 'POST',
+      body: { descriptors, replace, consentConfirmed: true }
+    })
+    await adminRefreshAll()
+    resetFaceFailures()
+  }
+
+  async function autoEnrollFace() {
+    if (enrollAutoRunning) return
+    if (!canAdminActions || !selectedEmployeeId) return
+    if (!enrollConsent) {
+      setEnrollHint('Confirme o consentimento para iniciar')
+      return
+    }
+    if (!stream || cameraOwner !== 'admin') return
+    let videoEl = adminVideoRef.current
+    if (!videoEl) {
+      const deadline = Date.now() + 2400
+      while (!videoEl && Date.now() < deadline) {
+        if (enrollAbortRef.current) return
+        await new Promise(r => setTimeout(r, 80))
+        videoEl = adminVideoRef.current
+      }
+      if (!videoEl) {
+        setEnrollHint('Não foi possível iniciar a câmera. Feche e tente novamente.')
+        return
+      }
+    }
+
+    enrollAbortRef.current = false
+    resetFaceFailures()
+    const ok = await ensureModelsUI(faceDetectorMode)
+    if (!ok) return toast.error('Modelos faciais indisponíveis (use PIN)')
+
+    const minSamples = 3
+    const maxSamples = 7
+    const targetScore = 0.85
+    const descriptors: number[][] = []
+    const scores: number[] = []
+    const replace = (selectedEmployee?.faceDescriptorsCount || 0) >= 5
+
+    setEnrollAutoRunning(true)
+    setEnrollProgress({ total: maxSamples, done: 0 })
+    setEnrollHint('Centralize o rosto e aguarde')
+
     try {
-      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/pin', {
-        method: 'POST',
-        body: { pin }
-      })
-      setPinAdminValue('')
-      await adminRefreshAll()
-      toast.success('PIN atualizado')
+      while (!enrollAbortRef.current && descriptors.length < maxSamples) {
+        try {
+          const info = await detectDescriptorWithInfo(videoEl, faceDetectorMode)
+          descriptors.push(info.descriptor)
+          if (typeof info.score === 'number') scores.push(info.score)
+          setEnrollProgress({ total: maxSamples, done: descriptors.length })
+          const guide = getEnrollHint(info, videoEl)
+          setEnrollHint(`Leitura ${descriptors.length}/${maxSamples} capturada. ${guide}`)
+
+          if (descriptors.length >= minSamples) {
+            const avgScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0.9
+            if (avgScore >= targetScore) break
+          }
+          await new Promise(r => setTimeout(r, 500))
+        } catch (e: any) {
+          if (isFaceDetectionError(e)) {
+            noteFaceFailure()
+            const raw = await detectFaceRaw(videoEl, faceDetectorMode).catch(() => null)
+            setEnrollHint(getEnrollHint(raw, videoEl))
+            await new Promise(r => setTimeout(r, 350))
+            continue
+          }
+          throw e
+        }
+      }
+
+      if (enrollAbortRef.current) return
+      if (descriptors.length < minSamples) {
+        toast.error('Não foi possível capturar biometria com qualidade suficiente')
+        setEnrollHint('Qualidade insuficiente. Ajuste posição e iluminação e tente novamente.')
+        return
+      }
+
+      await saveEnroll(descriptors, replace)
+      toast.success('Biometria cadastrada')
+      setEnrollHint('Biometria salva com sucesso.')
     } catch (e: any) {
       toast.error(e?.message || String(e))
+    } finally {
+      setEnrollAutoRunning(false)
+      setEnrollProgress(null)
+    }
+  }
+
+  async function adminSaveEmployeeEdit() {
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+    const name = editName.trim()
+    if (!name) return toast.error('Nome é obrigatório')
+    const email = editEmail.trim()
+    if (email && !email.includes('@')) return toast.error('Email inválido')
+    setLoading(true)
+    try {
+      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
+        method: 'PATCH',
+        body: {
+          name,
+          code: editCode.trim(),
+          loginEmail: email || '',
+          active: !!editActive
+        }
+      })
+      await adminRefreshAll()
+      toast.success('Cadastro atualizado')
+      setEditOpen(false)
+    } catch (e: any) {
+      const details = e?.details as any
+      if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
+        toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else {
+        toast.error(e?.message || String(e))
+      }
       toastErrorMeta(e)
     } finally {
       setLoading(false)
     }
   }
 
-  async function adminEnrollFace() {
+  async function adminLoadSelectedRecords() {
     if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
-    if (!enrollConsent) return toast.error('Confirme o consentimento para biometria')
-    if (!stream || cameraOwner !== 'admin') return toast.error('Ative a câmera (admin)')
-    const videoEl = adminVideoRef.current
-    if (!videoEl) return toast.error('Câmera não inicializada')
-
-    const ok = await ensureModelsUI()
-    if (!ok) return toast.error('Modelos faciais indisponíveis (use PIN)')
-
-    const total = Math.max(1, Math.min(10, Number(enrollCount) || 5))
-    setEnrollProgress({ total, done: 0 })
-    const descriptors: number[][] = []
-
+    setSelectedRecordsLoading(true)
+    setSelectedRecordsError(null)
     try {
-      for (let i = 0; i < total; i++) {
-        const d = await captureDescriptorStable(videoEl, 2, 180)
-        descriptors.push(d)
-        setEnrollProgress({ total, done: i + 1 })
-        await new Promise(r => setTimeout(r, 650))
-      }
-      await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId + '/enroll', {
-        method: 'POST',
-        body: { descriptors, replace: enrollReplace, consentConfirmed: true }
-      })
-      await adminRefreshAll()
-      toast.success('Rosto cadastrado')
+      const qs = new URLSearchParams()
+      qs.set('employeeId', selectedEmployeeId)
+      qs.set('limit', '200')
+      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
+        '/api/ponto/admin/records?' + qs.toString(),
+        {}
+      )
+      setSelectedRecords(res.data || [])
     } catch (e: any) {
-      toast.error(e?.message || String(e))
+      const msg = e?.message || String(e)
+      setSelectedRecordsError(msg)
+      toast.error(msg)
+      toastErrorMeta(e)
     } finally {
-      setEnrollProgress(null)
+      setSelectedRecordsLoading(false)
     }
   }
 
@@ -1269,6 +1708,37 @@ export function PontoModule() {
                 </div>
               ) : null}
 
+              {me && 'linked' in me && me.linked ? (
+                allowedUnits.length ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-2 md:col-span-1">
+                      <Label>Unidade</Label>
+                      {allowedUnits.length > 1 ? (
+                        <Select value={resolvedMeUnit || undefined} onValueChange={setMeUnit}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allowedUnits.map((unit) => (
+                              <SelectItem key={unit} value={unit}>
+                                {unit}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="outline">Unidade: {allowedUnits[0]}</Badge>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
+                    <div className="font-medium">Unidade não configurada</div>
+                    <div className="opacity-80">Seu usuário não possui unidade permitida. Contate o administrador.</div>
+                  </div>
+                )
+              ) : null}
+
               {import.meta.env.DEV ? (
                 <div className="rounded-md border p-3 text-sm space-y-2">
                   <div className="font-medium">Dev: actor email (para testar local sem Pages proxy)</div>
@@ -1292,7 +1762,7 @@ export function PontoModule() {
                     else setMeStep('pin')
                     setMePunchOpen(true)
                   }}
-                  disabled={meLoading || !(me && 'linked' in me && me.linked)}
+                  disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}
                 >
                   Bater ponto
                 </Button>
@@ -1322,10 +1792,28 @@ export function PontoModule() {
                     <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
                     <Button onClick={mePunchFace} disabled={loading || !stream}>Registrar por Face</Button>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CameraStatusBadge active={!!stream && cameraOwner === 'employee'} />
+                    <FaceModelsBadge state={modelsReady} mode={faceDetectorMode} />
+                  </div>
                   <div className="rounded-xl overflow-hidden border bg-black">
                     <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
                   </div>
                   {modelsError ? <div className="text-sm text-red-600">{modelsError}</div> : null}
+                  {modelsReady === 'loading' ? (
+                    <div className="space-y-1">
+                      <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                      <div className="h-2 rounded bg-muted/40 overflow-hidden">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
+                      </div>
+                      <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
+                    </div>
+                  ) : null}
+                  {modelsReady === 'idle' ? (
+                    <div className="text-sm text-muted-foreground">
+                      Carregue os modelos faciais antes de registrar por Face.
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1360,7 +1848,7 @@ export function PontoModule() {
                   <Input type="datetime-local" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
                 </div>
                 <div className="flex items-end">
-                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked)}>Buscar</Button>
+                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}>Buscar</Button>
                 </div>
               </div>
 
@@ -1460,26 +1948,37 @@ export function PontoModule() {
                     </div>
                   </div>
                 ) : null}
+                {modelsReady === 'loading' ? (
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                    <div className="h-2 rounded bg-muted/40 overflow-hidden">
+                      <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
+                    </div>
+                    <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
+                  </div>
+                ) : null}
 
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
-                  <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                  <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
-                  <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
-                    Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
-                  </Button>
-                </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => startCameraFor('device')} disabled={loading}>Ativar câmera</Button>
+                <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
+                <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
+                <Button variant="outline" onClick={() => setAutoIdentify(v => !v)} disabled={loading || !stream}>
+                  Auto-identificar: {autoIdentify ? 'ON' : 'OFF'}
+                </Button>
+              </div>
 
-                <div className="rounded-xl overflow-hidden border bg-black">
-                  <video ref={deviceVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                </div>
+              <div className="rounded-xl overflow-hidden border bg-black">
+                <video ref={deviceVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+              </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {identifyResult?.match ? (
-                    <>
-                      <Badge>Reconhecido: {identifyResult.match.name}</Badge>
-                      <Badge variant="outline">dist: {identifyResult.match.distance.toFixed(3)}</Badge>
-                    </>
+              <div className="flex flex-wrap items-center gap-2">
+                <CameraStatusBadge active={!!stream && cameraOwner === 'device'} />
+                <FaceModelsBadge state={modelsReady} mode={faceDetectorMode} />
+                {identifyResult?.match ? (
+                  <>
+                    <Badge>Reconhecido: {identifyResult.match.name}</Badge>
+                    <Badge variant="outline">dist: {identifyResult.match.distance.toFixed(3)}</Badge>
+                  </>
                   ) : (
                     <Badge variant="secondary">Nenhum reconhecimento</Badge>
                   )}
@@ -1567,8 +2066,35 @@ export function PontoModule() {
                     <Label>Código (opcional)</Label>
                     <Input value={newEmployeeCode} onChange={(e) => setNewEmployeeCode(e.target.value)} placeholder="Matrícula..." />
                   </div>
-                  <div className="flex items-end">
-                    <Button onClick={adminCreateEmployee} disabled={loading || !canAdminActions}>Criar</Button>
+                  <div className="space-y-2">
+                    <Label>Email (vínculo login)</Label>
+                    <Input
+                      value={newEmployeeLoginEmail}
+                      onChange={(e) => setNewEmployeeLoginEmail(e.target.value)}
+                      placeholder="ex: funcionario@empresa.com"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <Label>PIN (min. 4)</Label>
+                    <Input value={newEmployeePin} onChange={(e) => setNewEmployeePin(e.target.value)} inputMode="numeric" placeholder="••••" />
+                  </div>
+                  <div className="md:col-span-2 flex items-end">
+                    <Button
+                      onClick={adminCreateEmployee}
+                      disabled={
+                        loading ||
+                        !canAdminActions ||
+                        !newEmployeeName.trim() ||
+                        !newEmployeeLoginEmail.trim() ||
+                        !newEmployeeLoginEmail.includes('@') ||
+                        newEmployeePin.trim().length < 4
+                      }
+                    >
+                      Cadastrar
+                    </Button>
                   </div>
                 </div>
 
@@ -1587,82 +2113,38 @@ export function PontoModule() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Email (vínculo login)</Label>
-                    <Input
-                      value={selectedEmployeeLoginEmail}
-                      onChange={(e) => setSelectedEmployeeLoginEmail(e.target.value)}
-                      placeholder="ex: funcionario@empresa.com"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={adminSaveLoginEmail} disabled={loading || !canAdminActions || !selectedEmployeeId}>Salvar vínculo</Button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Novo PIN (min. 4)</Label>
-                    <Input value={pinAdminValue} onChange={(e) => setPinAdminValue(e.target.value)} inputMode="numeric" placeholder="••••" />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={adminSetPin} disabled={loading || !canAdminActions || !selectedEmployeeId}>Salvar PIN</Button>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium">Cadastro facial</div>
-                      <div className="text-sm text-muted-foreground">
-                        {selectedEmployee ? (
-                          <>Atual: {selectedEmployee.faceDescriptorsCount || 0} templates • Último: {fmtDate(selectedEmployee.lastEnrolledAt)}</>
-                        ) : (
-                          <>Selecione um funcionário.</>
-                        )}
-                      </div>
-                    </div>
-                    {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-2">
-                      <Label>Amostras</Label>
-                      <Input value={String(enrollCount)} onChange={(e) => setEnrollCount(Number(e.target.value))} inputMode="numeric" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Modo</Label>
-                      <Select value={enrollReplace ? 'replace' : 'append'} onValueChange={(v) => setEnrollReplace(v === 'replace')}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="replace">Substituir</SelectItem>
-                          <SelectItem value="append">Adicionar</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <Button variant="secondary" onClick={ensureModelsUI} disabled={loading}>Carregar modelos</Button>
-                      <Button onClick={() => startCameraFor('admin')} disabled={loading}>Ativar câmera</Button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl overflow-hidden border bg-black">
-                    <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                  </div>
-
-                  <label className="flex items-start gap-2 text-sm">
-                    <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
-                    <span>Confirmo que o consentimento para biometria (rosto) foi obtido no cadastro do usuário.</span>
-                  </label>
-
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => void stopCameraUI()} disabled={loading || !stream}>Desligar</Button>
-                    <Button onClick={adminEnrollFace} disabled={loading || !canAdminActions || !selectedEmployeeId}>
-                      Capturar & salvar biometria
-                    </Button>
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                      setEnrollOpen(true)
+                    }}
+                    disabled={loading || !canAdminActions || !selectedEmployeeId}
+                  >
+                    Cadastrar Biometria
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                      setEditOpen(true)
+                    }}
+                    disabled={loading || !canAdminActions || !selectedEmployeeId}
+                  >
+                    Editar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                      setRecordsOpen(true)
+                      void adminLoadSelectedRecords()
+                    }}
+                    disabled={loading || !canAdminActions || !selectedEmployeeId}
+                  >
+                    Registros
+                  </Button>
                 </div>
 
                 <div className="border rounded-xl overflow-hidden">
@@ -1696,6 +2178,153 @@ export function PontoModule() {
                     </TableBody>
                   </Table>
                 </div>
+
+                <Dialog
+                  open={enrollOpen}
+                  onOpenChange={(open) => {
+                    if (!open) return closeEnrollDialog()
+                    setEnrollOpen(true)
+                  }}
+                >
+                  <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                      <DialogTitle>Biometria facial</DialogTitle>
+                      <DialogDescription>
+                        {selectedEmployee
+                          ? `Funcionário: ${selectedEmployee.name}`
+                          : 'Selecione um funcionário.'}
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm text-muted-foreground">
+                          {selectedEmployee ? (
+                            <>Biometrias cadastradas: {selectedEmployee.faceDescriptorsCount || 0} • Última atualização: {fmtDate(selectedEmployee.lastEnrolledAt)}</>
+                          ) : null}
+                        </div>
+                        {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
+                      </div>
+
+                      <div className="rounded-xl overflow-hidden border bg-black">
+                        <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+                      </div>
+
+                      <div className="text-sm text-muted-foreground">
+                        {enrollConsent ? enrollHint : 'Confirme o consentimento para iniciar a captura.'}
+                      </div>
+                      {enrollAutoRunning ? (
+                        <div className="text-xs text-muted-foreground">Capturando automaticamente…</div>
+                      ) : null}
+                      {modelsReady === 'loading' ? (
+                        <div className="space-y-1">
+                          <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                          <div className="h-2 rounded bg-muted/40 overflow-hidden">
+                            <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
+                          </div>
+                          <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
+                        </div>
+                      ) : null}
+
+                      <label className="flex items-start gap-2 text-sm">
+                        <input type="checkbox" className="mt-1" checked={enrollConsent} onChange={(e) => setEnrollConsent(e.target.checked)} />
+                        <span>Confirmo que o usuário autorizou a coleta de biometria facial.</span>
+                      </label>
+
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={closeEnrollDialog} disabled={loading}>Fechar</Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog
+                  open={editOpen}
+                  onOpenChange={(open) => setEditOpen(open)}
+                >
+                  <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                      <DialogTitle>Editar cadastro</DialogTitle>
+                      <DialogDescription>Atualize nome, codigo, email e status do funcionario.</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="space-y-2">
+                        <Label>Nome</Label>
+                        <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Nome" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Codigo</Label>
+                        <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} placeholder="Matricula" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Email (vinculo login)</Label>
+                        <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="ex: funcionario@empresa.com" />
+                      </div>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} />
+                        <span>Funcionario ativo</span>
+                      </label>
+                    </div>
+                    <DialogFooter className="gap-2">
+                      <Button variant="outline" onClick={() => setEditOpen(false)} disabled={loading}>Cancelar</Button>
+                      <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId}>Salvar</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog
+                  open={recordsOpen}
+                  onOpenChange={(open) => setRecordsOpen(open)}
+                >
+                  <DialogContent className="max-w-4xl">
+                    <DialogHeader>
+                      <DialogTitle>Registros do funcionario</DialogTitle>
+                      <DialogDescription>
+                        {selectedEmployee ? `Funcionario: ${selectedEmployee.name}` : 'Selecione um funcionario.'}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Button onClick={adminLoadSelectedRecords} disabled={selectedRecordsLoading || !selectedEmployeeId}>Atualizar</Button>
+                        {selectedRecordsLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                        {selectedRecordsError ? <Badge variant="destructive">Erro</Badge> : null}
+                      </div>
+                      {selectedRecordsError ? (
+                        <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
+                          <div className="font-medium">Falha ao carregar registros</div>
+                          <div className="opacity-80">{selectedRecordsError}</div>
+                        </div>
+                      ) : null}
+                      <div className="border rounded-xl overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Quando</TableHead>
+                              <TableHead>Tipo</TableHead>
+                              <TableHead>Unidade</TableHead>
+                              <TableHead>Metodo</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedRecords.map(r => (
+                              <TableRow key={r.id}>
+                                <TableCell className="text-sm">{fmtDate(r.at)}</TableCell>
+                                <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
+                                <TableCell className="text-sm">{r.unit || '-'}</TableCell>
+                                <TableCell className="text-sm">{r.method || '-'}</TableCell>
+                              </TableRow>
+                            ))}
+                            {!selectedRecords.length ? (
+                              <TableRow>
+                                <TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
+                              </TableRow>
+                            ) : null}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
 

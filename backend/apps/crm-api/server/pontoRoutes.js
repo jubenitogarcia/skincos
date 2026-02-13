@@ -28,6 +28,21 @@ function normalizeEmail(value) {
   return raw
 }
 
+function normalizeUnit(value) {
+  const raw = safeText(value, 80).toLowerCase()
+  return raw
+}
+
+function normalizeUnits(values) {
+  if (!Array.isArray(values)) return []
+  const out = []
+  for (const v of values) {
+    const unit = normalizeUnit(v)
+    if (unit) out.push(unit)
+  }
+  return out
+}
+
 function getClientIp(req) {
   const xf = String(req.headers['x-forwarded-for'] || '').trim()
   if (xf) return xf.split(',')[0].trim()
@@ -172,6 +187,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   const STORE_FILE = path.join(coreStateDir, 'ponto_store.v2.json')
   const AUDIT_FILE = path.join(coreStateDir, 'ponto_audit.v1.jsonl')
 
+  const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production'
   const adminToken = String(process.env.PONTO_ADMIN_TOKEN || '').trim()
   const templatesKey = tryParseKey(process.env.PONTO_TEMPLATES_KEY)
   const auditHmacKey = tryParseKey(process.env.PONTO_AUDIT_HMAC_KEY)
@@ -220,12 +236,13 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     await fs.appendFile(AUDIT_FILE, JSON.stringify(event) + '\n')
   }
 
-  function actorFromReq(req, { kind, id, label, unit } = {}) {
+  function actorFromReq(req, { kind, id, label, unit, allowedUnits } = {}) {
     return {
       kind: kind || 'unknown',
       id: id || null,
       label: label || null,
       unit: unit || null,
+      allowedUnits: Array.isArray(allowedUnits) ? allowedUnits : null,
       ip: getClientIp(req),
       ua: safeText(req.headers['user-agent'], 220) || null
     }
@@ -362,7 +379,8 @@ export function registerPontoRoutes(app, { coreStateDir }) {
 
     const email = normalizeEmail(actor.email)
     if (!email) return { ok: false, code: 'ACTOR_EMAIL_MISSING' }
-    return { ok: true, actor: { ...actor, email } }
+    const allowedUnits = normalizeUnits(actor.allowedUnits)
+    return { ok: true, actor: { ...actor, email, allowedUnits } }
   }
 
   function requireEmployee(req, res) {
@@ -386,7 +404,8 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     }
 
     const email = verified.actor.email
-    return actorFromReq(req, { kind: 'employee', id: email, label: email })
+    const allowedUnits = Array.isArray(verified.actor.allowedUnits) ? verified.actor.allowedUnits : []
+    return actorFromReq(req, { kind: 'employee', id: email, label: email, allowedUnits })
   }
 
   function findEmployeesByLoginEmail(email) {
@@ -725,6 +744,13 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   app.post('/api/ponto/admin/employees/:id/enroll', async (req, res) => {
     const actor = requireAdmin(req, res)
     if (!actor) return
+    if (isProd && !templatesKey) {
+      return res.status(503).json({
+        ok: false,
+        error: 'TEMPLATES_KEY_NOT_CONFIGURED',
+        hint: 'Configure PONTO_TEMPLATES_KEY para habilitar a biometria em produção.'
+      })
+    }
     const employee = findEmployee(req.params.id)
     if (!employee || employee.deletedAt) return res.status(404).json({ ok: false, error: 'NOT_FOUND' })
     const consentConfirmed = req.body?.consentConfirmed === true
@@ -1051,6 +1077,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const actor = requireEmployee(req, res)
     if (!actor) return
     const email = actor.label
+    const allowedUnits = Array.isArray(actor.allowedUnits) ? actor.allowedUnits : []
     const resolved = resolveEmployeeByLoginEmail(email)
     if (resolved.conflict) {
       return res.status(409).json({ ok: false, ...resolved.conflict, actorEmail: email })
@@ -1061,6 +1088,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
         ok: true,
         linked: false,
         actorEmail: email,
+        allowedUnits,
         hint: 'Seu usuário ainda não está vinculado a um funcionário. Peça ao admin para definir o email no cadastro do funcionário.'
       })
     }
@@ -1071,6 +1099,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       ok: true,
       linked: true,
       actorEmail: email,
+      allowedUnits,
       employee: publicEmployee(employee),
       hasFace,
       pinSet: !!employee.pinHash,
@@ -1084,6 +1113,14 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const actor = requireEmployee(req, res)
     if (!actor) return
     const email = actor.label
+    const allowedUnits = Array.isArray(actor.allowedUnits) ? actor.allowedUnits : []
+    if (!allowedUnits.length) {
+      return res.status(403).json({ ok: false, error: 'UNIT_ACCESS_NOT_CONFIGURED' })
+    }
+    const requestedUnit = normalizeUnit(req.query?.unit)
+    if (allowedUnits.length && requestedUnit && !allowedUnits.includes(requestedUnit)) {
+      return res.status(403).json({ ok: false, error: 'UNIT_FORBIDDEN' })
+    }
     const resolved = resolveEmployeeByLoginEmail(email)
     if (resolved.conflict) return res.status(409).json({ ok: false, ...resolved.conflict, actorEmail: email })
     const employee = resolved.employee
@@ -1106,6 +1143,14 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       const ms = new Date(r.at || r.createdAt).getTime()
       if (fromMs != null && Number.isFinite(fromMs) && ms < fromMs) continue
       if (toMs != null && Number.isFinite(toMs) && ms > toMs) continue
+      const recordUnit = normalizeUnit(r.unit)
+      if (allowedUnits.length) {
+        if (requestedUnit && recordUnit !== requestedUnit) continue
+        if (!requestedUnit && recordUnit && !allowedUnits.includes(recordUnit)) continue
+        if (!requestedUnit && !recordUnit) continue
+      } else if (requestedUnit && recordUnit !== requestedUnit) {
+        continue
+      }
       if (r.kind === 'CORRECTION') corrections.push(r)
       if (r.kind === 'PUNCH') punches.push(r)
       if (punches.length >= limit && corrections.length >= limit) break
@@ -1118,6 +1163,10 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const actor = requireEmployee(req, res)
     if (!actor) return
     const email = actor.label
+    const allowedUnits = Array.isArray(actor.allowedUnits) ? actor.allowedUnits : []
+    if (!allowedUnits.length) {
+      return res.status(403).json({ ok: false, error: 'UNIT_ACCESS_NOT_CONFIGURED' })
+    }
     const resolved = resolveEmployeeByLoginEmail(email)
     if (resolved.conflict) return res.status(409).json({ ok: false, ...resolved.conflict, actorEmail: email })
     const employee = resolved.employee
@@ -1158,7 +1207,17 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     }
 
     const type = computePunchType(req.body?.type, employee.id)
-    const unit = safeText(req.body?.unit, 80) || null
+    let unit = normalizeUnit(req.body?.unit)
+    if (allowedUnits.length) {
+      if (!unit) {
+        if (allowedUnits.length === 1) unit = allowedUnits[0]
+        else return res.status(400).json({ ok: false, error: 'UNIT_REQUIRED' })
+      }
+      if (!allowedUnits.includes(unit)) {
+        return res.status(403).json({ ok: false, error: 'UNIT_FORBIDDEN' })
+      }
+    }
+    unit = unit || null
     const note = safeText(req.body?.note, 240) || null
     const now = new Date().toISOString()
 

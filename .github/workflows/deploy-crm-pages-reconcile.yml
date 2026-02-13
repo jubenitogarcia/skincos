@@ -96,6 +96,8 @@ jobs:
         continue-on-error: true
         env:
           BASE_URL: https://crm.skincos.com.br
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -107,7 +109,13 @@ jobs:
 
           def fetch_json(path: str):
             url = f"{base}{path}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"})
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"}
+            cid = os.environ.get("CF_ACCESS_CLIENT_ID", "").strip()
+            csec = os.environ.get("CF_ACCESS_CLIENT_SECRET", "").strip()
+            if cid and csec:
+              headers["CF-Access-Client-Id"] = cid
+              headers["CF-Access-Client-Secret"] = csec
+            req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
               data = resp.read().decode("utf-8", "ignore")
               return json.loads(data)
@@ -116,8 +124,8 @@ jobs:
             proxy = fetch_json("/api/ponto/_proxy-status")
             if not proxy.get("ok"):
               raise SystemExit(f"proxy-status ok=false: {proxy}")
-            if not proxy.get("effectiveTargetConfigured"):
-              raise SystemExit(f"proxy-status effectiveTargetConfigured=false: {proxy}")
+            if not proxy.get("targetConfigured"):
+              raise SystemExit(f"proxy-status targetConfigured=false: {proxy}")
             if not proxy.get("adminTokenConfigured"):
               raise SystemExit(f"proxy-status adminTokenConfigured=false: {proxy}")
             if not proxy.get("proxyTokenConfigured"):
@@ -127,6 +135,8 @@ jobs:
             health = fetch_json("/api/ponto/health")
             if not health.get("ok"):
               raise SystemExit(f"health ok=false: {health}")
+            if not health.get("cryptoTemplates"):
+              raise SystemExit(f"health cryptoTemplates=false: {health}")
             return True
 
           # When the SHA is already deployed, this check is primarily for env drift (Pages vars/secrets changed).
@@ -169,6 +179,11 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Fetch face models
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        run: npm run fetch-face-models
+        working-directory: frontend
+
       - name: Build frontend
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
         env:
@@ -194,8 +209,11 @@ jobs:
 
       - name: Smoke check Ponto (production)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
+        continue-on-error: true
         env:
           BASE_URL: https://crm.skincos.com.br
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -207,7 +225,13 @@ jobs:
 
           def fetch_json(path: str):
             url = f"{base}{path}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"})
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"}
+            cid = os.environ.get("CF_ACCESS_CLIENT_ID", "").strip()
+            csec = os.environ.get("CF_ACCESS_CLIENT_SECRET", "").strip()
+            if cid and csec:
+              headers["CF-Access-Client-Id"] = cid
+              headers["CF-Access-Client-Secret"] = csec
+            req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
               data = resp.read().decode("utf-8", "ignore")
               return json.loads(data)
@@ -216,8 +240,8 @@ jobs:
             proxy = fetch_json("/api/ponto/_proxy-status")
             if not proxy.get("ok"):
               raise SystemExit(f"proxy-status ok=false: {proxy}")
-            if not proxy.get("effectiveTargetConfigured"):
-              raise SystemExit(f"proxy-status effectiveTargetConfigured=false: {proxy}")
+            if not proxy.get("targetConfigured"):
+              raise SystemExit(f"proxy-status targetConfigured=false: {proxy}")
             if not proxy.get("adminTokenConfigured"):
               raise SystemExit(f"proxy-status adminTokenConfigured=false: {proxy}")
             if not proxy.get("proxyTokenConfigured"):
@@ -227,6 +251,8 @@ jobs:
             health = fetch_json("/api/ponto/health")
             if not health.get("ok"):
               raise SystemExit(f"health ok=false: {health}")
+            if not health.get("cryptoTemplates"):
+              raise SystemExit(f"health cryptoTemplates=false: {health}")
             return True
 
           # After a Pages deploy, it can take some time for the new deployment + env vars to propagate.

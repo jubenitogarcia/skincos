@@ -41,6 +41,20 @@ export async function handleInsumosRoutes({
             }
         }
 
+        // GET /insumos/options
+        if (url.pathname === "/insumos/options" && request.method === "GET") {
+            try {
+                const limite = url.searchParams.get('limite') || url.searchParams.get('limit') || null;
+                if (typeof d1.listInsumosOptions === 'function') {
+                    const data = await d1.listInsumosOptions({ limite });
+                    return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
+                }
+                return withCORS(JSON.stringify({ success: true, data: { categorias: [], marcas: [] } }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
         // POST /insumos - cadastrar novo insumo/lote
         if (url.pathname === "/insumos" && request.method === "POST") {
             try {
@@ -307,7 +321,12 @@ export async function handleInsumosRoutes({
             if (parts.length === 2 && maybeCodigo && !isReserved) {
                 try {
                     const items = await d1.listInsumos({ unidade });
-                    const byCodigo = items.filter((i) => String(i?.codigoBarras || '').trim() === maybeCodigo);
+                    const byCodigo = items.filter((i) => {
+                        const primary = String(i?.codigoBarras || '').trim();
+                        if (primary && primary === maybeCodigo) return true;
+                        const list = Array.isArray(i?.codigosBarras) ? i.codigosBarras : [];
+                        return list.some((code) => String(code || '').trim() === maybeCodigo);
+                    });
                     if (byCodigo.length === 1) {
                         return withCORS(JSON.stringify({ success: true, data: byCodigo[0] }), { status: 200 }, appOrigin);
                     }

@@ -25,6 +25,7 @@ import {
     d1Transfer,
     d1ListMovimentacoes,
     d1ListInsumosPaged,
+    d1ListInsumosOptions,
     d1GetUserByUsername,
     d1GetUserByIdentifier,
     d1UpdateUserProfile,
@@ -313,7 +314,11 @@ function withCORSBase(body, init = {}, origin) {
 function buildResumoEstoque(itens) {
     const totalInsumos = itens.length;
     const valorEstoqueTotal = itens.reduce((acc, cur) => acc + (Number(cur.precoCusto) || 0) * (Number(cur.estoqueAtual) || 0), 0);
-    const criticos = itens.filter(i => i.estoqueMinimo > 0 && (i.estoqueAtual || 0) <= i.estoqueMinimo).length;
+    const criticos = itens.filter(i => {
+        const estoqueAtual = Number(i.estoqueAtual) || 0;
+        const estoqueMinimo = Number(i.estoqueMinimo) || 0;
+        return estoqueAtual < 0 || (estoqueMinimo > 0 && estoqueAtual < estoqueMinimo);
+    }).length;
     return { totalInsumos, valorEstoqueTotal, criticos };
 }
 
@@ -438,7 +443,7 @@ function buildRoi(itens, unidade) {
     };
 }
 
-const ALLOWED_UNIDADES_MEDIDA = new Set(['FRASCO', 'SERINGA', 'UNIDADE', 'CAIXA', 'ML', 'AMPOLA']);
+const ALLOWED_UNIDADES_MEDIDA = new Set(['UNIDADE', 'FRASCO', 'SERINGA', 'CAIXA', 'AMPOLA', 'PACOTE', 'ROLO']);
 
 function buildQualityReport(itens, unidade, limitIssues = 500) {
     const issues = [];
@@ -531,7 +536,7 @@ function buildQualityReport(itens, unidade, limitIssues = 500) {
                 codigoBarras: codigo,
                 produto,
                 unidade,
-                suggestion: 'Definir unidade (ex.: Frasco, Seringa, ml)'
+                suggestion: 'Definir unidade (ex.: frasco, seringa, caixa, ampola)'
             }));
         } else if (!ALLOWED_UNIDADES_MEDIDA.has(tipoUnidade.toUpperCase())) {
             issues.push(makeIssue({
@@ -786,8 +791,12 @@ function computeNotificationsForUnidade(insumos, unidade) {
     for (const i of insumos) {
         const estoqueAtual = Number(i.estoqueAtual) || 0;
         const estoqueMinimo = Number(i.estoqueMinimo) || 0;
+        // "lowStock" is for attention-level items only (at the limit).
+        // Critical items (below minimum or negative stock) are handled elsewhere (overview resumo/criticos).
         const isBreakage = estoqueAtual < 0;
-        if (isBreakage || (estoqueMinimo > 0 && estoqueAtual <= estoqueMinimo)) {
+        const isCritical = isBreakage || (estoqueMinimo > 0 && estoqueAtual < estoqueMinimo);
+        const isLowStock = !isCritical && estoqueMinimo > 0 && estoqueAtual === estoqueMinimo;
+        if (isBreakage || isLowStock) {
             lowStock.push({
                 codigoBarras: i.codigoBarras,
                 produto: i.produto,
@@ -941,7 +950,6 @@ export default {
                     '/backup',
                     '/auditoria',
                     '/quality',
-                    '/ponto',
                 ];
                 if (allow.some((prefix) => rest === prefix || rest.startsWith(prefix))) {
                     url.pathname = rest === '/auditoria' ? '/audit' : rest;
@@ -990,27 +998,6 @@ export default {
             console.log(JSON.stringify(payload));
             return res;
         };
-
-        // Ponto routes must not depend on Insumos session cookies/config (SESSION_SECRET, CSRF, etc).
-        // They have their own auth model (proxy token + signed actor headers / admin token / device token).
-        let pontoEarlyResp = null;
-        try {
-            pontoEarlyResp = await handlePontoRoutes({
-                request,
-                url,
-                env,
-                appOrigin,
-                withCORS,
-            });
-        } catch (err) {
-            const message = String((err && err.message) || err || 'unknown');
-            console.error(JSON.stringify({ level: 'error', request_id: requestId, scope: 'ponto', error: message }));
-            return withCORS(
-                JSON.stringify({ ok: false, error: 'PONTO_WORKER_EXCEPTION', requestId, detail: message }),
-                { status: 500, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }
-            );
-        }
-        if (pontoEarlyResp) return pontoEarlyResp;
 
         const enforceRateLimit = async (kind) => {
             if (!env.RATE_LIMITER) return { allowed: true };
@@ -1062,6 +1049,11 @@ export default {
         if (url.pathname === "/api/metrics" || url.pathname === "/metrics") {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
         }
+
+        // Ponto (Relógio-Ponto) — handled here to avoid depending on Insumos auth/session.
+        // Important: run this before any Insumos-specific storage guards or auth gates.
+        const pontoResponse = await handlePontoRoutes({ request, url, env, appOrigin, withCORS });
+        if (pontoResponse) return pontoResponse;
 
         // D1-only: reject any non-d1 storage mode explicitly.
         if (!storageOk) {
@@ -1331,6 +1323,7 @@ export default {
             enabled: true,
             listInsumos: ({ unidade }) => d1ListInsumos({ env, unidades: UNIDADES, unidade }),
             listInsumosPaged: ({ unidade, q, pagina, limite }) => d1ListInsumosPaged({ env, unidades: UNIDADES, unidade, q, pagina, limite }),
+            listInsumosOptions: ({ limite }) => d1ListInsumosOptions({ env, limite }),
             createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
             updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
             deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),

@@ -123,6 +123,11 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Fetch face models
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        run: npm run fetch-face-models
+        working-directory: frontend
+
       - name: Build frontend
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' }}
         env:
@@ -148,6 +153,8 @@ jobs:
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' }}
         env:
           BASE_URL: https://crm.skincos.com.br
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -159,7 +166,13 @@ jobs:
 
           def fetch_json(path: str):
             url = f"{base}{path}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"})
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; PontoSmoke/1.0)"}
+            cid = os.environ.get("CF_ACCESS_CLIENT_ID", "").strip()
+            csec = os.environ.get("CF_ACCESS_CLIENT_SECRET", "").strip()
+            if cid and csec:
+              headers["CF-Access-Client-Id"] = cid
+              headers["CF-Access-Client-Secret"] = csec
+            req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
               data = resp.read().decode("utf-8", "ignore")
               return json.loads(data)
@@ -168,13 +181,15 @@ jobs:
             proxy = fetch_json("/api/ponto/_proxy-status")
             if not proxy.get("ok"):
               raise SystemExit("proxy-status ok=false")
-            if not proxy.get("effectiveTargetConfigured"):
-              raise SystemExit("proxy-status effectiveTargetConfigured=false")
+            if not proxy.get("targetConfigured"):
+              raise SystemExit("proxy-status targetConfigured=false")
             if not proxy.get("adminTokenConfigured"):
               raise SystemExit("proxy-status adminTokenConfigured=false")
             health = fetch_json("/api/ponto/health")
             if not health.get("ok"):
               raise SystemExit("health ok=false")
+            if not health.get("cryptoTemplates"):
+              raise SystemExit("health cryptoTemplates=false")
             return True
 
           for i in range(1, 6):
