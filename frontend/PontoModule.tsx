@@ -175,6 +175,7 @@ async function apiJson<T>(
   if (opts.deviceToken) headers.authorization = `Device ${opts.deviceToken}`
   const res = await fetch(path, {
     method,
+    credentials: 'include',
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: opts.signal
@@ -211,7 +212,7 @@ async function apiJson<T>(
 async function apiBlob(path: string, opts: { adminToken?: string; signal?: AbortSignal } = {}): Promise<Blob> {
   const headers: Record<string, string> = {}
   if (opts.adminToken) headers.authorization = `Admin ${opts.adminToken}`
-  const res = await fetch(path, { headers, signal: opts.signal })
+  const res = await fetch(path, { headers, credentials: 'include', signal: opts.signal })
   if (!res.ok) {
     const requestId = String(res.headers.get('x-request-id') || '').trim()
     const cfRay = String(res.headers.get('cf-ray') || '').trim()
@@ -240,6 +241,7 @@ async function fetchJsonWithMeta(
 
   const res = await fetch(path, {
     method,
+    credentials: 'include',
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: opts.signal
