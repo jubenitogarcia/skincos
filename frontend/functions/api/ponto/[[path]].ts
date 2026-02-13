@@ -69,6 +69,16 @@ async function signHmacSha256B64Url(secret: string, message: string): Promise<st
   return b64UrlEncodeBytes(sig)
 }
 
+function normalizeUnits(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  const out: string[] = []
+  for (const v of values) {
+    const unit = String(v ?? '').trim()
+    if (unit) out.push(unit)
+  }
+  return out
+}
+
 export async function onRequest(context: any): Promise<Response> {
   const request: Request = context.request
   const url = new URL(request.url)
@@ -80,10 +90,8 @@ export async function onRequest(context: any): Promise<Response> {
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
   const env = context.env || {}
-  const targetOriginExplicit = String((env?.PONTO_API_TARGET as string | undefined) || '').trim()
-  const targetOriginFallback = String((env?.INSUMOS_API_TARGET as string | undefined) || '').trim()
-  const targetOrigin = targetOriginExplicit || targetOriginFallback
-  const targetFrom = targetOriginExplicit ? 'PONTO_API_TARGET' : (targetOriginFallback ? 'INSUMOS_API_TARGET' : 'NONE')
+  const targetOrigin = String((env?.PONTO_API_TARGET as string | undefined) || '').trim()
+  const targetFrom = targetOrigin ? 'PONTO_API_TARGET' : 'NONE'
 
   if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
     const proxyToken = (env?.PONTO_PROXY_TOKEN as string | undefined) || ''
@@ -93,17 +101,15 @@ export async function onRequest(context: any): Promise<Response> {
       200,
       {
         ok: true,
-        targetConfigured: !!targetOriginExplicit,
-        effectiveTargetConfigured: !!targetOrigin,
+        targetConfigured: !!targetOrigin,
         targetFrom,
         targetOrigin: targetOrigin || undefined,
         proxyTokenConfigured: !!proxyToken,
         actorKeyConfigured: !!String(actorKey || '').trim(),
         adminTokenConfigured: !!String(adminToken || '').trim(),
         hint: !targetOrigin
-          ? 'Configure PONTO_API_TARGET (ou INSUMOS_API_TARGET) no Cloudflare Pages/Functions para apontar para o backend.'
-          : (!targetOriginExplicit ? 'PONTO_API_TARGET não está definido; usando INSUMOS_API_TARGET como fallback.' : undefined),
-        recommended: !targetOriginExplicit ? 'Defina PONTO_API_TARGET explicitamente para evitar divergências entre ambientes.' : undefined,
+          ? 'Configure PONTO_API_TARGET no Cloudflare Pages/Functions para apontar para o backend.'
+          : undefined,
       },
       { 'x-request-id': requestId },
     )
@@ -115,7 +121,7 @@ export async function onRequest(context: any): Promise<Response> {
       {
         ok: false,
         error: 'PONTO_API_TARGET nao configurado',
-        hint: 'Defina PONTO_API_TARGET (ou INSUMOS_API_TARGET) no Cloudflare Pages/Functions.',
+        hint: 'Defina PONTO_API_TARGET no Cloudflare Pages/Functions.',
       },
       { 'x-request-id': requestId },
     )
@@ -150,10 +156,12 @@ export async function onRequest(context: any): Promise<Response> {
           { 'x-request-id': requestId },
         )
       }
+      const allowedUnits = normalizeUnits(user.allowedUnits)
       const actor = {
         id: String(user.id || ''),
         email: user.email ? String(user.email) : undefined,
         name: user.displayName ? String(user.displayName) : (user.name ? String(user.name) : undefined),
+        allowedUnits: allowedUnits.length ? allowedUnits : undefined,
       }
       actorB64 = b64UrlEncodeString(JSON.stringify(actor))
       actorTs = String(Date.now())

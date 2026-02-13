@@ -14,7 +14,6 @@ import { handleInsightsRoutes } from './routes/insights.js';
 import { handleShareRoutes } from './routes/share.js';
 import { handleCategoriasRoutes } from './routes/categorias.js';
 import { handlePrefsRoutes } from './routes/prefs.js';
-import { handlePontoRoutes } from './routes/ponto.js';
 import {
     d1ListInsumos,
     d1CreateInsumo,
@@ -949,7 +948,6 @@ export default {
                     '/backup',
                     '/auditoria',
                     '/quality',
-                    '/ponto',
                 ];
                 if (allow.some((prefix) => rest === prefix || rest.startsWith(prefix))) {
                     url.pathname = rest === '/auditoria' ? '/audit' : rest;
@@ -998,27 +996,6 @@ export default {
             console.log(JSON.stringify(payload));
             return res;
         };
-
-        // Ponto routes must not depend on Insumos session cookies/config (SESSION_SECRET, CSRF, etc).
-        // They have their own auth model (proxy token + signed actor headers / admin token / device token).
-        let pontoEarlyResp = null;
-        try {
-            pontoEarlyResp = await handlePontoRoutes({
-                request,
-                url,
-                env,
-                appOrigin,
-                withCORS,
-            });
-        } catch (err) {
-            const message = String((err && err.message) || err || 'unknown');
-            console.error(JSON.stringify({ level: 'error', request_id: requestId, scope: 'ponto', error: message }));
-            return withCORS(
-                JSON.stringify({ ok: false, error: 'PONTO_WORKER_EXCEPTION', requestId, detail: message }),
-                { status: 500, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }
-            );
-        }
-        if (pontoEarlyResp) return pontoEarlyResp;
 
         const enforceRateLimit = async (kind) => {
             if (!env.RATE_LIMITER) return { allowed: true };
