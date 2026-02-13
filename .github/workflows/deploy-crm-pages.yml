@@ -137,6 +137,8 @@ jobs:
             health = fetch_json("/api/ponto/health")
             if not health.get("ok"):
               raise SystemExit("health ok=false")
+            if not health.get("cryptoTemplates"):
+              raise SystemExit("health cryptoTemplates=false")
             return True
 
           for i in range(1, 6):

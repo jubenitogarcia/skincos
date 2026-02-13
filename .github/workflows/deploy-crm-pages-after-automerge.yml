@@ -173,13 +173,15 @@ jobs:
             proxy = fetch_json("/api/ponto/_proxy-status")
             if not proxy.get("ok"):
               raise SystemExit("proxy-status ok=false")
-            if not proxy.get("effectiveTargetConfigured"):
-              raise SystemExit("proxy-status effectiveTargetConfigured=false")
+            if not proxy.get("targetConfigured"):
+              raise SystemExit("proxy-status targetConfigured=false")
             if not proxy.get("adminTokenConfigured"):
               raise SystemExit("proxy-status adminTokenConfigured=false")
             health = fetch_json("/api/ponto/health")
             if not health.get("ok"):
               raise SystemExit("health ok=false")
+            if not health.get("cryptoTemplates"):
+              raise SystemExit("health cryptoTemplates=false")
             return True
 
           for i in range(1, 6):

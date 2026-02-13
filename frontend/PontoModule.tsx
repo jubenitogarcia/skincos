@@ -54,11 +54,12 @@ type PontoPunchRecord = {
 }
 
 type PontoMeResponse =
-  | { ok: true; linked: false; actorEmail?: string; hint?: string }
+  | { ok: true; linked: false; actorEmail?: string; hint?: string; allowedUnits?: string[] }
   | {
     ok: true
     linked: true
     actorEmail?: string
+    allowedUnits?: string[]
     employee: PontoEmployeePublic
     hasFace: boolean
     pinSet: boolean
@@ -507,6 +508,7 @@ export function PontoModule() {
   const [mePunchOpen, setMePunchOpen] = useState(false)
   const [meStep, setMeStep] = useState<'face' | 'pin'>('face')
   const [mePin, setMePin] = useState('')
+  const [meUnit, setMeUnit] = useState('')
   const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
   const [meRecordsFrom, setMeRecordsFrom] = useState('')
   const [meRecordsTo, setMeRecordsTo] = useState('')
@@ -572,8 +574,19 @@ export function PontoModule() {
   const [selectedRecordsLoading, setSelectedRecordsLoading] = useState(false)
   const [selectedRecordsError, setSelectedRecordsError] = useState<string | null>(null)
 
-  const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string } } | null>(null)
+  const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string; allowedUnits?: string[] } } | null>(null)
   const [crmMeLoading, setCrmMeLoading] = useState(false)
+
+  const allowedUnits = useMemo(() => {
+    const fromCrm = crmMe?.user?.allowedUnits
+    const fromMe = me && 'allowedUnits' in me ? me.allowedUnits : undefined
+    const raw = Array.isArray(fromCrm) && fromCrm.length ? fromCrm : (Array.isArray(fromMe) ? fromMe : [])
+    return raw.map((u) => String(u || '').trim()).filter(Boolean)
+  }, [crmMe, me])
+
+  const resolvedMeUnit = allowedUnits.length === 1 ? allowedUnits[0] : (meUnit || '')
+  const unitSelectionRequired = allowedUnits.length > 1
+  const unitMissing = allowedUnits.length === 0 || (unitSelectionRequired && !resolvedMeUnit)
 
   useEffect(() => {
     try { localStorage.setItem(LS_DEVICE_TOKEN, deviceToken) } catch { /* ignore */ }
@@ -590,6 +603,14 @@ export function PontoModule() {
     setMeRecordsFrom(toDateTimeLocalValue(from))
     setMeRecordsTo(toDateTimeLocalValue(now))
   }, [meRecordsFrom, meRecordsTo])
+
+  useEffect(() => {
+    if (allowedUnits.length === 1) {
+      setMeUnit(allowedUnits[0])
+    } else if (allowedUnits.length === 0) {
+      setMeUnit('')
+    }
+  }, [allowedUnits])
 
   const isDev = import.meta.env.DEV
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
@@ -883,12 +904,30 @@ export function PontoModule() {
     }
   }
 
+  function ensureEmployeeUnitSelected() {
+    if (!allowedUnits.length) {
+      toast.error('Unidade não configurada')
+      return null
+    }
+    if (allowedUnits.length && !resolvedMeUnit) {
+      toast.error('Selecione a unidade')
+      return null
+    }
+    return resolvedMeUnit || null
+  }
+
   async function meLoadRecords() {
     setMeLoading(true)
     try {
+      const unit = ensureEmployeeUnitSelected()
+      if (allowedUnits.length && !unit) {
+        setMeLoading(false)
+        return
+      }
       const qs = new URLSearchParams()
       if (meRecordsFrom) qs.set('from', new Date(meRecordsFrom).toISOString())
       if (meRecordsTo) qs.set('to', new Date(meRecordsTo).toISOString())
+      if (unit) qs.set('unit', unit)
       qs.set('limit', '500')
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
         '/api/ponto/me/records?' + qs.toString(),
@@ -899,6 +938,10 @@ export function PontoModule() {
       const details = e?.details as any
       if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
         toast.error(`Email já vinculado ao funcionário: ${details?.employeeName || details?.employeeId || 'outro usuário'}`)
+      } else if (details?.error === 'UNIT_ACCESS_NOT_CONFIGURED') {
+        toast.error('Unidade não configurada para este usuário')
+      } else if (details?.error === 'UNIT_FORBIDDEN') {
+        toast.error('Unidade não permitida')
       } else {
         toast.error(e?.message || String(e))
       }
@@ -914,6 +957,8 @@ export function PontoModule() {
     if (!stream || cameraOwner !== 'employee') return toast.error('Ative a câmera')
     const videoEl = employeeVideoRef.current
     if (!videoEl) return toast.error('Câmera não disponível')
+    const unit = ensureEmployeeUnitSelected()
+    if (allowedUnits.length && !unit) return
     const ok = await ensureModelsUI()
     if (!ok) {
       setMeStep('pin')
@@ -928,7 +973,7 @@ export function PontoModule() {
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { descriptor, ...meta }, headers: getDevEmployeeActorHeaders() }
+        { method: 'POST', body: { descriptor, unit, ...meta }, headers: getDevEmployeeActorHeaders() }
       )
       toast.success(`Ponto registrado (${res.data.type})`)
       setMePunchOpen(false)
@@ -947,6 +992,12 @@ export function PontoModule() {
       const code = String(details?.error || details?.code || '')
       if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else if (code === 'UNIT_ACCESS_NOT_CONFIGURED') {
+        toast.error('Unidade não configurada para este usuário')
+      } else if (code === 'UNIT_REQUIRED') {
+        toast.error('Selecione a unidade')
+      } else if (code === 'UNIT_FORBIDDEN') {
+        toast.error('Unidade não permitida')
       } else if (code === 'FACE_NOT_RECOGNIZED' || code === 'FACE_NOT_ENROLLED') {
         toast.error('Rosto não reconhecido. Use PIN.')
         setMeStep('pin')
@@ -965,12 +1016,14 @@ export function PontoModule() {
     if (!me || !('linked' in me) || !me.linked) return toast.error('Usuário não vinculado a funcionário')
     const pin = mePin.trim()
     if (!pin) return toast.error('Informe o PIN')
+    const unit = ensureEmployeeUnitSelected()
+    if (allowedUnits.length && !unit) return
     setLoading(true)
     try {
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { pin, ...meta }, headers: getDevEmployeeActorHeaders() }
+        { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders() }
       )
       setMePin('')
       toast.success(`Ponto registrado (${res.data.type})`)
@@ -987,6 +1040,12 @@ export function PontoModule() {
         toast.error('PIN não configurado para este funcionário')
       } else if (code === 'PIN_LOCKED') {
         toast.error(`PIN bloqueado. Aguarde ${details?.secondsRemaining || '?'}s e tente novamente.`)
+      } else if (code === 'UNIT_ACCESS_NOT_CONFIGURED') {
+        toast.error('Unidade não configurada para este usuário')
+      } else if (code === 'UNIT_REQUIRED') {
+        toast.error('Selecione a unidade')
+      } else if (code === 'UNIT_FORBIDDEN') {
+        toast.error('Unidade não permitida')
       } else if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
       } else {
@@ -1047,9 +1106,10 @@ export function PontoModule() {
     if (tab !== 'employee') return
     if (!me || !('linked' in me) || !me.linked) return
     if (!meRecordsFrom || !meRecordsTo) return
+    if (unitMissing) return
     void meLoadRecords()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, me, meRecordsFrom, meRecordsTo])
+  }, [tab, me, meRecordsFrom, meRecordsTo, unitMissing])
 
   useEffect(() => {
     if (tab !== 'device') return
@@ -1648,6 +1708,37 @@ export function PontoModule() {
                 </div>
               ) : null}
 
+              {me && 'linked' in me && me.linked ? (
+                allowedUnits.length ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-2 md:col-span-1">
+                      <Label>Unidade</Label>
+                      {allowedUnits.length > 1 ? (
+                        <Select value={resolvedMeUnit || undefined} onValueChange={setMeUnit}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allowedUnits.map((unit) => (
+                              <SelectItem key={unit} value={unit}>
+                                {unit}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="outline">Unidade: {allowedUnits[0]}</Badge>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
+                    <div className="font-medium">Unidade não configurada</div>
+                    <div className="opacity-80">Seu usuário não possui unidade permitida. Contate o administrador.</div>
+                  </div>
+                )
+              ) : null}
+
               {import.meta.env.DEV ? (
                 <div className="rounded-md border p-3 text-sm space-y-2">
                   <div className="font-medium">Dev: actor email (para testar local sem Pages proxy)</div>
@@ -1671,7 +1762,7 @@ export function PontoModule() {
                     else setMeStep('pin')
                     setMePunchOpen(true)
                   }}
-                  disabled={meLoading || !(me && 'linked' in me && me.linked)}
+                  disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}
                 >
                   Bater ponto
                 </Button>
@@ -1757,7 +1848,7 @@ export function PontoModule() {
                   <Input type="datetime-local" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
                 </div>
                 <div className="flex items-end">
-                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked)}>Buscar</Button>
+                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}>Buscar</Button>
                 </div>
               </div>
 
