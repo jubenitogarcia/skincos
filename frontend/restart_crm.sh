@@ -141,6 +141,17 @@ fi
 
 kill_procs() {
   echo "[restart_crm] Matando processos antigos..."
+  # Best-effort: kill by port first (covers processes started outside this script, e.g. `node server.js`)
+  if command -v lsof >/dev/null 2>&1; then
+    for p in "$CRM_API_PORT" "$CRM_PORT"; do
+      if lsof -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "[restart_crm] Matando processos na porta :$p..."
+        # shellcheck disable=SC2046
+        kill -9 $(lsof -ti tcp:"$p") 2>/dev/null || true
+        sleep 0.2
+      fi
+    done
+  fi
   # API do CRM
   pkill -f "${API_DIR}/server.js" 2>/dev/null || true
   # Vite do CRM (melhor esforço por porta)
