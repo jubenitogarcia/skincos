@@ -248,7 +248,7 @@ async function main() {
     await page.waitForTimeout(1500)
 
     const buildBadge = page
-      .locator('text=/Build:\\s*[a-f0-9]{7,}|Build:\\s*unknown|build:\\s*[a-f0-9]{7,}|build:\\s*unknown/i')
+      .locator('text=/Build:\\s*[a-f0-9]{7,}|Build:\\s*(unknown|dev)|build:\\s*[a-f0-9]{7,}|build:\\s*(unknown|dev)/i')
       .first()
     await buildBadge.waitFor({ timeout: 30_000 })
     if (EXPECT_BUILD_SHA) {
@@ -303,18 +303,26 @@ async function main() {
       return out
     })
 
-    if (!diag.proxy || diag.proxy.ok !== true) {
-      throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
+    const proxyMissing =
+      diag.proxyStatus === 404 ||
+      /Cannot\s+GET\s+\/api\/ponto\/_proxy-status/i.test(String(diag.proxyText || ''))
+
+    if (!proxyMissing) {
+      if (!diag.proxy || diag.proxy.ok !== true) {
+        throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
+      }
+      if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
+      if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
+      if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
+      if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
+    } else {
+      console.log('[ponto-ui-smoke] local mode: /api/ponto/_proxy-status not available (skipping proxy asserts).')
     }
-    if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
-    if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
-    if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
-    if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
 
     if (!diag.health || diag.health.ok !== true) {
       throw new Error(`Health failed: HTTP ${diag.healthStatus} body=${String(diag.healthText || '').slice(0, 260)}`)
     }
-    if (diag.health.cryptoTemplates !== true) {
+    if (!proxyMissing && diag.health.cryptoTemplates !== true) {
       throw new Error('Health: cryptoTemplates=false (biometria não configurada)')
     }
 

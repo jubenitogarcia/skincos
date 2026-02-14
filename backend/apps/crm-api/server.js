@@ -313,7 +313,8 @@ const DEV_AUTH_ENABLED = String(process.env.NO_AUTH || '').toLowerCase() === 'tr
 if (DEV_AUTH_ENABLED) {
     const DEV_AUTH_COOKIE = 'skincos_dev_session'
     const DEV_AUTH_SECRET = String(process.env.DEV_SESSION_SECRET || process.env.SESSION_SECRET || 'dev-only-session-secret')
-    const DEV_AUTH_EMAIL = String(process.env.DEV_AUTH_EMAIL || 'dev@localhost').trim() || 'dev@localhost'
+    // Must be a valid email per Ponto actor validation (requires a dot in domain).
+    const DEV_AUTH_EMAIL = String(process.env.DEV_AUTH_EMAIL || 'dev@local.test').trim() || 'dev@local.test'
     const DEV_AUTH_ROLE = String(process.env.DEV_AUTH_ROLE || 'admin').trim() || 'admin'
     const DEV_AUTH_ALLOWED_UNITS = String(process.env.DEV_AUTH_ALLOWED_UNITS || '').trim()
     const DEV_AUTH_ALLOWED_MODULES = String(process.env.DEV_AUTH_ALLOWED_MODULES || 'ponto').trim()
