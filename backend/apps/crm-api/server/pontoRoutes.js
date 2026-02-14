@@ -274,6 +274,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       code: employee.code || '',
       name: employee.name,
       loginEmail: employee.loginEmail || '',
+      unit: employee.unit || '',
       active: employee.active !== false,
       createdAt: employee.createdAt,
       updatedAt: employee.updatedAt,
@@ -643,6 +644,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const name = safeText(req.body?.name, 80)
     const code = safeText(req.body?.code, 40)
     const loginEmail = normalizeEmail(req.body?.loginEmail)
+    const unit = normalizeUnit(req.body?.unit)
     if (!name) return res.status(400).json({ ok: false, error: 'NAME_REQUIRED' })
     if (loginEmail) {
       const [takenBy] = findEmployeesByLoginEmail(loginEmail)
@@ -662,6 +664,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       code,
       name,
       loginEmail: loginEmail || '',
+      unit: unit || '',
       active: true,
       createdAt: now,
       updatedAt: now,
@@ -676,7 +679,9 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     }
     state.employees.push(employee)
     schedulePersist()
-    await enqueueWrite(() => writeAudit('EMPLOYEE_CREATE', { employeeId: employee.id, name: employee.name, code: employee.code }, actor))
+    await enqueueWrite(() =>
+      writeAudit('EMPLOYEE_CREATE', { employeeId: employee.id, name: employee.name, code: employee.code, unit: employee.unit }, actor)
+    )
     res.json({ ok: true, data: publicEmployee(employee) })
   })
 
@@ -689,6 +694,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const nameRaw = req.body?.name
     const codeRaw = req.body?.code
     const loginEmailRaw = req.body?.loginEmail
+    const unitRaw = req.body?.unit
 
     if (nameRaw !== undefined) {
       const name = safeText(nameRaw, 80)
@@ -720,10 +726,15 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       )
     }
 
+    if (unitRaw !== undefined) {
+      const nextUnit = normalizeUnit(unitRaw)
+      employee.unit = nextUnit || ''
+    }
+
     if (typeof activeRaw === 'boolean') employee.active = activeRaw
     employee.updatedAt = new Date().toISOString()
     schedulePersist()
-    await enqueueWrite(() => writeAudit('EMPLOYEE_UPDATE', { employeeId: employee.id }, actor))
+    await enqueueWrite(() => writeAudit('EMPLOYEE_UPDATE', { employeeId: employee.id, unit: employee.unit }, actor))
     res.json({ ok: true, data: publicEmployee(employee) })
   })
 
