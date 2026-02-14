@@ -125,10 +125,14 @@ function b64UrlEncodeString(input: string): string {
   return b64UrlEncodeBytes(bytes.buffer)
 }
 
-function getDevEmployeeActorHeaders(): Record<string, string> {
+function getDevEmployeeActorHeaders(emailOverride?: string): Record<string, string> {
   if (!import.meta.env.DEV) return {}
   let email = ''
-  try { email = String(localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '').trim().toLowerCase() } catch { email = '' }
+  if (emailOverride) {
+    email = String(emailOverride).trim().toLowerCase()
+  } else {
+    try { email = String(localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '').trim().toLowerCase() } catch { email = '' }
+  }
   if (!email) return {}
   const actor = { email }
   const actorB64 = b64UrlEncodeString(JSON.stringify(actor))
@@ -658,6 +662,14 @@ export function PontoModule() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!isDev) return
+    if (String(devActorEmail || '').trim()) return
+    const email = String(crmMe?.user?.email || '').trim().toLowerCase()
+    if (!email) return
+    setDevActorEmail(email)
+  }, [isDev, devActorEmail, crmMe])
+
   const loadAdminUnits = React.useCallback(async () => {
     setAdminUnitsLoading(true)
     setAdminUnitsError(null)
@@ -948,7 +960,7 @@ export function PontoModule() {
     setMeLoading(true)
     setMeError(null)
     try {
-      const res = await apiJson<PontoMeResponse>('/api/ponto/me', { headers: getDevEmployeeActorHeaders() })
+      const res = await apiJson<PontoMeResponse>('/api/ponto/me', { headers: getDevEmployeeActorHeaders(devActorEmail) })
       setMe(res)
     } catch (e: any) {
       setMe(null)
@@ -985,7 +997,7 @@ export function PontoModule() {
       qs.set('limit', '500')
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord[] }>(
         '/api/ponto/me/records?' + qs.toString(),
-        { headers: getDevEmployeeActorHeaders() }
+        { headers: getDevEmployeeActorHeaders(devActorEmail) }
       )
       setMeRecords(res.data || [])
     } catch (e: any) {
@@ -1027,7 +1039,7 @@ export function PontoModule() {
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { descriptor, unit, ...meta }, headers: getDevEmployeeActorHeaders() }
+        { method: 'POST', body: { descriptor, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
       )
       toast.success(`Ponto registrado (${res.data.type})`)
       setMePunchOpen(false)
@@ -1077,7 +1089,7 @@ export function PontoModule() {
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders() }
+        { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
       )
       setMePin('')
       toast.success(`Ponto registrado (${res.data.type})`)
