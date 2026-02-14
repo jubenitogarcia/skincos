@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { DEFAULT_UNIT_OPTIONS, type UnitOption } from '@/unitSelection'
 import * as QRCode from 'qrcode'
 
 type ApiError = { ok?: boolean; error?: string; message?: string; code?: string; hint?: string }
@@ -85,6 +86,14 @@ function errorMetaString(meta: { code?: string; requestId?: string; cfRay?: stri
 const FACE_FALLBACK_THRESHOLD = 3
 const FACE_FALLBACK_MESSAGE =
   'Condições ruins detectadas. Estamos melhorando a análise do rosto, aguarde alguns segundos.'
+
+function formatUnitLabel(u: string) {
+  return String(u || '')
+    .split('-')
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' ')
+}
 
 function isFaceDetectionError(err: any) {
   const code = String(err?.code || err?.details?.error || err?.details?.code || '').trim()
@@ -579,6 +588,10 @@ export function PontoModule() {
   const [selectedRecordsLoading, setSelectedRecordsLoading] = useState(false)
   const [selectedRecordsError, setSelectedRecordsError] = useState<string | null>(null)
 
+  const [adminUnitOptions, setAdminUnitOptions] = useState<UnitOption[]>(DEFAULT_UNIT_OPTIONS)
+  const [adminUnitsLoading, setAdminUnitsLoading] = useState(false)
+  const [adminUnitsError, setAdminUnitsError] = useState<string | null>(null)
+
   const [crmMe, setCrmMe] = useState<{ user?: { role?: string; username?: string; email?: string; displayName?: string; allowedUnits?: string[] } } | null>(null)
   const [crmMeLoading, setCrmMeLoading] = useState(false)
 
@@ -645,9 +658,36 @@ export function PontoModule() {
     }
   }, [])
 
+  const loadAdminUnits = React.useCallback(async () => {
+    setAdminUnitsLoading(true)
+    setAdminUnitsError(null)
+    try {
+      const res = await fetch('/api/insumos/health', { credentials: 'include' })
+      if (!res.ok) throw new Error('Falha ao carregar unidades')
+      const data = await res.json().catch(() => null)
+      const rawUnits = Array.isArray(data?.unidades) ? data.unidades : []
+      const normalized = rawUnits
+        .map((u: any) => String(u || '').trim())
+        .filter(Boolean)
+      const options = (normalized.length ? normalized : DEFAULT_UNIT_OPTIONS.map((u) => u.value))
+        .map((u) => ({ value: u, label: formatUnitLabel(u) }))
+      setAdminUnitOptions(options)
+    } catch (e: any) {
+      setAdminUnitOptions(DEFAULT_UNIT_OPTIONS)
+      setAdminUnitsError(e?.message || 'Falha ao carregar unidades')
+    } finally {
+      setAdminUnitsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void loadCrmMe()
   }, [loadCrmMe])
+
+  useEffect(() => {
+    if (!canAdminActions) return
+    void loadAdminUnits()
+  }, [canAdminActions, loadAdminUnits])
 
   useEffect(() => {
     if (!showAdminTab && tab === 'admin') setTab('employee')
@@ -1118,6 +1158,14 @@ export function PontoModule() {
   }, [selectedEmployee])
 
   useEffect(() => {
+    if (!adminUnitOptions.length) return
+    const current = newEmployeeUnit.trim()
+    if (!current || !adminUnitOptions.some((u) => u.value === current)) {
+      setNewEmployeeUnit(adminUnitOptions[0].value)
+    }
+  }, [adminUnitOptions, newEmployeeUnit])
+
+  useEffect(() => {
     if (tab !== 'employee') return
     if (!me || !('linked' in me) || !me.linked) return
     if (!meRecordsFrom || !meRecordsTo) return
@@ -1292,13 +1340,15 @@ export function PontoModule() {
     if (!name) return toast.error('Nome é obrigatório')
     const loginEmail = newEmployeeLoginEmail.trim()
     if (!loginEmail || !loginEmail.includes('@')) return toast.error('Email inválido')
+    const unit = newEmployeeUnit.trim()
+    if (!unit) return toast.error('Unidade é obrigatória')
     const pin = newEmployeePin.trim()
     if (pin.length < 4) return toast.error('PIN deve ter pelo menos 4 dígitos')
     setLoading(true)
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
         '/api/ponto/admin/employees',
-        { method: 'POST', body: { name, code: newEmployeeCode.trim(), loginEmail, unit: newEmployeeUnit.trim() } }
+        { method: 'POST', body: { name, code: newEmployeeCode.trim(), loginEmail, unit } }
       )
       await apiJson('/api/ponto/admin/employees/' + res.data.id + '/pin', {
         method: 'POST',
@@ -1420,6 +1470,8 @@ export function PontoModule() {
     if (!name) return toast.error('Nome é obrigatório')
     const email = editEmail.trim()
     if (email && !email.includes('@')) return toast.error('Email inválido')
+    const unit = editUnit.trim()
+    if (!unit) return toast.error('Unidade é obrigatória')
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
@@ -1428,7 +1480,7 @@ export function PontoModule() {
           name,
           code: editCode.trim(),
           loginEmail: email || '',
-          unit: editUnit.trim(),
+          unit,
           active: !!editActive
         }
       })
@@ -2099,8 +2151,20 @@ export function PontoModule() {
                     <Input value={newEmployeePin} onChange={(e) => setNewEmployeePin(e.target.value)} inputMode="numeric" placeholder="••••" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Unidade (opcional)</Label>
-                    <Input value={newEmployeeUnit} onChange={(e) => setNewEmployeeUnit(e.target.value)} placeholder="ex: unidade-01" />
+                    <Label>Unidade</Label>
+                    <Select value={newEmployeeUnit} onValueChange={setNewEmployeeUnit} disabled={adminUnitsLoading}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {adminUnitOptions.map((u) => (
+                          <SelectItem key={u.value} value={u.value}>
+                            {u.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {adminUnitsError ? <div className="text-xs text-muted-foreground">{adminUnitsError}</div> : null}
                   </div>
                   <div className="flex items-end">
                     <Button
@@ -2111,7 +2175,8 @@ export function PontoModule() {
                         !newEmployeeName.trim() ||
                         !newEmployeeLoginEmail.trim() ||
                         !newEmployeeLoginEmail.includes('@') ||
-                        newEmployeePin.trim().length < 4
+                        newEmployeePin.trim().length < 4 ||
+                        !newEmployeeUnit.trim()
                       }
                     >
                       Cadastrar
@@ -2186,7 +2251,7 @@ export function PontoModule() {
                         <TableRow key={e.id} className={e.id === selectedEmployeeId ? 'bg-muted/40' : ''}>
                           <TableCell className="font-medium">{e.name}</TableCell>
                           <TableCell className="text-sm">{e.loginEmail || '-'}</TableCell>
-                          <TableCell className="text-sm">{e.unit || '-'}</TableCell>
+                          <TableCell className="text-sm">{e.unit ? formatUnitLabel(e.unit) : '-'}</TableCell>
                           <TableCell>{e.active === false ? <Badge variant="secondary">Inativo</Badge> : <Badge>Ativo</Badge>}</TableCell>
                           <TableCell><Badge variant="outline">{e.faceDescriptorsCount || 0}</Badge></TableCell>
                           <TableCell>{e.pinSet ? <Badge variant="outline">OK</Badge> : <Badge variant="secondary">—</Badge>}</TableCell>
@@ -2277,8 +2342,20 @@ export function PontoModule() {
                         <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="ex: funcionario@empresa.com" />
                       </div>
                       <div className="space-y-2">
-                        <Label>Unidade (opcional)</Label>
-                        <Input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} placeholder="ex: unidade-01" />
+                        <Label>Unidade</Label>
+                        <Select value={editUnit} onValueChange={setEditUnit} disabled={adminUnitsLoading}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {adminUnitOptions.map((u) => (
+                              <SelectItem key={u.value} value={u.value}>
+                                {u.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {adminUnitsError ? <div className="text-xs text-muted-foreground">{adminUnitsError}</div> : null}
                       </div>
                       <label className="flex items-center gap-2 text-sm">
                         <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} />
@@ -2287,7 +2364,7 @@ export function PontoModule() {
                     </div>
                     <DialogFooter className="gap-2">
                       <Button variant="outline" onClick={() => setEditOpen(false)} disabled={loading}>Cancelar</Button>
-                      <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId}>Salvar</Button>
+                      <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId || !editUnit.trim()}>Salvar</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
