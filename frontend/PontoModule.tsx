@@ -18,6 +18,7 @@ type PontoEmployeePublic = {
   code?: string
   name: string
   loginEmail?: string
+  unit?: string
   active?: boolean
   createdAt?: string
   updatedAt?: string
@@ -538,6 +539,7 @@ export function PontoModule() {
   const [newEmployeeName, setNewEmployeeName] = useState('')
   const [newEmployeeCode, setNewEmployeeCode] = useState('')
   const [newEmployeeLoginEmail, setNewEmployeeLoginEmail] = useState('')
+  const [newEmployeeUnit, setNewEmployeeUnit] = useState('')
   const [newEmployeePin, setNewEmployeePin] = useState('')
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const selectedEmployee = useMemo(() => adminEmployees.find(e => e.id === selectedEmployeeId) || null, [adminEmployees, selectedEmployeeId])
@@ -569,6 +571,7 @@ export function PontoModule() {
   const [editName, setEditName] = useState('')
   const [editCode, setEditCode] = useState('')
   const [editEmail, setEditEmail] = useState('')
+  const [editUnit, setEditUnit] = useState('')
   const [editActive, setEditActive] = useState(true)
 
   const [recordsOpen, setRecordsOpen] = useState(false)
@@ -1110,6 +1113,7 @@ export function PontoModule() {
     setEditName(selectedEmployee.name || '')
     setEditCode(selectedEmployee.code || '')
     setEditEmail(selectedEmployee.loginEmail || '')
+    setEditUnit(selectedEmployee.unit || '')
     setEditActive(selectedEmployee.active !== false)
   }, [selectedEmployee])
 
@@ -1294,7 +1298,7 @@ export function PontoModule() {
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
         '/api/ponto/admin/employees',
-        { method: 'POST', body: { name, code: newEmployeeCode.trim(), loginEmail } }
+        { method: 'POST', body: { name, code: newEmployeeCode.trim(), loginEmail, unit: newEmployeeUnit.trim() } }
       )
       await apiJson('/api/ponto/admin/employees/' + res.data.id + '/pin', {
         method: 'POST',
@@ -1303,6 +1307,7 @@ export function PontoModule() {
       setNewEmployeeName('')
       setNewEmployeeCode('')
       setNewEmployeeLoginEmail('')
+      setNewEmployeeUnit('')
       setNewEmployeePin('')
       await adminRefreshAll()
       setSelectedEmployeeId(res.data.id)
@@ -1423,6 +1428,7 @@ export function PontoModule() {
           name,
           code: editCode.trim(),
           loginEmail: email || '',
+          unit: editUnit.trim(),
           active: !!editActive
         }
       })
@@ -2092,7 +2098,11 @@ export function PontoModule() {
                     <Label>PIN (min. 4)</Label>
                     <Input value={newEmployeePin} onChange={(e) => setNewEmployeePin(e.target.value)} inputMode="numeric" placeholder="••••" />
                   </div>
-                  <div className="md:col-span-2 flex items-end">
+                  <div className="space-y-2">
+                    <Label>Unidade (opcional)</Label>
+                    <Input value={newEmployeeUnit} onChange={(e) => setNewEmployeeUnit(e.target.value)} placeholder="ex: unidade-01" />
+                  </div>
+                  <div className="flex items-end">
                     <Button
                       onClick={adminCreateEmployee}
                       disabled={
@@ -2164,6 +2174,7 @@ export function PontoModule() {
                       <TableRow>
                         <TableHead>Nome</TableHead>
                         <TableHead>Login</TableHead>
+                        <TableHead>Unidade</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Face</TableHead>
                         <TableHead>PIN</TableHead>
@@ -2175,6 +2186,7 @@ export function PontoModule() {
                         <TableRow key={e.id} className={e.id === selectedEmployeeId ? 'bg-muted/40' : ''}>
                           <TableCell className="font-medium">{e.name}</TableCell>
                           <TableCell className="text-sm">{e.loginEmail || '-'}</TableCell>
+                          <TableCell className="text-sm">{e.unit || '-'}</TableCell>
                           <TableCell>{e.active === false ? <Badge variant="secondary">Inativo</Badge> : <Badge>Ativo</Badge>}</TableCell>
                           <TableCell><Badge variant="outline">{e.faceDescriptorsCount || 0}</Badge></TableCell>
                           <TableCell>{e.pinSet ? <Badge variant="outline">OK</Badge> : <Badge variant="secondary">—</Badge>}</TableCell>
@@ -2183,7 +2195,7 @@ export function PontoModule() {
                       ))}
                       {!adminEmployees.length ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-sm text-muted-foreground">Nenhum funcionário.</TableCell>
+                          <TableCell colSpan={7} className="text-sm text-muted-foreground">Nenhum funcionário.</TableCell>
                         </TableRow>
                       ) : null}
                     </TableBody>
@@ -2263,6 +2275,10 @@ export function PontoModule() {
                       <div className="space-y-2">
                         <Label>Email (vinculo login)</Label>
                         <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="ex: funcionario@empresa.com" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Unidade (opcional)</Label>
+                        <Input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} placeholder="ex: unidade-01" />
                       </div>
                       <label className="flex items-center gap-2 text-sm">
                         <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} />
