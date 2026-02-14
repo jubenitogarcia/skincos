@@ -305,6 +305,149 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // -------------------------------------------------------------
+// Dev-only Auth stub (for local testing without Cloudflare Pages Functions)
+// Frontend expects `/api/auth/*` endpoints (normally served by Pages Functions).
+// When running locally with `NO_AUTH=true`, provide a minimal cookie-based session.
+// -------------------------------------------------------------
+const DEV_AUTH_ENABLED = String(process.env.NO_AUTH || '').toLowerCase() === 'true' && String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
+if (DEV_AUTH_ENABLED) {
+    const DEV_AUTH_COOKIE = 'skincos_dev_session'
+    const DEV_AUTH_SECRET = String(process.env.DEV_SESSION_SECRET || process.env.SESSION_SECRET || 'dev-only-session-secret')
+    const DEV_AUTH_EMAIL = String(process.env.DEV_AUTH_EMAIL || 'dev@localhost').trim() || 'dev@localhost'
+    const DEV_AUTH_ROLE = String(process.env.DEV_AUTH_ROLE || 'admin').trim() || 'admin'
+    const DEV_AUTH_ALLOWED_UNITS = String(process.env.DEV_AUTH_ALLOWED_UNITS || '').trim()
+    const DEV_AUTH_ALLOWED_MODULES = String(process.env.DEV_AUTH_ALLOWED_MODULES || 'ponto').trim()
+    const DEV_AUTH_AUTO = String(process.env.DEV_AUTH_AUTO || 'true').toLowerCase() !== 'false'
+
+    const base64urlEncode = (input) => Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+    const base64urlDecode = (input) => {
+        const raw = String(input || '').replace(/-/g, '+').replace(/_/g, '/')
+        const pad = raw.length % 4 ? '='.repeat(4 - (raw.length % 4)) : ''
+        return Buffer.from(raw + pad, 'base64').toString('utf8')
+    }
+    const sign = (payloadB64) => createHmac('sha256', DEV_AUTH_SECRET).update(payloadB64).digest('hex')
+    const timingSafeEqHex = (a, b) => {
+        try {
+            const aa = Buffer.from(String(a || ''), 'hex')
+            const bb = Buffer.from(String(b || ''), 'hex')
+            if (aa.length !== bb.length) return false
+            return timingSafeEqual(aa, bb)
+        } catch {
+            return false
+        }
+    }
+    const parseCookies = (cookieHeader) => {
+        const out = {}
+        const raw = String(cookieHeader || '')
+        if (!raw) return out
+        raw.split(';').forEach((part) => {
+            const idx = part.indexOf('=')
+            if (idx < 0) return
+            const k = part.slice(0, idx).trim()
+            const v = part.slice(idx + 1).trim()
+            if (!k) return
+            out[k] = v
+        })
+        return out
+    }
+    const buildUser = ({ email, role }) => {
+        const safeEmail = String(email || '').trim() || DEV_AUTH_EMAIL
+        const username = safeEmail.includes('@') ? safeEmail.split('@')[0] : safeEmail
+        const allowedUnits = DEV_AUTH_ALLOWED_UNITS
+            ? DEV_AUTH_ALLOWED_UNITS.split(',').map(s => s.trim()).filter(Boolean)
+            : undefined
+        const allowedModules = DEV_AUTH_ALLOWED_MODULES
+            ? DEV_AUTH_ALLOWED_MODULES.split(',').map(s => s.trim()).filter(Boolean)
+            : undefined
+        return {
+            email: safeEmail,
+            username,
+            displayName: username,
+            role: String(role || DEV_AUTH_ROLE || 'admin'),
+            allowedUnits,
+            allowedModules,
+            createdAt: new Date().toISOString(),
+        }
+    }
+    const encodeSession = (user) => {
+        const payload = JSON.stringify({ v: 1, user })
+        const payloadB64 = base64urlEncode(payload)
+        const sig = sign(payloadB64)
+        return `${payloadB64}.${sig}`
+    }
+    const decodeSession = (value) => {
+        const raw = String(value || '').trim()
+        if (!raw) return null
+        const [payloadB64, sig] = raw.split('.', 2)
+        if (!payloadB64 || !sig) return null
+        const expected = sign(payloadB64)
+        if (!timingSafeEqHex(sig, expected)) return null
+        try {
+            const json = JSON.parse(base64urlDecode(payloadB64))
+            const user = json?.user || null
+            if (!user || !user.email) return null
+            return { user }
+        } catch {
+            return null
+        }
+    }
+    const setDevCookie = (res, sessionValue) => {
+        const cookie = `${DEV_AUTH_COOKIE}=${sessionValue}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`
+        res.setHeader('Set-Cookie', cookie)
+    }
+    const clearDevCookie = (res) => {
+        const cookie = `${DEV_AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+        res.setHeader('Set-Cookie', cookie)
+    }
+
+    const getSessionFromReq = (req) => {
+        const cookies = parseCookies(req.headers?.cookie)
+        const current = cookies[DEV_AUTH_COOKIE]
+        return decodeSession(current)
+    }
+
+    app.get('/api/auth/me', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store')
+        const existing = getSessionFromReq(req)
+        if (existing?.user) return res.json({ ok: true, user: existing.user })
+        if (!DEV_AUTH_AUTO) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' })
+        const user = buildUser({ email: DEV_AUTH_EMAIL, role: DEV_AUTH_ROLE })
+        setDevCookie(res, encodeSession(user))
+        return res.json({ ok: true, user })
+    })
+
+    app.post('/api/auth/login', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store')
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const email = String(body.email || '').trim() || DEV_AUTH_EMAIL
+        const password = String(body.password || '')
+        if (!email || !password) return res.status(400).json({ ok: false, error: 'EMAIL_PASSWORD_REQUIRED' })
+        const user = buildUser({ email, role: DEV_AUTH_ROLE })
+        setDevCookie(res, encodeSession(user))
+        return res.json({ ok: true, user })
+    })
+
+    app.post('/api/auth/register', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store')
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const email = String(body.email || '').trim() || DEV_AUTH_EMAIL
+        const name = String(body.name || '').trim()
+        const password = String(body.password || '')
+        if (!email || !password || !name) return res.status(400).json({ ok: false, error: 'NAME_EMAIL_PASSWORD_REQUIRED' })
+        const user = buildUser({ email, role: DEV_AUTH_ROLE })
+        user.displayName = name
+        setDevCookie(res, encodeSession(user))
+        return res.json({ ok: true, user })
+    })
+
+    app.post('/api/auth/logout', (_req, res) => {
+        res.setHeader('Cache-Control', 'no-store')
+        clearDevCookie(res)
+        return res.json({ ok: true })
+    })
+}
+
+// -------------------------------------------------------------
 // Ponto (registro de ponto com identificação facial)
 // Persistência em arquivo (backend/var/core/ponto_store.v1.json)
 // -------------------------------------------------------------
