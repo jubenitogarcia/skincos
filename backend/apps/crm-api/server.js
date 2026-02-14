@@ -24,7 +24,9 @@ import axios from 'axios'
 
 // Base directory resolution (compatível com ESM)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
+// server.js lives in: <repo>/backend/apps/crm-api/server.js
+// so repo root is 4 levels up from __dirname (<repo>/backend/apps/crm-api).
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..')
 const BACKEND_ROOT = path.join(REPO_ROOT, 'backend')
 function resolveCrmUiDir() {
     const env = String(process.env.CRM_UI_DIR || '').trim()
@@ -370,8 +372,11 @@ if (DEV_AUTH_ENABLED) {
             createdAt: new Date().toISOString(),
         }
     }
-    const encodeSession = (user) => {
-        const payload = JSON.stringify({ v: 1, user })
+    const DEV_AUTH_CSRF_DEFAULT = 'dev-csrf'
+    const newCsrf = () => randomBytes(12).toString('hex')
+
+    const encodeSession = ({ user, csrfToken }) => {
+        const payload = JSON.stringify({ v: 1, user, csrfToken: csrfToken || DEV_AUTH_CSRF_DEFAULT })
         const payloadB64 = base64urlEncode(payload)
         const sig = sign(payloadB64)
         return `${payloadB64}.${sig}`
@@ -386,8 +391,9 @@ if (DEV_AUTH_ENABLED) {
         try {
             const json = JSON.parse(base64urlDecode(payloadB64))
             const user = json?.user || null
+            const csrfToken = typeof json?.csrfToken === 'string' ? json.csrfToken : DEV_AUTH_CSRF_DEFAULT
             if (!user || !user.email) return null
-            return { user }
+            return { user, csrfToken }
         } catch {
             return null
         }
@@ -410,11 +416,12 @@ if (DEV_AUTH_ENABLED) {
     app.get('/api/auth/me', (req, res) => {
         res.setHeader('Cache-Control', 'no-store')
         const existing = getSessionFromReq(req)
-        if (existing?.user) return res.json({ ok: true, user: existing.user })
+        if (existing?.user) return res.json({ ok: true, user: existing.user, csrfToken: existing.csrfToken || DEV_AUTH_CSRF_DEFAULT })
         if (!DEV_AUTH_AUTO) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' })
         const user = buildUser({ email: DEV_AUTH_EMAIL, role: DEV_AUTH_ROLE })
-        setDevCookie(res, encodeSession(user))
-        return res.json({ ok: true, user })
+        const csrfToken = newCsrf()
+        setDevCookie(res, encodeSession({ user, csrfToken }))
+        return res.json({ ok: true, user, csrfToken })
     })
 
     app.post('/api/auth/login', (req, res) => {
@@ -424,8 +431,9 @@ if (DEV_AUTH_ENABLED) {
         const password = String(body.password || '')
         if (!email || !password) return res.status(400).json({ ok: false, error: 'EMAIL_PASSWORD_REQUIRED' })
         const user = buildUser({ email, role: DEV_AUTH_ROLE })
-        setDevCookie(res, encodeSession(user))
-        return res.json({ ok: true, user })
+        const csrfToken = newCsrf()
+        setDevCookie(res, encodeSession({ user, csrfToken }))
+        return res.json({ ok: true, user, csrfToken })
     })
 
     app.post('/api/auth/register', (req, res) => {
@@ -437,8 +445,18 @@ if (DEV_AUTH_ENABLED) {
         if (!email || !password || !name) return res.status(400).json({ ok: false, error: 'NAME_EMAIL_PASSWORD_REQUIRED' })
         const user = buildUser({ email, role: DEV_AUTH_ROLE })
         user.displayName = name
-        setDevCookie(res, encodeSession(user))
-        return res.json({ ok: true, user })
+        const csrfToken = newCsrf()
+        setDevCookie(res, encodeSession({ user, csrfToken }))
+        return res.json({ ok: true, user, csrfToken })
+    })
+
+    app.post('/api/auth/refresh', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store')
+        const existing = getSessionFromReq(req)
+        if (!existing?.user) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' })
+        const csrfToken = newCsrf()
+        setDevCookie(res, encodeSession({ user: existing.user, csrfToken }))
+        return res.json({ ok: true, user: existing.user, csrfToken })
     })
 
     app.post('/api/auth/logout', (_req, res) => {
@@ -541,6 +559,34 @@ app.use('/api/instagram-module', createProxyMiddleware({
 // Cloudflare target (default production). Override for local testing.
 const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || 'https://api.skincos.com.br'
 
+function isLocalSafeMode() {
+    // When running locally (NO_AUTH=true), default to read-only for upstream production APIs.
+    const noAuth = String(process.env.NO_AUTH || '').toLowerCase() === 'true'
+    if (!noAuth) return false
+    return String(process.env.LOCAL_ALLOW_UPSTREAM_MUTATIONS || '').trim() !== '1'
+}
+
+function isProductionUpstream(target) {
+    const raw = String(target || '').trim().toLowerCase()
+    return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
+}
+
+function blockUpstreamMutationsIfNeeded(targetOrigin) {
+    const safe = isLocalSafeMode()
+    const prod = isProductionUpstream(targetOrigin)
+    return (req, res, next) => {
+        if (!safe || !prod) return next()
+        const m = String(req.method || '').toUpperCase()
+        if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return next()
+        return res.status(403).json({
+            ok: false,
+            error: 'LOCAL_READONLY',
+            hint: 'Modo local seguro: mutações upstream desabilitadas. Para permitir, rode com LOCAL_ALLOW_UPSTREAM_MUTATIONS=1.'
+        })
+    }
+}
+
+app.use('/api/insumos', blockUpstreamMutationsIfNeeded(INSUMOS_API_TARGET))
 app.use('/api/insumos', createProxyMiddleware({
     target: INSUMOS_API_TARGET,
     changeOrigin: true,
@@ -548,6 +594,285 @@ app.use('/api/insumos', createProxyMiddleware({
     logLevel: 'silent',
     pathRewrite: { '^/api/insumos': '/insumos' }
 }))
+
+// -------------------------------------------------------------
+// CRM API endpoints (prod: Pages Function /api/crm/*)
+// Local: provide minimal admin stubs so the CRM can be exercised without
+// touching production / requiring Pages emulation.
+// -------------------------------------------------------------
+if (DEV_AUTH_ENABLED) {
+    const LOCAL_CRM_STORE_FILE = process.env.LOCAL_CRM_STORE_FILE || path.join(CORE_STATE_DIR, 'local_crm_store.v1.json')
+
+    const base64urlDecode = (input) => {
+        const raw = String(input || '').replace(/-/g, '+').replace(/_/g, '/')
+        const pad = raw.length % 4 ? '='.repeat(4 - (raw.length % 4)) : ''
+        return Buffer.from(raw + pad, 'base64').toString('utf8')
+    }
+    const parseCookies = (cookieHeader) => {
+        const out = {}
+        const raw = String(cookieHeader || '')
+        if (!raw) return out
+        raw.split(';').forEach((part) => {
+            const idx = part.indexOf('=')
+            if (idx < 0) return
+            const k = part.slice(0, idx).trim()
+            const v = part.slice(idx + 1).trim()
+            if (!k) return
+            out[k] = v
+        })
+        return out
+    }
+    const timingSafeEqHex = (a, b) => {
+        try {
+            const aa = Buffer.from(String(a || ''), 'hex')
+            const bb = Buffer.from(String(b || ''), 'hex')
+            if (aa.length !== bb.length) return false
+            return timingSafeEqual(aa, bb)
+        } catch {
+            return false
+        }
+    }
+
+    const getDevSession = (req) => {
+        try {
+            const cookies = parseCookies(req.headers?.cookie)
+            const raw = String(cookies['skincos_dev_session'] || '').trim()
+            if (!raw) return null
+            const [payloadB64, sig] = raw.split('.', 2)
+            if (!payloadB64 || !sig) return null
+            const secret = String(process.env.DEV_SESSION_SECRET || process.env.SESSION_SECRET || 'dev-only-session-secret')
+            const expected = createHmac('sha256', secret).update(payloadB64).digest('hex')
+            if (!timingSafeEqHex(sig, expected)) return null
+            const json = JSON.parse(base64urlDecode(payloadB64))
+            const user = json?.user || null
+            if (!user || !user.email) return null
+            const csrfToken = typeof json?.csrfToken === 'string' ? json.csrfToken : 'dev-csrf'
+            return { user, csrfToken }
+        } catch {
+            return null
+        }
+    }
+
+    const requireDevAdmin = (req, res) => {
+        const session = getDevSession(req)
+        const role = String(session?.user?.role || '').trim().toUpperCase()
+        const ok = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
+        if (!ok) {
+            res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+            return null
+        }
+        const token = String(req.headers['x-csrf-token'] || '').trim()
+        if (!token || token !== String(session?.csrfToken || '')) {
+            res.status(403).json({ ok: false, success: false, error: 'CSRF_INVALID', code: 'CSRF_INVALID' })
+            return null
+        }
+        return session
+    }
+
+    const loadLocalCrmStore = async () => {
+        try {
+            const raw = await fs.readFile(LOCAL_CRM_STORE_FILE, 'utf8')
+            const json = raw ? JSON.parse(raw) : {}
+            return {
+                users: Array.isArray(json?.users) ? json.users : [],
+                invites: Array.isArray(json?.invites) ? json.invites : [],
+            }
+        } catch {
+            return { users: [], invites: [] }
+        }
+    }
+    const saveLocalCrmStore = async (store) => {
+        try {
+            await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(store, null, 2), 'utf8')
+        } catch {
+            // ignore
+        }
+    }
+
+    app.get('/api/crm/admin/users', async (_req, res) => {
+        const store = await loadLocalCrmStore()
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data: store.users })
+    })
+    app.post('/api/crm/admin/users', async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        const store = await loadLocalCrmStore()
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const username = String(body.username || '').trim()
+        if (!username) return res.status(400).json({ success: false, error: 'USERNAME_REQUIRED', code: 'USERNAME_REQUIRED' })
+        const exists = store.users.find((u) => String(u?.username || '').toLowerCase() === username.toLowerCase())
+        if (exists) return res.status(409).json({ success: false, error: 'USERNAME_TAKEN', code: 'USERNAME_TAKEN' })
+        const user = {
+            username,
+            email: String(body.email || '').trim() || null,
+            displayName: String(body.displayName || body.name || username).trim(),
+            role: String(body.role || 'OPERADOR').trim().toUpperCase(),
+            allowedUnits: Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : [],
+            allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : [],
+            ativo: body.ativo !== false,
+            password: typeof body.password === 'string' ? body.password : null,
+            note: typeof body.note === 'string' ? body.note : null,
+            createdBy: session?.user?.username || session?.user?.email || 'dev',
+            createdAt: new Date().toISOString(),
+        }
+        store.users.push(user)
+        await saveLocalCrmStore(store)
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data: user })
+    })
+    app.put('/api/crm/admin/users/:username', async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        const store = await loadLocalCrmStore()
+        const username = String(req.params.username || '').trim()
+        const idx = store.users.findIndex((u) => String(u?.username || '').toLowerCase() === username.toLowerCase())
+        if (idx < 0) return res.status(404).json({ success: false, error: 'NOT_FOUND', code: 'NOT_FOUND' })
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const cur = store.users[idx]
+        const next = {
+            ...cur,
+            email: body.email !== undefined ? (String(body.email || '').trim() || null) : cur.email,
+            displayName: body.displayName !== undefined ? String(body.displayName || '').trim() : cur.displayName,
+            role: body.role !== undefined ? String(body.role || '').trim().toUpperCase() : cur.role,
+            allowedUnits: body.allowedUnits !== undefined ? (Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : []) : cur.allowedUnits,
+            allowedModules: body.allowedModules !== undefined ? (Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : []) : cur.allowedModules,
+            ativo: body.ativo !== undefined ? Boolean(body.ativo) : cur.ativo,
+            note: body.note !== undefined ? (typeof body.note === 'string' ? body.note : null) : cur.note,
+            updatedBy: session?.user?.username || session?.user?.email || 'dev',
+            updatedAt: new Date().toISOString(),
+        }
+        store.users[idx] = next
+        await saveLocalCrmStore(store)
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data: next })
+    })
+    app.post('/api/crm/admin/users/:username/reset-password', async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        const store = await loadLocalCrmStore()
+        const username = String(req.params.username || '').trim()
+        const idx = store.users.findIndex((u) => String(u?.username || '').toLowerCase() === username.toLowerCase())
+        if (idx < 0) return res.status(404).json({ success: false, error: 'NOT_FOUND', code: 'NOT_FOUND' })
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
+        if (!newPassword) return res.status(400).json({ success: false, error: 'PASSWORD_REQUIRED', code: 'PASSWORD_REQUIRED' })
+        store.users[idx] = { ...store.users[idx], password: newPassword, updatedBy: session?.user?.username || 'dev', updatedAt: new Date().toISOString() }
+        await saveLocalCrmStore(store)
+        res.status(200).set('cache-control', 'no-store').json({ success: true })
+    })
+
+    app.get('/api/crm/admin/invites', async (_req, res) => {
+        const store = await loadLocalCrmStore()
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data: store.invites })
+    })
+    app.post('/api/crm/admin/invites', async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        const store = await loadLocalCrmStore()
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const token = randomBytes(18).toString('hex')
+        const tokenHint = token.slice(0, 4) + '…' + token.slice(-4)
+        const maxUses = Math.max(1, Math.min(50, Number.parseInt(String(body.maxUses || '1'), 10) || 1))
+        const expiresInDays = Math.max(1, Math.min(365, Number.parseInt(String(body.expiresInDays || body.expiresIn || '30'), 10) || 30))
+        const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString()
+        const invite = {
+            id: randomBytes(8).toString('hex'),
+            tokenHint,
+            role: String(body.role || 'OPERADOR').trim().toUpperCase(),
+            allowedUnits: Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : [],
+            allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : [],
+            maxUses,
+            usesCount: 0,
+            expiresAt,
+            revoked: false,
+            note: typeof body.note === 'string' ? body.note : null,
+            createdBy: session?.user?.username || session?.user?.email || 'dev',
+            createdAt: new Date().toISOString(),
+        }
+        store.invites.unshift(invite)
+        await saveLocalCrmStore(store)
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data: invite, token })
+    })
+
+    app.all(/^\/api\/crm\/.+/, (_req, res) => {
+        res.status(503).set('cache-control', 'no-store').json({
+            ok: false,
+            success: false,
+            error: 'LOCAL_CRM_STUB',
+            hint: 'Em modo local (NO_AUTH=true), apenas /api/crm/admin/* está disponível.'
+        })
+    })
+} else {
+    // In production this is a Pages Function. Locally, allow proxying for convenience.
+    app.use('/api/crm', blockUpstreamMutationsIfNeeded(INSUMOS_API_TARGET))
+    app.use('/api/crm', createProxyMiddleware({
+        target: INSUMOS_API_TARGET,
+        changeOrigin: true,
+        ws: false,
+        logLevel: 'silent',
+        pathRewrite: { '^/api/crm': '' }
+    }))
+}
+
+// -------------------------------------------------------------
+// Local stubs for Pages-only APIs (social/instagram/share)
+// Keeps the SPA stable in local mode without requiring wrangler pages dev.
+// -------------------------------------------------------------
+const LOCAL_STUB_PAGES_APIS =
+    (String(process.env.NODE_ENV || '').toLowerCase() === 'development') ||
+    (String(process.env.NO_AUTH || '').toLowerCase() === 'true')
+
+if (LOCAL_STUB_PAGES_APIS) {
+    // Instagram integration (Pages Functions in prod).
+    app.get('/api/instagram/status', (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({ ok: true, connected: false, localStub: true })
+    })
+    app.get('/api/instagram/metrics', (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({ ok: true, connected: false, metrics: null, localStub: true })
+    })
+    app.get('/api/instagram/media', (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({ ok: true, data: [], localStub: true })
+    })
+    app.get('/api/instagram/stories', (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({ ok: true, data: [], localStub: true })
+    })
+    app.get('/api/instagram/comments', (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({ ok: true, data: [], localStub: true })
+    })
+    app.all(/^\/api\/instagram\/.+/, (_req, res) => {
+        res.status(503).set('cache-control', 'no-store').json({
+            ok: false,
+            error: 'LOCAL_PAGES_REQUIRED',
+            hint: 'Este endpoint é Pages Function em produção. Para testar localmente, use o modo Pages (wrangler pages dev).'
+        })
+    })
+
+    // Social Studio (Pages Functions in prod).
+    app.get('/api/social/setup/status', (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({
+            ok: true,
+            localStub: true,
+            r2: { bucketConfigured: false, effectiveKeyPrefix: null },
+            encryption: { required: false, configured: false },
+            admin: { isAdmin: true, role: 'LOCAL' },
+            socialDefaults: { defaultUnitsFromEnv: [] }
+        })
+    })
+    app.all(/^\/api\/social\/.+/, (_req, res) => {
+        res.status(503).set('cache-control', 'no-store').json({
+            ok: false,
+            error: 'LOCAL_PAGES_REQUIRED',
+            hint: 'Social Studio roda via Pages Functions (R2/Queues). Para testar localmente, use o modo Pages (wrangler pages dev).'
+        })
+    })
+
+    // Share upload (Pages Function in prod).
+    app.post('/api/share/upload', (_req, res) => {
+        res.status(503).set('cache-control', 'no-store').json({
+            success: false,
+            error: 'LOCAL_PAGES_REQUIRED',
+            hint: 'Upload usa R2 em Pages Functions. Para testar localmente, use o modo Pages (wrangler pages dev).'
+        })
+    })
+}
 
 // JSON parse errors (express.json)
 app.use((err, req, res, next) => {
@@ -1785,6 +2110,22 @@ function isSensitiveUnitMonitorRoute(req) {
     if (method === 'POST' && p.startsWith('/api/unit-monitor/rtsp/recorders/')) return true
     return false
 }
+
+// Diagnostic helper used by the CRM UI.
+// In production, the Pages proxy intercepts this endpoint and returns proxy-level config.
+// In local/dev (direct-to-backend), expose backend-level readiness flags.
+app.get('/api/unit-monitor/_proxy-status', (_req, res) => {
+    res.status(200).set('cache-control', 'no-store').json({
+        ok: true,
+        localDirect: true,
+        gatewayMode: !!IS_GATEWAY_MODE,
+        proxyTokenConfigured: !!UNIT_MONITOR_PROXY_TOKEN,
+        actorKeyConfigured: !!UNIT_MONITOR_ACTOR_HMAC_KEY,
+        allowedEmailsConfigured: UNIT_MONITOR_ALLOWED_EMAILS.size > 0,
+        allowedDomainsConfigured: UNIT_MONITOR_ALLOWED_DOMAINS.size > 0,
+        rateLimitPerMin: UNIT_MONITOR_RATE_LIMIT_PER_MIN || 0,
+    })
+})
 
 // Optional hardening for public "gateway" deployments behind a simple shared secret.
 // In gateway mode, the token is REQUIRED.

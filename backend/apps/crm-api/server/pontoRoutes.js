@@ -203,6 +203,22 @@ export function registerPontoRoutes(app, { coreStateDir }) {
 
   const faceCache = new Map() // employeeId -> number[][]
 
+  // Diagnostic helper used by the CRM UI.
+  // In production, the Pages proxy intercepts this endpoint and returns proxy-level config.
+  // In local/dev (direct-to-backend), expose backend-level readiness flags.
+  app.get('/api/ponto/_proxy-status', (_req, res) => {
+    res.status(200).set('cache-control', 'no-store').json({
+      ok: true,
+      localDirect: true,
+      isProd,
+      adminTokenConfigured: !!adminToken,
+      proxyTokenConfigured: !!proxyToken,
+      actorKeyConfigured: !!actorHmacKey,
+      cryptoTemplatesConfigured: !!templatesKey,
+      auditHmacConfigured: !!auditHmacKey
+    })
+  })
+
   let state = {
     version: 2,
     employees: [],
@@ -386,12 +402,57 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     return { ok: true, actor: { ...actor, email, allowedUnits } }
   }
 
+  function tryDevSessionUser(req) {
+    const isDev =
+      String(process.env.NODE_ENV || '').toLowerCase() === 'development' ||
+      String(process.env.NO_AUTH || '').toLowerCase() === 'true'
+    if (!isDev) return null
+
+    const cookieHeader = String(req.headers?.cookie || '')
+    if (!cookieHeader) return null
+    const parts = cookieHeader.split(';').map((p) => p.trim()).filter(Boolean)
+    let raw = ''
+    for (const p of parts) {
+      if (!p.startsWith('skincos_dev_session=')) continue
+      raw = p.slice('skincos_dev_session='.length)
+      break
+    }
+    if (!raw) return null
+
+    const [payloadB64, sig] = String(raw).split('.', 2)
+    if (!payloadB64 || !sig) return null
+
+    const secret = String(process.env.DEV_SESSION_SECRET || process.env.SESSION_SECRET || 'dev-only-session-secret')
+    const expected = crypto.createHmac('sha256', secret).update(payloadB64).digest('hex')
+    if (!safeEqual(sig, expected)) return null
+
+    let json = null
+    try { json = JSON.parse(b64UrlToUtf8(payloadB64)) } catch { json = null }
+    const user = json?.user || null
+    if (!user || typeof user !== 'object') return null
+    const email = normalizeEmail(user.email)
+    if (!email) return null
+    const allowedUnits = normalizeUnits(user.allowedUnits)
+    return { email, allowedUnits }
+  }
+
   function requireEmployee(req, res) {
     if (proxyToken) {
       const token = String(req.headers['x-ponto-proxy-token'] || '').trim()
       if (!token || token !== proxyToken) {
         res.status(401).json({ ok: false, error: 'UNAUTHORIZED', code: 'PROXY_TOKEN_INVALID' })
         return null
+      }
+    }
+
+    // Local/dev convenience: when NO_AUTH is enabled, allow deriving the actor from
+    // the local dev session cookie (so the UI works without the Pages proxy headers).
+    const actorB64 = String(req.headers['x-skincos-actor'] || '').trim()
+    const tsRaw = String(req.headers['x-skincos-actor-ts'] || '').trim()
+    if (!actorB64 && !tsRaw) {
+      const devUser = tryDevSessionUser(req)
+      if (devUser?.email) {
+        return actorFromReq(req, { kind: 'employee', id: devUser.email, label: devUser.email, allowedUnits: devUser.allowedUnits })
       }
     }
 
