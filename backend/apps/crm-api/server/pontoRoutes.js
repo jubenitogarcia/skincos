@@ -646,6 +646,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     const loginEmail = normalizeEmail(req.body?.loginEmail)
     const unit = normalizeUnit(req.body?.unit)
     if (!name) return res.status(400).json({ ok: false, error: 'NAME_REQUIRED' })
+    if (!unit) return res.status(400).json({ ok: false, error: 'UNIT_REQUIRED' })
     if (loginEmail) {
       const [takenBy] = findEmployeesByLoginEmail(loginEmail)
       if (takenBy) {
@@ -728,6 +729,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
 
     if (unitRaw !== undefined) {
       const nextUnit = normalizeUnit(unitRaw)
+      if (!nextUnit) return res.status(400).json({ ok: false, error: 'UNIT_REQUIRED' })
       employee.unit = nextUnit || ''
     }
 
