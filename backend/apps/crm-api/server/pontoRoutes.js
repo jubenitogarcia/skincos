@@ -369,7 +369,9 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     try { actor = JSON.parse(actorJson) } catch { actor = null }
     if (!actor || typeof actor !== 'object') return { ok: false, code: 'ACTOR_INVALID' }
 
-    const isDev = String(process.env.NODE_ENV || '').toLowerCase() === 'development'
+    const isDev =
+      String(process.env.NODE_ENV || '').toLowerCase() === 'development' ||
+      String(process.env.NO_AUTH || '').toLowerCase() === 'true'
     const sigRequired = !isDev || !!actorHmacKey
     if (sigRequired) {
       if (!actorHmacKey) return { ok: false, code: 'ACTOR_KEY_MISSING' }
