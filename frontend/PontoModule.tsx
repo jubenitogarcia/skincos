@@ -470,6 +470,7 @@ async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, w
 
 export function PontoModule() {
   const [tab, setTab] = useState<'employee' | 'device' | 'admin'>('employee')
+  const adminInitialTabAppliedRef = useRef(false)
 
   const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
   const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
@@ -648,6 +649,13 @@ export function PontoModule() {
   useEffect(() => {
     if (!showAdminTab && tab === 'admin') setTab('employee')
   }, [showAdminTab, tab])
+
+  useEffect(() => {
+    if (adminInitialTabAppliedRef.current) return
+    if (crmMeLoading) return
+    adminInitialTabAppliedRef.current = true
+    if (canAdmin) setTab('admin')
+  }, [canAdmin, crmMeLoading])
 
   useEffect(() => {
     if (!enrollOpen) return
@@ -1697,8 +1705,12 @@ export function PontoModule() {
                 </div>
               ) : me && 'linked' in me && !me.linked ? (
                 <div className="rounded-md border p-3 text-sm">
-                  <div className="font-medium">Usuário não vinculado</div>
-                  <div className="text-muted-foreground">{me.hint || 'Peça ao admin para vincular seu email a um funcionário.'}</div>
+                  <div className="font-medium">{canAdmin ? 'Conta admin sem vínculo de funcionário' : 'Usuário não vinculado'}</div>
+                  <div className="text-muted-foreground">
+                    {canAdmin
+                      ? 'Sua conta tem acesso administrativo, mas não está vinculada como funcionário. Isso é normal. Para testar o fluxo de funcionário, vincule seu email a um funcionário na aba Admin.'
+                      : (me.hint || 'Peça ao admin para vincular seu email a um funcionário.')}
+                  </div>
                 </div>
               ) : meError ? (
                 <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
