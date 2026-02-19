@@ -92,6 +92,8 @@ export async function onRequest(context: any): Promise<Response> {
   const env = context.env || {}
   const targetOrigin = String((env?.PONTO_API_TARGET as string | undefined) || '').trim()
   const targetFrom = targetOrigin ? 'PONTO_API_TARGET' : 'NONE'
+  const exposeTarget = String((env?.PONTO_PROXY_EXPOSE_TARGET as string | undefined) || '').trim().toLowerCase() === 'true'
+    || String((env?.NODE_ENV as string | undefined) || '').trim().toLowerCase() !== 'production'
 
   if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
     const proxyToken = (env?.PONTO_PROXY_TOKEN as string | undefined) || ''
@@ -103,7 +105,7 @@ export async function onRequest(context: any): Promise<Response> {
         ok: true,
         targetConfigured: !!targetOrigin,
         targetFrom,
-        targetOrigin: targetOrigin || undefined,
+        ...(exposeTarget ? { targetOrigin: targetOrigin || undefined } : {}),
         proxyTokenConfigured: !!proxyToken,
         actorKeyConfigured: !!String(actorKey || '').trim(),
         adminTokenConfigured: !!String(adminToken || '').trim(),

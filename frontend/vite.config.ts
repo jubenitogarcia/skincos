@@ -27,6 +27,11 @@ import { resolve } from 'path'
 const projectRoot = process.env.PROJECT_ROOT || import.meta.dirname
 
 // https://vite.dev/config/
+const apiProxyTarget =
+  process.env.VITE_API_PROXY_TARGET ||
+  process.env.API_PROXY_TARGET ||
+  'http://localhost:8099'
+
 export default defineConfig({
   plugins: [
     tailwindcss(),
@@ -40,10 +45,21 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           if (!req.url) return next()
-          if (req.url.startsWith('/health') || req.url.startsWith('/api/health') || req.url.startsWith('/v1/health')) {
+          if (
+            req.url.startsWith('/health') ||
+            req.url.startsWith('/api/health') ||
+            req.url.startsWith('/v1/health') ||
+            req.url.startsWith('/api/insumos/health')
+          ) {
             res.statusCode = 200
             res.setHeader('content-type', 'application/json')
             res.end('{"ok":true}')
+            return
+          }
+          if (req.url.startsWith('/api/instagram/status')) {
+            res.statusCode = 200
+            res.setHeader('content-type', 'application/json')
+            res.end('{"ok":true,"connected":false}')
             return
           }
           next()
@@ -52,10 +68,21 @@ export default defineConfig({
       configurePreviewServer(server) {
         server.middlewares.use((req, res, next) => {
           if (!req.url) return next()
-          if (req.url.startsWith('/health') || req.url.startsWith('/api/health') || req.url.startsWith('/v1/health')) {
+          if (
+            req.url.startsWith('/health') ||
+            req.url.startsWith('/api/health') ||
+            req.url.startsWith('/v1/health') ||
+            req.url.startsWith('/api/insumos/health')
+          ) {
             res.statusCode = 200
             res.setHeader('content-type', 'application/json')
             res.end('{"ok":true}')
+            return
+          }
+          if (req.url.startsWith('/api/instagram/status')) {
+            res.statusCode = 200
+            res.setHeader('content-type', 'application/json')
+            res.end('{"ok":true,"connected":false}')
             return
           }
           next()
@@ -103,7 +130,7 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:8099',
+        target: apiProxyTarget,
         changeOrigin: true,
         secure: false,
         ws: true,

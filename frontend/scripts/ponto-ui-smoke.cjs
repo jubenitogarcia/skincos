@@ -5,8 +5,7 @@
  * Validates key UI invariants of the Ponto module:
  * - Build badge is present
  * - Diagnostics dialog loads (/api/ponto/_proxy-status + /api/ponto/health)
- * - Kiosk PIN fallback is hidden by default (only appears when triggered)
- * - Admin tab (when visible) does NOT ask for manual admin token
+ * - Admin actions appear in the header for admin users
  *
  * Credentials:
  * This script intentionally does NOT handle credentials. If not authenticated:
@@ -47,6 +46,8 @@ const BUILD_BADGE_WAIT_MS = Math.max(
 const MUTATE_ADMIN = process.env.MUTATE_ADMIN === '1' || process.env.MUTATE_ADMIN === 'true'
 const MUTATE_EMPLOYEE = process.env.MUTATE_EMPLOYEE === '1' || process.env.MUTATE_EMPLOYEE === 'true'
 const MUTATE_PUNCH = process.env.MUTATE_PUNCH === '1' || process.env.MUTATE_PUNCH === 'true'
+const SMOKE_UNIT = String(process.env.SMOKE_UNIT || '').trim()
+const CHECK_PIN_LOCKOUT = process.env.CHECK_PIN_LOCKOUT === '1' || process.env.CHECK_PIN_LOCKOUT === 'true'
 
 const { chromium } = require('playwright')
 
@@ -274,14 +275,6 @@ async function main() {
     }
     await maybeScreenshot('ponto-open')
 
-    const diagButton = page.locator('button:has-text("Diagnóstico")').first()
-    await diagButton.click({ timeout: 30_000 })
-    await page.waitForTimeout(1500)
-    await maybeScreenshot('diagnostics')
-
-    await page.locator('text=GET /api/ponto/_proxy-status').first().waitFor({ timeout: 30_000 })
-    await page.locator('text=GET /api/ponto/health').first().waitFor({ timeout: 30_000 })
-
     const diag = await page.evaluate(async () => {
       const out = { proxy: null, health: null, proxyStatus: 0, healthStatus: 0, proxyText: '', healthText: '' }
       try {
@@ -311,10 +304,14 @@ async function main() {
       if (!diag.proxy || diag.proxy.ok !== true) {
         throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
       }
-      if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
-      if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
-      if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
-      if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
+      if (diag.proxy.localDirect) {
+        // Local direct backend mode: no proxy-layer config to validate.
+      } else {
+        if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
+        if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
+        if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
+        if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
+      }
     } else {
       console.log('[ponto-ui-smoke] local mode: /api/ponto/_proxy-status not available (skipping proxy asserts).')
     }
@@ -329,79 +326,66 @@ async function main() {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(500)
 
-    await page.locator('button:has-text("Kiosk")').first().click({ timeout: 30_000 })
-    await page.waitForTimeout(1500)
-    await maybeScreenshot('kiosk')
-    {
-      // Avoid false positives: the module description contains "fallback por PIN" text even when the fallback card is closed.
-      // The actual fallback UI uses CardTitle with data-slot="card-title".
-      const visible = await page.locator('[data-slot="card-title"]', { hasText: 'Fallback por PIN' }).first().isVisible().catch(() => false)
-      if (visible) throw new Error('Kiosk PIN fallback is visible by default (expected hidden).')
-    }
-
-    async function waitForAdminTab(timeoutMs) {
-      const start = Date.now()
-      const adminTab = page.locator('button:has-text("Admin")').first()
-      while (Date.now() - start < timeoutMs) {
-        const visible = await adminTab.isVisible().catch(() => false)
-        if (visible) return adminTab
-        await page.waitForTimeout(250)
+    const smokeContext = await page.evaluate(async ({ explicitUnit }) => {
+      const out = { isAdmin: false, actorEmail: '', unit: '', allowedUnits: [] }
+      if (explicitUnit) out.unit = explicitUnit
+      try {
+        const res = await fetch('/api/auth/me', { credentials: 'include' })
+        const text = await res.text()
+        let json = null
+        try { json = text ? JSON.parse(text) : null } catch {}
+        const role = String(json?.user?.role || '').toUpperCase()
+        out.isAdmin = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
+        out.actorEmail = json?.user?.email ? String(json.user.email) : ''
+        const allowed = Array.isArray(json?.user?.allowedUnits)
+          ? json.user.allowedUnits.map((u) => String(u || '').trim()).filter(Boolean)
+          : []
+        out.allowedUnits = allowed
+        if (allowed.length) out.unit = allowed[0]
+      } catch {}
+      if (!out.unit) {
+        try {
+          const res = await fetch('/api/insumos/health', { credentials: 'include' })
+          const text = await res.text()
+          let json = null
+          try { json = text ? JSON.parse(text) : null } catch {}
+          const unidades = Array.isArray(json?.unidades) ? json.unidades : []
+          const unit = String(unidades[0] || '').trim()
+          if (unit) out.unit = unit
+        } catch {}
       }
-      return null
-    }
+      return out
+    }, { explicitUnit: SMOKE_UNIT })
 
     const mutateRequested = MUTATE_ADMIN || MUTATE_EMPLOYEE || MUTATE_PUNCH
-    const adminTab = mutateRequested ? await waitForAdminTab(30_000) : page.locator('button:has-text("Admin")').first()
-    const hasAdminTab = adminTab ? await adminTab.isVisible().catch(() => false) : false
-
-    if (mutateRequested && !hasAdminTab) {
-      throw new Error('Mutation requested, but Admin tab is not visible. Ensure the smoke account is an admin and that /api/auth/me loads in time.')
+    if (mutateRequested && !smokeContext.isAdmin) {
+      throw new Error('Mutation requested, but the session is not admin. Ensure the smoke account is admin and /api/auth/me is available.')
     }
 
-    if (hasAdminTab) {
-      await adminTab.click({ timeout: 30_000 })
-      await page.waitForTimeout(1500)
+    if (smokeContext.isAdmin) {
       await maybeScreenshot('admin')
-      // Avoid false positives: other tabs contain "token" strings (device token), and tab panels can remain in the DOM.
-      // We only fail if there's an *actual* admin-token prompt (text or an input hinting admin token).
-      const adminTokenTextVisible = await page
-        .locator('text=/admin\\s*token|token\\s*(do|de)?\\s*admin/i')
-        .first()
-        .isVisible()
-        .catch(() => false)
-      const adminTokenInputVisible = await page
-        .locator('input[placeholder*="admin" i], input[aria-label*="admin" i]')
-        .first()
-        .isVisible()
-        .catch(() => false)
-      if (adminTokenTextVisible || adminTokenInputVisible) {
-        throw new Error('Admin tab still prompts for admin token (expected role-based).')
-      }
-
-      const enrollButton = page.locator('button:has-text("Cadastrar Biometria")').first()
-      const enrollEnabled = await enrollButton.isEnabled().catch(() => false)
-      if (enrollEnabled) {
-        await enrollButton.click({ timeout: 15_000 })
-        await page.locator('text=Biometria facial').first().waitFor({ timeout: 10_000 })
-        await maybeScreenshot('biometria-modal')
-        await page.locator('button:has-text("Fechar")').first().click({ timeout: 10_000 })
-        await page.waitForTimeout(600)
-        const stillOpen = await page.locator('text=Biometria facial').first().isVisible().catch(() => false)
-        if (stillOpen) throw new Error('Biometria modal did not close properly.')
-      } else {
-        console.log('[ponto-ui-smoke] Biometria modal skipped (no employee selected).')
+      const adminButtons = ['Cadastrar', 'Editar', 'Exportar', 'Gerenciar Dispositivo']
+      for (const label of adminButtons) {
+        const btn = page.locator(`button:has-text("${label}")`).first()
+        await btn.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {
+          throw new Error(`Admin action missing from header: ${label}`)
+        })
       }
 
       if (MUTATE_ADMIN) {
-        const created = await page.evaluate(async () => {
+        const created = await page.evaluate(async ({ unit }) => {
           const stamp = Date.now()
           const name = `Smoke Test ${stamp}`
           const code = `smoke-${stamp}`
+          const loginEmail = `smoke+${stamp}@example.com`
+          if (!unit) {
+            throw new Error('unit missing for admin create (configure allowedUnits or insumos/health)')
+          }
           const createRes = await fetch('/api/ponto/admin/employees', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ name, code }),
+            body: JSON.stringify({ name, code, loginEmail, unit }),
           })
           const createText = await createRes.text()
           let createJson = null
@@ -433,13 +417,13 @@ async function main() {
           }
 
           return { id, name, code }
-        })
+        }, { unit: smokeContext.unit })
         console.log(`[ponto-ui-smoke] Admin create/list/delete OK (employeeId=${created.id})`)
       }
 
       if (MUTATE_EMPLOYEE) {
         if (!MUTATE_ADMIN) throw new Error('MUTATE_EMPLOYEE requires MUTATE_ADMIN (admin session + routes).')
-        const out = await page.evaluate(async ({ doPunch }) => {
+        const out = await page.evaluate(async ({ doPunch, unitFallback, checkLockout }) => {
           const me0Res = await fetch('/api/ponto/me', { credentials: 'include' })
           const me0Text = await me0Res.text()
           let me0 = null
@@ -454,11 +438,15 @@ async function main() {
           const code = `emp-${stamp}`
           const pin = '1234'
 
+          const unitForCreate = unitFallback || ''
+          if (!unitForCreate) {
+            throw new Error('unit missing for admin create (configure allowedUnits or insumos/health)')
+          }
           const createRes = await fetch('/api/ponto/admin/employees', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ name, code, loginEmail: actorEmail }),
+            body: JSON.stringify({ name, code, loginEmail: actorEmail, unit: unitForCreate }),
           })
           const createText = await createRes.text()
           let createJson = null
@@ -554,6 +542,29 @@ async function main() {
               throw new Error(`cooldown check failed: HTTP ${cooldownRes.status} body=${cooldownText.slice(0, 240)}`)
             }
 
+            if (checkLockout) {
+              const wrongPin = '0000'
+              let locked = false
+              for (let i = 0; i < 6; i++) {
+                const res = await fetch('/api/ponto/me/punch', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  credentials: 'include',
+                  body: JSON.stringify({ pin: wrongPin, type: 'AUTO', unit, clientTime: new Date().toISOString() }),
+                })
+                const text = await res.text()
+                let json = null
+                try { json = text ? JSON.parse(text) : null } catch {}
+                if (res.status === 429 && json?.error === 'PIN_LOCKED') {
+                  locked = true
+                  break
+                }
+              }
+              if (!locked) {
+                throw new Error('PIN lockout not triggered after repeated failures')
+              }
+            }
+
             // Verify audit chain is still consistent after a punch write.
             const auditRes = await fetch('/api/ponto/admin/audit/verify', { credentials: 'include' })
             const auditText = await auditRes.text()
@@ -577,7 +588,7 @@ async function main() {
           }
 
           return { actorEmail, employeeId, punch }
-        }, { doPunch: MUTATE_PUNCH })
+        }, { doPunch: MUTATE_PUNCH, unitFallback: smokeContext.unit, checkLockout: CHECK_PIN_LOCKOUT })
         // Do not print actorEmail (can leak PII in CI logs).
         console.log(`[ponto-ui-smoke] Employee link + PIN OK (employeeId=${out.employeeId})${out.punch ? ' + punch' : ''}`)
       }

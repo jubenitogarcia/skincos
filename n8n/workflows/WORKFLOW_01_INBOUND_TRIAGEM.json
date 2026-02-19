@@ -1,0 +1,1158 @@
+{
+  "name": "SKINCOS | 01 Inbound Triagem (Evolution -> Postgres)",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "01_Webhook_Inbound",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wa/inbound/evolution",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "2",
+      "name": "02_Parse_Evolution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst root = $json && typeof $json === 'object' ? $json : {};\nconst top = root.body && typeof root.body === 'object' ? root.body : root;\nconst data = top.data && typeof top.data === 'object' ? top.data : top;\nconst key = (data.key && typeof data.key === 'object') ? data.key : ((top.key && typeof top.key === 'object') ? top.key : {});\nconst msg = (data.message && typeof data.message === 'object') ? data.message : ((top.message && typeof top.message === 'object') ? top.message : {});\n\nconst messageText =\n  msg.conversation ||\n  (msg.extendedTextMessage && msg.extendedTextMessage.text) ||\n  '';\nconst messageType = data.messageType || top.messageType || null;\n\nconst instance = top.instance || root.instance || '';\n\nlet waJid = key.remoteJid || top.sender || root.sender || '';\nlet phoneRaw = '';\nif (typeof waJid === 'string' && waJid) {\n  phoneRaw = waJid.split('@')[0].replace(/[^0-9]/g, '');\n}\nif (!phoneRaw && top.number) {\n  phoneRaw = String(top.number || '').replace(/[^0-9]/g, '');\n}\n\nlet phoneE164 = '';\nif (phoneRaw) {\n  if (phoneRaw.startsWith('55')) phoneE164 = `+${phoneRaw}`;\n  else if (phoneRaw.length >= 10) phoneE164 = `+55${phoneRaw}`;\n  else phoneE164 = `+${phoneRaw}`;\n}\n\nconst unitSlugRaw = String(top.unitSlug || instance || process.env.N8N_DEFAULT_UNIT_SLUG || 'default').trim().toLowerCase();\nconst unitSlug = unitSlugRaw.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'default';\nlet unitName = unitSlug;\ntry {\n  const map = process.env.N8N_UNIT_NAME_MAP ? JSON.parse(process.env.N8N_UNIT_NAME_MAP) : {};\n  unitName = map[unitSlug] || process.env.N8N_DEFAULT_UNIT_NAME || unitSlug;\n} catch (e) {\n  unitName = process.env.N8N_DEFAULT_UNIT_NAME || unitSlug;\n}\n\nconst rawText = messageText || '';\nconst normalized = rawText.toLowerCase().trim();\nconst isOptOut = /(parar|sair|stop|cancelar mensagens)/i.test(normalized);\nconst wantsHuman = /(atendente|humano)/i.test(normalized);\nconst isPrice = /(preço|preco|valor|custo|quanto)/i.test(normalized);\nconst isFear = /(medo|receio|insegur)/i.test(normalized);\nconst isAudioLong = messageType && messageType !== 'conversation' && rawText.length === 0;\nconst selection = ['1', '2', '3'].includes(normalized) ? normalized : null;\nconst confirmYes = /^(sim|s)$/i.test(normalized);\nconst confirmNo = /^(nao|não|n)$/i.test(normalized);\n\nconst pushName = data.pushName || top.pushName || null;\n\nlet messageId = key.id || data.messageId || top.messageId || root.messageId || null;\nif (!messageId) {\n  const ts = data.messageTimestamp || top.messageTimestamp || top.date_time || new Date().toISOString();\n  const source = JSON.stringify({ phone: phoneRaw, ts, text: rawText });\n  messageId = `derived:${crypto.createHash('sha256').update(source).digest('hex').slice(0, 32)}`;\n}\n\nconst shouldProcess = Boolean(rawText) && key.fromMe !== true;\n\nfunction esc(v) {\n  return String(v || '').replace(/'/g, \"''\");\n}\n\nreturn [{\n  json: {\n    raw_payload: root,\n    raw_payload_sql: esc(JSON.stringify(root || {})),\n    message_text: rawText,\n    message_text_sql: esc(rawText || ''),\n    message_type: messageType,\n    message_id: messageId,\n    from_me: !!key.fromMe,\n    push_name: pushName,\n    push_name_sql: esc(pushName || ''),\n    phone_raw: phoneRaw || null,\n    phone_e164: phoneE164 || null,\n    unit_slug: unitSlug || null,\n    unit_name: unitName || null,\n    is_opt_out: isOptOut,\n    wants_human: wantsHuman,\n    is_price: isPrice,\n    is_fear: isFear,\n    is_audio_long: isAudioLong,\n    selection,\n    confirm_yes: confirmYes,\n    confirm_no: confirmNo,\n    should_process: shouldProcess\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "3",
+      "name": "03_DB_Init",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nwith input as (\n    select\n        nullif('{{$node[\"02_Parse_Evolution\"].json.message_id}}', '')::text as message_id,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.message_text_sql}}', '')::text as message_text,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.message_type}}', '')::text as message_type,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.phone_e164}}', '')::text as phone_e164,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.phone_raw}}', '')::text as phone_raw,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.push_name_sql}}', '')::text as push_name,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.unit_slug}}', '')::text as unit_slug,\n        nullif('{{$node[\"02_Parse_Evolution\"].json.raw_payload_sql}}', '')::text as raw_payload,\n        now() as ts\n),\nexisting as (\n    select id from wa_n8n.processed_message_ids p\n    join input i on p.provider_message_id = i.message_id\n    limit 1\n),\nlog_received as (\n    insert into wa_n8n.events (event_type, payload, created_at)\n    select 'message_received', jsonb_build_object(\n        'message_id', i.message_id,\n        'phone_e164', i.phone_e164,\n        'text', i.message_text,\n        'unit_slug', i.unit_slug\n    ), i.ts\n    from input i\n    returning id\n),\nins_processed as (\n    insert into wa_n8n.processed_message_ids (provider, provider_message_id, received_at, processed_at, created_at)\n    select 'evolution', i.message_id, i.ts, i.ts, i.ts\n    from input i\n    where i.message_id is not null and not exists (select 1 from existing)\n    returning id\n),\ncontact as (\n    insert into wa_n8n.contacts (phone_e164, phone_raw, push_name, created_at, updated_at)\n    select i.phone_e164, i.phone_raw, i.push_name, i.ts, i.ts\n    from input i\n    where i.phone_e164 is not null and exists (select 1 from ins_processed)\n    on conflict (phone_e164) do update set\n        phone_raw = coalesce(excluded.phone_raw, wa_n8n.contacts.phone_raw),\n        push_name = coalesce(excluded.push_name, wa_n8n.contacts.push_name),\n        updated_at = now()\n    returning *, (xmax = 0) as inserted\n),\nlog_lead_created as (\n    insert into wa_n8n.events (event_type, contact_id, payload, created_at)\n    select 'lead_created', c.id, jsonb_build_object('phone_e164', c.phone_e164), now()\n    from contact c\n    where c.inserted is true\n    returning id\n),\nlog_lead_updated as (\n    insert into wa_n8n.events (event_type, contact_id, payload, created_at)\n    select 'lead_updated', c.id, jsonb_build_object('phone_e164', c.phone_e164), now()\n    from contact c\n    where c.inserted is false\n    returning id\n),\nconversation as (\n    insert into wa_n8n.conversations (contact_id, unit_slug, last_message_at, last_inbound_at, created_at, updated_at)\n    select c.id, i.unit_slug, i.ts, i.ts, i.ts, i.ts\n    from contact c, input i\n    on conflict (contact_id, unit_slug) do update set\n        last_message_at = excluded.last_message_at,\n        last_inbound_at = excluded.last_inbound_at,\n        followup_stage = 0,\n        updated_at = now()\n    returning *, (xmax = 0) as inserted\n),\nmessage as (\n    insert into wa_n8n.messages (conversation_id, direction, provider_message_id, message_type, text, raw_payload, created_at)\n    select conv.id, 'inbound', i.message_id, i.message_type, i.message_text,\n           case when i.raw_payload is not null then i.raw_payload::jsonb else null end,\n           i.ts\n    from conversation conv, input i\n    returning id\n),\nlog_duplicate as (\n    insert into wa_n8n.events (event_type, payload, created_at)\n    select 'message_ignored_duplicate', jsonb_build_object('message_id', i.message_id), i.ts\n    from input i\n    where exists (select 1 from existing)\n    returning id\n)\nselect\n    (select count(*) from existing) > 0 as is_duplicate,\n    (select id from contact limit 1) as contact_id,\n    (select inserted from contact limit 1) as contact_created,\n    (select id from conversation limit 1) as conversation_id,\n    (select funnel_status from conversation limit 1) as funnel_status,\n    (select triage_step from conversation limit 1) as triage_step,\n    (select triage_data from conversation limit 1) as triage_data,\n    (select needs_human from conversation limit 1) as needs_human,\n    (select do_not_contact from contact limit 1) as do_not_contact\n;\n"
+      }
+    },
+    {
+      "id": "4",
+      "name": "04_Is_Duplicate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        760,
+        -140
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$node[\"03_DB_Init\"].json.is_duplicate}}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5",
+      "name": "05_Respond_Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1010,
+        -140
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"duplicate\":true}"
+      }
+    },
+    {
+      "id": "6",
+      "name": "06_Check_Should_Process",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        760,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$node[\"02_Parse_Evolution\"].json.should_process}}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7",
+      "name": "07_Respond_NoAction",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1010,
+        0
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"no_action\":true}"
+      }
+    },
+    {
+      "id": "8",
+      "name": "08_Check_DoNotContact",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        760,
+        140
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$node[\"03_DB_Init\"].json.do_not_contact}}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9",
+      "name": "09_Respond_DoNotContact",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1010,
+        140
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"do_not_contact\":true}"
+      }
+    },
+    {
+      "id": "10",
+      "name": "10_Check_OptOut",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        760,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$node[\"02_Parse_Evolution\"].json.is_opt_out}}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "11",
+      "name": "11_Log_OptOut",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1010,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'opt_out',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('message', '{{$node[\"02_Parse_Evolution\"].json.message_text_sql}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "12",
+      "name": "12_Update_Contact_OptOut",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nupdate wa_n8n.contacts\nset do_not_contact = true, opted_out_at = coalesce(opted_out_at, now()), updated_at = now()\nwhere id = '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "13",
+      "name": "13_Insert_Consent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.consent (contact_id, do_not_contact, reason, source, created_at, updated_at)\nvalues (\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  true,\n  'opt_out_keyword',\n  'whatsapp',\n  now(),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "14",
+      "name": "14_Respond_OptOut",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        280
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"opted_out\":true}"
+      }
+    },
+    {
+      "id": "15",
+      "name": "15_Check_Appointment_Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        760,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$node[\"02_Parse_Evolution\"].json.confirm_yes || $node[\"02_Parse_Evolution\"].json.confirm_no}}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "16",
+      "name": "16_Update_Appointment_Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1010,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nwith appt as (\n  select id, conversation_id\n  from wa_n8n.appointments\n  where conversation_id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid\n  order by created_at desc\n  limit 1\n),\nlog as (\n  insert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\n  select\n    case when {{$node[\"02_Parse_Evolution\"].json.confirm_yes}} then 'appointment_confirmed' else 'appointment_cancelled' end,\n    '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n    appt.conversation_id,\n    jsonb_build_object('appointment_id', appt.id),\n    now()\n  from appt\n  returning id\n)\nupdate wa_n8n.appointments\nset status = case when {{$node[\"02_Parse_Evolution\"].json.confirm_yes}} then 'confirmado' else 'cancelado' end,\n    updated_at = now()\nwhere id = (select id from appt);\n"
+      }
+    },
+    {
+      "id": "17",
+      "name": "17_Update_Conversation_Appt_Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'status_changed',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('status', case when {{$node[\"02_Parse_Evolution\"].json.confirm_yes}} then 'confirmado' else 'reagendar' end),\n  now()\n);\n\nupdate wa_n8n.conversations\nset funnel_status = case when {{$node[\"02_Parse_Evolution\"].json.confirm_yes}} then 'confirmado' else 'reagendar' end,\n    updated_at = now()\nwhere id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "18",
+      "name": "18_Respond_Appt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1460,
+        420
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"appointment_response\":true}"
+      }
+    },
+    {
+      "id": "19",
+      "name": "19_Fetch_Last_Slots",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        760,
+        560
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nselect e.payload->'slots' as slots\nfrom wa_n8n.events e\nwhere e.event_type = 'appointment_slots_proposed'\n  and e.conversation_id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid\norder by e.created_at desc\nlimit 1;\n"
+      }
+    },
+    {
+      "id": "20",
+      "name": "20_Decide_Triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1010,
+        560
+      ],
+      "parameters": {
+        "jsCode": "\nconst parse = $node[\"02_Parse_Evolution\"].json;\nconst db = $node[\"03_DB_Init\"].json || {};\nconst slotsRow = $node[\"19_Fetch_Last_Slots\"].json || {};\nconst slots = Array.isArray(slotsRow.slots) ? slotsRow.slots : [];\n\nconst text = (parse.message_text || '').trim();\nconst lower = text.toLowerCase();\nconst triageStep = Number(db.triage_step || 0);\nlet triageData = db.triage_data || {};\nif (typeof triageData === 'string') {\n  try { triageData = JSON.parse(triageData); } catch { triageData = {}; }\n}\n\nconst assistant = 'Quer falar com atendente? (Digite ATENDENTE)';\nconst unitName = parse.unit_name || 'nossa clínica';\n\nconst reply = (line1, line2) => `${line1}\n${line2} ${assistant}`.trim();\n\nlet nextAction = 'noop';\nlet replyText = null;\nlet newStatus = db.funnel_status || 'novo_lead';\nlet triageEvent = null;\nlet nextStep = triageStep;\nlet schedulePayload = null;\nlet slot = null;\nlet handoffReason = null;\n\nif (parse.wants_human) {\n  nextAction = 'handoff';\n  handoffReason = 'user_requested';\n} else if ((db.funnel_status === 'agendamento_sugerido' || db.funnel_status === 'qualificado') && parse.selection && slots.length) {\n  nextAction = 'schedule_confirm';\n  const idx = Number(parse.selection) - 1;\n  slot = slots[idx] || slots[0];\n  schedulePayload = {\n    contact_id: db.contact_id,\n    conversation_id: db.conversation_id,\n    unit_slug: parse.unit_slug,\n    unit_name: unitName,\n    phone_e164: parse.phone_e164\n  };\n} else if (parse.is_price) {\n  nextAction = 'reply';\n  replyText = reply('Temos faixas de valores que variam por avaliação.', 'Posso te ajudar a agendar uma avaliação rápida?');\n} else if (parse.is_fear) {\n  nextAction = 'reply';\n  replyText = reply('Entendo sua preocupação.', 'A avaliação é feita com profissional habilitado para orientar com segurança.');\n} else if (parse.is_audio_long) {\n  nextAction = 'reply';\n  replyText = reply('Recebi seu áudio.', 'Pode resumir em 1 frase o que você busca?');\n} else if (triageStep <= 0) {\n  nextAction = 'reply';\n  replyText = reply(`Oi! Sou a assistente da ${unitName}.`, 'Você procura estética Facial ou Corporal? (Responda: Facial/Corporal)');\n  nextStep = 1;\n  newStatus = 'em_triagem';\n  triageEvent = 'triage_started';\n} else if (triageStep === 1) {\n  if (lower.includes('facial') || lower.includes('corporal')) {\n    triageData.area = lower.includes('corporal') ? 'corporal' : 'facial';\n    nextAction = 'reply';\n    replyText = reply('Perfeito.', 'Qual procedimento você quer? (Ex: harmonização, bioestimulador, lipo enzimática)');\n    nextStep = 2;\n    newStatus = 'em_triagem';\n    triageEvent = 'triage_answered';\n  } else {\n    nextAction = 'handoff';\n    handoffReason = 'out_of_script_area';\n  }\n} else if (triageStep === 2) {\n  triageData.procedure = text || null;\n  nextAction = 'reply';\n  replyText = reply('Entendi.', 'É pra quando? (Hoje/Essa semana/Sem pressa)');\n  nextStep = 3;\n  newStatus = 'em_triagem';\n  triageEvent = 'triage_answered';\n} else if (triageStep === 3) {\n  triageData.urgency = text || null;\n  nextAction = 'reply';\n  replyText = reply('Ótimo.', 'Quais períodos você prefere? (Manhã/Tarde/Noite) e quais dias?');\n  nextStep = 4;\n  newStatus = 'em_triagem';\n  triageEvent = 'triage_answered';\n} else {\n  triageData.preferences = text || null;\n  nextAction = 'schedule';\n  newStatus = 'qualificado';\n  triageEvent = 'triage_completed';\n  schedulePayload = {\n    contact_id: db.contact_id,\n    conversation_id: db.conversation_id,\n    unit_slug: parse.unit_slug,\n    unit_name: unitName,\n    phone_e164: parse.phone_e164,\n    preferences: triageData.preferences\n  };\n}\n\nfunction esc(v) {\n  return String(v || '').replace(/'/g, \"''\");\n}\n\nreturn [{ json: {\n  next_action: nextAction,\n  reply_text: replyText,\n  reply_text_sql: esc(replyText || ''),\n  new_status: newStatus,\n  triage_event: triageEvent,\n  next_step: nextStep,\n  triage_data: triageData,\n  triage_data_sql: esc(JSON.stringify(triageData || {})),\n  schedule_payload: schedulePayload,\n  slot,\n  handoff_reason: handoffReason,\n  handoff_reason_sql: esc(handoffReason || '')\n} }];\n"
+      }
+    },
+    {
+      "id": "21",
+      "name": "21_If_Handoff",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        560
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"20_Decide_Triage\"].json.next_action}}",
+              "operation": "equal",
+              "value2": "handoff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "22",
+      "name": "22_Log_Handoff_Requested",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'handoff_requested',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('reason', '{{$node[\"20_Decide_Triage\"].json.handoff_reason_sql}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "23",
+      "name": "23_Log_Handoff_Triggered",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'handoff_triggered',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('reason', '{{$node[\"20_Decide_Triage\"].json.handoff_reason_sql}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "24",
+      "name": "24_Update_Conversation_Handoff",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with current as (\n  select id, funnel_status\n  from wa_n8n.conversations\n  where id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid\n  limit 1\n),\nlog as (\n  insert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\n  select 'status_changed',\n    '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n    current.id,\n    jsonb_build_object('status', case when current.funnel_status = 'novo_lead' then 'em_triagem' else current.funnel_status end),\n    now()\n  from current\n  returning id\n)\nupdate wa_n8n.conversations\nset needs_human = true,\n    funnel_status = case when funnel_status = 'novo_lead' then 'em_triagem' else funnel_status end,\n    updated_at = now()\nwhere id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid;"
+      }
+    },
+    {
+      "id": "25",
+      "name": "25_Notify_Handoff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2120,
+        500
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($env.N8N_HANDOFF_NOTIFY_NUMBER || '')).replace(/\\D/g, ''), text: `Handoff necessário: ${$node[\"02_Parse_Evolution\"].json.phone_e164} • ${$node[\"02_Parse_Evolution\"].json.message_text}` } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "26",
+      "name": "26_Respond_Handoff",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2340,
+        500
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"handoff\":true}"
+      }
+    },
+    {
+      "id": "27",
+      "name": "27_If_Schedule",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        680
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"20_Decide_Triage\"].json.next_action}}",
+              "operation": "regex",
+              "value2": "^schedule"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "28",
+      "name": "28_Log_Triage_Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nselect 'triage_completed',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('triage_step', {{$node[\"20_Decide_Triage\"].json.next_step}}),\n  now()\nwhere '{{$node[\"20_Decide_Triage\"].json.next_action}}' = 'schedule';\n\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nselect 'status_changed',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('status', 'qualificado'),\n  now()\nwhere '{{$node[\"20_Decide_Triage\"].json.next_action}}' = 'schedule';\n"
+      }
+    },
+    {
+      "id": "29",
+      "name": "29_Update_Conversation_Qualified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nupdate wa_n8n.conversations\nset funnel_status = case when '{{$node[\"20_Decide_Triage\"].json.next_action}}' = 'schedule' then 'qualificado' else funnel_status end,\n    triage_step = {{$node[\"20_Decide_Triage\"].json.next_step}},\n    triage_data = '{{$node[\"20_Decide_Triage\"].json.triage_data_sql}}'::jsonb,\n    updated_at = now()\nwhere id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "30",
+      "name": "30_Execute_Workflow_02",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1900,
+        620
+      ],
+      "parameters": {
+        "workflowId": "WORKFLOW_02_AGENDAMENTO",
+        "options": {},
+        "input": "={{ { mode: $node[\"20_Decide_Triage\"].json.next_action === 'schedule_confirm' ? 'confirm' : 'propose', payload: $node[\"20_Decide_Triage\"].json.schedule_payload, slot: $node[\"20_Decide_Triage\"].json.slot } }}"
+      }
+    },
+    {
+      "id": "31",
+      "name": "31_Respond_Schedule",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2120,
+        620
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true,\"scheduled\":true}"
+      }
+    },
+    {
+      "id": "32",
+      "name": "32_If_Reply",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        820
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"20_Decide_Triage\"].json.next_action}}",
+              "operation": "equal",
+              "value2": "reply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "33",
+      "name": "33_Log_Triage_Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        760
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  '{{$node[\"20_Decide_Triage\"].json.triage_event || \"triage_answered\"}}',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('triage_step', {{$node[\"20_Decide_Triage\"].json.next_step}}),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "34",
+      "name": "34_Log_Status_Change",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        760
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'status_changed',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('status', '{{$node[\"20_Decide_Triage\"].json.new_status}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "35",
+      "name": "35_Update_Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        760
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nupdate wa_n8n.conversations\nset funnel_status = '{{$node[\"20_Decide_Triage\"].json.new_status}}',\n    triage_step = {{$node[\"20_Decide_Triage\"].json.next_step}},\n    triage_data = '{{$node[\"20_Decide_Triage\"].json.triage_data_sql}}'::jsonb,\n    last_outbound_at = now(),\n    updated_at = now()\nwhere id = '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "36",
+      "name": "36_Log_Outbound_Queued",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        760
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'outbound_message_queued',\n  '{{$node[\"03_DB_Init\"].json.contact_id}}'::uuid,\n  '{{$node[\"03_DB_Init\"].json.conversation_id}}'::uuid,\n  jsonb_build_object('text', '{{$node[\"20_Decide_Triage\"].json.reply_text_sql}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "37",
+      "name": "37_Send_WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2340,
+        760
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($node[\"02_Parse_Evolution\"].json.phone_e164 || '')).replace(/\\D/g, ''), text: $node[\"20_Decide_Triage\"].json.reply_text } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "38",
+      "name": "38_Respond_OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2560,
+        760
+      ],
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "={\"ok\":true}"
+      }
+    },
+    {
+      "id": "90",
+      "name": "90_Error_Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        980
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "91",
+      "name": "91_Log_Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        980
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, payload, created_at)\nvalues (\n  'handoff_triggered',\n  jsonb_build_object('error', '{{ JSON.stringify($json) }}'::jsonb, 'workflow', '{{ $workflow.name }}', 'node', '{{ ($json.error && $json.error.node && $json.error.node.name) ? $json.error.node.name : (($json.node && $json.node.name) ? $json.node.name : '') }}'),\n  now()\n);\n\nupdate wa_n8n.conversations\nset needs_human = true, updated_at = now()\nwhere id = nullif('{{ $json.conversation_id || \"\" }}','')::uuid;\n"
+      }
+    },
+    {
+      "id": "92",
+      "name": "92_Notify_Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        980
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($env.N8N_HANDOFF_NOTIFY_NUMBER || '')).replace(/\\D/g, ''), text: 'Erro no workflow 01. Verifique execuções.' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    }
+  ],
+  "connections": {
+    "01_Webhook_Inbound": {
+      "main": [
+        [
+          {
+            "node": "02_Parse_Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02_Parse_Evolution": {
+      "main": [
+        [
+          {
+            "node": "03_DB_Init",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03_DB_Init": {
+      "main": [
+        [
+          {
+            "node": "04_Is_Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04_Is_Duplicate": {
+      "main": [
+        [
+          {
+            "node": "05_Respond_Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "06_Check_Should_Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06_Check_Should_Process": {
+      "main": [
+        [
+          {
+            "node": "08_Check_DoNotContact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "07_Respond_NoAction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08_Check_DoNotContact": {
+      "main": [
+        [
+          {
+            "node": "09_Respond_DoNotContact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "10_Check_OptOut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10_Check_OptOut": {
+      "main": [
+        [
+          {
+            "node": "11_Log_OptOut",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "15_Check_Appointment_Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11_Log_OptOut": {
+      "main": [
+        [
+          {
+            "node": "12_Update_Contact_OptOut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12_Update_Contact_OptOut": {
+      "main": [
+        [
+          {
+            "node": "13_Insert_Consent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13_Insert_Consent": {
+      "main": [
+        [
+          {
+            "node": "14_Respond_OptOut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15_Check_Appointment_Response": {
+      "main": [
+        [
+          {
+            "node": "16_Update_Appointment_Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "19_Fetch_Last_Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16_Update_Appointment_Response": {
+      "main": [
+        [
+          {
+            "node": "17_Update_Conversation_Appt_Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17_Update_Conversation_Appt_Status": {
+      "main": [
+        [
+          {
+            "node": "18_Respond_Appt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19_Fetch_Last_Slots": {
+      "main": [
+        [
+          {
+            "node": "20_Decide_Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20_Decide_Triage": {
+      "main": [
+        [
+          {
+            "node": "21_If_Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "21_If_Handoff": {
+      "main": [
+        [
+          {
+            "node": "22_Log_Handoff_Requested",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "27_If_Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "22_Log_Handoff_Requested": {
+      "main": [
+        [
+          {
+            "node": "23_Log_Handoff_Triggered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "23_Log_Handoff_Triggered": {
+      "main": [
+        [
+          {
+            "node": "24_Update_Conversation_Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "24_Update_Conversation_Handoff": {
+      "main": [
+        [
+          {
+            "node": "25_Notify_Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "25_Notify_Handoff": {
+      "main": [
+        [
+          {
+            "node": "26_Respond_Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "27_If_Schedule": {
+      "main": [
+        [
+          {
+            "node": "28_Log_Triage_Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "32_If_Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "28_Log_Triage_Completed": {
+      "main": [
+        [
+          {
+            "node": "29_Update_Conversation_Qualified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "29_Update_Conversation_Qualified": {
+      "main": [
+        [
+          {
+            "node": "30_Execute_Workflow_02",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "30_Execute_Workflow_02": {
+      "main": [
+        [
+          {
+            "node": "31_Respond_Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "32_If_Reply": {
+      "main": [
+        [
+          {
+            "node": "33_Log_Triage_Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "07_Respond_NoAction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "33_Log_Triage_Event": {
+      "main": [
+        [
+          {
+            "node": "34_Log_Status_Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "34_Log_Status_Change": {
+      "main": [
+        [
+          {
+            "node": "35_Update_Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "35_Update_Conversation": {
+      "main": [
+        [
+          {
+            "node": "36_Log_Outbound_Queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "36_Log_Outbound_Queued": {
+      "main": [
+        [
+          {
+            "node": "37_Send_WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "37_Send_WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "38_Respond_OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "90_Error_Trigger": {
+      "main": [
+        [
+          {
+            "node": "91_Log_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "91_Log_Error": {
+      "main": [
+        [
+          {
+            "node": "92_Notify_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false,
+  "versionId": "1",
+  "description": "Inbound Evolution → Postgres. Idempotência, opt-out, triagem, handoff e encaminhamento para agendamento."
+}

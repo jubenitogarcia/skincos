@@ -8,6 +8,8 @@
 # APP_ORIGINS="http://localhost:5173,https://crm.skincos.com.br,https://app.skincos.com.br"
 # SESSION_COOKIE_DOMAIN=".skincos.com.br"
 # SESSION_SECRET="dev-only-secret"
+# ALLOW_DEV_SEED=true
+# INSUMOS_SEED_TOKEN="dev-seed-token"
 
 # Units (scales beyond 2 units)
 # UNIDADES="novo-hamburgo,barra-shopping-sul"

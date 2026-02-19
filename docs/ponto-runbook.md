@@ -7,6 +7,8 @@ Este documento descreve **como validar, diagnosticar e operar** o módulo **Pont
 2. **Proxy Pages Functions**: `frontend/functions/api/ponto/[[path]].ts`
 3. **CRM API (backend central)**: `backend/apps/crm-api/server/pontoRoutes.js`
 
+Observação: o Worker do Insumos **não** atende Ponto por padrão (somente se `PONTO_INSUMOS_ENABLED=true`).
+
 ---
 
 ## 2) Variáveis e secrets (produção)
@@ -23,6 +25,8 @@ Este documento descreve **como validar, diagnosticar e operar** o módulo **Pont
 - `PONTO_ACTOR_HMAC_KEY`
 - `PONTO_AUDIT_HMAC_KEY` (opcional, mas recomendado)
 - `PONTO_TEMPLATES_KEY` (**obrigatório em produção**; criptografa biometria)
+- `PONTO_PIN_MAX_ATTEMPTS`, `PONTO_PIN_WINDOW_SECONDS`, `PONTO_PIN_LOCK_SECONDS` (opcionais; lockout de PIN)
+- `PONTO_REQUIRE_CONSENT` (opcional; exige consentimento explícito para biometria)
 
 ---
 
@@ -56,7 +60,8 @@ Esperado:
 1) Abrir **Ponto** no CRM  
 2) Conferir **Build** no header (ex.: `Build: 0f1196c`)  
 3) Clicar em **Diagnóstico**  
-4) Confirmar JSON de `_proxy-status` e `health`
+4) Confirmar JSON de `_proxy-status` e `health`  
+5) (Admin) Verificar botões no header: **Cadastrar**, **Editar**, **Exportar**, **Gerenciar Dispositivo**
 
 ### 4.1 Smoke automatizado (UI) com Playwright (sem credenciais no script)
 Rodar (do root do repo):
@@ -90,8 +95,11 @@ Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/
 **O que ele valida**
 - Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
 - Diagnóstico carrega (`/_proxy-status` e `/health`).
-- Invariantes de UI (admin sem campo de token; PIN fallback do Kiosk oculto por padrão).
+- Invariantes de UI (ações de Admin apenas no header; fluxo do Funcionário sem campos técnicos).
 - (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, faz punch por PIN, valida `audit/verify`, exporta CSV e limpa em seguida.
+Variáveis úteis no smoke:
+- `SMOKE_UNIT` (força unidade quando Insumos estiver indisponível)
+- `CHECK_PIN_LOCKOUT=1` (valida lockout de PIN)
 
 ---
 
@@ -112,7 +120,7 @@ GET /api/ponto/admin/audit/verify
 ## 6) Problemas comuns
 
 ### UI desatualizada
-**Sinal:** você ainda vê campos antigos (token admin ou PIN fallback sempre visível).  
+**Sinal:** você ainda vê elementos antigos no Ponto.  
 **Solução:** conferir o **Build** no header e fazer hard refresh (Ctrl/Cmd+Shift+R).
 
 ### Admin não acessa
@@ -134,6 +142,10 @@ GET /api/ponto/admin/audit/verify
 ### Funcionário não consegue carregar `/me`
 **Sinal:** erro `LOGIN_EMAIL_AMBIGUOUS`.  
 **Ação:** há mais de um funcionário ativo com o mesmo email; corrija os cadastros duplicados antes de retestar.
+
+### Duplicidade de email (admin)
+**Sinal:** `LOGIN_EMAIL_AMBIGUOUS` e acesso bloqueado.  
+**Ação:** use **Editar → Ver duplicidades** para manter o email em apenas um funcionário.
 
 ### `_proxy-status` diz que secrets não estão configurados, mesmo após sync
 **Sinal:** `proxyTokenConfigured=false` / `actorKeyConfigured=false` / `adminTokenConfigured=false`, mas o workflow de sync está “success”.  

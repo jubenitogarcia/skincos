@@ -67,6 +67,8 @@ function buildStockAlerts(insumos) {
             const estoqueAtual = safeNumber(i?.estoqueAtual);
             const estoqueMinimo = safeNumber(i?.estoqueMinimo);
             const isBreakage = estoqueAtual < 0;
+            const isBelowMin = estoqueMinimo > 0 && estoqueAtual < estoqueMinimo;
+            const statusAlerta = isBreakage || isBelowMin ? 'URGENTE' : 'ATENCAO';
             return {
                 codigoBarras: i.codigoBarras,
                 produto: i.produto,
@@ -75,7 +77,8 @@ function buildStockAlerts(insumos) {
                 estoqueMinimo,
                 diferenca: estoqueAtual - estoqueMinimo,
                 percentual: estoqueMinimo > 0 ? Math.round((estoqueAtual / estoqueMinimo) * 100) : null,
-                tipoAlerta: isBreakage ? 'QUEBRA_ESTOQUE' : 'ESTOQUE_BAIXO'
+                tipoAlerta: isBreakage ? 'QUEBRA_ESTOQUE' : 'ESTOQUE_BAIXO',
+                statusAlerta
             };
         });
 }
@@ -192,6 +195,84 @@ function computeTrends({ movimentos, insumoByCode, groupBy, from, to, unidade })
     };
 }
 
+function bucketExprForGroup(group) {
+    if (group === 'month') return "strftime('%Y-%m', m.data_hora)";
+    if (group === 'week') return "date(m.data_hora, 'weekday 1', '-7 days')";
+    return "date(m.data_hora)";
+}
+
+async function listMovimentosAggregated({ env, unidadeQ, fromIso, toIso, groupBy }) {
+    if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
+    const where = [];
+    const binds = [];
+    if (unidadeQ) {
+        where.push('m.unidade = ?');
+        binds.push(String(unidadeQ));
+    }
+    if (fromIso) {
+        where.push('m.data_hora >= ?');
+        binds.push(String(fromIso));
+    }
+    if (toIso) {
+        where.push('m.data_hora <= ?');
+        binds.push(String(toIso));
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const bucketExpr = bucketExprForGroup(groupBy);
+    const tipoExpr = "UPPER(REPLACE(m.tipo, 'Í', 'I'))";
+    const r = await env.DB.prepare(
+        `SELECT
+            ${bucketExpr} AS bucket,
+            SUM(CASE WHEN ${tipoExpr} = 'ENTRADA' THEN COALESCE(m.quantidade, 0) ELSE 0 END) AS entradaQtd,
+            SUM(CASE WHEN ${tipoExpr} IN ('SAIDA','SAÍDA') THEN COALESCE(m.quantidade, 0) ELSE 0 END) AS saidaQtd,
+            SUM(CASE WHEN ${tipoExpr} = 'AJUSTE' THEN COALESCE(m.quantidade, 0) ELSE 0 END) AS ajusteQtd,
+            SUM(CASE WHEN ${tipoExpr} = 'ENTRADA' THEN COALESCE(m.quantidade, 0) * COALESCE(i.preco_custo, 0) ELSE 0 END) AS entradaValor,
+            SUM(CASE WHEN ${tipoExpr} IN ('SAIDA','SAÍDA') THEN COALESCE(m.quantidade, 0) * COALESCE(i.preco_custo, 0) ELSE 0 END) AS saidaValor
+         FROM insumos_movements m
+         LEFT JOIN insumos_items i ON i.registro = m.registro_insumo
+         ${whereSql}
+         GROUP BY bucket
+         ORDER BY bucket ASC`
+    )
+        .bind(...binds)
+        .all();
+    const buckets = (r?.results || []).filter((b) => b?.bucket);
+    const totals = buckets.reduce(
+        (acc, cur) => {
+            acc.entradaQtd += Number(cur.entradaQtd) || 0;
+            acc.saidaQtd += Number(cur.saidaQtd) || 0;
+            acc.ajusteQtd += Number(cur.ajusteQtd) || 0;
+            acc.entradaValor += Number(cur.entradaValor) || 0;
+            acc.saidaValor += Number(cur.saidaValor) || 0;
+            return acc;
+        },
+        { entradaQtd: 0, saidaQtd: 0, ajusteQtd: 0, entradaValor: 0, saidaValor: 0 }
+    );
+    return { buckets, totals };
+}
+
+function trendsFromBuckets({ buckets, totals, unidadeQ, groupBy, from, to }) {
+    return {
+        unidade: unidadeQ,
+        groupBy,
+        from: from ? from.toISOString() : null,
+        to: to ? to.toISOString() : null,
+        totals: {
+            ...totals,
+            saldoQtd: totals.entradaQtd - totals.saidaQtd,
+            saldoValor: totals.entradaValor - totals.saidaValor
+        },
+        buckets: (buckets || []).map((b) => ({
+            bucket: String(b.bucket || ''),
+            entradaQtd: Number(b.entradaQtd) || 0,
+            saidaQtd: Number(b.saidaQtd) || 0,
+            ajusteQtd: Number(b.ajusteQtd) || 0,
+            entradaValor: Number(b.entradaValor) || 0,
+            saidaValor: Number(b.saidaValor) || 0
+        }))
+    };
+}
+
 function computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode }) {
     const byCat = new Map();
     const only = mode === 'saida' ? 'SAIDA' : mode === 'entrada' ? 'ENTRADA' : null;
@@ -283,14 +364,18 @@ export async function handleInsightsRoutes({
         try {
             const unidadeQ = url.searchParams.get('unidade') || unidade;
             const limitIssues = url.searchParams.get('limitIssues') || '120';
+            const lite = String(url.searchParams.get('lite') || '').trim().toLowerCase();
+            const isLite = lite === '1' || lite === 'true' || lite === 'yes';
             const { from, to, days } = resolveWindow(url, 30);
 
-            const [insumos, movimentos] = await Promise.all([
+            const [insumos, movAgg] = await Promise.all([
                 listInsumos(unidadeQ),
-                listMovimentos({
+                listMovimentosAggregated({
+                    env,
                     unidadeQ,
                     fromIso: from ? from.toISOString() : null,
-                    toIso: to ? to.toISOString() : null
+                    toIso: to ? to.toISOString() : null,
+                    groupBy: 'day'
                 }),
             ]);
 
@@ -299,19 +384,31 @@ export async function handleInsightsRoutes({
             const actionables = buildActionables(insumos, unidadeQ);
             const roi = buildRoi(insumos, unidadeQ);
             const quality = buildQualityReport(insumos, unidadeQ, limitIssues);
-            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
-            const movementData = computeMovementOverview({
-                movimentos,
-                insumoByCode,
-                from,
-                to,
-                unidade: unidadeQ,
-                maxSeriesPoints: days
-            });
+            const movementData = (() => {
+                const buckets = movAgg?.buckets || [];
+                const totals = movAgg?.totals || { entradaQtd: 0, saidaQtd: 0, entradaValor: 0, saidaValor: 0 };
+                const series = buckets.slice(-Math.max(1, days)).map((b) => ({
+                    day: String(b.bucket || ''),
+                    entrada: Number(b.entradaQtd) || 0,
+                    saida: Number(b.saidaQtd) || 0,
+                    entradaValor: Number(b.entradaValor) || 0,
+                    saidaValor: Number(b.saidaValor) || 0
+                }));
+                return {
+                    movResumo: {
+                        entradaQtd: totals.entradaQtd,
+                        saidaQtd: totals.saidaQtd,
+                        entradaValor: totals.entradaValor,
+                        saidaValor: totals.saidaValor,
+                        saldoLiquido: totals.entradaValor - totals.saidaValor
+                    },
+                    movSeries: series
+                };
+            })();
 
             const data = {
                 resumo,
-                itens: insumos,
+                ...(isLite ? {} : { itens: insumos }),
                 notifications,
                 actionables,
                 roi,
@@ -404,17 +501,14 @@ export async function handleInsightsRoutes({
             const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
             const { from, to } = resolveWindow(url, 30);
 
-            const [insumos, movimentos] = await Promise.all([
-                listInsumos(unidade),
-                listMovimentos({
-                    unidadeQ: unidade,
-                    fromIso: from ? from.toISOString() : null,
-                    toIso: to ? to.toISOString() : null
-                }),
-            ]);
-            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
-
-            const data = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade });
+            const movAgg = await listMovimentosAggregated({
+                env,
+                unidadeQ: unidade,
+                fromIso: from ? from.toISOString() : null,
+                toIso: to ? to.toISOString() : null,
+                groupBy: group
+            });
+            const data = trendsFromBuckets({ buckets: movAgg.buckets, totals: movAgg.totals, unidadeQ: unidade, groupBy: group, from, to });
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
         } catch (err) {
             return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);

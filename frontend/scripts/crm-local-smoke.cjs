@@ -78,49 +78,10 @@ async function main() {
   // Build badge should be present (dev or sha).
   await expectVisible(page.locator('text=/Build:\\s*/'), 'Build badge')
 
-  // Diagnostics should load without crashing (localDirect _proxy-status + health).
-  await page.click('button:has-text("Diagnóstico")', { timeout: TIMEOUT_MS })
-  await expectVisible(page.locator('text=GET /api/ponto/_proxy-status'), 'Diagnostics content (_proxy-status)')
-  await expectVisible(page.locator('text=GET /api/ponto/health'), 'Diagnostics content (health)')
-  // Look for "ok" somewhere (either payload preview or rendered JSON snippet).
-  await expectVisible(page.locator('text=/\"ok\"\\s*:\\s*true/'), 'Diagnostics ok:true')
-  await page.keyboard.press('Escape').catch(() => {})
-
-  // Kiosk: PIN fallback must be hidden until triggered.
-  await page.click('button[role="tab"]:has-text("Kiosk")', { timeout: TIMEOUT_MS })
-  const pinFallback = page.getByText('Fallback por PIN', { exact: true })
-  const kioskLoaded = page.locator('text=Configuração do Dispositivo')
-  await expectVisible(kioskLoaded, 'Kiosk loaded')
-  // The fallback panel is rendered only when devicePinOpen is true.
-  // Ensure we don't fail on hidden/offscreen text occurrences.
-  const pinCount = await pinFallback.count().catch(() => 0)
-  const pinVisible = pinCount ? await pinFallback.first().isVisible().catch(() => false) : false
-  if (pinCount) {
-    const debug = await pinFallback.first().evaluate((el) => {
-      const cs = window.getComputedStyle(el)
-      const r = el.getBoundingClientRect()
-      return {
-        text: String(el.textContent || '').trim().slice(0, 120),
-        display: cs.display,
-        visibility: cs.visibility,
-        opacity: cs.opacity,
-        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
-      }
-    }).catch(() => null)
-    console.log('[crm-local-smoke] kiosk pinFallback debug:', { pinCount, pinVisible, debug })
-  }
-  if (pinVisible) {
-    await page.screenshot({ path: shot('kiosk-pin-visible'), fullPage: true })
-    throw new Error('Kiosk PIN fallback is visible by default (expected hidden).')
-  }
-
-  // Admin tab should be accessible for local dev admin session.
-  await page.click('button[role="tab"]:has-text("Admin")', { timeout: TIMEOUT_MS })
-  await expectVisible(page.locator('text=Admin logado'), 'Admin logged badge')
-  // Must not ask for manual token.
-  if ((await page.locator('text=/Admin token/i').count()) > 0) {
-    await page.screenshot({ path: shot('admin-token-visible'), fullPage: true })
-    throw new Error('Admin token input is visible (expected hidden for CRM admins).')
+  // Admin actions should be visible in the header (local dev admin session).
+  const adminButtons = ['Cadastrar', 'Editar', 'Exportar', 'Gerenciar Dispositivo']
+  for (const label of adminButtons) {
+    await expectVisible(page.locator(`button:has-text("${label}")`), `Admin action visible: ${label}`)
   }
 
   await page.screenshot({ path: shot('ok'), fullPage: true })

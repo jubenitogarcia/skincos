@@ -1,0 +1,456 @@
+{
+  "name": "SKINCOS | 02 Agendamento (Propor / Confirmar)",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "01_Execute_Workflow_Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2",
+      "name": "02_Log_Appointment_Requested",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'appointment_requested',\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.conversation_id}}'::uuid,\n  jsonb_build_object('mode', '{{$json.mode}}', 'preferences', '{{ JSON.stringify($json.payload.preferences || null) }}'::jsonb),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "3",
+      "name": "03_Generate_Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const mode = $json.mode || 'propose';\nconst payload = $json.payload || {};\nif (mode !== 'propose') return [{ json: { mode, payload, slot: $json.slot } }];\n\nconst tz = 'America/Sao_Paulo';\nconst now = new Date();\nconst dayMs = 24 * 60 * 60 * 1000;\nconst base = new Date(now.getTime() + dayMs);\n\nfunction formatDateParts(d) {\n  const fmt = new Intl.DateTimeFormat('en-CA', {\n    timeZone: tz,\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit'\n  });\n  const parts = fmt.formatToParts(d);\n  const year = parts.find(p => p.type === 'year')?.value;\n  const month = parts.find(p => p.type === 'month')?.value;\n  const day = parts.find(p => p.type === 'day')?.value;\n  return { year, month, day };\n}\n\nfunction slotFor(dayOffset, hour) {\n  const d = new Date(base.getTime() + dayOffset * dayMs);\n  const { year, month, day } = formatDateParts(d);\n  const hh = String(hour).padStart(2, '0');\n  return {\n    start_at: `${year}-${month}-${day}T${hh}:00:00-03:00`,\n    end_at: `${year}-${month}-${day}T${String(hour + 1).padStart(2, '0')}:00:00-03:00`,\n    label: `${day}/${month} às ${hh}:00`\n  };\n}\n\nconst slots = [slotFor(0, 10), slotFor(0, 15), slotFor(1, 10)];\nreturn [{ json: { mode, payload, slots } }];"
+      }
+    },
+    {
+      "id": "4",
+      "name": "04_Log_Slots_Proposed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'appointment_slots_proposed',\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.conversation_id}}'::uuid,\n  jsonb_build_object('slots', '{{ JSON.stringify($json.slots || []) }}'::jsonb),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "5",
+      "name": "05_Log_Outbound_Queued",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'outbound_message_queued',\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.conversation_id}}'::uuid,\n  jsonb_build_object('text', 'Propondo horários'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "6",
+      "name": "06_Send_Slots_Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($json.payload.phone_e164 || $env.N8N_DEFAULT_TEST_PHONE || '')).replace(/\\D/g, ''), text: `Segue 3 opções de horário:\n1) ${$json.slots[0].label}\n2) ${$json.slots[1].label}\n3) ${$json.slots[2].label}\nResponda 1, 2 ou 3. Quer falar com atendente? (Digite ATENDENTE)` } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "7",
+      "name": "07_Update_Status_Suggested",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'status_changed',\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.conversation_id}}'::uuid,\n  jsonb_build_object('status', 'agendamento_sugerido'),\n  now()\n);\n\nupdate wa_n8n.conversations\nset funnel_status = 'agendamento_sugerido', updated_at = now()\nwhere id = '{{$json.payload.conversation_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "8",
+      "name": "08_If_Confirm_Mode",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        520,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.mode}}",
+              "operation": "equal",
+              "value2": "confirm"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9",
+      "name": "09_Log_Appointment_Scheduled",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        780,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'appointment_scheduled',\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.conversation_id}}'::uuid,\n  jsonb_build_object('slot', '{{ JSON.stringify($json.slot || {}) }}'::jsonb),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "10",
+      "name": "10_Create_Google_Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        220
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "1",
+          "name": "Google Calendar (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "create",
+        "calendar": "={{$env.GOOGLE_CALENDAR_ID}}",
+        "start": "={{$json.slot.start_at}}",
+        "end": "={{$json.slot.end_at}}",
+        "summary": "Agendamento SkinCos",
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "11",
+      "name": "11_Insert_Appointment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.appointments (conversation_id, contact_id, unit_slug, calendar_id, calendar_event_id, status, start_at, end_at, timezone, created_at, updated_at)\nvalues (\n  '{{$json.payload.conversation_id}}'::uuid,\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.unit_slug}}',\n  '{{$env.GOOGLE_CALENDAR_ID}}',\n  '{{$node[\"10_Create_Google_Event\"].json.id}}',\n  'agendado',\n  '{{$json.slot.start_at}}',\n  '{{$json.slot.end_at}}',\n  'America/Sao_Paulo',\n  now(),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "12",
+      "name": "12_Update_Conversation_Agendado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'status_changed',\n  '{{$json.payload.contact_id}}'::uuid,\n  '{{$json.payload.conversation_id}}'::uuid,\n  jsonb_build_object('status', 'agendado'),\n  now()\n);\n\nupdate wa_n8n.conversations\nset funnel_status = 'agendado', updated_at = now()\nwhere id = '{{$json.payload.conversation_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "13",
+      "name": "13_Send_Confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1820,
+        220
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($json.payload.phone_e164 || $env.N8N_DEFAULT_TEST_PHONE || '')).replace(/\\D/g, ''), text: `Perfeito! Agendei para ${$json.slot.label}.\nResponda SIM para confirmar. Quer falar com atendente? (Digite ATENDENTE)` } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "90",
+      "name": "90_Error_Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        460
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "91",
+      "name": "91_Log_Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, payload, created_at)\nvalues (\n  'handoff_triggered',\n  jsonb_build_object('error', '{{ JSON.stringify($json) }}'::jsonb, 'workflow', '{{ $workflow.name }}', 'node', '{{ ($json.error && $json.error.node && $json.error.node.name) ? $json.error.node.name : (($json.node && $json.node.name) ? $json.node.name : '') }}'),\n  now()\n);\n\nupdate wa_n8n.conversations\nset needs_human = true, updated_at = now()\nwhere id = nullif('{{ $json.conversation_id || \"\" }}','')::uuid;\n"
+      }
+    },
+    {
+      "id": "92",
+      "name": "92_Notify_Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        460
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($env.N8N_HANDOFF_NOTIFY_NUMBER || '')).replace(/\\D/g, ''), text: 'Erro no workflow 02. Verifique execuções.' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    }
+  ],
+  "connections": {
+    "01_Execute_Workflow_Trigger": {
+      "main": [
+        [
+          {
+            "node": "02_Log_Appointment_Requested",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "08_If_Confirm_Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02_Log_Appointment_Requested": {
+      "main": [
+        [
+          {
+            "node": "03_Generate_Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03_Generate_Slots": {
+      "main": [
+        [
+          {
+            "node": "04_Log_Slots_Proposed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04_Log_Slots_Proposed": {
+      "main": [
+        [
+          {
+            "node": "05_Log_Outbound_Queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05_Log_Outbound_Queued": {
+      "main": [
+        [
+          {
+            "node": "06_Send_Slots_Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06_Send_Slots_Message": {
+      "main": [
+        [
+          {
+            "node": "07_Update_Status_Suggested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08_If_Confirm_Mode": {
+      "main": [
+        [
+          {
+            "node": "10_Create_Google_Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "09_Log_Appointment_Scheduled": {
+      "main": [
+        [
+          {
+            "node": "13_Send_Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10_Create_Google_Event": {
+      "main": [
+        [
+          {
+            "node": "11_Insert_Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11_Insert_Appointment": {
+      "main": [
+        [
+          {
+            "node": "12_Update_Conversation_Agendado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12_Update_Conversation_Agendado": {
+      "main": [
+        [
+          {
+            "node": "09_Log_Appointment_Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "90_Error_Trigger": {
+      "main": [
+        [
+          {
+            "node": "91_Log_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "91_Log_Error": {
+      "main": [
+        [
+          {
+            "node": "92_Notify_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false,
+  "versionId": "1",
+  "description": "Proposta de horários e criação de evento no Google Calendar."
+}

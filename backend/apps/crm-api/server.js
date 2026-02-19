@@ -464,6 +464,14 @@ if (DEV_AUTH_ENABLED) {
         clearDevCookie(res)
         return res.json({ ok: true })
     })
+
+    app.get('/api/insumos/health', (_req, res) => {
+        res.setHeader('Cache-Control', 'no-store')
+        const units = DEV_AUTH_ALLOWED_UNITS
+            ? DEV_AUTH_ALLOWED_UNITS.split(',').map(s => s.trim()).filter(Boolean)
+            : ['local']
+        return res.json({ ok: true, unidades: units, source: 'local-dev' })
+    })
 }
 
 // -------------------------------------------------------------
@@ -560,10 +568,15 @@ app.use('/api/instagram-module', createProxyMiddleware({
 const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || 'https://api.skincos.com.br'
 
 function isLocalSafeMode() {
-    // When running locally (NO_AUTH=true), default to read-only for upstream production APIs.
-    const noAuth = String(process.env.NO_AUTH || '').toLowerCase() === 'true'
-    if (!noAuth) return false
-    return String(process.env.LOCAL_ALLOW_UPSTREAM_MUTATIONS || '').trim() !== '1'
+    // In local/dev, default to read-only for upstream production APIs unless explicitly allowed.
+    const allow = String(process.env.LOCAL_ALLOW_UPSTREAM_MUTATIONS || '').trim() === '1'
+    if (allow) return false
+    const override = String(process.env.LOCAL_SAFE_MODE || '').trim()
+    if (override === '0') return false
+    const envName = String(process.env.NODE_ENV || '').toLowerCase()
+    const isLocal = envName !== 'production'
+    if (!isLocal) return false
+    return true
 }
 
 function isProductionUpstream(target) {
@@ -585,6 +598,19 @@ function blockUpstreamMutationsIfNeeded(targetOrigin) {
         })
     }
 }
+
+app.get('/api/insumos/_proxy-status', (_req, res) => {
+    const safe = isLocalSafeMode()
+    const prod = isProductionUpstream(INSUMOS_API_TARGET)
+    res.status(200).set('cache-control', 'no-store').json({
+        ok: true,
+        localDirect: true,
+        target: INSUMOS_API_TARGET,
+        isProductionTarget: prod,
+        localSafeMode: safe,
+        mutationsBlocked: safe && prod
+    })
+})
 
 app.use('/api/insumos', blockUpstreamMutationsIfNeeded(INSUMOS_API_TARGET))
 app.use('/api/insumos', createProxyMiddleware({
