@@ -116,6 +116,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json, os, sys, time, urllib.request
+          from urllib.error import HTTPError
 
           base = os.environ.get("BASE_URL", "").rstrip("/")
           if not base:
@@ -130,9 +131,18 @@ jobs:
               headers["CF-Access-Client-Id"] = cid
               headers["CF-Access-Client-Secret"] = csec
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-              data = resp.read().decode("utf-8", "ignore")
-              return json.loads(data)
+            try:
+              with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read().decode("utf-8", "ignore")
+                return json.loads(data)
+            except HTTPError as err:
+              body = err.read().decode("utf-8", "ignore")
+              try:
+                data = json.loads(body)
+                data["__http_status"] = err.code
+                return data
+              except Exception:
+                raise
 
           def check():
             proxy = fetch_json("/api/ponto/_proxy-status")
@@ -143,6 +153,9 @@ jobs:
             if not proxy.get("adminTokenConfigured"):
               raise SystemExit("proxy-status adminTokenConfigured=false")
             health = fetch_json("/api/ponto/health")
+            if health.get("__http_status") == 410 and health.get("error") == "PONTO_DISABLED":
+              print("Ponto disabled in production; skipping health assertions.")
+              return "SKIP"
             if not health.get("ok"):
               raise SystemExit("health ok=false")
             if not health.get("cryptoTemplates"):
@@ -151,7 +164,9 @@ jobs:
 
           for i in range(1, 6):
             try:
-              check()
+              out = check()
+              if out == "SKIP":
+                sys.exit(0)
               print("Ponto smoke check OK")
               sys.exit(0)
             except Exception as exc:
