@@ -94,14 +94,11 @@ const LeadsManager = lazy(() => import('@/LeadsManager').then(m => ({ default: m
 const NotificationCenter = lazy(() => import('@/NotificationCenter').then(m => ({ default: m.NotificationCenter })))
 const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
 const AccountingModule = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
-const HelpDeskModule = lazy(() => import('@/HelpDeskModule').then(m => ({ default: m.HelpDeskModule })))
-const OmnichannelCenter = lazy(() => import('@/OmnichannelCenter').then(m => ({ default: m.OmnichannelCenter })))
+const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
 const MetaAdsManager = lazy(() => import('@/MetaAdsManager').then(m => ({ default: m.MetaAdsManager })))
 const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
 const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m => ({ default: m.MetaSentimentMonitor })))
-const WhatsAppUnifiedHub = lazy(() => import('@/WhatsAppUnifiedHub').then(m => ({ default: m.WhatsAppUnifiedHub })))
-const HarmoniaModule = lazy(() => import('@/HarmoniaModule').then(m => ({ default: m.HarmoniaModule })))
 const InstagramStudioPro = lazy(() => import('@/InstagramStudioPro').then(m => ({ default: m.InstagramStudioPro })))
 const ThreadsStudio = lazy(() => import('@/ThreadsStudio').then(m => ({ default: m.ThreadsStudio })))
 const SocialNetworksStudio = lazy(() => import('@/SocialNetworksStudio').then(m => ({ default: m.SocialNetworksStudio })))
@@ -146,12 +143,6 @@ const PontoModule = lazy(() => import('@/PontoModule').then(m => ({ default: m.P
 
 // TODO: Add remaining modules if needed
 
-// Mocks mínimos para props obrigatórias
-const mockActivities = [
-    { id: 'a1', type: 'call', subject: 'Ligação inicial', description: 'Primeiro contato', date: new Date().toISOString(), userId: 'u1' },
-    { id: 'a2', type: 'email', subject: 'Envio de proposta', description: 'Proposta enviada', date: new Date().toISOString(), userId: 'u1' }
-] as any
-
 const modules: { key: string; label: string; icon: React.ReactNode; component: React.ReactNode }[] = [
     { key: 'capabilities', label: 'Plataforma', icon: '🧭', component: <CapabilitiesCenter /> },
     { key: 'jobs', label: 'Execuções', icon: '🏃', component: <JobsCenter /> },
@@ -167,14 +158,11 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'dashboard', label: 'Analítica', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <ReportsDashboard /> },
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
-    { key: 'helpdesk', label: 'Help Desk', icon: '🎧', component: <HelpDeskModule /> },
-    { key: 'omnichannel', label: 'Omnichannel', icon: '💬', component: <OmnichannelCenter activities={mockActivities} /> },
+    { key: 'atendimento', label: 'Atendimento', icon: '💬', component: <AtendimentoModule /> },
     { key: 'meta-ads', label: 'Meta Ads', icon: '📢', component: <MetaAdsManager /> },
     { key: 'meta-command', label: 'Meta Command', icon: '🧭', component: <MetaCommandCenter /> },
     { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
     { key: 'meta-sentiment', label: 'Sentimento', icon: '🧠', component: <MetaSentimentMonitor /> },
-    { key: 'whatsapp-business', label: 'WhatsApp', icon: '📱', component: <WhatsAppUnifiedHub /> },
-    { key: 'harmonia', label: 'Harmonia', icon: '🎼', component: <HarmoniaModule /> },
     { key: 'instagram-studio', label: 'Redes Sociais', icon: '🌐', component: <SocialNetworksStudio /> },
     { key: 'threads-studio', label: 'Threads', icon: '🧵', component: <ThreadsStudio /> },
     { key: 'workflow', label: 'Workflows', icon: '⚙️', component: <WorkflowEngine /> },
@@ -218,6 +206,13 @@ export default function AppFunctionalNeatlab() {
 
     const allowedModulesKey = Array.isArray(user?.allowedModules) ? user.allowedModules.join('|') : ''
     const roleKey = String(user?.role || '').trim().toUpperCase()
+    const isLocalDev = import.meta.env.DEV && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
+    const devEmail = String(user?.email || '').trim().toLowerCase()
+    const pontoCanAdmin =
+        roleKey === 'ADMIN' ||
+        roleKey === 'GESTOR' ||
+        roleKey === 'GERENTE' ||
+        (isLocalDev && devEmail.endsWith('@local.test'))
     const hasModuleAccess = React.useCallback(
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
@@ -227,7 +222,11 @@ export default function AppFunctionalNeatlab() {
                 ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
                 : []
             if (!allowed.length) return true // compat: vazio/ausente => ALL
-            return allowed.includes(key)
+            if (allowed.includes(key)) return true
+            if (key === 'atendimento') {
+                return allowed.some((m) => ['whatsapp-business', 'whatsapp-n8n', 'harmonia', 'omnichannel', 'helpdesk'].includes(m))
+            }
+            return false
         },
         [allowedModulesKey, roleKey]
     )
@@ -286,7 +285,7 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio', 'ponto', 'harmonia']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio', 'ponto', 'atendimento']), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
@@ -882,9 +881,9 @@ export default function AppFunctionalNeatlab() {
 				                                    <div className="hidden lg:flex items-center gap-2">
 				                                        {active === 'insumos' ? (
 					                                            <>
-				                                                <span className="text-xs text-blue-200/70">Unidade</span>
-				                                                <Select
-				                                                    value={selectedUnit}
+					                                                <span className="text-xs text-blue-200/70">Unidade</span>
+					                                                <Select
+					                                                    value={selectedUnit}
 			                                                    onValueChange={(v) => setSelectedUnit(v)}
 			                                                >
 				                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
@@ -993,14 +992,66 @@ export default function AppFunctionalNeatlab() {
 			                                                        aria-label="Transferência"
 				                                                    >
 				                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
-				                                                    </Button>
-				
-		                                                </div>
-					                                            </>
-					                                        ) : null}
-			                                        {active === 'unit-monitor' ? (
-			                                            <>
-			                                                <span className="text-xs text-blue-200/70">Unidade</span>
+					                                                    </Button>
+					
+			                                                </div>
+						                                            </>
+						                                        ) : null}
+				                                        {active === 'ponto' && pontoCanAdmin ? (
+				                                            <div className="flex items-center gap-2">
+				                                                <Button
+				                                                    size="sm"
+				                                                    variant="ghost"
+				                                                    className="h-8 bg-white/[0.06] border border-white/20 text-white hover:bg-white/[0.12]"
+				                                                    onClick={() => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:ponto:action', { detail: { action: 'create' } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+				                                                    Cadastrar
+				                                                </Button>
+				                                                <Button
+				                                                    size="sm"
+				                                                    variant="ghost"
+				                                                    className="h-8 bg-white/[0.06] border border-white/20 text-white hover:bg-white/[0.12]"
+				                                                    onClick={() => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:ponto:action', { detail: { action: 'edit' } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+				                                                    Editar
+				                                                </Button>
+				                                                <Button
+				                                                    size="sm"
+				                                                    variant="ghost"
+				                                                    className="h-8 bg-white/[0.06] border border-white/20 text-white hover:bg-white/[0.12]"
+				                                                    onClick={() => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:ponto:action', { detail: { action: 'records' } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+				                                                    Exportar
+				                                                </Button>
+				                                                <Button
+				                                                    size="sm"
+				                                                    variant="ghost"
+				                                                    className="h-8 bg-white/[0.06] border border-white/20 text-white hover:bg-white/[0.12]"
+				                                                    onClick={() => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:ponto:action', { detail: { action: 'device' } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+				                                                    Gerenciar Dispositivo
+				                                                </Button>
+				                                            </div>
+				                                        ) : null}
+				                                        {active === 'unit-monitor' ? (
+				                                            <>
+				                                                <span className="text-xs text-blue-200/70">Unidade</span>
 			                                                <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
 			                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
 			                                                        <SelectValue placeholder="Selecione" />

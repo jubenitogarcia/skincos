@@ -13,16 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-function LoadingBadge({ active }: { active: boolean }) {
-  if (!active) return null
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/20 px-2 py-0.5 text-[10px] text-blue-100/80">
-      <span className="inline-flex h-2 w-2 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-      Carregando
-    </span>
-  )
-}
-
 type InsumosHealth = {
   ok?: boolean
   ready?: boolean
@@ -73,6 +63,8 @@ type Movimentacao = {
   tipo?: string
   codigoBarras?: string
   produto?: string
+  categoria?: string
+  marca?: string
   quantidade?: number
   estoqueAnterior?: number
   estoqueNovo?: number
@@ -121,6 +113,7 @@ type EstoqueAlerta = {
   diferenca?: number
   percentual?: number | null
   tipoAlerta?: string
+  statusAlerta?: 'URGENTE' | 'ATENCAO' | string
 }
 
 type RoiInsights = {
@@ -177,6 +170,15 @@ type InsightsBundleData = {
     saida?: any
     entrada?: any
   } | null
+}
+
+type InsumosProxyStatus = {
+  ok?: boolean
+  localDirect?: boolean
+  target?: string
+  isProductionTarget?: boolean
+  localSafeMode?: boolean
+  mutationsBlocked?: boolean
 }
 
 type ShareFile = {
@@ -365,6 +367,39 @@ function buildTagStyle(bgColor?: string | null): React.CSSProperties {
     color: getContrastColor(bg),
     borderColor: 'rgba(255,255,255,0.25)'
   }
+}
+
+function buildInsumoDescriptor(item?: Insumo | null) {
+  if (!item) return []
+  const produto = String(item.produto || '').trim()
+  const produtoKey = normalizeText(produto)
+  const rawParts = [item.especificacao, item.concentracao, item.volume, item.calibre, item.tipoUnidade]
+  const out: string[] = []
+  const seen = new Set<string>()
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  for (const raw of rawParts) {
+    let v = String(raw || '').trim()
+    if (!v) continue
+    if (produtoKey) {
+      const vNorm = normalizeText(v)
+      if (vNorm.includes(produtoKey)) {
+        const prodRegex = new RegExp(escapeRegExp(produto), 'ig')
+        v = v.replace(prodRegex, '').trim()
+      }
+    }
+    const key = normalizeText(v)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(v)
+    if (out.length >= 3) break
+  }
+  return out
+}
+
+function formatInsumoDescriptor(item?: Insumo | null) {
+  const parts = buildInsumoDescriptor(item)
+  if (!parts.length) return ''
+  return parts.slice(0, 3).join(' • ')
 }
 
 function useViewportSize() {
@@ -591,7 +626,7 @@ function BarcodeScannerInline({
   const [running, setRunning] = React.useState(false)
   const [needsGesture, setNeedsGesture] = React.useState(false)
   const [mode, setMode] = React.useState<'BARCODE_DETECTOR' | 'ZXING' | 'NONE'>('BARCODE_DETECTOR')
-  const [facingMode, setFacingMode] = React.useState<'user' | 'environment'>('user')
+  const [facingMode, setFacingMode] = React.useState<'user' | 'environment'>('environment')
   const [activeFacingMode, setActiveFacingMode] = React.useState<'user' | 'environment' | null>(null)
 
   const stop = React.useCallback(() => {
@@ -835,7 +870,7 @@ function BarcodeScannerInline({
         <video
           ref={videoRef}
           className="w-full rounded-lg border border-white/10 bg-black"
-          style={{ transform: 'scaleX(-1)' }}
+          style={{ transform: activeFacingMode === 'user' ? 'scaleX(-1)' : 'none' }}
           playsInline
           muted
         />
@@ -978,13 +1013,14 @@ export function InsumosModule() {
   const dialogMaxHeight = viewportHeight > 0 && viewportHeight < 720 ? 'max-h-[88vh]' : 'max-h-[92vh]'
   const dialogPaddingClass = isAdaptiveCompact ? 'p-3' : 'p-4 sm:p-5'
   const dialogBodyClass = `${dialogMaxHeight} min-w-0 overflow-auto`
-  const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-full'} ${dialogPaddingClass}`
-  const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'w-[calc(100vw-1.5rem)] max-w-6xl xl:max-w-7xl'} ${dialogPaddingClass}`
-  const dialogMediumClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-4xl'} ${dialogPaddingClass}`
-  const dialogSmallClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[97vw]' : 'max-w-2xl'} ${dialogPaddingClass}`
+  const dialogWideClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[98vw]' : 'w-[calc(100vw-1.5rem)] max-w-[96vw] 2xl:max-w-[112rem]'} ${dialogPaddingClass}`
+  const dialogLargeClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[98vw]' : 'w-[calc(100vw-2rem)] max-w-[94vw] 2xl:max-w-[104rem]'} ${dialogPaddingClass}`
+  const dialogMediumClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[98vw]' : 'w-[calc(100vw-2rem)] max-w-[90vw] 2xl:max-w-[92rem]'} ${dialogPaddingClass}`
+  const dialogSmallClass = `${dialogBodyClass} ${isAdaptiveCompact ? 'w-[calc(100vw-0.75rem)] max-w-[98vw]' : 'max-w-[42rem]'} ${dialogPaddingClass}`
   const [health, setHealth] = React.useState<InsumosHealth | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [healthLoading, setHealthLoading] = React.useState(true)
+  const [proxyStatus, setProxyStatus] = React.useState<InsumosProxyStatus | null>(null)
 
   const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
   const INSUMOS_OPTIONS_CACHE_KEY = 'skincos.insumos.options.v1'
@@ -1026,11 +1062,17 @@ export function InsumosModule() {
   const [quickLookupCtxUnidade, setQuickLookupCtxUnidade] = React.useState<string | null>(null)
   const [quickLookupCode, setQuickLookupCode] = React.useState<string | null>(null)
   const [quickLookupItems, setQuickLookupItems] = React.useState<Insumo[]>([])
+  const [quickSelectedSnapshot, setQuickSelectedSnapshot] = React.useState<Insumo | null>(null)
+  const [quickSearchRemote, setQuickSearchRemote] = React.useState<Insumo[]>([])
+  const [quickSearchRemoteLoading, setQuickSearchRemoteLoading] = React.useState(false)
+  const [quickSearchRemoteError, setQuickSearchRemoteError] = React.useState<string | null>(null)
   const quickLookupTokenRef = React.useRef(0)
+  const quickSearchRemoteTokenRef = React.useRef(0)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
   const overviewAbortRef = React.useRef<AbortController | null>(null)
   const insightsAbortRef = React.useRef<AbortController | null>(null)
+  const overviewFullAttemptRef = React.useRef<number>(0)
   const apiFailureTimestampsRef = React.useRef<number[]>([])
   const [autoSyncSuspendedUntil, setAutoSyncSuspendedUntil] = React.useState<number>(0)
   const [overviewVisible, setOverviewVisible] = React.useState(false)
@@ -1117,7 +1159,7 @@ export function InsumosModule() {
   const [createEspecificacao, setCreateEspecificacao] = React.useState('')
   const [createConcentracao, setCreateConcentracao] = React.useState('')
   const [createVolume, setCreateVolume] = React.useState('')
-  const [createFonte, setCreateFonte] = React.useState('')
+  const [createHomologado, setCreateHomologado] = React.useState(false)
   const [createCalibre, setCreateCalibre] = React.useState('')
   const [createPrecoCusto, setCreatePrecoCusto] = React.useState('')
   const [createEstoqueInicial, setCreateEstoqueInicial] = React.useState('0')
@@ -1422,6 +1464,11 @@ export function InsumosModule() {
     return () => window.clearTimeout(timeoutId)
   }, [autoSyncSuspendedUntil])
 
+  React.useEffect(() => {
+    if (autoSyncSuspendedUntil) return
+    overviewFullAttemptRef.current = 0
+  }, [autoSyncSuspendedUntil])
+
   const dashboardProgress = React.useMemo(() => {
     const steps = [
       healthLoaded,
@@ -1506,6 +1553,9 @@ export function InsumosModule() {
     }
     return ordered
   }, [DEFAULT_OVERVIEW_PANELS.join('|'), isManagerRole, overviewPanelOrder.join('|')])
+
+  const chartsPanelOpen = detailsOpen[OVERVIEW_PANEL_OPEN_KEYS.charts] ?? true
+  const chartsPanelVisible = visibleOverviewPanels.includes('charts')
 
   const persistMainPanels = React.useCallback((next: MainPanelId[]) => {
     setMainPanelOrder(next)
@@ -1868,44 +1918,218 @@ export function InsumosModule() {
   const quickSearchMatches = React.useMemo(() => {
     const query = quickSearch.trim().toLowerCase()
     if (!query) return []
-    const source = Array.isArray(insumos) ? insumos : []
-    const matches: Array<{ item: Insumo; matchedCode: string }> = []
-    for (const item of source) {
+    const looksLikeCode = /^[0-9]{4,}$/.test(query)
+    const remoteActive = canUseApi && isAuthed && !looksLikeCode && query.length >= 2
+    const baseList = remoteActive
+      ? (quickSearchRemoteError ? (Array.isArray(insumos) ? insumos : []) : quickSearchRemote)
+      : (Array.isArray(insumos) ? insumos : [])
+    const selected: Insumo[] = []
+    if (Array.isArray(quickLookupItems) && quickLookupItems.length) selected.push(...quickLookupItems)
+    else if (quickSelectedSnapshot) selected.push(quickSelectedSnapshot)
+    const selectedSignatures = selected.map((s) => ({
+      registro: normalizeText(s?.registro || ''),
+      codes: getInsumoBarcodes(s).map((c) => normalizeText(c)),
+      produto: normalizeText(s?.produto || ''),
+      categoria: normalizeText(s?.categoria || ''),
+      marca: normalizeText(s?.marca || '')
+    }))
+    const isSelected = (item: Insumo) => {
+      const registro = normalizeText(item?.registro || '')
+      if (registro && selectedSignatures.some((s) => s.registro && s.registro === registro)) return true
+      const codes = getInsumoBarcodes(item).map((c) => normalizeText(c))
+      const produto = normalizeText(item?.produto || '')
+      const categoria = normalizeText(item?.categoria || '')
+      const marca = normalizeText(item?.marca || '')
+      return selectedSignatures.some((s) => {
+        const sameCore =
+          (!!produto || !!categoria || !!marca) &&
+          produto === s.produto &&
+          categoria === s.categoria &&
+          marca === s.marca
+        if (!sameCore) return false
+        if (!codes.length || !s.codes.length) return true
+        return s.codes.some((c) => codes.includes(c))
+      })
+    }
+    const scored: Array<{ item: Insumo; matchedCode: string; score: number }> = []
+    const normQuery = normalizeText(query)
+    const scoreMatch = (item: Insumo, matchedCode: string) => {
+      let score = 0
+      const produto = normalizeText(item?.produto || '')
+      const categoria = normalizeText(item?.categoria || '')
+      const marca = normalizeText(item?.marca || '')
+      const extras = [
+        normalizeText((item as any)?.especificacao || ''),
+        normalizeText((item as any)?.concentracao || ''),
+        normalizeText((item as any)?.volume || ''),
+        normalizeText((item as any)?.calibre || ''),
+        normalizeText((item as any)?.tipoUnidade || '')
+      ]
+      const codes = getInsumoBarcodes(item).map((c) => normalizeText(c))
+      if (matchedCode) score += 20
+      if (codes.includes(normQuery)) score += 80
+      if (produto === normQuery) score += 70
+      else if (produto.startsWith(normQuery)) score += 40
+      else if (produto.includes(normQuery)) score += 25
+      if (marca === normQuery) score += 30
+      else if (marca.includes(normQuery)) score += 12
+      if (categoria === normQuery) score += 25
+      else if (categoria.includes(normQuery)) score += 10
+      if (extras.some((e) => e && e === normQuery)) score += 15
+      else if (extras.some((e) => e && e.includes(normQuery))) score += 8
+      return score
+    }
+    for (const item of baseList) {
+      if (isSelected(item)) continue
       const codes = getInsumoBarcodes(item)
       const produto = String(item?.produto || '').toLowerCase()
       const categoria = String(item?.categoria || '').toLowerCase()
       const marca = String(item?.marca || '').toLowerCase()
-      const hay = [produto, categoria, marca, ...codes].filter(Boolean).join(' ')
+      const extras = [
+        String((item as any)?.especificacao || '').toLowerCase(),
+        String((item as any)?.concentracao || '').toLowerCase(),
+        String((item as any)?.volume || '').toLowerCase(),
+        String((item as any)?.calibre || '').toLowerCase(),
+        String((item as any)?.tipoUnidade || '').toLowerCase()
+      ]
+      const hay = [produto, categoria, marca, ...extras, ...codes].filter(Boolean).join(' ')
       if (!hay.includes(query)) continue
       const matchedCode = codes.find((c) => String(c || '').toLowerCase().includes(query)) || codes[0] || ''
-      matches.push({ item, matchedCode })
-      if (matches.length >= 8) break
+      scored.push({ item, matchedCode, score: scoreMatch(item, matchedCode) })
     }
-    return matches
-  }, [insumos, quickSearch])
+    return scored
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        return String(a.item?.produto || '').localeCompare(String(b.item?.produto || ''), 'pt-BR', { sensitivity: 'base' })
+      })
+      .slice(0, 8)
+  }, [canUseApi, insumos, isAuthed, quickLookupItems, quickSearch, quickSearchRemote, quickSearchRemoteError, quickSelectedSnapshot])
+
+  const hasQuickSelection = !!quickSelectedSnapshot || quickLookupItems.length > 0
+
+  const selectQuickCodigo = React.useCallback(
+    (code: string, opts?: { setSearch?: boolean; snapshot?: Insumo | null }) => {
+      const value = String(code || '').trim()
+      if (!value) return false
+      setQuickCodigo(value)
+      if (opts?.setSearch) setQuickSearch(value)
+      if (opts && Object.prototype.hasOwnProperty.call(opts, 'snapshot')) {
+        setQuickSelectedSnapshot(opts?.snapshot ?? null)
+      }
+      setQuickLookupError(null)
+      return true
+    },
+    []
+  )
+
+  const clearQuickSelection = React.useCallback(() => {
+    setQuickCodigo('')
+    setQuickSelectedSnapshot(null)
+    setQuickRegistro('')
+    setQuickRegistros([])
+    setQuickCandidates([])
+    setQuickLookupError(null)
+    setQuickLookupCtxUnidade(null)
+    setQuickLookupCode(null)
+    setQuickLookupItems([])
+  }, [])
 
   const applyQuickSelection = React.useCallback((item: Insumo, preferredCode?: string) => {
     const codes = getInsumoBarcodes(item)
+    if (!codes.length) {
+      const message = 'Este item não possui código de barras cadastrado.'
+      setQuickLookupError(message)
+      toast.error(message)
+      return
+    }
     const code = preferredCode && codes.includes(preferredCode) ? preferredCode : codes[0] || ''
     if (!code) return
-    setQuickCodigo(code)
-    setQuickSearch(code)
-  }, [])
+    selectQuickCodigo(code, { setSearch: false, snapshot: item })
+  }, [selectQuickCodigo])
+
+  React.useEffect(() => {
+    if (!quickLookupItems.length) return
+    setQuickSelectedSnapshot(quickLookupItems[0])
+  }, [quickLookupItems])
+
+  React.useEffect(() => {
+    if (!quickOp) return
+    if (!canUseApi || !isAuthed) {
+      setQuickSearchRemote([])
+      setQuickSearchRemoteLoading(false)
+      setQuickSearchRemoteError(null)
+      return
+    }
+    const query = quickSearch.trim()
+    const looksLikeCode = /^[0-9]{4,}$/.test(query)
+    if (!query || looksLikeCode || query.length < 2) {
+      setQuickSearchRemote([])
+      setQuickSearchRemoteLoading(false)
+      setQuickSearchRemoteError(null)
+      return
+    }
+    const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
+    const token = ++quickSearchRemoteTokenRef.current
+    setQuickSearchRemoteLoading(true)
+    setQuickSearchRemoteError(null)
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const params = new URLSearchParams({
+            unidade: ctxUnidade,
+            q: query,
+            pagina: '1',
+            limite: '30'
+          })
+          const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?${params.toString()}`)
+          if (token !== quickSearchRemoteTokenRef.current) return
+          setQuickSearchRemote(Array.isArray(out?.data) ? out.data : [])
+        } catch (e: any) {
+          if (token !== quickSearchRemoteTokenRef.current) return
+          const message = e?.message || 'Falha ao buscar insumos.'
+          setQuickSearchRemoteError(message)
+          setQuickSearchRemote([])
+          console.warn('[insumos][quick-search]', {
+            unit: ctxUnidade,
+            query,
+            status: e?.status || 0,
+            code: e?.code || null
+          })
+        } finally {
+          if (token === quickSearchRemoteTokenRef.current) setQuickSearchRemoteLoading(false)
+        }
+      })()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [apiJson, canUseApi, isAuthed, quickOp, quickSearch, transferFrom, unidade])
 
   React.useEffect(() => {
     const query = quickSearch.trim()
+    const hasSelection = !!quickSelectedSnapshot || quickLookupItems.length > 0
     if (!query) {
-      if (quickCodigo) setQuickCodigo('')
+      if (!hasSelection && quickCodigo) setQuickCodigo('')
       return
     }
     if (query === quickCodigo) return
     const looksLikeCode = /^[0-9]{4,}$/.test(query)
     if (looksLikeCode) {
-      if (query !== quickCodigo) setQuickCodigo(query)
+      if (query !== quickCodigo) {
+        setQuickSelectedSnapshot(null)
+        setQuickCodigo(query)
+      }
       return
     }
-    if (quickCodigo) setQuickCodigo('')
-  }, [quickSearch, quickCodigo])
+    if (!hasSelection && quickCodigo) setQuickCodigo('')
+  }, [quickSearch, quickCodigo, quickLookupItems.length, quickSelectedSnapshot])
+
+  React.useEffect(() => {
+    if (quickCodigo) return
+    const selected = quickLookupItems[0] || quickSelectedSnapshot
+    if (!selected) return
+    const codes = getInsumoBarcodes(selected)
+    if (!codes.length) return
+    setQuickCodigo(codes[0])
+  }, [quickCodigo, quickLookupItems, quickSelectedSnapshot])
 
   const quickLoteNeedsPick = (quickCandidates.length > 1) || (quickRegistros.length > 1) || (quickLotes.length > 1)
   const quickLotesForPicker = React.useMemo(() => {
@@ -1922,6 +2146,7 @@ export function InsumosModule() {
   const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
     setQuickSearch('')
     setQuickCodigo('')
+    setQuickSelectedSnapshot(null)
     setQuickRegistro('')
     setQuickRegistros([])
     setQuickCandidates([])
@@ -1936,6 +2161,9 @@ export function InsumosModule() {
     setQuickLookupCtxUnidade(null)
     setQuickLookupCode(null)
     setQuickLookupItems([])
+    setQuickSearchRemote([])
+    setQuickSearchRemoteLoading(false)
+    setQuickSearchRemoteError(null)
     setQuickActionLoading(false)
     if (!opts?.keepFeedback) setQuickActionFeedback(null)
   }, [])
@@ -1954,8 +2182,7 @@ export function InsumosModule() {
       resetQuickOperationState()
       if (prefill?.codigoBarras) {
         const code = String(prefill.codigoBarras).trim()
-        setQuickCodigo(code)
-        setQuickSearch(code)
+        selectQuickCodigo(code, { setSearch: true, snapshot: null })
       }
       if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
       if (prefill?.obs) setQuickObs(String(prefill.obs))
@@ -1963,7 +2190,7 @@ export function InsumosModule() {
       if (prefill?.toUnidade) setTransferTo(String(prefill.toUnidade))
       setQuickOp(op)
     },
-    [resetQuickOperationState]
+    [resetQuickOperationState, selectQuickCodigo]
   )
 
   React.useEffect(() => {
@@ -2023,13 +2250,19 @@ export function InsumosModule() {
           setQuickLookupCode(codigo)
           setQuickLookupCtxUnidade(ctxUnidade)
           if (!items.length) setQuickLookupError('Nenhum insumo encontrado para este código.')
-	        } catch (e: any) {
-	          if (token !== quickLookupTokenRef.current) return
-	          setQuickLookupError(e?.message || 'Falha ao buscar o insumo.')
-	          setQuickLookupItems([])
-	          setQuickLookupCode(codigo)
-	          setQuickLookupCtxUnidade(ctxUnidade)
-	        } finally {
+        } catch (e: any) {
+          if (token !== quickLookupTokenRef.current) return
+          setQuickLookupError(e?.message || 'Falha ao buscar o insumo.')
+          setQuickLookupItems([])
+          setQuickLookupCode(codigo)
+          setQuickLookupCtxUnidade(ctxUnidade)
+          console.warn('[insumos][quick-lookup]', {
+            unit: ctxUnidade,
+            codigo,
+            status: e?.status || 0,
+            code: e?.code || null
+          })
+        } finally {
 	          if (token === quickLookupTokenRef.current) setQuickLookupLoading(false)
 	        }
 	      })()
@@ -2048,7 +2281,7 @@ export function InsumosModule() {
     if (!createEspecificacao.trim() && (it as any).especificacao) setCreateEspecificacao(String((it as any).especificacao))
     if (!createConcentracao.trim() && (it as any).concentracao) setCreateConcentracao(String((it as any).concentracao))
     if (!createVolume.trim() && (it as any).volume) setCreateVolume(String((it as any).volume))
-    if (!createFonte.trim() && (it as any).fonte) setCreateFonte(String((it as any).fonte))
+    if (!createHomologado && /homologad/i.test(String((it as any).fonte || '').trim())) setCreateHomologado(true)
     if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
     if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
     if (!createPolicyTouched) {
@@ -2062,7 +2295,7 @@ export function InsumosModule() {
     createCategoria,
     createConcentracao,
     createEspecificacao,
-    createFonte,
+    createHomologado,
     createMarca,
     createPolicyTouched,
     createPrecoCusto,
@@ -2367,10 +2600,10 @@ export function InsumosModule() {
 	        setInsumosListModalOpen(true)
 	        if (payload.title) setCreateProduto((prev) => (prev ? prev : payload.title || ''))
 	        if (payload.text) setCreateEspecificacao((prev) => (prev ? prev : payload.text || ''))
-	        if (payload.url) setCreateFonte((prev) => (prev ? prev : payload.url || ''))
+	        if (payload.url) setCreateEspecificacao((prev) => (prev ? prev : payload.url || ''))
 	        if (payload.files && payload.files.length) {
 	          const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
-	          setCreateFonte((prev) => (prev ? prev : filesSummary))
+	          setCreateEspecificacao((prev) => (prev ? prev : filesSummary))
 	        }
 	      }
 
@@ -2443,10 +2676,10 @@ export function InsumosModule() {
 	    setInsumosListModalOpen(true)
 	    if (payload.title) setCreateProduto(payload.title)
 	    if (payload.text) setCreateEspecificacao(payload.text)
-	    if (payload.url) setCreateFonte(payload.url)
+	    if (payload.url) setCreateEspecificacao(payload.url)
 	    if (payload.files && payload.files.length) {
 	      const filesSummary = `Arquivos: ${payload.files.map((f) => f.name).join(', ')}`
-	      setCreateFonte((prev) => (prev ? prev : filesSummary))
+	      setCreateEspecificacao((prev) => (prev ? prev : filesSummary))
 	    }
 	  }, [])
 
@@ -2916,6 +3149,15 @@ export function InsumosModule() {
     }
   }, [])
 
+  const loadProxyStatus = React.useCallback(async () => {
+    try {
+      const out = await apiJson<InsumosProxyStatus>('/_proxy-status')
+      setProxyStatus(out || null)
+    } catch {
+      setProxyStatus(null)
+    }
+  }, [])
+
   const openLotDialog = React.useCallback((i: Insumo) => {
     setLotSelecionado(i)
     setLotEditLote(String(i.lote || ''))
@@ -3253,7 +3495,7 @@ export function InsumosModule() {
     return () => window.clearTimeout(t)
   }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
-  const loadOverview = React.useCallback(async (opts?: { force?: boolean }) => {
+  const loadOverview = React.useCallback(async (opts?: { force?: boolean; lite?: boolean }) => {
     if (!canUseApi || !isAuthed) return
     // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
     setOverviewEverVisible(true)
@@ -3272,6 +3514,7 @@ export function InsumosModule() {
       let de = ''
       let ate = yyyyMmDd(now)
       let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
+      const isLite = opts?.lite !== false
 
       if (overviewPeriod === 'custom') {
         const deIso = dateInputToIso(overviewCustomFrom)
@@ -3301,12 +3544,17 @@ export function InsumosModule() {
         days: String(days),
         limitIssues: '120'
       })
+      if (isLite) params.set('lite', '1')
       const out = await apiJson<{ success?: boolean; data?: OverviewBundleData }>(`/analytics/overview?${params.toString()}`, { signal: ac.signal })
 
       if (overviewAbortRef.current !== ac) return
       const data = out?.data || null
       setOverviewResumo(data?.resumo || null)
-      setOverviewInsumos(Array.isArray(data?.itens) ? (data?.itens as any) : null)
+      if (Array.isArray(data?.itens)) {
+        setOverviewInsumos(data?.itens as any)
+      } else if (!isLite) {
+        setOverviewInsumos(null)
+      }
       setOverviewNotifications(data?.notifications || null)
       setOverviewActionables(data?.actionables || null)
       setOverviewRoi(data?.roi || null)
@@ -3345,6 +3593,27 @@ export function InsumosModule() {
       }
     }
   }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
+
+  React.useEffect(() => {
+    if (!canUseApi || !isAuthed) return
+    if (!chartsPanelVisible || !chartsPanelOpen) return
+    if (overviewInsumos && overviewInsumos.length) return
+    if (overviewLoading) return
+    if (autoSyncSuspendedUntil > Date.now()) return
+    const now = Date.now()
+    if (now - overviewFullAttemptRef.current < 15_000) return
+    overviewFullAttemptRef.current = now
+    void loadOverview({ force: true, lite: false })
+  }, [
+    autoSyncSuspendedUntil,
+    canUseApi,
+    chartsPanelOpen,
+    chartsPanelVisible,
+    isAuthed,
+    loadOverview,
+    overviewInsumos,
+    overviewLoading
+  ])
 
   const saveLot = React.useCallback(async () => {
     if (!lotSelecionado?.registro) {
@@ -3820,7 +4089,12 @@ export function InsumosModule() {
     setQuickActionLoading(true)
     try {
       const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
-      await mutateJson(`/insumos/transferir?unidade=${encodeURIComponent(transferFrom)}`, {
+      const out = await mutateJson<{
+        success?: boolean
+        estoqueNovoOrigem?: number
+        quebraEstoqueOrigem?: boolean
+        deficitOrigem?: number
+      }>(`/insumos/transferir?unidade=${encodeURIComponent(transferFrom)}`, {
         method: 'POST',
         body: {
           codigoBarras,
@@ -3832,8 +4106,18 @@ export function InsumosModule() {
         },
         queueLabel: 'Transferência'
       })
-      const message = 'Transferência registrada'
+      const novoOrigem = Number((out as any)?.estoqueNovoOrigem)
+      const quebraEstoque = (out as any)?.quebraEstoqueOrigem === true || (Number.isFinite(novoOrigem) && novoOrigem < 0)
+      const message = quebraEstoque
+        ? `Transferência registrada com quebra de estoque (origem: ${Number.isFinite(novoOrigem) ? novoOrigem : '-'})`
+        : 'Transferência registrada'
       setQuickActionFeedback({ type: 'success', message })
+      if (quebraEstoque) {
+        const deficit = Number((out as any)?.deficitOrigem)
+        toast.warning(
+          `Quebra de estoque detectada na origem${Number.isFinite(deficit) ? `: déficit de ${deficit}` : ''}. Confira os alertas.`
+        )
+      }
 
       // Refresh what the user is seeing (estoque + movimentações)
       await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
@@ -3902,7 +4186,8 @@ export function InsumosModule() {
   React.useEffect(() => {
     void loadHealth()
     void loadMe()
-  }, [loadHealth, loadMe])
+    void loadProxyStatus()
+  }, [loadHealth, loadMe, loadProxyStatus])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -4804,7 +5089,8 @@ export function InsumosModule() {
     for (const a of Array.isArray(insightsAlertas) ? insightsAlertas : []) {
       const estoqueAtual = Number(a?.estoqueAtual) || 0
       const estoqueMinimo = Number(a?.estoqueMinimo) || 0
-      const st = calcularStatusEstoque(estoqueAtual, estoqueMinimo)
+      const backendStatus = String((a as any)?.statusAlerta || '').trim().toUpperCase()
+      const st = backendStatus === 'URGENTE' || backendStatus === 'ATENCAO' ? backendStatus : calcularStatusEstoque(estoqueAtual, estoqueMinimo)
       const tag: AlertaStatusTag | null = st === 'URGENTE' ? 'URGENTE' : st === 'ATENCAO' ? 'ATENCAO' : null
       if (!tag) continue
       upsert(
@@ -4967,11 +5253,13 @@ export function InsumosModule() {
           const insumo = pickInsumoForMov(m)
           const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
           const categoriaNome = normalizeText(insumo?.categoria || '')
+          const marcaNome = normalizeText(insumo?.marca || m?.marca || '')
           const codigoBarras = normalizeText(String(m?.codigoBarras || insumo?.codigoBarras || '').trim())
           if (
             !(
               (produtoNome && produtoNome.includes(filterSearch)) ||
               (categoriaNome && categoriaNome.includes(filterSearch)) ||
+              (marcaNome && marcaNome.includes(filterSearch)) ||
               (codigoBarras && codigoBarras.includes(filterSearch))
             )
           ) {
@@ -5409,7 +5697,7 @@ export function InsumosModule() {
                             especificacao: createEspecificacao.trim(),
                             concentracao: createConcentracao.trim(),
                             volume: createVolume.trim(),
-                            fonte: createFonte.trim(),
+                            fonte: createHomologado ? 'Homologado' : '',
                             calibre: createCalibre.trim(),
                             precoCusto: createPrecoCusto ? Number(createPrecoCusto) : undefined,
                             estoqueInicial: createEstoqueInicial ? Number(createEstoqueInicial) : undefined,
@@ -5445,17 +5733,17 @@ export function InsumosModule() {
               onScroll={onInsumosModalScroll}
               className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
             >
-              <table className="w-full table-fixed text-sm">
+              <table className="w-full min-w-[880px] table-auto text-sm">
                 <thead className="bg-black/30 text-blue-100/80">
                   <tr>
-                    <th className="text-left p-3 w-[26%] xl:w-[24%]">Produto</th>
-                    <th className="text-left p-3 hidden md:table-cell w-[20%] xl:w-[18%]">Categoria</th>
-                    <th className="text-left p-3 hidden lg:table-cell w-[20%] xl:w-[18%]">Código</th>
-                    <th className="text-right p-3 w-[6.5rem] whitespace-nowrap">Estoque</th>
-                    <th className="text-right p-3 hidden sm:table-cell w-[5.5rem] whitespace-nowrap">Mín</th>
-                    <th className="text-left p-3 hidden xl:table-cell w-[7.5rem] whitespace-nowrap">Validade</th>
-                    <th className="text-right p-3 hidden xl:table-cell w-[8.5rem] whitespace-nowrap">Valor</th>
-                    <th className="text-right p-3 w-[7.5rem] whitespace-nowrap">Ações</th>
+                    <th className="text-left p-3 w-[30%]">Produto</th>
+                    <th className="text-left p-3 hidden md:table-cell w-[20%]">Categoria</th>
+                    <th className="text-left p-3 hidden lg:table-cell w-[18%]">Código</th>
+                    <th className="text-right p-3 w-[6rem] whitespace-nowrap">Estoque</th>
+                    <th className="text-right p-3 hidden sm:table-cell w-[5rem] whitespace-nowrap">Mín</th>
+                    <th className="text-left p-3 hidden xl:table-cell w-[7rem] whitespace-nowrap">Validade</th>
+                    <th className="text-right p-3 hidden xl:table-cell w-[7.5rem] whitespace-nowrap">Valor</th>
+                    <th className="text-right p-3 w-[6.5rem] whitespace-nowrap">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -5671,36 +5959,67 @@ export function InsumosModule() {
                 </Button>
               </div>
               <div className="mt-2">
-                {quickSearchMatches.length ? (
+                {quickSearchRemoteLoading ? (
+                  <div className="text-xs text-blue-200/70">Buscando no servidor…</div>
+                ) : quickSearchRemoteError ? (
+                  <div className="text-xs text-amber-200">{quickSearchRemoteError} (mostrando cache local).</div>
+                ) : null}
+                {quickSearchMatches.length && !hasQuickSelection ? (
                   <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                     <div className="text-[11px] text-blue-200/60 mb-2">Selecione o produto para lançar a operação:</div>
                     <div className="space-y-2">
                       {quickSearchMatches.map(({ item, matchedCode }) => {
-                        const code = matchedCode || item.codigoBarras || ''
+                        const codes = getInsumoBarcodes(item)
+                        const code = matchedCode && codes.includes(matchedCode) ? matchedCode : codes[0] || ''
+                        const hasCode = !!code
+                        const descriptor = formatInsumoDescriptor(item)
                         return (
-                          <button
-                            key={`${item.registro || ''}-${code}`}
-                            type="button"
-                            onClick={() => applyQuickSelection(item, code)}
-                            className="w-full min-w-0 rounded-md border border-white/5 bg-white/5 px-2 py-2 text-left hover:bg-white/10"
+                          <div
+                            key={`${item.registro || ''}-${code || 'nocode'}`}
+                            className="w-full min-w-0 rounded-md border border-white/5 bg-white/5 px-2 py-2"
                           >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="text-sm text-blue-50 font-semibold break-words">{String(item.produto || 'Insumo')}</div>
-                              <div className="text-xs text-blue-200/60 font-mono break-all">{code}</div>
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
-                              {item.categoria ? (
-                                <Badge style={buildTagStyle(getCategoriaBgColor(String(item.categoria)))} className="border">
-                                  {String(item.categoria)}
-                                </Badge>
+                            <button
+                              type="button"
+                              onClick={() => applyQuickSelection(item, code)}
+                              disabled={!hasCode}
+                              className={`w-full text-left ${!hasCode ? 'cursor-not-allowed' : 'hover:bg-white/10'} rounded-md px-1 py-1`}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-sm text-blue-50 font-semibold break-words">{String(item.produto || 'Insumo')}</div>
+                                <div className="text-xs text-blue-200/60 font-mono break-all">{code || '—'}</div>
+                              </div>
+                              {descriptor ? (
+                                <div className="text-xs text-blue-200/70 mt-0.5 break-words">{descriptor}</div>
                               ) : null}
-                              {item.marca ? (
-                                <Badge style={buildTagStyle(getMarcaBgColor(String(item.marca)))} className="border">
-                                  {String(item.marca)}
-                                </Badge>
+                              {!hasCode ? (
+                                <div className="text-xs text-amber-200 mt-1">Sem código de barras cadastrado</div>
                               ) : null}
-                            </div>
-                          </button>
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
+                                {item.categoria ? (
+                                  <Badge style={buildTagStyle(getCategoriaBgColor(String(item.categoria)))} className="border">
+                                    {String(item.categoria)}
+                                  </Badge>
+                                ) : null}
+                                {item.marca ? (
+                                  <Badge style={buildTagStyle(getMarcaBgColor(String(item.marca)))} className="border">
+                                    {String(item.marca)}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </button>
+                            {!hasCode ? (
+                              <div className="mt-2 flex justify-end">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openEditDialog(item)}
+                                  disabled={!isAuthed}
+                                >
+                                  Editar cadastro
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
                         )
                       })}
                     </div>
@@ -5710,38 +6029,77 @@ export function InsumosModule() {
                   <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
                 ) : quickLookupError ? (
                   <div className="text-xs text-red-200">{quickLookupError}</div>
-                ) : quickLookupItems.length ? (
-                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm text-blue-50 font-semibold">
-                        {String(quickLookupItems[0]?.produto || '').trim() || 'Insumo'}
+                ) : (quickLookupItems.length || quickSelectedSnapshot) ? (
+                  (() => {
+                    const selected = quickLookupItems[0] || quickSelectedSnapshot
+                    if (!selected) return null
+                    const selectedCodes = getInsumoBarcodes(selected)
+                    const activeCode = quickCodigo.trim() || selectedCodes[0] || ''
+                    const resumoBase = quickLookupItems.length ? quickLookupItems : [selected]
+                    return (
+                      <div className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-2">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="text-xs uppercase tracking-wide text-blue-200/70">Selecionado</div>
+                            <div className="text-sm text-blue-50 font-semibold">
+                              {String(selected?.produto || '').trim() || 'Insumo'}
+                            </div>
+                            {formatInsumoDescriptor(selected) ? (
+                              <div className="text-xs text-blue-200/70 mt-0.5">
+                                {formatInsumoDescriptor(selected)}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-col items-end gap-2 text-xs text-blue-200/70">
+                            <Button variant="outline" size="sm" onClick={clearQuickSelection}>
+                              Trocar seleção
+                            </Button>
+                            <div className="text-right">
+                              {(() => {
+                                const ctx = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
+                                const total = resumoBase.reduce((acc, it) => {
+                                  const v = ctx && (it as any)?.estoques ? Number((it as any).estoques?.[ctx] ?? 0) : Number((it as any).estoqueAtual ?? 0)
+                                  return acc + (Number.isFinite(v) ? v : 0)
+                                }, 0)
+                                return `Estoque: ${total}`
+                              })()}
+                              {' • '}
+                              {Array.from(new Set(resumoBase.map((it) => String((it as any)?.registro || '').trim()).filter(Boolean))).length} registros
+                            </div>
+                          </div>
+                        </div>
+                        {selectedCodes.length > 1 ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
+                            <span className="uppercase tracking-wide">Código</span>
+                            <Select value={activeCode} onValueChange={(v) => selectQuickCodigo(v, { snapshot: selected })}>
+                              <SelectTrigger className="h-8">
+                                <SelectValue placeholder="Selecione o código" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {selectedCodes.map((c) => (
+                                  <SelectItem key={c} value={c}>
+                                    <span className="font-mono">{c}</span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : null}
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
+                          {selected?.categoria ? (
+                            <Badge style={buildTagStyle(getCategoriaBgColor(String(selected.categoria)))} className="border">
+                              {String(selected.categoria)}
+                            </Badge>
+                          ) : null}
+                          {selected?.marca ? (
+                            <Badge style={buildTagStyle(getMarcaBgColor(String(selected.marca)))} className="border">
+                              {String(selected.marca)}
+                            </Badge>
+                          ) : null}
+                        </div>
                       </div>
-                      <div className="text-xs text-blue-200/60">
-                        {(() => {
-                          const ctx = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
-                          const total = quickLookupItems.reduce((acc, it) => {
-                            const v = ctx && (it as any)?.estoques ? Number((it as any).estoques?.[ctx] ?? 0) : Number((it as any).estoqueAtual ?? 0)
-                            return acc + (Number.isFinite(v) ? v : 0)
-                          }, 0)
-                          return `Estoque: ${total}`
-                        })()}
-                        {' • '}
-                        {Array.from(new Set(quickLookupItems.map((it) => String((it as any)?.registro || '').trim()).filter(Boolean))).length} registros
-                      </div>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
-                      {quickLookupItems[0]?.categoria ? (
-                        <Badge style={buildTagStyle(getCategoriaBgColor(String(quickLookupItems[0].categoria)))} className="border">
-                          {String(quickLookupItems[0].categoria)}
-                        </Badge>
-                      ) : null}
-                      {quickLookupItems[0]?.marca ? (
-                        <Badge style={buildTagStyle(getMarcaBgColor(String(quickLookupItems[0].marca)))} className="border">
-                          {String(quickLookupItems[0].marca)}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </div>
+                    )
+                  })()
                 ) : null}
               </div>
             </div>
@@ -5844,8 +6202,7 @@ export function InsumosModule() {
             {quickScanOpen ? (
               <BarcodeScannerInline
                 onDetected={(code) => {
-                  setQuickCodigo(code)
-                  setQuickSearch(code)
+                  selectQuickCodigo(code, { setSearch: true, snapshot: null })
                   setQuickScanOpen(false)
                   toast.success('Código detectado')
                 }}
@@ -5917,12 +6274,6 @@ export function InsumosModule() {
               </Button>
             )}
           </DialogFooter>
-          {quickActionFeedback ? (
-            <div className={`text-xs ${quickActionFeedback.type === 'success' ? 'text-green-300' : 'text-red-300'}`}>
-              {quickActionFeedback.type === 'success' ? 'Sucesso: ' : 'Falha: '}
-              {quickActionFeedback.message}
-            </div>
-          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -6106,6 +6457,16 @@ export function InsumosModule() {
         </DialogContent>
       </Dialog>
 
+      {proxyStatus?.mutationsBlocked ? (
+        <div className="max-w-6xl mx-auto mb-3 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div className="font-semibold">Modo local seguro ativo</div>
+          <div className="text-amber-100/80">
+            Mutações para o backend de produção estão bloqueadas. Para liberar, rode com
+            <span className="font-mono"> LOCAL_ALLOW_UPSTREAM_MUTATIONS=1</span>.
+          </div>
+        </div>
+      ) : null}
+
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
@@ -6114,7 +6475,6 @@ export function InsumosModule() {
                 <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
                 Valor em estoque
               </CardTitle>
-              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">
@@ -6135,9 +6495,8 @@ export function InsumosModule() {
             <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-                Críticos
+                Crítico
               </CardTitle>
-              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
@@ -6156,9 +6515,8 @@ export function InsumosModule() {
             <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-                Estoque baixo
+                Atenção
               </CardTitle>
-              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
@@ -6168,7 +6526,7 @@ export function InsumosModule() {
                   Carregando {loadingPercent}%
                 </div>
               ) : (
-                <div className="text-xs text-blue-200/60">atenção</div>
+                <div className="text-xs text-blue-200/60">estoque baixo</div>
               )}
             </CardContent>
           </Card>
@@ -6179,7 +6537,6 @@ export function InsumosModule() {
                 <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
                 Vencendo
               </CardTitle>
-              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
@@ -6198,9 +6555,8 @@ export function InsumosModule() {
             <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2">
                 <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                Expirado c/ estoque
+                Expirado
               </CardTitle>
-              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
@@ -6221,7 +6577,6 @@ export function InsumosModule() {
                 <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
                 Movimentações
               </CardTitle>
-              <LoadingBadge active={overviewLoading} />
             </CardHeader>
             <CardContent>
               <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
@@ -6439,13 +6794,13 @@ export function InsumosModule() {
 
               <div className="overflow-auto rounded-xl border border-white/10">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-black/30 text-blue-100/80">
-                    <tr>
-                      <th className="text-left p-3">Categoria</th>
-                      <th className="text-left p-3">Regras</th>
-                      <th className="text-right p-3">Ações</th>
-                    </tr>
-                  </thead>
+                      <thead className="bg-black/30 text-blue-100/80">
+                        <tr>
+                          <th className="text-left p-3 w-[34%]">Categoria</th>
+                          <th className="text-left p-3 w-[46%]">Regras</th>
+                          <th className="text-right p-3 w-[20%]">Ações</th>
+                        </tr>
+                      </thead>
                   <tbody className="divide-y divide-white/5">
                     {(adminCategoryPolicies || []).map((p) => (
                       <tr key={p.slug} className="hover:bg-white/5">
@@ -6609,21 +6964,32 @@ export function InsumosModule() {
                     <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
                   </div>
                 </div>
+                <div className="flex items-center justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPurchaseDialogOpen(true)}
+                    disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                    title="Ver lista completa de reposição"
+                  >
+                    Lista de compra
+                  </Button>
+                </div>
 
                 <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                   <table className="w-full table-auto text-sm">
                     <thead className="bg-black/30 text-blue-100/80">
                       <tr>
-                        <th className="text-left p-3">Produto</th>
-                        <th className="text-left p-3">Categoria</th>
-                        <th className="text-left p-3">Status</th>
-                        <th className="text-left p-3">Ação</th>
-                        <th className="text-right p-3">Atual</th>
-                        <th className="text-right p-3 hidden sm:table-cell">Mín</th>
-                        <th className="hidden lg:table-cell text-right p-3">Dif</th>
-                        <th className="hidden lg:table-cell text-right p-3">%</th>
-                      </tr>
-                    </thead>
+                          <th className="text-left p-3 w-[24%]">Produto</th>
+                          <th className="text-left p-3 w-[14%]">Categoria</th>
+                          <th className="text-left p-3 w-[14%]">Status</th>
+                          <th className="text-left p-3 w-[20%]">Ação recomendada</th>
+                          <th className="text-right p-3 w-[8%]">Atual</th>
+                          <th className="text-right p-3 hidden sm:table-cell w-[6%]">Mín</th>
+                          <th className="hidden lg:table-cell text-right p-3 w-[7%]">Dif</th>
+                          <th className="hidden lg:table-cell text-right p-3 w-[7%]">%</th>
+                        </tr>
+                      </thead>
                     <tbody className="divide-y divide-white/5">
                       {alertasLinhasFiltradas.slice(0, 120).map((a, idx) => {
                         const code = String(a.codigoBarras || '').trim()
@@ -6635,8 +7001,7 @@ export function InsumosModule() {
                             className={`hover:bg-white/5 ${a.codigoBarras ? 'cursor-pointer' : ''}`}
                             onClick={() => {
                               if (code) {
-                                setQuickCodigo(code)
-                                setQuickSearch(code)
+                                selectQuickCodigo(code, { setSearch: true, snapshot: null })
                               }
                             }}
                             title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
@@ -6758,205 +7123,6 @@ export function InsumosModule() {
             </details>
 
             <details
-              data-pref-key="insumos.details.alerts.validity"
-              open={detailsOpen['insumos.details.alerts.validity'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.validity', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">Validade</summary>
-              <div className="mt-3 space-y-3">
-                <div className="text-xs text-blue-200/60">
-                  Lista resumida (até 50 itens) gerada automaticamente para a unidade.
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                        <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                        Vencendo
-                      </div>
-                      <Badge variant="secondary">{overviewNotifications?.counts?.expiringSoon ?? 0}</Badge>
-                    </div>
-                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-left p-3">Validade</th>
-                            <th className="text-right p-3">Estoque</th>
-                            <th className="text-right p-3">Ação</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5 text-blue-50/90">
-                          {(overviewNotifications?.expiringSoon || []).map((it: any, idx: number) => (
-                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3">
-                                <div className="font-medium">{it.produto || '-'}</div>
-                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
-                              </td>
-                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
-                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
-                              <td className="p-3 text-right">
-                                <Button
-                                  variant="secondary"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => {
-                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
-                                  }}
-                                  disabled={!isAuthed}
-                                >
-                                  Usar
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                          {!(overviewNotifications?.expiringSoon || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {renderLoadingText(overviewLoading, 'Sem itens.')}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm text-blue-100/80 flex items-center gap-2">
-                        <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                        Expirado c/ estoque
-                      </div>
-                      <Badge variant="destructive">{overviewNotifications?.counts?.expiredWithStock ?? 0}</Badge>
-                    </div>
-                    <div className="mt-2 overflow-auto max-h-[50vh] rounded-lg border border-white/10">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-black/30 text-blue-100/80">
-                          <tr>
-                            <th className="text-left p-3">Produto</th>
-                            <th className="text-left p-3">Validade</th>
-                            <th className="text-right p-3">Estoque</th>
-                            <th className="text-right p-3">Ação</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5 text-blue-50/90">
-                          {(overviewNotifications?.expiredWithStock || []).map((it: any, idx: number) => (
-                            <tr key={`${it.codigoBarras || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3">
-                                <div className="font-medium">{it.produto || '-'}</div>
-                                <div className="text-xs text-blue-200/60 font-mono">{it.codigoBarras || ''}</div>
-                              </td>
-                              <td className="p-3 font-mono">{it.dataValidade ? fmtDateOnlyBR(String(it.dataValidade)) : '-'}</td>
-                              <td className="p-3 text-right font-mono">{it.estoqueAtual ?? '-'}</td>
-                              <td className="p-3 text-right">
-                                <Button
-                                  variant="secondary"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => {
-                                    if (it.codigoBarras) setQuickCodigo(String(it.codigoBarras))
-                                  }}
-                                  disabled={!isAuthed}
-                                >
-                                  Usar
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                          {!(overviewNotifications?.expiredWithStock || []).length ? (
-                            <tr>
-                              <td className="p-3 text-blue-100/70" colSpan={4}>
-                                {renderLoadingText(overviewLoading, 'Sem itens.')}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </details>
-
-            <details
-              data-pref-key="insumos.details.alerts.actionables"
-              open={detailsOpen['insumos.details.alerts.actionables'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.actionables', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Ações recomendadas
-              </summary>
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm text-blue-100/80">Reposição</div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPurchaseDialogOpen(true)}
-                      disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                      title="Ver lista de compra completa"
-                    >
-                      Lista de compra
-                    </Button>
-                  </div>
-                  {(overviewActionables?.reposicao || []).slice(0, 6).map((r) => (
-                    <button
-                      key={String(r.codigoBarras)}
-                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                      onClick={() => {
-                        openQuickOperation('ENTRADA', {
-                          codigoBarras: r.codigoBarras ? String(r.codigoBarras) : '',
-                          quantidade: r.suggestedPurchaseQty ?? null,
-                          obs: 'Reposição sugerida'
-                        })
-                      }}
-                    >
-                      <div className="text-sm text-blue-50 truncate">{r.produto || '-'}</div>
-                      <div className="text-xs text-blue-200/60 font-mono truncate">{r.codigoBarras || ''}</div>
-                      <div className="text-xs text-blue-100/70 mt-1">
-                        sugerido: <span className="font-mono">+{r.suggestedPurchaseQty ?? '-'}</span> •{' '}
-                        {r.estimatedValue != null ? fmtMoneyBRL(Number(r.estimatedValue) || 0) : ''}
-                      </div>
-                    </button>
-                  ))}
-                  {!overviewActionables?.reposicao?.length ? (
-                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem recomendações.')}</div>
-                  ) : null}
-                </div>
-                <div className="space-y-2">
-                  <div className="text-sm text-blue-100/80">Transferências sugeridas</div>
-                  {(overviewActionables?.transferencias || []).slice(0, 6).map((t) => (
-                    <button
-                      key={`${t.codigoBarras}-${t.from}-${t.to}`}
-                      className="w-full text-left rounded-lg border border-white/10 bg-black/20 px-3 py-2 hover:bg-white/5"
-                      onClick={() => {
-                        openQuickOperation('TRANSFERENCIA', {
-                          codigoBarras: t.codigoBarras ? String(t.codigoBarras) : '',
-                          quantidade: t.qty ?? null,
-                          fromUnidade: t.from ? String(t.from) : null,
-                          toUnidade: t.to ? String(t.to) : null,
-                          obs: 'Transferência sugerida'
-                        })
-                      }}
-                    >
-                      <div className="text-sm text-blue-50 truncate">{t.produto || '-'}</div>
-                      <div className="text-xs text-blue-200/60 font-mono truncate">{t.codigoBarras || ''}</div>
-                      <div className="text-xs text-blue-100/70 mt-1">
-                        <span className="font-mono">{t.from ? unidadeLabel(String(t.from)) : '-'}</span> →{' '}
-                        <span className="font-mono">{t.to ? unidadeLabel(String(t.to)) : '-'}</span> •{' '}
-                        <span className="font-mono">{t.qty ?? '-'}</span>
-                      </div>
-                    </button>
-                  ))}
-                  {!overviewActionables?.transferencias?.length ? (
-                    <div className="text-sm text-blue-100/70">{renderLoadingText(overviewLoading, 'Sem sugestões.')}</div>
-                  ) : null}
-                </div>
-              </div>
-            </details>
-
-            <details
               data-pref-key="insumos.details.alerts.quality"
               open={detailsOpen['insumos.details.alerts.quality'] ?? true}
               onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
@@ -7009,11 +7175,7 @@ export function InsumosModule() {
 	                  ) : null}
 	                </div>
 
-                  {overviewLoading && !overviewQuality?.issues?.length ? (
-                    <div className="text-xs text-blue-100/70">
-                      {renderInlinePercent(true, 'text-[11px]')}
-                    </div>
-                  ) : !overviewLoading && !overviewQuality?.issues?.length ? (
+                  {!overviewLoading && !overviewQuality?.issues?.length ? (
                     <div className="text-xs text-blue-100/70">Sem ocorrências.</div>
                   ) : null}
 
@@ -7022,10 +7184,10 @@ export function InsumosModule() {
                     <table className="w-full table-auto text-sm">
                       <thead className="bg-black/30 text-blue-100/80">
                         <tr>
-                          <th className="text-left p-3">Nível</th>
-                          <th className="text-left p-3 hidden sm:table-cell">Código</th>
-                          <th className="text-left p-3">Mensagem</th>
-                          <th className="text-left p-3 w-[1%] whitespace-nowrap">Ação</th>
+                          <th className="text-left p-3 w-[10%]">Nível</th>
+                          <th className="text-left p-3 hidden sm:table-cell w-[18%]">Código</th>
+                          <th className="text-left p-3 w-[54%]">Mensagem</th>
+                          <th className="text-left p-3 w-[18%] whitespace-nowrap">Ação</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -7355,17 +7517,9 @@ export function InsumosModule() {
                             </Select>
                           ) : null}
                         </div>
-                        <div className="flex justify-end">
-                          <LoadingBadge active={overviewLoading || insightsLoading} />
-                        </div>
+                        <div className="flex justify-end" />
                       </CardHeader>
                       <CardContent>
-                        {(overviewLoading || insightsLoading || shouldShowDashboardLoading) ? (
-                          <div className="mb-2 text-xs text-blue-200/70 inline-flex items-center gap-2">
-                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                            Carregando {loadingPercent}%
-                          </div>
-                        ) : null}
                         {renderChart({ ...slot, view, metric, topN }, { height })}
                       </CardContent>
                     </Card>
@@ -7416,15 +7570,15 @@ export function InsumosModule() {
           </DialogHeader>
           <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
             <table className="min-w-full text-sm">
-              <thead className="bg-black/30 text-blue-100/80">
-                <tr>
-                  <th className="text-left p-3">Registro</th>
-                  <th className="text-left p-3">Produto</th>
-                        <th className="text-left p-3 hidden md:table-cell">Lote</th>
-                        <th className="text-left p-3 hidden sm:table-cell">Estoque ({unidadeLabel(unidade)})</th>
-                  <th className="text-left p-3">Ações</th>
-                </tr>
-              </thead>
+                      <thead className="bg-black/30 text-blue-100/80">
+                        <tr>
+                          <th className="text-left p-3 w-[20%]">Registro</th>
+                          <th className="text-left p-3 w-[32%]">Produto</th>
+                          <th className="text-left p-3 hidden md:table-cell w-[18%]">Lote</th>
+                          <th className="text-left p-3 hidden sm:table-cell w-[14%]">Estoque ({unidadeLabel(unidade)})</th>
+                          <th className="text-left p-3 w-[16%]">Ações</th>
+                        </tr>
+                      </thead>
               <tbody className="divide-y divide-white/5">
                 {qualityMatchesItems.map((item) => {
                   const registro = String(item?.registro || '').trim()
@@ -7805,12 +7959,12 @@ export function InsumosModule() {
                     <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
                   </div>
                 ) : null}
-                {lotSelecionado.fonte ? (
-                  <div>
-                    <div className="text-xs text-muted-foreground">Fonte</div>
-                    <div className="text-blue-100/80 break-words">{lotSelecionado.fonte}</div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Homologado</div>
+                  <div className="text-blue-100/80">
+                    {/homologad/i.test(String(lotSelecionado.fonte || '').trim()) ? 'Sim' : 'Não'}
                   </div>
-                ) : null}
+                </div>
               </div>
             </div>
           ) : null}
@@ -8262,12 +8416,11 @@ export function InsumosModule() {
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Fonte</div>
-                  <Input
-                    value={createFonte}
-                    onChange={(e) => setCreateFonte(e.target.value)}
-                    placeholder="ex: Tabela 2025"
-                  />
+                  <div className="text-xs text-blue-200/70 mb-1">Homologado</div>
+                  <label className="flex items-center gap-2 text-sm text-blue-100/80 select-none">
+                    <Checkbox checked={createHomologado} onCheckedChange={(v) => setCreateHomologado(!!v)} />
+                    Produto homologado
+                  </label>
                 </div>
               </div>
             </details>
@@ -8335,7 +8488,7 @@ export function InsumosModule() {
                         especificacao: createEspecificacao.trim(),
                         concentracao: createConcentracao.trim(),
                         volume: createVolume.trim(),
-                        fonte: createFonte.trim(),
+                        fonte: createHomologado ? 'Homologado' : '',
                         calibre: createCalibre.trim(),
                         precoCusto: createPrecoCusto.trim(),
                         estoqueInicial: Number(createEstoqueInicial) || 0,
@@ -8357,7 +8510,7 @@ export function InsumosModule() {
                     setCreateEspecificacao('')
                     setCreateConcentracao('')
                     setCreateVolume('')
-                    setCreateFonte('')
+                    setCreateHomologado(false)
                     setCreateCalibre('')
                     setCreatePrecoCusto('')
                     setCreateEstoqueInicial('0')
@@ -8389,18 +8542,18 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-          <table className="w-full table-auto text-sm">
+        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[70vh] rounded-xl border border-white/10">
+          <table className="w-full table-fixed text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
-                <th className="text-left p-3">Produto</th>
-                <th className="text-left p-3">Categoria</th>
-                <th className="hidden lg:table-cell text-left p-3">Código</th>
-                <th className="text-right p-3">Estoque</th>
-                <th className="text-right p-3">Mín</th>
-                <th className="hidden md:table-cell text-left p-3">Validade</th>
-                <th className="hidden xl:table-cell text-right p-3">Valor</th>
-                <th className="text-right p-3">Ações</th>
+                <th className="text-left p-3 w-[28%]">Produto</th>
+                <th className="text-left p-3 w-[16%]">Categoria</th>
+                <th className="hidden lg:table-cell text-left p-3 w-[16%]">Código</th>
+                <th className="text-right p-3 w-[7%]">Estoque</th>
+                <th className="text-right p-3 w-[7%]">Mín</th>
+                <th className="hidden md:table-cell text-left p-3 w-[10%]">Validade</th>
+                <th className="hidden xl:table-cell text-right p-3 w-[8%]">Valor</th>
+                <th className="text-right p-3 w-[8%]">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -8433,7 +8586,7 @@ export function InsumosModule() {
                     key={`${i.registro || ''}-${i.codigoBarras || ''}`}
                     className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}
                   >
-                    <td className="p-3 min-w-0">
+                    <td className="p-3 min-w-0 align-top">
                       <button
                         type="button"
                         className="w-full text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 cursor-pointer group"
@@ -8450,10 +8603,16 @@ export function InsumosModule() {
                         aria-pressed={isSelected}
                       >
                         <div className="flex items-center justify-between gap-2 min-w-0">
-                          <div className="text-blue-50 group-hover:underline break-words">{i.produto || '-'}</div>
+                          <div className="text-blue-50 group-hover:underline break-words line-clamp-2">{i.produto || '-'}</div>
                           {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
                         </div>
-                        <div className="text-xs text-blue-200/60 break-words">{i.marca || ''}</div>
+                        {i.marca ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <Badge style={buildTagStyle(getMarcaBgColor(String(i.marca)))} className="border">
+                              {String(i.marca)}
+                            </Badge>
+                          </div>
+                        ) : null}
                         {isCritico || isLowStock || isVencendo || isExpirado ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {isCritico ? <Badge variant="destructive">Crítico</Badge> : null}
@@ -8464,38 +8623,35 @@ export function InsumosModule() {
                         ) : null}
                       </button>
                     </td>
-                    <td className="p-3 text-blue-100/80">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="inline-block h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: getCategoriaBgColor(i.categoria || 'Outros') }}
-                        />
-                        <span className="break-words">{i.categoria || '-'}</span>
+                    <td className="p-3 text-blue-100/80 align-top">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Badge style={buildTagStyle(getCategoriaBgColor(i.categoria || 'Outros'))} className="border">
+                          {i.categoria || '-'}
+                        </Badge>
                       </div>
                     </td>
-                    <td className="hidden lg:table-cell p-3">
+                    <td className="hidden lg:table-cell p-3 align-top">
                       <div className="font-mono text-blue-100/80 break-all">{i.codigoBarras || '-'}</div>
                     </td>
-                    <td className={`p-3 text-right ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
+                    <td className={`p-3 text-right align-top ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
                       <div className="flex items-center justify-end gap-2">
                         <span className="font-mono">{estoque}</span>
                       </div>
                       {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
                     </td>
-                    <td className="p-3 text-right text-blue-100/70">{min || '-'}</td>
-                    <td className="hidden md:table-cell p-3">
+                    <td className="p-3 text-right text-blue-100/70 align-top">{min || '-'}</td>
+                    <td className="hidden md:table-cell p-3 align-top">
                       <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
                     </td>
-                    <td className="hidden xl:table-cell p-3 text-right text-blue-100/80">{fmtMoneyBRL(valor)}</td>
-                    <td className="p-3 text-right">
+                    <td className="hidden xl:table-cell p-3 text-right text-blue-100/80 align-top">{fmtMoneyBRL(valor)}</td>
+                    <td className="p-3 text-right align-top">
                       <div className="flex items-center justify-end gap-2">
                         <Button
                           variant="secondary"
                           className="h-8 px-2 text-xs"
                           onClick={() => {
                             if (i.codigoBarras) {
-                              setQuickCodigo(i.codigoBarras)
-                              setQuickSearch(String(i.codigoBarras))
+                              selectQuickCodigo(i.codigoBarras, { setSearch: true, snapshot: i })
                             }
                           }}
                         >
@@ -8711,7 +8867,7 @@ export function InsumosModule() {
             <Input
               value={movSearch}
               onChange={(e) => setMovSearch(e.target.value)}
-              placeholder="nome, codigo, categoria"
+              placeholder="nome, marca, categoria, código"
               className="w-full"
             />
           </div>
@@ -8734,29 +8890,29 @@ export function InsumosModule() {
           </div>
         </div>
 
-	        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-	          <table className="min-w-full text-sm">
-	            <thead className="bg-black/30 text-blue-100/80">
-	              <tr>
+        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+          <table className="w-full table-fixed text-sm">
+            <thead className="bg-black/30 text-blue-100/80">
+              <tr>
                   {(
                     [
-                      { key: 'dataHora', label: 'Data', compact: true, className: '' },
-                      { key: 'produto', label: 'Produto' },
-                      { key: 'categoria', label: 'Categoria', compact: true, className: 'hidden md:table-cell' },
-                      { key: 'marca', label: 'Marca', compact: true, className: 'hidden lg:table-cell' },
-                      { key: 'estoque', label: 'Estoque', compact: true },
-                      { key: 'valor', label: 'Valor', compact: true },
-                      { key: 'usuario', label: 'Usuário', compact: true, className: 'hidden xl:table-cell' },
-                      { key: 'observacao', label: 'Observação', className: 'hidden md:table-cell' },
-                      { key: null, label: 'Ações', compact: true }
-                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string }>
+                      { key: 'dataHora', label: 'Data', compact: true, className: '', widthClass: 'w-[8%]' },
+                      { key: 'produto', label: 'Produto', widthClass: 'w-[22%]' },
+                      { key: 'categoria', label: 'Categoria', compact: true, className: 'hidden md:table-cell', widthClass: 'w-[12%]' },
+                      { key: 'marca', label: 'Marca', compact: true, className: 'hidden lg:table-cell', widthClass: 'w-[10%]' },
+                      { key: 'estoque', label: 'Estoque', compact: true, widthClass: 'w-[10%]' },
+                      { key: 'valor', label: 'Valor', compact: true, widthClass: 'w-[10%]' },
+                      { key: 'usuario', label: 'Usuário', compact: true, className: 'hidden xl:table-cell', widthClass: 'w-[10%]' },
+                      { key: 'observacao', label: 'Observação', className: 'hidden md:table-cell', widthClass: 'w-[16%]' },
+                      { key: null, label: 'Ações', compact: true, widthClass: 'w-[6%]' }
+                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string; widthClass?: string }>
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
                     return (
-	                      <th
-	                        key={col.label}
-	                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap w-[1%]' : ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
-	                      >
+                      <th
+                        key={col.label}
+                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap' : ''} ${col.widthClass || ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
+                      >
 	                        <div className="flex items-center justify-center gap-2">
                             {col.key ? (
                               <button
@@ -8832,11 +8988,11 @@ export function InsumosModule() {
 
 		                return (
 		                  <tr key={`${m.dataHora || ''}-${idx}`} className={rowClass}>
-		                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap">
+                    <td className="p-3 text-center align-top text-blue-100/70 whitespace-nowrap">
                           <div className="text-blue-50">{fmtMovDateShort(m.dataHora) || '-'}</div>
                           <div className="text-xs text-blue-200/60">{fmtMovTimeShort(m.dataHora) || ''}</div>
                         </td>
-                    <td className="p-3 text-center align-middle">
+                    <td className="p-3 text-center align-top">
                       <button
                         type="button"
                         className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer break-words"
@@ -8851,7 +9007,7 @@ export function InsumosModule() {
                         title="Filtrar por produto"
                         aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
                       >
-                        {produtoNome}
+                        <span className="line-clamp-2">{produtoNome}</span>
                       </button>
                       {marcaNome && marcaNome !== '-' ? (
                         <div className="mt-1 flex flex-wrap justify-center gap-1 lg:hidden">
@@ -8861,7 +9017,7 @@ export function InsumosModule() {
                         </div>
                       ) : null}
                     </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap hidden md:table-cell">
+                      <td className="p-3 text-center align-top whitespace-nowrap hidden md:table-cell">
                         {categoriaNome && categoriaNome !== '-' ? (
                           <button
                             type="button"
@@ -8884,7 +9040,7 @@ export function InsumosModule() {
                           <span className="text-blue-100/70">-</span>
                         )}
                       </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap hidden lg:table-cell">
+                      <td className="p-3 text-center align-top whitespace-nowrap hidden lg:table-cell">
                         {marcaNome && marcaNome !== '-' ? (
                           <button
                             type="button"
@@ -8907,25 +9063,25 @@ export function InsumosModule() {
                           <span className="text-blue-100/70">-</span>
                         )}
                       </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                      <td className="p-3 text-center align-top whitespace-nowrap">
                         {estoqueAntes != null && estoqueDepois != null && Number.isFinite(estoqueAntes) && Number.isFinite(estoqueDepois) ? (
                           <span className="font-mono text-blue-50">{estoqueAntes} → {estoqueDepois}</span>
                         ) : (
                           <span className="font-mono text-blue-100/70">-</span>
                         )}
                       </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap w-[1%]">
+                      <td className="p-3 text-center align-top whitespace-nowrap w-[1%]">
                         <div className="text-blue-50">{preco ? fmtMoneyBRL(valorMov) : '-'}</div>
                         <div className="text-xs text-blue-200/60">
                           {valorEstoqueTotal != null ? fmtMoneyBRL0(valorEstoqueTotal) : ''}
                         </div>
                       </td>
-	                    <td className="p-3 text-center align-middle text-blue-100/70 whitespace-nowrap hidden xl:table-cell">{m.usuario || '-'}</td>
-	                    <td className="p-3 text-center align-middle text-blue-100/60 hidden md:table-cell">
-	                      <div className="space-y-1">
-	                        {m.transferId ? (
-	                          <div>
-	                            <div>
+                    <td className="p-3 text-center align-top text-blue-100/70 whitespace-nowrap hidden xl:table-cell">{m.usuario || '-'}</td>
+                    <td className="p-3 text-left align-top text-blue-100/60 hidden md:table-cell">
+                      <div className="space-y-1 break-words">
+                        {m.transferId ? (
+                          <div>
+                            <div>
                               Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
                               {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
                             </div>
@@ -8936,16 +9092,16 @@ export function InsumosModule() {
                         ) : (
                           <span>{m.observacoes || '-'}</span>
                         )}
-                        {m.registroInsumo || m.lote || m.dataValidade ? (
-                          <div className="text-xs text-blue-200/60">
-                            {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
-                            {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
-                            {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
-                          </div>
-	                        ) : null}
-	                      </div>
-	                    </td>
-                      <td className="p-3 text-center align-middle whitespace-nowrap">
+                          {m.registroInsumo || m.lote || m.dataValidade ? (
+                            <div className="text-xs text-blue-200/60">
+                              {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
+                              {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
+                              {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="p-3 text-center align-top whitespace-nowrap">
                         <div className="flex justify-center gap-2">
                           <Button
                             variant="outline"

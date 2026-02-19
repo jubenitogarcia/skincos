@@ -15,6 +15,17 @@ async function tableHasColumn(env, tableName, columnName) {
     }
 }
 
+function hasBackupPayloadInsumos(payload) {
+    return !!(
+        payload?.d1 &&
+        (Array.isArray(payload.d1.insumosItems) ||
+            Array.isArray(payload.d1.crmUsers) ||
+            Array.isArray(payload.d1.insumosUsers) ||
+            Array.isArray(payload.d1.insumosStocks) ||
+            Array.isArray(payload.d1.insumosMovements))
+    );
+}
+
 // -------------------------------------------------------------
 // Backups (Cloudflare-only)
 // - Prefer storing large payloads in R2 when BACKUP_BUCKET exists.
@@ -132,6 +143,207 @@ export async function buildBackupPayload({ env }) {
         },
         d1: d1Dump,
     };
+}
+
+export async function restoreBackupPayload({ env, payload }) {
+    if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
+    const p = payload;
+    if (!hasBackupPayloadInsumos(p)) throw new Error('PAYLOAD_INVALID');
+
+    if (env?.DB && p?.d1) {
+        try {
+            const { usersTable } = await resolveCrmTables(env);
+            const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+            const usersRows = Array.isArray(p.d1.crmUsers)
+                ? p.d1.crmUsers
+                : (Array.isArray(p.d1.insumosUsers) ? p.d1.insumosUsers : []);
+
+            if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
+            if (Array.isArray(p.d1.insumosMovements)) await env.DB.prepare('DELETE FROM insumos_movements').run();
+            if (Array.isArray(p.d1.insumosItems)) await env.DB.prepare('DELETE FROM insumos_items').run();
+            if (usersRows.length) await env.DB.prepare(`DELETE FROM ${usersTable}`).run();
+            if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
+
+            for (const row of (usersRows || []).reverse()) {
+                if (usersHasModules) {
+                    await env.DB.prepare(
+                        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    )
+                        .bind(
+                            row.username || '',
+                            row.email || '',
+                            row.displayName || '',
+                            row.passwordHash || '',
+                            row.role || 'CONSULTOR',
+                            row.photoUrl || '',
+                            row.allowedUnitsJson || null,
+                            row.allowedModulesJson || null,
+                            Number(row.ativo || 0) ? 1 : 0,
+                            row.createdAt || new Date().toISOString(),
+                            row.updatedAt || new Date().toISOString()
+                        )
+                        .run();
+                } else {
+                    await env.DB.prepare(
+                        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    )
+                        .bind(
+                            row.username || '',
+                            row.email || '',
+                            row.displayName || '',
+                            row.passwordHash || '',
+                            row.role || 'CONSULTOR',
+                            row.photoUrl || '',
+                            row.allowedUnitsJson || null,
+                            Number(row.ativo || 0) ? 1 : 0,
+                            row.createdAt || new Date().toISOString(),
+                            row.updatedAt || new Date().toISOString()
+                        )
+                        .run();
+                }
+            }
+            for (const row of (p.d1.insumosItems || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT INTO insumos_items
+                     (registro, codigo_barras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade,
+                      fonte, preco_custo, estoque_minimo, lote, data_validade,
+                      policy_requires_lot, policy_requires_expiry, policy_fefo,
+                      data_cadastro, data_atualizacao)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                    .bind(
+                        row.registro || '',
+                        row.codigoBarras || '',
+                        row.produto || '',
+                        row.categoria || '',
+                        row.marca || '',
+                        row.especificacao || '',
+                        row.concentracao || '',
+                        row.volume || '',
+                        row.calibre || '',
+                        row.tipoUnidade || '',
+                        row.fonte || '',
+                        Number(row.precoCusto || 0),
+                        Number(row.estoqueMinimo || 0),
+                        row.lote || '',
+                        row.dataValidade || '',
+                        row.policyRequiresLot !== undefined && row.policyRequiresLot !== null ? (Number(row.policyRequiresLot) ? 1 : 0) : null,
+                        row.policyRequiresExpiry !== undefined && row.policyRequiresExpiry !== null ? (Number(row.policyRequiresExpiry) ? 1 : 0) : null,
+                        row.policyFefo !== undefined && row.policyFefo !== null ? (Number(row.policyFefo) ? 1 : 0) : null,
+                        row.dataCadastro || new Date().toISOString(),
+                        row.dataAtualizacao || new Date().toISOString()
+                    )
+                    .run();
+            }
+            for (const row of (p.d1.insumosStocks || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+                     VALUES (?, ?, ?, ?)`
+                )
+                    .bind(row.registro || '', row.unidade || '', Number(row.quantidade || 0), row.updatedAt || new Date().toISOString())
+                    .run();
+            }
+            for (const row of (p.d1.insumosMovements || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT INTO insumos_movements
+                     (id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto, quantidade,
+                      estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia,
+                      usuario, motivo, observacoes)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                    .bind(
+                        row.id || crypto.randomUUID(),
+                        row.dataHora || new Date().toISOString(),
+                        row.tipo || '',
+                        row.codigoBarras || '',
+                        row.registroInsumo || '',
+                        row.lote || '',
+                        row.dataValidade || '',
+                        row.produto || '',
+                        Number(row.quantidade || 0),
+                        Number(row.estoqueAnterior || 0),
+                        Number(row.estoqueNovo || 0),
+                        row.unidade || '',
+                        row.unidadeOrigem || '',
+                        row.unidadeDestino || '',
+                        row.transferId || '',
+                        row.usuario || '',
+                        row.motivo || '',
+                        row.observacoes || ''
+                    )
+                    .run();
+            }
+            for (const row of (p.d1.shareHistory || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT INTO share_history (id, user, created_at, title, text, url, files_json, source_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                    .bind(
+                        row.id || crypto.randomUUID(),
+                        row.user || '',
+                        row.createdAt || new Date().toISOString(),
+                        row.title || '',
+                        row.text || '',
+                        row.url || '',
+                        row.filesJson || '[]',
+                        row.sourceId || ''
+                    )
+                    .run();
+            }
+        } catch {
+            // ignore
+        }
+        try {
+            await env.DB.prepare('DELETE FROM audit_log').run();
+            for (const row of (p.d1.auditLog || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT INTO audit_log (ts, actor, role, action, entity, entity_id, unidade, ip, user_agent, idempotency_key, before_json, after_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                    .bind(
+                        row.ts || row.timestamp || new Date().toISOString(),
+                        row.actor || '',
+                        row.role || '',
+                        row.action || '',
+                        row.entity || '',
+                        row.entityId || '',
+                        row.unidade || '',
+                        row.ip || '',
+                        row.userAgent || '',
+                        row.idempotencyKey || '',
+                        row.beforeJson || null,
+                        row.afterJson || null
+                    )
+                    .run();
+            }
+        } catch {
+            // ignore
+        }
+        try {
+            await env.DB.prepare('DELETE FROM notification_snapshot').run();
+            for (const row of (p.d1.notificationSnapshots || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT INTO notification_snapshot (ts, unidade, low_stock, expiring_soon, expired_with_stock, payload_json)
+                     VALUES (?, ?, ?, ?, ?, ?)`
+                )
+                    .bind(
+                        row.ts || new Date().toISOString(),
+                        row.unidade || '',
+                        Number(row.lowStock || 0),
+                        Number(row.expiringSoon || 0),
+                        Number(row.expiredWithStock || 0),
+                        row.payloadJson || null
+                    )
+                    .run();
+            }
+        } catch {
+            // ignore
+        }
+    }
+
+    return { restored: true };
 }
 
 export async function persistBackupSnapshot({ env, actor, role, unidade, kind, payload }) {

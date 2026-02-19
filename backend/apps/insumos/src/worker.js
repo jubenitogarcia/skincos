@@ -779,6 +779,72 @@ async function appendAuditLog({ env, actor, role, ip, userAgent, action, entity,
     }
 }
 
+async function recordCronFailure(env, error) {
+    const ts = new Date().toISOString();
+    const message = String(error?.message || error || '');
+    try {
+        if (env?.DB) {
+            await env.DB.prepare(
+                `INSERT INTO audit_log (ts, actor, role, action, entity, entity_id, unidade, ip, user_agent, idempotency_key, before_json, after_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+                .bind(
+                    ts,
+                    'system',
+                    'CRON',
+                    'CRON_FAIL',
+                    'INSUMOS_NOTIFICATIONS',
+                    'scheduled',
+                    '',
+                    '',
+                    '',
+                    '',
+                    safeJson({ error: message }),
+                    safeJson({ error: message })
+                )
+                .run();
+
+            const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+            const failRow = await env.DB.prepare(
+                `SELECT COUNT(1) AS n FROM audit_log
+                 WHERE action = 'CRON_FAIL' AND entity = 'INSUMOS_NOTIFICATIONS' AND ts >= ?`
+            ).bind(since).first();
+            const alertRow = await env.DB.prepare(
+                `SELECT COUNT(1) AS n FROM audit_log
+                 WHERE action = 'CRON_ALERT' AND entity = 'INSUMOS_NOTIFICATIONS' AND ts >= ?`
+            ).bind(since).first();
+            const failures = Number(failRow?.n || 0) || 0;
+            const alerted = Number(alertRow?.n || 0) || 0;
+            if (failures >= 3 && alerted === 0) {
+                await env.DB.prepare(
+                    `INSERT INTO audit_log (ts, actor, role, action, entity, entity_id, unidade, ip, user_agent, idempotency_key, before_json, after_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                    .bind(
+                        new Date().toISOString(),
+                        'system',
+                        'CRON',
+                        'CRON_ALERT',
+                        'INSUMOS_NOTIFICATIONS',
+                        'scheduled',
+                        '',
+                        '',
+                        '',
+                        '',
+                        safeJson({ failures, error: message }),
+                        safeJson({ failures, error: message })
+                    )
+                    .run();
+                console.error('ALERT_CRON_FAILURES', { failures, error: message });
+            }
+            return;
+        }
+    } catch (err) {
+        console.error('CRON_FAIL_LOG_ERROR', { error: String(err?.message || err || '') });
+    }
+    console.error('CRON_FAIL', { error: message });
+}
+
 function computeNotificationsForUnidade(insumos, unidade) {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -1050,9 +1116,26 @@ export default {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
         }
 
-        // Ponto (Relógio-Ponto) — handled here to avoid depending on Insumos auth/session.
+        const pontoEnabled = String(env?.PONTO_INSUMOS_ENABLED || '').trim().toLowerCase() === 'true';
+        if (url.pathname.startsWith("/api/ponto")) {
+            if (!pontoEnabled) {
+                return withCORS(
+                    JSON.stringify({
+                        ok: false,
+                        error: "PONTO_DISABLED",
+                        hint: "Ponto está centralizado no CRM API. Atualize PONTO_API_TARGET para o backend do CRM."
+                    }),
+                    { status: 410, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } },
+                    appOrigin
+                );
+            }
+        }
+
+        // Ponto (Relógio-Ponto) — handled here only when explicitly enabled.
         // Important: run this before any Insumos-specific storage guards or auth gates.
-        const pontoResponse = await handlePontoRoutes({ request, url, env, appOrigin, withCORS });
+        const pontoResponse = pontoEnabled
+            ? await handlePontoRoutes({ request, url, env, appOrigin, withCORS })
+            : null;
         if (pontoResponse) return pontoResponse;
 
         // D1-only: reject any non-d1 storage mode explicitly.
@@ -1124,7 +1207,11 @@ export default {
         const methodUpper = (request.method || 'GET').toUpperCase();
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(methodUpper);
         const isAuthRoute = url.pathname.startsWith('/auth/');
-        if (isMutating && !isAuthRoute) {
+        const allowDevSeed = String(env?.ALLOW_DEV_SEED || '').trim().toLowerCase() === 'true';
+        const seedToken = String(env?.INSUMOS_SEED_TOKEN || '').trim();
+        const seedHeader = String(request.headers.get('x-seed-token') || request.headers.get('x-insumos-seed-token') || '').trim();
+        const isDevSeed = url.pathname === '/admin/seed' && allowDevSeed && seedToken && seedHeader === seedToken;
+        if (isMutating && !isAuthRoute && !isDevSeed) {
             const csrfCookie = cookies.csrfToken || '';
             const csrfHeader = request.headers.get('x-csrf-token') || request.headers.get('X-CSRF-Token') || '';
             const expected = sessionCsrf || csrfCookie;
@@ -1463,15 +1550,18 @@ export default {
         try {
             const { unidades } = getInsumosConfig(env);
             // Prefer Cloudflare-only job execution (Queues are not available on free plan).
-            if (env?.JOB_QUEUE) {
+            const forceDirect =
+                String(env?.INSUMOS_CRON_FORCE_DIRECT || env?.CRON_FORCE_DIRECT || '').trim().toLowerCase() === 'true' ||
+                String(env?.INSUMOS_CRON_FORCE_DIRECT || env?.CRON_FORCE_DIRECT || '').trim() === '1';
+            if (env?.JOB_QUEUE && !forceDirect) {
                 for (const unidade of unidades) {
                     ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
                 }
                 return;
             }
             await refreshNotificationsSnapshotInD1({ env, unidade: null });
-        } catch {
-            // ignore cron failures
+        } catch (err) {
+            await recordCronFailure(env, err || event?.error || 'scheduled_failed');
         }
     }
 };

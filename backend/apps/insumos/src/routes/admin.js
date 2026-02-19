@@ -1,5 +1,6 @@
 // @ts-nocheck
 
+import { restoreBackupPayload } from '../services/backup.js';
 import { resolveCrmTables } from '../d1Store.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
@@ -216,6 +217,29 @@ export async function handleAdminRoutes({
   validateUsername,
 }) {
   if (!url.pathname.startsWith('/admin/')) return null;
+
+  if (url.pathname === '/admin/seed' && request.method === 'POST') {
+    const allowSeed = String(env?.ALLOW_DEV_SEED || '').trim().toLowerCase() === 'true';
+    const seedToken = String(env?.INSUMOS_SEED_TOKEN || '').trim();
+    const headerToken = String(request.headers.get('x-seed-token') || request.headers.get('x-insumos-seed-token') || '').trim();
+    if (!allowSeed || !seedToken || headerToken !== seedToken) {
+      return withCORS(JSON.stringify({ success: false, error: 'Not found' }), { status: 404 }, appOrigin);
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      const payload = body?.payload ?? body;
+      if (!payload || typeof payload !== 'object') {
+        return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
+      }
+      await restoreBackupPayload({ env, payload });
+      return withCORS(JSON.stringify({ success: true, data: { restored: true } }), { status: 200 }, appOrigin);
+    } catch (err) {
+      const msg = String(err?.message || err || 'Erro ao restaurar');
+      const status = msg === 'PAYLOAD_INVALID' ? 400 : 500;
+      return withCORS(JSON.stringify({ success: false, error: msg }), { status }, appOrigin);
+    }
+  }
 
   const auth = await requireRoles(ROLE_ADMIN);
   if (!auth.ok) return auth.response;

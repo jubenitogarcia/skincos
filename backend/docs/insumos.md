@@ -134,6 +134,36 @@ Smoke test (sem segredos / sem Google):
 
 - `./backend/scripts/insumos-smoke.sh http://127.0.0.1:8787`
 
+### Seed local (D1) a partir de snapshot
+
+Objetivo: popular o D1 local sem tocar o banco online.
+
+0) (Opcional) Exportar snapshot da produção via D1 remoto (somente leitura):
+
+```
+./backend/scripts/insumos-d1-export.cjs /caminho/para/backup.json
+```
+
+1) No Worker local, habilite seed (somente dev) via `backend/apps/insumos/.dev.vars`:
+
+```
+ALLOW_DEV_SEED=true
+INSUMOS_SEED_TOKEN=seu-token-aqui
+```
+
+2) Suba o Worker local:
+
+```
+./backend/scripts/dev.sh insumos dev
+```
+
+3) Envie o snapshot JSON:
+
+```
+INSUMOS_SEED_TOKEN=seu-token-aqui \
+./backend/scripts/insumos-seed.sh /caminho/para/backup.json
+```
+
 ## Segredos
 
 ### Obrigatórios (produção)

@@ -22,16 +22,36 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
     (env.INSUMOS_API_TARGET as string | undefined) ||
     'https://api.skincos.com.br'
 
-  const url = new URL(targetOrigin)
-  // Auth backend path (internal implementation detail; UI/docs must not mention it)
-  url.pathname = '/auth/me'
+  const normalizeAuthPrefix = (value: unknown) => {
+    let prefix = String(value ?? '').trim()
+    if (!prefix) return '/api/auth'
+    if (!prefix.startsWith('/')) prefix = `/${prefix}`
+    return prefix.replace(/\/$/, '')
+  }
+  const primaryPrefix = normalizeAuthPrefix(env.AUTH_PATH_PREFIX)
+  const candidates = [primaryPrefix]
+  if (primaryPrefix !== '/auth') candidates.push('/auth')
+  if (primaryPrefix !== '/api/auth') candidates.push('/api/auth')
 
   const headers = new Headers()
   headers.set('accept', 'application/json')
   const cookie = context?.request?.headers?.get?.('cookie')
   if (cookie) headers.set('cookie', cookie)
 
-  const res = await fetch(url.toString(), { method: 'GET', headers, redirect: 'manual' }).catch(() => null)
+  let res: Response | null = null
+  for (const prefix of candidates) {
+    const url = new URL(targetOrigin)
+    // Auth backend path (internal implementation detail; UI/docs must not mention it)
+    url.pathname = `${prefix}/me`
+    res = await fetch(url.toString(), { method: 'GET', headers, redirect: 'manual' }).catch(() => null)
+    if (!res) continue
+    if (res.ok) break
+    if (res.status === 404 || res.status === 405) {
+      res = null
+      continue
+    }
+    return null
+  }
   if (!res || !res.ok) return null
 
   const data = await res.json().catch(() => null)

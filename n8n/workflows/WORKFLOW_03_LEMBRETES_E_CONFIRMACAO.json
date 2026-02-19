@@ -1,0 +1,469 @@
+{
+  "name": "SKINCOS | 03 Lembretes e Confirmação",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "01_Cron_15min",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 15,
+              "unit": "minutes"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "02_Select_Reminders_24h",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nselect a.id as appointment_id, a.start_at, c.phone_e164, c.id as contact_id, conv.id as conversation_id\nfrom wa_n8n.appointments a\njoin wa_n8n.conversations conv on conv.id = a.conversation_id\njoin wa_n8n.contacts c on c.id = a.contact_id\nwhere a.start_at between now() + interval '23 hours' and now() + interval '25 hours'\n  and a.status in ('agendado','confirmado')\n  and c.do_not_contact = false\n  and not exists (\n    select 1 from wa_n8n.events e\n    where e.event_type = 'reminder_sent'\n      and e.payload->>'kind' = '24h'\n      and e.payload->>'appointment_id' = a.id::text\n  );\n"
+      }
+    },
+    {
+      "id": "3",
+      "name": "03_Split_24h",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "4",
+      "name": "04_Log_Reminder_24h",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'reminder_sent',\n  '{{$json.contact_id}}'::uuid,\n  '{{$json.conversation_id}}'::uuid,\n  jsonb_build_object('kind','24h','appointment_id','{{$json.appointment_id}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "5",
+      "name": "05_Send_Reminder_24h",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($json.phone_e164 || '')).replace(/\\D/g, ''), text: 'Lembrete: seu agendamento é em 24h. Responda SIM para confirmar. Quer falar com atendente? (Digite ATENDENTE)' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "6",
+      "name": "06_Select_Reminders_2h",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nselect a.id as appointment_id, a.start_at, c.phone_e164, c.id as contact_id, conv.id as conversation_id\nfrom wa_n8n.appointments a\njoin wa_n8n.conversations conv on conv.id = a.conversation_id\njoin wa_n8n.contacts c on c.id = a.contact_id\nwhere a.start_at between now() + interval '110 minutes' and now() + interval '130 minutes'\n  and a.status in ('agendado','confirmado')\n  and c.do_not_contact = false\n  and not exists (\n    select 1 from wa_n8n.events e\n    where e.event_type = 'reminder_sent'\n      and e.payload->>'kind' = '2h'\n      and e.payload->>'appointment_id' = a.id::text\n  );\n"
+      }
+    },
+    {
+      "id": "7",
+      "name": "07_Split_2h",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        520,
+        220
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "8",
+      "name": "08_Log_Reminder_2h",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        780,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'reminder_sent',\n  '{{$json.contact_id}}'::uuid,\n  '{{$json.conversation_id}}'::uuid,\n  jsonb_build_object('kind','2h','appointment_id','{{$json.appointment_id}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "9",
+      "name": "09_Send_Reminder_2h",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1040,
+        220
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($json.phone_e164 || '')).replace(/\\D/g, ''), text: 'Seu agendamento é em ~2h. Se precisar reagendar, responda NÃO. Quer falar com atendente? (Digite ATENDENTE)' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "10",
+      "name": "10_Select_Followups",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nselect conv.id as conversation_id, c.id as contact_id, c.phone_e164,\n       1 as next_stage, 'triage_15m' as kind\nfrom wa_n8n.conversations conv\njoin wa_n8n.contacts c on c.id = conv.contact_id\nwhere conv.followup_stage = 0\n  and c.do_not_contact = false\n  and conv.needs_human = false\n  and conv.last_outbound_at <= now() - interval '15 minutes'\n  and (conv.last_inbound_at is null or conv.last_inbound_at < conv.last_outbound_at)\n\nunion all\n\nselect conv.id as conversation_id, c.id as contact_id, c.phone_e164,\n       2 as next_stage, 'triage_24h' as kind\nfrom wa_n8n.conversations conv\njoin wa_n8n.contacts c on c.id = conv.contact_id\nwhere conv.followup_stage = 1\n  and c.do_not_contact = false\n  and conv.needs_human = false\n  and conv.last_outbound_at <= now() - interval '24 hours'\n  and (conv.last_inbound_at is null or conv.last_inbound_at < conv.last_outbound_at)\n\nunion all\n\nselect conv.id as conversation_id, c.id as contact_id, c.phone_e164,\n       3 as next_stage, 'triage_72h' as kind\nfrom wa_n8n.conversations conv\njoin wa_n8n.contacts c on c.id = conv.contact_id\nwhere conv.followup_stage = 2\n  and c.do_not_contact = false\n  and conv.needs_human = false\n  and conv.last_outbound_at <= now() - interval '72 hours'\n  and (conv.last_inbound_at is null or conv.last_inbound_at < conv.last_outbound_at);\n"
+      }
+    },
+    {
+      "id": "11",
+      "name": "11_Split_Followups",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        520,
+        440
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "12",
+      "name": "12_Log_Followup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        780,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'reminder_sent',\n  '{{$json.contact_id}}'::uuid,\n  '{{$json.conversation_id}}'::uuid,\n  jsonb_build_object('kind','{{$json.kind}}'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "13",
+      "name": "13_Update_Followup_Stage",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nupdate wa_n8n.conversations\nset followup_stage = {{$json.next_stage}}, updated_at = now()\nwhere id = '{{$json.conversation_id}}'::uuid;\n"
+      }
+    },
+    {
+      "id": "14",
+      "name": "14_Send_Followup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1300,
+        440
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($json.phone_e164 || '')).replace(/\\D/g, ''), text: 'Posso ajudar com seu agendamento? Quer falar com atendente? (Digite ATENDENTE) Para parar mensagens, digite PARAR.' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "90",
+      "name": "90_Error_Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        660
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "91",
+      "name": "91_Log_Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        660
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, payload, created_at)\nvalues (\n  'handoff_triggered',\n  jsonb_build_object('error', '{{ JSON.stringify($json) }}'::jsonb, 'workflow', '{{ $workflow.name }}', 'node', '{{ ($json.error && $json.error.node && $json.error.node.name) ? $json.error.node.name : (($json.node && $json.node.name) ? $json.node.name : '') }}'),\n  now()\n);\n\nupdate wa_n8n.conversations\nset needs_human = true, updated_at = now()\nwhere id = nullif('{{ $json.conversation_id || \"\" }}','')::uuid;\n"
+      }
+    },
+    {
+      "id": "92",
+      "name": "92_Notify_Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        660
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($env.N8N_HANDOFF_NOTIFY_NUMBER || '')).replace(/\\D/g, ''), text: 'Erro no workflow 03. Verifique execuções.' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    }
+  ],
+  "connections": {
+    "01_Cron_15min": {
+      "main": [
+        [
+          {
+            "node": "02_Select_Reminders_24h",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "06_Select_Reminders_2h",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "10_Select_Followups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02_Select_Reminders_24h": {
+      "main": [
+        [
+          {
+            "node": "03_Split_24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03_Split_24h": {
+      "main": [
+        [
+          {
+            "node": "04_Log_Reminder_24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04_Log_Reminder_24h": {
+      "main": [
+        [
+          {
+            "node": "05_Send_Reminder_24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06_Select_Reminders_2h": {
+      "main": [
+        [
+          {
+            "node": "07_Split_2h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07_Split_2h": {
+      "main": [
+        [
+          {
+            "node": "08_Log_Reminder_2h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08_Log_Reminder_2h": {
+      "main": [
+        [
+          {
+            "node": "09_Send_Reminder_2h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10_Select_Followups": {
+      "main": [
+        [
+          {
+            "node": "11_Split_Followups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11_Split_Followups": {
+      "main": [
+        [
+          {
+            "node": "12_Log_Followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12_Log_Followup": {
+      "main": [
+        [
+          {
+            "node": "13_Update_Followup_Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13_Update_Followup_Stage": {
+      "main": [
+        [
+          {
+            "node": "14_Send_Followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "90_Error_Trigger": {
+      "main": [
+        [
+          {
+            "node": "91_Log_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "91_Log_Error": {
+      "main": [
+        [
+          {
+            "node": "92_Notify_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false,
+  "versionId": "1",
+  "description": "Lembretes 24h/2h e follow-ups de silêncio (15m/24h/72h)."
+}

@@ -8,8 +8,9 @@ export async function onRequest(context: any): Promise<Response> {
     const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
     const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
+    const authPrefix = String((context.env?.AUTH_PATH_PREFIX as string | undefined) || '/auth')
     const targetUrl = new URL(targetOrigin)
-    targetUrl.pathname = `/auth${rest.startsWith('/') ? '' : '/'}${rest}`
+    targetUrl.pathname = `${authPrefix}${rest.startsWith('/') ? '' : '/'}${rest}`
     targetUrl.search = url.search
 
     const headers = new Headers(request.headers)
