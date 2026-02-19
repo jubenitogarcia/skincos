@@ -12,6 +12,7 @@ Este documento descreve como validar, diagnosticar e operar o módulo **Insumos*
 - Modo de armazenamento: **D1-only**.
 - `zero demo` por padrão: dados simulados só com flag explícita.
 - Auto-sync resiliente: pausa temporária após falhas repetidas de API.
+- Políticas (lote/validade/FEFO) são **por item**; categorias são apenas sugestão/organização.
 - Overview/Insights com endpoints agregados:
   - `/api/insumos/analytics/overview`
   - `/api/insumos/analytics/insights`
@@ -34,6 +35,10 @@ curl -sS -I https://crm.skincos.com.br/api/auth/me
 Esperado:
 - `200` com sessão ativa
 - `401` quando não autenticado (comportamento esperado fora da sessão)
+
+### 3.3 Políticas por item (erros comuns)
+- Exemplo de erro esperado quando política do item exige validade:
+  - `POLICY_REQUIRES_EXPIRY` → “Este item exige Data de validade pela política do item.”
 
 ### 3.3 Verificação visual no CRM
 1. Abrir o módulo **Insumos**.

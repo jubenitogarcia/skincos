@@ -51,7 +51,7 @@ export function AutocompleteInput({
     return out
   }, [maxItems, options, value])
 
-  const show = open && !!filtered.length && !disabled
+  const show = open && !disabled
 
   return (
     <Popover open={show} onOpenChange={setOpen}>
@@ -88,20 +88,24 @@ export function AutocompleteInput({
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <div className="max-h-64 overflow-y-auto overflow-x-hidden">
-          {filtered.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onValueChange(opt)
-                setOpen(false)
-              }}
-            >
-              {opt}
-            </button>
-          ))}
+          {filtered.length ? (
+            filtered.map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onValueChange(opt)
+                  setOpen(false)
+                }}
+              >
+                {opt}
+              </button>
+            ))
+          ) : (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">Sem resultados.</div>
+          )}
         </div>
       </PopoverContent>
     </Popover>

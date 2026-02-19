@@ -107,6 +107,47 @@ async function loadBarcodesByRegistro(env, registros) {
   return map;
 }
 
+async function loadStocksByRegistro(env, registros) {
+  const map = new Map();
+  if (!env?.DB) return map;
+  const list = (registros || []).map((r) => String(r || '').trim()).filter(Boolean);
+  if (!list.length) return map;
+  const queryChunk = async (chunk) => {
+    if (!chunk.length) return [];
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const res = await env.DB.prepare(
+        `SELECT registro, unidade, quantidade
+         FROM insumos_stocks
+         WHERE registro IN (${placeholders})`
+      ).bind(...chunk).all();
+      return res?.results || [];
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (/too many sql variables/i.test(message) && chunk.length > 1) {
+        const splitAt = Math.max(1, Math.floor(chunk.length / 2));
+        const left = await queryChunk(chunk.slice(0, splitAt));
+        const right = await queryChunk(chunk.slice(splitAt));
+        return left.concat(right);
+      }
+      throw err;
+    }
+  };
+  for (let i = 0; i < list.length; i += MAX_SQL_BINDS) {
+    const chunk = list.slice(i, i + MAX_SQL_BINDS);
+    const rows = await queryChunk(chunk);
+    for (const row of rows) {
+      const reg = String(row?.registro || '').trim();
+      const unidade = String(row?.unidade || '').trim();
+      if (!reg || !unidade) continue;
+      const current = map.get(reg) || {};
+      current[unidade] = toInt(row?.quantidade, 0);
+      map.set(reg, current);
+    }
+  }
+  return map;
+}
+
 function calcularStatusValidade(dataValidade) {
   if (!dataValidade) return { status: 'OK', dias: null };
   const hoje = new Date();
@@ -544,30 +585,7 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
   const registros = items.map((it) => String(it?.registro || '').trim()).filter(Boolean);
   const barcodesByRegistro = await loadBarcodesByRegistro(env, registros);
 
-  const byRegistro = new Map();
-  if (items.length) {
-    const stocksRes = await env.DB.prepare(
-      `SELECT s.registro, s.unidade, s.quantidade
-       FROM insumos_stocks s
-       WHERE s.registro IN (
-         SELECT registro
-         FROM insumos_items
-         ${whereSql}
-         ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC
-         LIMIT ? OFFSET ?
-       )`
-    )
-      .bind(...binds, lim, offset)
-      .all();
-    const stocks = stocksRes?.results || [];
-    for (const s of stocks) {
-      const reg = String(s.registro || '').trim();
-      if (!reg) continue;
-      const map = byRegistro.get(reg) || {};
-      map[String(s.unidade || '').trim()] = toInt(s.quantidade, 0);
-      byRegistro.set(reg, map);
-    }
-  }
+  const byRegistro = await loadStocksByRegistro(env, registros);
 
   const mapped = items.map((it) => {
     const registro = String(it.registro || '').trim();
@@ -1066,10 +1084,11 @@ export async function d1Transfer({ env, body }) {
   ).bind(reg, toUnidade).first();
   const estoqueAnteriorOrigem = toInt(beforeOrig?.quantidade, 0);
   const estoqueAnteriorDestino = toInt(beforeDest?.quantidade, 0);
-  if (quantidade > estoqueAnteriorOrigem) return { ok: false, status: 400, error: 'Estoque insuficiente' };
 
   const estoqueNovoOrigem = estoqueAnteriorOrigem - quantidade;
   const estoqueNovoDestino = estoqueAnteriorDestino + quantidade;
+  const quebraEstoqueOrigem = estoqueNovoOrigem < 0;
+  const deficitOrigem = quebraEstoqueOrigem ? Math.abs(estoqueNovoOrigem) : 0;
 
   const ts = nowIso();
   const transferId = crypto.randomUUID();
@@ -1158,6 +1177,8 @@ export async function d1Transfer({ env, body }) {
     estoqueNovoOrigem,
     estoqueAnteriorDestino,
     estoqueNovoDestino,
+    quebraEstoqueOrigem,
+    deficitOrigem,
     registro: reg
   };
 }
@@ -1216,7 +1237,9 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
         m.registro_insumo AS registroInsumo,
         m.lote AS lote,
         m.data_validade AS dataValidade,
-        i.preco_custo AS preco
+        i.preco_custo AS preco,
+        i.categoria AS categoria,
+        i.marca AS marca
      FROM insumos_movements m
      LEFT JOIN insumos_items i
        ON i.registro = m.registro_insumo

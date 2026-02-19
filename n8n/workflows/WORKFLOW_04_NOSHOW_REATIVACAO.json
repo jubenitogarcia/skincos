@@ -1,0 +1,245 @@
+{
+  "name": "SKINCOS | 04 No-Show e Reativação",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "01_Cron_Diario",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "02_Marcar_NoShow",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nwith past as (\n  select a.id, a.conversation_id, a.contact_id\n  from wa_n8n.appointments a\n  where a.end_at < now() - interval '2 hours'\n    and a.status in ('agendado','confirmado')\n)\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nselect 'no_show', p.contact_id, p.conversation_id, jsonb_build_object('appointment_id', p.id), now()\nfrom past p;\n\nupdate wa_n8n.appointments\nset status = 'no_show', updated_at = now()\nwhere id in (select id from past);\n\nupdate wa_n8n.conversations\nset funnel_status = 'no_show', updated_at = now()\nwhere id in (select conversation_id from past);\n"
+      }
+    },
+    {
+      "id": "3",
+      "name": "03_Select_Reactivation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nselect conv.id as conversation_id, c.id as contact_id, c.phone_e164\nfrom wa_n8n.conversations conv\njoin wa_n8n.contacts c on c.id = conv.contact_id\nwhere conv.funnel_status in ('no_show','cancelado')\n  and c.do_not_contact = false\n  and not exists (\n    select 1 from wa_n8n.events e\n    where e.event_type = 'reactivation_sent'\n      and e.conversation_id = conv.id\n      and e.created_at > now() - interval '24 hours'\n  );\n"
+      }
+    },
+    {
+      "id": "4",
+      "name": "04_Split_Reactivation",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "5",
+      "name": "05_Log_Reactivation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, contact_id, conversation_id, payload, created_at)\nvalues (\n  'reactivation_sent',\n  '{{$json.contact_id}}'::uuid,\n  '{{$json.conversation_id}}'::uuid,\n  jsonb_build_object('reason','no_show_or_cancel'),\n  now()\n);\n"
+      }
+    },
+    {
+      "id": "6",
+      "name": "06_Send_Reactivation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($json.phone_e164 || '')).replace(/\\D/g, ''), text: 'Podemos reagendar seu atendimento quando for melhor para você. Quer falar com atendente? (Digite ATENDENTE)' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    },
+    {
+      "id": "90",
+      "name": "90_Error_Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        260
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "91",
+      "name": "91_Log_Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        260,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres (Skincos)"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\ninsert into wa_n8n.events (event_type, payload, created_at)\nvalues (\n  'handoff_triggered',\n  jsonb_build_object('error', '{{ JSON.stringify($json) }}'::jsonb, 'workflow', '{{ $workflow.name }}', 'node', '{{ ($json.error && $json.error.node && $json.error.node.name) ? $json.error.node.name : (($json.node && $json.node.name) ? $json.node.name : '') }}'),\n  now()\n);\n\nupdate wa_n8n.conversations\nset needs_human = true, updated_at = now()\nwhere id = nullif('{{ $json.conversation_id || \"\" }}','')::uuid;\n"
+      }
+    },
+    {
+      "id": "92",
+      "name": "92_Notify_Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        260
+      ],
+      "parameters": {
+        "url": "={{$env.EVOLUTION_BASE_URL.replace(/\\/$/, '')}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ { number: ('' + ($env.N8N_HANDOFF_NOTIFY_NUMBER || '')).replace(/\\D/g, ''), text: 'Erro no workflow 04. Verifique execuções.' } }}",
+        "headerParametersJson": "={{ { apikey: $env.EVOLUTION_API_KEY } }}"
+      }
+    }
+  ],
+  "connections": {
+    "01_Cron_Diario": {
+      "main": [
+        [
+          {
+            "node": "02_Marcar_NoShow",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "03_Select_Reactivation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03_Select_Reactivation": {
+      "main": [
+        [
+          {
+            "node": "04_Split_Reactivation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04_Split_Reactivation": {
+      "main": [
+        [
+          {
+            "node": "05_Log_Reactivation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05_Log_Reactivation": {
+      "main": [
+        [
+          {
+            "node": "06_Send_Reactivation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "90_Error_Trigger": {
+      "main": [
+        [
+          {
+            "node": "91_Log_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "91_Log_Error": {
+      "main": [
+        [
+          {
+            "node": "92_Notify_Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false,
+  "versionId": "1",
+  "description": "No-show/cancelado → reativação com respeito a opt-out."
+}

@@ -1,0 +1,18 @@
+{
+  "body": {
+    "instance": "skincos",
+    "data": {
+      "key": {
+        "remoteJid": "5511999999999@s.whatsapp.net",
+        "fromMe": false,
+        "id": "MSG-001"
+      },
+      "pushName": "Teste",
+      "message": {
+        "conversation": "Oi"
+      },
+      "messageType": "conversation",
+      "messageTimestamp": 1700000000
+    }
+  }
+}

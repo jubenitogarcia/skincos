@@ -24,6 +24,26 @@ interface OmnichannelCenterProps {
 }
 
 export function OmnichannelCenter({ activities, onStartConversation }: OmnichannelCenterProps) {
+  if (!activities || activities.length === 0) {
+    return (
+      <div className="space-y-6">
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle>Sem atividades</CardTitle>
+            <CardDescription>
+              Nenhuma integração ou atividade registrada ainda. Conecte os canais para começar.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm text-muted-foreground">
+              Quando houver interações, a central Omnichannel exibirá estatísticas e histórico aqui.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   const getChannelIcon = (type: Activity['type']) => {
     switch (type) {
       case 'call': return <Phone className="h-4 w-4" />

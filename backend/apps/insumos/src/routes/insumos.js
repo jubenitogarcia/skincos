@@ -37,7 +37,14 @@ export async function handleInsumosRoutes({
                 const items = await d1.listInsumos({ unidade });
                 return withCORS(JSON.stringify({ success: true, data: items }), { status: 200 }, appOrigin);
             } catch (err) {
-                return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+                const msg = err?.message || String(err || '');
+                const lower = String(msg || '').toLowerCase();
+                let code = 'UNKNOWN';
+                if (lower.includes('sql variables')) code = 'SQL_BIND_LIMIT';
+                else if (lower.includes('sqlite') || lower.includes('d1_error')) code = 'D1_ERROR';
+                const requestId = request.headers.get('cf-ray') || request.headers.get('x-request-id') || '';
+                console.error('[insumos] list error', { code, requestId, error: msg });
+                return withCORS(JSON.stringify({ success: false, error: msg, code }), { status: 500 }, appOrigin);
             }
         }
 
@@ -268,6 +275,8 @@ export async function handleInsumosRoutes({
                     estoqueNovoOrigem: out.estoqueNovoOrigem,
                     estoqueAnteriorDestino: out.estoqueAnteriorDestino,
                     estoqueNovoDestino: out.estoqueNovoDestino,
+                    quebraEstoqueOrigem: out.quebraEstoqueOrigem,
+                    deficitOrigem: out.deficitOrigem
                 }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
