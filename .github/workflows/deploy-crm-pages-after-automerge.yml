@@ -205,19 +205,19 @@ jobs:
           PY
 
       - name: Cache Playwright browsers (UI smoke)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' && vars.ENABLE_PONTO_UI_SMOKE != 'false' }}
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-chromium
 
       - name: Install Playwright Chromium (UI smoke)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' && vars.ENABLE_PONTO_UI_SMOKE != 'false' }}
         run: npx --yes playwright install --with-deps chromium
         working-directory: frontend
 
       - name: Ponto UI smoke (production)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.frontend_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' && vars.ENABLE_PONTO_UI_SMOKE != 'false' }}
         env:
           CRM_URL: https://crm.skincos.com.br
           EXPECT_BUILD_SHA: ${{ steps.pr.outputs.merge_commit_sha }}

@@ -1047,6 +1047,18 @@ export default function AppFunctionalNeatlab() {
 				                                                >
 				                                                    Gerenciar Dispositivo
 				                                                </Button>
+				                                                <Button
+				                                                    size="sm"
+				                                                    variant="ghost"
+				                                                    className="h-8 bg-white/[0.06] border border-white/20 text-white hover:bg-white/[0.12]"
+				                                                    onClick={() => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:ponto:action', { detail: { action: 'diagnostics' } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+				                                                    Diagnóstico
+				                                                </Button>
 				                                            </div>
 				                                        ) : null}
 				                                        {active === 'unit-monitor' ? (

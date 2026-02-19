@@ -48,6 +48,7 @@ const MUTATE_EMPLOYEE = process.env.MUTATE_EMPLOYEE === '1' || process.env.MUTAT
 const MUTATE_PUNCH = process.env.MUTATE_PUNCH === '1' || process.env.MUTATE_PUNCH === 'true'
 const SMOKE_UNIT = String(process.env.SMOKE_UNIT || '').trim()
 const CHECK_PIN_LOCKOUT = process.env.CHECK_PIN_LOCKOUT === '1' || process.env.CHECK_PIN_LOCKOUT === 'true'
+const CHECK_BIOMETRY_MODAL = process.env.CHECK_BIOMETRY_MODAL === '1' || process.env.CHECK_BIOMETRY_MODAL === 'true'
 
 const { chromium } = require('playwright')
 
@@ -364,7 +365,7 @@ async function main() {
 
     if (smokeContext.isAdmin) {
       await maybeScreenshot('admin')
-      const adminButtons = ['Cadastrar', 'Editar', 'Exportar', 'Gerenciar Dispositivo']
+      const adminButtons = ['Cadastrar', 'Editar', 'Exportar', 'Gerenciar Dispositivo', 'Diagnóstico']
       for (const label of adminButtons) {
         const btn = page.locator(`button:has-text("${label}")`).first()
         await btn.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {
@@ -419,6 +420,47 @@ async function main() {
           return { id, name, code }
         }, { unit: smokeContext.unit })
         console.log(`[ponto-ui-smoke] Admin create/list/delete OK (employeeId=${created.id})`)
+      }
+
+      if (CHECK_BIOMETRY_MODAL) {
+        if (!MUTATE_ADMIN) throw new Error('CHECK_BIOMETRY_MODAL requires MUTATE_ADMIN (needs temp employee).')
+        const created = await page.evaluate(async ({ unit }) => {
+          const stamp = Date.now()
+          const name = `Smoke Biometria ${stamp}`
+          const code = `bio-${stamp}`
+          const loginEmail = `bio+${stamp}@example.com`
+          if (!unit) throw new Error('unit missing for biometric check')
+          const createRes = await fetch('/api/ponto/admin/employees', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ name, code, loginEmail, unit }),
+          })
+          const createText = await createRes.text()
+          let createJson = null
+          try { createJson = createText ? JSON.parse(createText) : null } catch {}
+          if (!createRes.ok || !createJson?.ok || !createJson?.data?.id) {
+            throw new Error(`biometria employee create failed: HTTP ${createRes.status} body=${createText.slice(0, 200)}`)
+          }
+          return { id: String(createJson.data.id), name }
+        }, { unit: smokeContext.unit })
+
+        await page.click('button:has-text("Editar")')
+        const employeeBtn = page.locator(`button:has-text("${created.name}")`).first()
+        await employeeBtn.waitFor({ state: 'visible', timeout: 20_000 })
+        await employeeBtn.click()
+        const enrollBtn = page.locator('button:has-text("Cadastrar biometria")').first()
+        await enrollBtn.waitFor({ state: 'visible', timeout: 20_000 })
+        await enrollBtn.click()
+        await page.locator('text=/Preparando|Carregando modelos faciais|Capturando/i').first().waitFor({ timeout: 20_000 })
+        await page.locator('button:has-text("Fechar")').first().click().catch(() => {})
+
+        await page.evaluate(async ({ id }) => {
+          await fetch(`/api/ponto/admin/employees/${encodeURIComponent(id)}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+        }, { id: created.id })
       }
 
       if (MUTATE_EMPLOYEE) {

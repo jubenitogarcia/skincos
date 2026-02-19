@@ -1455,6 +1455,11 @@ export function PontoModule() {
       if (action === 'device') {
         if (!adminDevices.length) void adminRefreshAll()
         setManageDevicesOpen(true)
+        return
+      }
+      if (action === 'diagnostics') {
+        setDiagOpen(true)
+        void loadDiagnostics()
       }
     }
     window.addEventListener('skincos:ponto:action', handler as EventListener)
@@ -1716,15 +1721,15 @@ export function PontoModule() {
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">CPF</div>
-                      <div className="font-medium">{(me.employee as any)?.cpf || (crmMe?.user as any)?.cpf || '—'}</div>
+                      <div className="font-medium">{me.employee?.cpf || '—'}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Data Nascimento</div>
-                      <div className="font-medium">{(me.employee as any)?.birthDate || (me.employee as any)?.dob || (crmMe?.user as any)?.birthDate || '—'}</div>
+                      <div className="font-medium">{me.employee?.birthDate || '—'}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Cargo</div>
-                      <div className="font-medium">{(me.employee as any)?.role || (me.employee as any)?.jobTitle || (crmMe?.user as any)?.role || '—'}</div>
+                      <div className="font-medium">{me.employee?.jobTitle || '—'}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">E-mail</div>
@@ -1732,7 +1737,7 @@ export function PontoModule() {
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Telefone</div>
-                      <div className="font-medium">{(me.employee as any)?.phone || (me.employee as any)?.phoneRaw || (crmMe?.user as any)?.phone || '—'}</div>
+                      <div className="font-medium">{me.employee?.phone || '—'}</div>
                     </div>
                   </div>
                   {me.linked ? (
@@ -2109,7 +2114,7 @@ export function PontoModule() {
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Editar cadastro</DialogTitle>
-            <DialogDescription>Atualize nome, codigo, email e status do funcionario.</DialogDescription>
+            <DialogDescription>Atualize dados do funcionário.</DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-1 gap-3">
             <div className="space-y-2">
@@ -2119,6 +2124,22 @@ export function PontoModule() {
             <div className="space-y-2">
               <Label>Codigo</Label>
               <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} placeholder="Matricula" />
+            </div>
+            <div className="space-y-2">
+              <Label>CPF</Label>
+              <Input value={editCpf} onChange={(e) => setEditCpf(e.target.value)} placeholder="Somente números" />
+            </div>
+            <div className="space-y-2">
+              <Label>Data de nascimento</Label>
+              <Input type="date" value={editBirthDate} onChange={(e) => setEditBirthDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Cargo</Label>
+              <Input value={editJobTitle} onChange={(e) => setEditJobTitle(e.target.value)} placeholder="Cargo" />
+            </div>
+            <div className="space-y-2">
+              <Label>Telefone</Label>
+              <Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="Telefone" />
             </div>
             <div className="space-y-2">
               <Label>Email (vinculo login)</Label>

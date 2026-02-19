@@ -599,8 +599,10 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       const templates = Array.isArray(e.faceTemplates) ? e.faceTemplates : []
       if (!templates.length) continue
       if (!templatesKey) {
-        const plain = templates.filter((t) => isNumberArray(t, 64, 1024)).slice(0, maxDescriptors)
-        if (plain.length) faceCache.set(e.id, plain)
+        if (!isProd) {
+          const plain = templates.filter((t) => isNumberArray(t, 64, 1024)).slice(0, maxDescriptors)
+          if (plain.length) faceCache.set(e.id, plain)
+        }
         continue
       }
       const out = []
