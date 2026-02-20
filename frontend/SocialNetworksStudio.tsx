@@ -222,7 +222,8 @@ export function SocialNetworksStudio() {
   const [accountToken, setAccountToken] = useState('')
   const [accountApiVersion, setAccountApiVersion] = useState('v20.0')
 
-  const unitOptions = useMemo(() => ['BSS', 'NH'], [])
+  type UnitKey = 'BSS' | 'NH'
+  const unitOptions = useMemo<UnitKey[]>(() => ['BSS', 'NH'], [])
   const detectedRole = String(setup?.admin?.role || setup?.user?.role || '')
     .trim()
     .toUpperCase()
@@ -408,12 +409,12 @@ export function SocialNetworksStudio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminReady, autoTriedAccounts, setupAuthed, tab])
 
-  const selectedScopeUnits = useMemo(() => {
+  const selectedScopeUnits = useMemo<UnitKey[]>(() => {
     const cleaned = (scopeUnits || [])
       .map((u) => String(u || '').trim().toUpperCase())
       .filter((u) => u && u !== 'NULL')
       .filter((u) => u === 'BSS' || u === 'NH')
-    return [...new Set(cleaned)]
+    return [...new Set(cleaned)] as UnitKey[]
   }, [scopeUnits])
 
   const selectedScopePlatforms = useMemo(() => {
@@ -575,7 +576,9 @@ export function SocialNetworksStudio() {
   const requiredUnits = useMemo(() => {
     if (selectedScopeUnits.length) return selectedScopeUnits
     const envUnits = Array.isArray(setup?.socialDefaults?.defaultUnitsFromEnv) ? setup!.socialDefaults!.defaultUnitsFromEnv! : []
-    const cleaned = envUnits.map((u) => String(u || '').trim().toUpperCase()).filter((u) => u && unitOptions.includes(u))
+    const cleaned = envUnits
+      .map((u) => String(u || '').trim().toUpperCase())
+      .filter((u): u is UnitKey => u === 'BSS' || u === 'NH')
     return cleaned.length ? cleaned : unitOptions
   }, [selectedScopeUnits, setup?.socialDefaults?.defaultUnitsFromEnv, unitOptions])
 

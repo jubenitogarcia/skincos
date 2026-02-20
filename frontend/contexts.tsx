@@ -38,7 +38,9 @@ interface AuthContextValue {
   isAuthenticated: boolean
 }
 
-const AuthContext = (import.meta.hot?.data.AuthCtx) ?? createContext<AuthContextValue | undefined>(undefined)
+const AuthContext: React.Context<AuthContextValue | undefined> =
+  (import.meta.hot?.data.AuthCtx as React.Context<AuthContextValue | undefined> | undefined) ??
+  createContext<AuthContextValue | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.AuthCtx = AuthContext })
   import.meta.hot.accept(() => import.meta.hot?.invalidate())
@@ -339,7 +341,9 @@ interface IntegrationsContextValue {
   syncWhatsApp: () => Promise<void>
 }
 
-const IntegrationsContext = (import.meta.hot?.data.IntegrationsCtx) ?? createContext<IntegrationsContextValue | undefined>(undefined)
+const IntegrationsContext: React.Context<IntegrationsContextValue | undefined> =
+  (import.meta.hot?.data.IntegrationsCtx as React.Context<IntegrationsContextValue | undefined> | undefined) ??
+  createContext<IntegrationsContextValue | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.IntegrationsCtx = IntegrationsContext })
   import.meta.hot.accept(() => import.meta.hot?.invalidate())
@@ -538,13 +542,15 @@ interface NotificationContextType {
   getNotificationsByCategory: (category: string) => Notification[]
 }
 
-const NotificationContext = (import.meta.hot?.data.NotificationCtx) ?? createContext<NotificationContextType | undefined>(undefined)
+const NotificationContext: React.Context<NotificationContextType | undefined> =
+  (import.meta.hot?.data.NotificationCtx as React.Context<NotificationContextType | undefined> | undefined) ??
+  createContext<NotificationContextType | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.NotificationCtx = NotificationContext })
   import.meta.hot.accept(() => import.meta.hot?.invalidate())
 }
 
-export function useNotifications() {
+export function useNotifications(): NotificationContextType {
   const context = useContext(NotificationContext)
   if (!context) {
     const stackTrace = new Error().stack
