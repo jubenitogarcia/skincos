@@ -7017,16 +7017,7 @@ export function InsumosModule() {
                               </CardHeader>
                               {panelOpen ? (
                                 <CardContent className="space-y-3">
-            <details
-              data-pref-key="insumos.details.alerts.lowStock"
-              open={detailsOpen['insumos.details.alerts.lowStock'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.lowStock', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Atenção
-              </summary>
-              <div className="mt-3 space-y-2">
+            <div className="rounded-xl border border-white/10 bg-black/10 p-3 space-y-2">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Status</div>
@@ -7253,8 +7244,7 @@ export function InsumosModule() {
                     </tbody>
                   </table>
                 </div>
-              </div>
-            </details>
+            </div>
 
                                 </CardContent>
                               ) : null}
