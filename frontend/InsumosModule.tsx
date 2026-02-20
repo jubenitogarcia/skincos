@@ -471,12 +471,13 @@ function estoqueStatusBadgeVariant(status: EstoqueStatus): 'default' | 'secondar
   return 'default'
 }
 
-type AlertaStatusTag = 'URGENTE' | 'ATENCAO' | 'VENCENDO' | 'EXPIRADO'
+type AlertaStatusTag = 'URGENTE' | 'ATENCAO' | 'VENCENDO' | 'EXPIRADO' | 'INFO'
 
 function alertaTagLabel(tag: AlertaStatusTag) {
   if (tag === 'URGENTE') return 'Crítico'
   if (tag === 'ATENCAO') return 'Atenção'
   if (tag === 'VENCENDO') return 'Vencendo'
+  if (tag === 'INFO') return 'Info'
   return 'Expirado'
 }
 
@@ -484,14 +485,15 @@ function alertaTagVariant(tag: AlertaStatusTag): 'default' | 'secondary' | 'dest
   if (tag === 'URGENTE') return 'destructive'
   if (tag === 'EXPIRADO') return 'destructive'
   if (tag === 'VENCENDO') return 'secondary'
-  return 'secondary'
+  if (tag === 'ATENCAO') return 'secondary'
+  return 'default'
 }
 
 function normalizeAlertTags(tags: Set<AlertaStatusTag>): AlertaStatusTag[] {
   const out = new Set(tags)
   if (out.has('URGENTE')) out.delete('ATENCAO')
   if (out.has('EXPIRADO')) out.delete('VENCENDO')
-  const order: Record<AlertaStatusTag, number> = { URGENTE: 0, EXPIRADO: 1, VENCENDO: 2, ATENCAO: 3 }
+  const order: Record<AlertaStatusTag, number> = { URGENTE: 0, EXPIRADO: 1, VENCENDO: 2, ATENCAO: 3, INFO: 4 }
   return Array.from(out).sort((a, b) => order[a] - order[b])
 }
 
@@ -1264,7 +1266,6 @@ export function InsumosModule() {
   }, [overviewPeriod])
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
-  const [overviewQualitySeverity, setOverviewQualitySeverity] = React.useState<'ALL' | 'CRITICAL' | 'WARN' | 'INFO'>('ALL')
   const [qualityMatchesOpen, setQualityMatchesOpen] = React.useState(false)
   const [qualityMatchesItems, setQualityMatchesItems] = React.useState<Insumo[]>([])
   const [qualityMatchesIssue, setQualityMatchesIssue] = React.useState<QualityIssue | null>(null)
@@ -1278,7 +1279,7 @@ export function InsumosModule() {
 	  const [insightsAlertas, setInsightsAlertas] = React.useState<EstoqueAlerta[]>([])
 	  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
 	  const [insightsTurnover, setInsightsTurnover] = React.useState<{ saida?: any; entrada?: any } | null>(null)
-  type AlertasStatusFilter = 'TODOS' | 'ATENCAO' | 'URGENTE' | 'VENCENDO' | 'EXPIRADO'
+  type AlertasStatusFilter = 'TODOS' | 'ATENCAO' | 'URGENTE' | 'VENCENDO' | 'EXPIRADO' | 'INFO'
   const [alertasStatus, setAlertasStatus] = React.useState<AlertasStatusFilter>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
@@ -1873,6 +1874,29 @@ export function InsumosModule() {
     return fromHealth.length ? fromHealth : ['novo-hamburgo', 'barra-shopping-sul']
   }, [Array.isArray(health?.unidades) ? health!.unidades!.join('|') : ''])
 
+  const isSameInsumo = React.useCallback((item: Insumo, target: Insumo | null) => {
+    if (!target) return false
+    const registro = normalizeText(item?.registro || '')
+    const targetRegistro = normalizeText(target?.registro || '')
+    if (registro && targetRegistro && registro === targetRegistro) return true
+    const codes = getInsumoBarcodes(item).map((c) => normalizeText(c))
+    const targetCodes = getInsumoBarcodes(target).map((c) => normalizeText(c))
+    const produto = normalizeText(item?.produto || '')
+    const categoria = normalizeText(item?.categoria || '')
+    const marca = normalizeText(item?.marca || '')
+    const targetProduto = normalizeText(target?.produto || '')
+    const targetCategoria = normalizeText(target?.categoria || '')
+    const targetMarca = normalizeText(target?.marca || '')
+    const sameCore =
+      (!!produto || !!categoria || !!marca) &&
+      produto === targetProduto &&
+      categoria === targetCategoria &&
+      marca === targetMarca
+    if (!sameCore) return false
+    if (!codes.length || !targetCodes.length) return true
+    return targetCodes.some((c) => codes.includes(c))
+  }, [])
+
   const quickLotes = React.useMemo(() => {
     const codigo = quickCodigo.trim()
     if (!codigo) return []
@@ -1926,6 +1950,8 @@ export function InsumosModule() {
     const selected: Insumo[] = []
     if (Array.isArray(quickLookupItems) && quickLookupItems.length) selected.push(...quickLookupItems)
     else if (quickSelectedSnapshot) selected.push(quickSelectedSnapshot)
+    const primarySelected = quickSelectedSnapshot || (quickLookupItems.length ? quickLookupItems[0] : null)
+    const allowSelectedWhileLoading = !!(quickLookupLoading && primarySelected)
     const selectedSignatures = selected.map((s) => ({
       registro: normalizeText(s?.registro || ''),
       codes: getInsumoBarcodes(s).map((c) => normalizeText(c)),
@@ -1980,7 +2006,7 @@ export function InsumosModule() {
       return score
     }
     for (const item of baseList) {
-      if (isSelected(item)) continue
+      if (isSelected(item) && !(allowSelectedWhileLoading && isSameInsumo(item, primarySelected))) continue
       const codes = getInsumoBarcodes(item)
       const produto = String(item?.produto || '').toLowerCase()
       const categoria = String(item?.categoria || '').toLowerCase()
@@ -2003,7 +2029,7 @@ export function InsumosModule() {
         return String(a.item?.produto || '').localeCompare(String(b.item?.produto || ''), 'pt-BR', { sensitivity: 'base' })
       })
       .slice(0, 8)
-  }, [canUseApi, insumos, isAuthed, quickLookupItems, quickSearch, quickSearchRemote, quickSearchRemoteError, quickSelectedSnapshot])
+  }, [canUseApi, insumos, isAuthed, isSameInsumo, quickLookupItems, quickLookupLoading, quickSearch, quickSearchRemote, quickSearchRemoteError, quickSelectedSnapshot])
 
   const hasQuickSelection = !!quickSelectedSnapshot || quickLookupItems.length > 0
 
@@ -5043,6 +5069,9 @@ export function InsumosModule() {
     produto?: string
     categoria?: string
     marca?: string
+    qualityIssue?: QualityIssue
+    qualityMessage?: string
+    qualitySeverity?: string
     estoqueAtual?: number
     estoqueMinimo?: number
     diferenca?: number
@@ -5055,12 +5084,17 @@ export function InsumosModule() {
   const alertasLinhas = React.useMemo<AlertasLinha[]>(() => {
     const byKey = new Map<string, { base: Omit<AlertasLinha, 'tags' | 'key'>; tags: Set<AlertaStatusTag> }>()
 
-    const upsert = (id: { codigoBarras?: string; produto?: string; categoria?: string; marca?: string }, patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>, tag?: AlertaStatusTag) => {
+    const upsert = (
+      id: { codigoBarras?: string; produto?: string; categoria?: string; marca?: string },
+      patch: Partial<Omit<AlertasLinha, 'tags' | 'key'>>,
+      tag?: AlertaStatusTag,
+      forcedKey?: string
+    ) => {
       const code = String(id.codigoBarras || '').trim()
       const produto = String(id.produto || '').trim()
       const categoria = String(id.categoria || '').trim()
       const marca = String(id.marca || '').trim()
-      const key = code || `${produto}::${categoria}` || `${Math.random()}`
+      const key = forcedKey || code || `${produto}::${categoria}` || `${Math.random()}`
       const prev = byKey.get(key)
       if (!prev) {
         const base: any = {
@@ -5068,6 +5102,9 @@ export function InsumosModule() {
           produto: produto || undefined,
           categoria: categoria || undefined,
           marca: marca || undefined,
+          qualityIssue: undefined,
+          qualityMessage: undefined,
+          qualitySeverity: undefined,
           estoqueAtual: undefined,
           estoqueMinimo: undefined,
           diferenca: undefined,
@@ -5129,6 +5166,53 @@ export function InsumosModule() {
       )
     }
 
+    // Quality issues (overview)
+    const qualityIssues = Array.isArray(overviewQuality?.issues) ? overviewQuality!.issues! : []
+    for (const [idx, it] of qualityIssues.entries()) {
+      const severityRaw = String(it?.severity || '').trim()
+      const severity = severityRaw.toUpperCase()
+      const tag: AlertaStatusTag =
+        severity === 'CRITICAL'
+          ? 'URGENTE'
+          : (severity === 'WARN' || severity === 'WARNING')
+            ? 'ATENCAO'
+            : 'INFO'
+
+      const registro = String(it?.registro || '').trim()
+      const codigo = String(it?.codigoBarras || '').trim()
+      let produto = String(it?.produto || '').trim()
+      let categoria = ''
+      let marca = ''
+      let found: Insumo | undefined
+      if (registro) {
+        found = (insumosRef.current || []).find((i) => String(i?.registro || '').trim() === registro)
+      }
+      if (!found && codigo) {
+        found = (insumosRef.current || []).find((i) => getInsumoBarcodes(i).includes(codigo))
+      }
+      if (!found && produto) {
+        const produtoKey = normalizeText(produto)
+        found = (insumosRef.current || []).find((i) => normalizeText(String(i?.produto || '').trim()) === produtoKey)
+      }
+      if (found) {
+        if (!produto) produto = String(found.produto || '').trim()
+        categoria = String(found.categoria || '').trim()
+        marca = String(found.marca || '').trim()
+      }
+      const message = String(it?.message || it?.suggestion || '').trim()
+      const forcedKey = `quality:${String(it?.code || 'ISSUE')}::${registro || codigo || produto || idx}`
+      upsert(
+        { codigoBarras: codigo, produto, categoria, marca },
+        {
+          qualityIssue: it,
+          qualityMessage: message || undefined,
+          qualitySeverity: severityRaw || undefined
+        },
+        tag,
+        forcedKey
+      )
+    }
+
     const rows: AlertasLinha[] = []
     for (const [key, v] of byKey.entries()) {
       if (!v.base.marca) {
@@ -5158,6 +5242,7 @@ export function InsumosModule() {
       if (tags.includes('EXPIRADO')) return 1
       if (tags.includes('VENCENDO')) return 2
       if (tags.includes('ATENCAO')) return 3
+      if (tags.includes('INFO')) return 4
       return 9
     }
 
@@ -5173,7 +5258,7 @@ export function InsumosModule() {
     })
 
     return rows
-  }, [insightsAlertas, overviewNotifications, calcularStatusEstoque])
+  }, [insightsAlertas, overviewNotifications, overviewQuality, calcularStatusEstoque])
 
   const alertasCategorias = React.useMemo(() => {
     return Array.from(new Set(alertasLinhas.map((a) => String(a.categoria || '').trim()).filter(Boolean))).sort((a, b) =>
@@ -5187,7 +5272,7 @@ export function InsumosModule() {
       if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
       if (alertasStatus !== 'TODOS' && !a.tags.includes(alertasStatus as any)) return false
       if (!q) return true
-      const hay = [a.produto, a.categoria, a.codigoBarras].filter(Boolean).join(' ').toLowerCase()
+      const hay = [a.produto, a.categoria, a.marca, a.codigoBarras, a.qualityMessage].filter(Boolean).join(' ').toLowerCase()
       return hay.includes(q)
     })
   }, [alertasBusca, alertasCategoria, alertasLinhas, alertasStatus])
@@ -5964,7 +6049,7 @@ export function InsumosModule() {
                 ) : quickSearchRemoteError ? (
                   <div className="text-xs text-amber-200">{quickSearchRemoteError} (mostrando cache local).</div>
                 ) : null}
-                {quickSearchMatches.length && !hasQuickSelection ? (
+                {quickSearchMatches.length && (!hasQuickSelection || quickLookupLoading) ? (
                   <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                     <div className="text-[11px] text-blue-200/60 mb-2">Selecione o produto para lançar a operação:</div>
                     <div className="space-y-2">
@@ -5973,6 +6058,8 @@ export function InsumosModule() {
                         const code = matchedCode && codes.includes(matchedCode) ? matchedCode : codes[0] || ''
                         const hasCode = !!code
                         const descriptor = formatInsumoDescriptor(item)
+                        const primarySelected = quickSelectedSnapshot || (quickLookupItems.length ? quickLookupItems[0] : null)
+                        const isLoadingSelection = !!(quickLookupLoading && primarySelected && isSameInsumo(item, primarySelected))
                         return (
                           <div
                             key={`${item.registro || ''}-${code || 'nocode'}`}
@@ -5981,12 +6068,21 @@ export function InsumosModule() {
                             <button
                               type="button"
                               onClick={() => applyQuickSelection(item, code)}
-                              disabled={!hasCode}
-                              className={`w-full text-left ${!hasCode ? 'cursor-not-allowed' : 'hover:bg-white/10'} rounded-md px-1 py-1`}
+                              disabled={!hasCode || isLoadingSelection}
+                              className={`w-full text-left ${(!hasCode || isLoadingSelection) ? 'cursor-not-allowed' : 'hover:bg-white/10'} rounded-md px-1 py-1`}
+                              aria-busy={isLoadingSelection}
                             >
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="text-sm text-blue-50 font-semibold break-words">{String(item.produto || 'Insumo')}</div>
-                                <div className="text-xs text-blue-200/60 font-mono break-all">{code || '—'}</div>
+                                <div className="flex items-center gap-2 text-xs text-blue-200/60 font-mono break-all">
+                                  {code || '—'}
+                                  {isLoadingSelection ? (
+                                    <span className="inline-flex items-center gap-1 text-blue-200/70 font-sans">
+                                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                                      Carregando…
+                                    </span>
+                                  ) : null}
+                                </div>
                               </div>
                               {descriptor ? (
                                 <div className="text-xs text-blue-200/70 mt-0.5 break-words">{descriptor}</div>
@@ -6888,9 +6984,16 @@ export function InsumosModule() {
                                           {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
                                         </span>
                                       </span>
+                                      <span>•</span>
+                                      <span>
+                                        cadastro:{' '}
+                                        <span className="font-mono">
+                                          {overviewQuality?.summary?.total != null ? overviewQuality.summary.total : 0}
+                                        </span>
+                                      </span>
                                     </div>
                                   </div>
-	                                </div>
+                                </div>
 	                                <div className="absolute top-2 right-2 flex items-center gap-2">
 	                                  <Button
 	                                    size="icon"
@@ -6937,6 +7040,7 @@ export function InsumosModule() {
                         <SelectItem value="URGENTE">Crítico</SelectItem>
                         <SelectItem value="VENCENDO">Vencendo</SelectItem>
                         <SelectItem value="EXPIRADO">Expirado</SelectItem>
+                        <SelectItem value="INFO">Info</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -6995,6 +7099,13 @@ export function InsumosModule() {
                         const code = String(a.codigoBarras || '').trim()
                         const rec = code ? alertasRecommendationByCode.get(code) || null : null
                         const canQuick = !!code && isAuthed
+                        const qualityIssue = a.qualityIssue
+                        const qualityMessage = String(a.qualityMessage || '').trim()
+                        const qualitySeverity = a.qualitySeverity || (qualityIssue as any)?.severity
+                        const canQualityEdit = !!qualityIssue && isAuthed && (!!qualityIssue.registro || !!qualityIssue.codigoBarras || !!qualityIssue.produto)
+                        const hasQualityAction = !!qualityIssue
+                        const hasExpiringAction = !rec && (a.tags.includes('EXPIRADO') || a.tags.includes('VENCENDO'))
+                        const hasAnyAction = !!rec || hasExpiringAction || hasQualityAction
                         return (
                           <tr
                             key={`${a.key}-${idx}`}
@@ -7080,7 +7191,7 @@ export function InsumosModule() {
                                     Entrada
                                   </Button>
                                 ) : null}
-                                {!rec && (a.tags.includes('EXPIRADO') || a.tags.includes('VENCENDO')) ? (
+                                {hasExpiringAction ? (
                                   <Button
                                     variant={a.tags.includes('EXPIRADO') ? 'destructive' : 'secondary'}
                                     className="h-8 px-2 text-xs"
@@ -7097,10 +7208,33 @@ export function InsumosModule() {
                                     {a.tags.includes('EXPIRADO') ? 'Baixar' : 'Usar'}
                                   </Button>
                                 ) : null}
-                                {!rec && !(a.tags.includes('EXPIRADO') || a.tags.includes('VENCENDO')) ? (
+                                {hasQualityAction ? (
+                                  <Button
+                                    variant="outline"
+                                    className="h-8 px-2 text-xs"
+                                    disabled={!canQualityEdit}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      if (qualityIssue) openQualityFix(qualityIssue)
+                                    }}
+                                  >
+                                    Editar
+                                  </Button>
+                                ) : null}
+                                {!hasAnyAction ? (
                                   <span className="text-xs text-blue-200/60">-</span>
                                 ) : null}
                               </div>
+                              {qualityMessage ? (
+                                <div className="mt-2 text-xs text-blue-200/70">
+                                  <div className="inline-flex items-center gap-2">
+                                    <Badge variant={severityBadgeVariant(qualitySeverity) as any} className="border">
+                                      {severityLabel(qualitySeverity)}
+                                    </Badge>
+                                  </div>
+                                  <div className="mt-1 break-words">{qualityMessage}</div>
+                                </div>
+                              ) : null}
                             </td>
                             <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
                             <td className="p-3 text-right text-blue-100/70 hidden sm:table-cell">{a.estoqueMinimo ?? '-'}</td>
@@ -7122,121 +7256,6 @@ export function InsumosModule() {
               </div>
             </details>
 
-            <details
-              data-pref-key="insumos.details.alerts.quality"
-              open={detailsOpen['insumos.details.alerts.quality'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.alerts.quality', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-xl border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Qualidade do cadastro{' '}
-                <span className="text-xs text-blue-200/60">
-                  • {overviewQuality?.summary?.total != null ? `${overviewQuality.summary.total} ocorrências` : renderLoadingText(overviewLoading, '—')}
-                </span>
-              </summary>
-              <div className="mt-3 space-y-2">
-                <div className="flex flex-wrap items-center gap-2 text-sm text-blue-100/80">
-                  {overviewQuality?.summary?.bySeverity ? (
-                    <>
-                      <button
-                        type="button"
-                        className="cursor-pointer"
-                        onClick={() => setOverviewQualitySeverity((cur) => (cur === 'CRITICAL' ? 'ALL' : 'CRITICAL'))}
-                        aria-pressed={overviewQualitySeverity === 'CRITICAL'}
-                        title="Filtrar Crítico"
-                      >
-                        <Badge variant="destructive" className={overviewQualitySeverity === 'CRITICAL' ? 'ring-2 ring-white/20' : ''}>
-                          Crítico {overviewQuality.summary.bySeverity.CRITICAL ?? 0}
-                        </Badge>
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-pointer"
-                        onClick={() => setOverviewQualitySeverity((cur) => (cur === 'WARN' ? 'ALL' : 'WARN'))}
-                        aria-pressed={overviewQualitySeverity === 'WARN'}
-                        title="Filtrar Atenção"
-                      >
-                        <Badge variant="secondary" className={overviewQualitySeverity === 'WARN' ? 'ring-2 ring-white/20' : ''}>
-                          Atenção {overviewQuality.summary.bySeverity.WARN ?? 0}
-                        </Badge>
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-pointer"
-                        onClick={() => setOverviewQualitySeverity((cur) => (cur === 'INFO' ? 'ALL' : 'INFO'))}
-                        aria-pressed={overviewQualitySeverity === 'INFO'}
-                        title="Filtrar INFO"
-                      >
-                        <Badge variant="default" className={overviewQualitySeverity === 'INFO' ? 'ring-2 ring-white/20' : ''}>
-                          INFO {overviewQuality.summary.bySeverity.INFO ?? 0}
-                        </Badge>
-                      </button>
-	                    </>
-	                  ) : null}
-	                </div>
-
-                  {!overviewLoading && !overviewQuality?.issues?.length ? (
-                    <div className="text-xs text-blue-100/70">Sem ocorrências.</div>
-                  ) : null}
-
-                {overviewQuality?.issues?.length ? (
-                  <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                    <table className="w-full table-auto text-sm">
-                      <thead className="bg-black/30 text-blue-100/80">
-                        <tr>
-                          <th className="text-left p-3 w-[10%]">Nível</th>
-                          <th className="text-left p-3 hidden sm:table-cell w-[18%]">Código</th>
-                          <th className="text-left p-3 w-[54%]">Mensagem</th>
-                          <th className="text-left p-3 w-[18%] whitespace-nowrap">Ação</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {(overviewQuality.issues || [])
-                          .filter((it) => {
-                            if (overviewQualitySeverity === 'ALL') return true
-                            const sev = String(it?.severity || '').toUpperCase()
-                            return sev === overviewQualitySeverity
-                          })
-                          .slice(0, 30)
-                          .map((it, idx) => {
-                          const sev = String(it.severity || '').trim()
-                          const badgeVariant = severityBadgeVariant(sev)
-                          const sevLabel = severityLabel(sev)
-                          return (
-                            <tr key={`${it.code || ''}-${idx}`} className="hover:bg-white/5">
-                              <td className="p-3">
-                                <Badge variant={badgeVariant as any}>{sevLabel}</Badge>
-                              </td>
-                              <td className="p-3 font-mono text-blue-100/70 hidden sm:table-cell break-all">{it.code || '-'}</td>
-                              <td className="p-3 text-blue-50 break-words">
-                                {it.message || '-'}
-                                {(it.codigoBarras || it.produto) ? (
-                                  <div className="text-xs text-blue-200/60 mt-1">
-                                    {(it.codigoBarras ? `#${it.codigoBarras}` : '')}
-                                    {it.codigoBarras && it.produto ? ' • ' : ''}
-                                    {it.produto || ''}
-                                  </div>
-                                ) : null}
-                              </td>
-                              <td className="p-3">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openQualityFix(it)}
-                                  disabled={!isAuthed || (!it.registro && !it.codigoBarras)}
-                                >
-                                  Editar
-                                </Button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : null}
-              </div>
-            </details>
                                 </CardContent>
                               ) : null}
                             </Card>

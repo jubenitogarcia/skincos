@@ -431,7 +431,7 @@ export function CustomObjectsManager() {
   }
 
   const getIcon = (iconName: string) => {
-    const icons: Record<string, any> = {
+    const icons: Record<string, React.ComponentType<{ className?: string }>> = {
       House,
       CalendarDots,
       FolderOpen,
@@ -440,8 +440,7 @@ export function CustomObjectsManager() {
       Target,
       Database
     }
-    const IconComponent = icons[iconName] || Database
-    return <IconComponent className="h-5 w-5" />
+    return icons[iconName] || Database
   }
 
   const selectedObjectData = selectedObject
