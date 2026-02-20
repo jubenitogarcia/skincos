@@ -7017,7 +7017,7 @@ export function InsumosModule() {
                               </CardHeader>
                               {panelOpen ? (
                                 <CardContent className="space-y-3">
-            <div className="rounded-xl border border-white/10 bg-black/10 p-3 space-y-2">
+            <div className="space-y-2">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
                   <div>
                     <div className="text-xs text-blue-200/70 mb-1">Status</div>
