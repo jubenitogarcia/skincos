@@ -1223,6 +1223,33 @@ export function PontoModule() {
     }
   }
 
+  async function adminLoadEmployeeDetail(employeeId: string) {
+    if (!canAdminActions) return
+    if (!employeeId) return
+    try {
+      const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
+        '/api/ponto/admin/employees/' + employeeId
+      )
+      setAdminEmployees((prev) =>
+        prev.map((e) => (e.id === employeeId ? res.data : e))
+      )
+      if (selectedEmployeeId === employeeId || !selectedEmployeeId) {
+        setEditName(res.data.name || '')
+        setEditCode(res.data.code || '')
+        setEditCpf(res.data.cpf || '')
+        setEditBirthDate(res.data.birthDate || '')
+        setEditJobTitle(res.data.jobTitle || '')
+        setEditPhone(res.data.phone || '')
+        setEditEmail(res.data.loginEmail || '')
+        setEditUnit(res.data.unit || '')
+        setEditActive(res.data.active !== false)
+        setEditPin('')
+      }
+    } catch (e: any) {
+      toastErrorMeta(e)
+    }
+  }
+
   async function adminCreateEmployee(opts: { enrollAfter?: boolean } = {}) {
     if (!canAdminActions) return toast.error('Acesso restrito a administradores')
     const name = newEmployeeName.trim()
@@ -1436,6 +1463,7 @@ export function PontoModule() {
       setEnrollOpen(true)
     } else if (selectEmployeeAction === 'edit') {
       setEditOpen(true)
+      void adminLoadEmployeeDetail(id)
     } else {
       setRecordsOpen(true)
       void adminLoadSelectedRecords()

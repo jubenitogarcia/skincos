@@ -910,6 +910,14 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     res.json({ ok: true, data: publicEmployee(employee) })
   })
 
+  app.get('/api/ponto/admin/employees/:id', async (req, res) => {
+    const actor = requireAdmin(req, res)
+    if (!actor) return
+    const employee = findEmployee(req.params.id)
+    if (!employee || employee.deletedAt) return res.status(404).json({ ok: false, error: 'NOT_FOUND' })
+    res.json({ ok: true, data: publicEmployee(employee) })
+  })
+
   app.patch('/api/ponto/admin/employees/:id', async (req, res) => {
     const actor = requireAdmin(req, res)
     if (!actor) return
