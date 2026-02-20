@@ -1455,6 +1455,27 @@ export function PontoModule() {
     }
   }
 
+  async function adminDeleteEmployee() {
+    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+    const name = selectedEmployee?.name || 'este funcionário'
+    const confirmed = window.confirm(`Tem certeza que deseja remover ${name}?`)
+    if (!confirmed) return
+    setLoading(true)
+    try {
+      await apiJson(`/api/ponto/admin/employees/${selectedEmployeeId}`, { method: 'DELETE' })
+      await adminRefreshAll()
+      toast.success('Funcionário removido')
+      setEditOpen(false)
+      setSelectedEmployeeId('')
+    } catch (e: any) {
+      toast.error(e?.message || String(e))
+      toastErrorMeta(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function openSelectEmployee(action: 'enroll' | 'edit' | 'records') {
     if (!adminEmployees.length) void adminRefreshAll()
     setSelectEmployeeAction(action)
@@ -2212,6 +2233,7 @@ export function PontoModule() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={loading}>Cancelar</Button>
+            <Button variant="destructive" onClick={adminDeleteEmployee} disabled={loading || !selectedEmployeeId}>Remover</Button>
             <Button
               variant="secondary"
               onClick={() => {
