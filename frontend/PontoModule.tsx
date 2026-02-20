@@ -605,6 +605,7 @@ export function PontoModule() {
   const [editJobTitle, setEditJobTitle] = useState('')
   const [editPhone, setEditPhone] = useState('')
   const [editEmail, setEditEmail] = useState('')
+  const [editPin, setEditPin] = useState('')
   const [editUnit, setEditUnit] = useState('')
   const [editActive, setEditActive] = useState(true)
 
@@ -1128,6 +1129,7 @@ export function PontoModule() {
     setEditEmail(selectedEmployee.loginEmail || '')
     setEditUnit(selectedEmployee.unit || '')
     setEditActive(selectedEmployee.active !== false)
+    setEditPin('')
   }, [selectedEmployee])
 
   useEffect(() => {
@@ -1379,6 +1381,8 @@ export function PontoModule() {
     if (email && !email.includes('@')) return toast.error('Email inválido')
     const unit = editUnit.trim()
     if (!unit) return toast.error('Unidade é obrigatória')
+    const pin = editPin.trim()
+    if (pin && pin.length < 4) return toast.error('PIN inválido (mínimo 4)')
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/employees/' + selectedEmployeeId, {
@@ -1395,9 +1399,16 @@ export function PontoModule() {
           active: !!editActive
         }
       })
+      if (pin) {
+        await apiJson(`/api/ponto/admin/employees/${selectedEmployeeId}/pin`, {
+          method: 'POST',
+          body: { pin }
+        })
+      }
       await adminRefreshAll()
       toast.success('Cadastro atualizado')
       setEditOpen(false)
+      setEditPin('')
     } catch (e: any) {
       const details = e?.details as any
       if (details?.error === 'LOGIN_EMAIL_ALREADY_IN_USE') {
@@ -2109,7 +2120,7 @@ export function PontoModule() {
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Editar cadastro</DialogTitle>
-            <DialogDescription>Atualize nome, codigo, email e status do funcionario.</DialogDescription>
+            <DialogDescription>Atualize os dados do funcionário.</DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-1 gap-3">
             <div className="space-y-2">
@@ -2117,12 +2128,32 @@ export function PontoModule() {
               <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Nome" />
             </div>
             <div className="space-y-2">
-              <Label>Codigo</Label>
-              <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} placeholder="Matricula" />
+              <Label>Código (opcional)</Label>
+              <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} placeholder="Matrícula" />
             </div>
             <div className="space-y-2">
-              <Label>Email (vinculo login)</Label>
+              <Label>CPF (opcional)</Label>
+              <Input value={editCpf} onChange={(e) => setEditCpf(e.target.value)} placeholder="Somente números" />
+            </div>
+            <div className="space-y-2">
+              <Label>Data de nascimento (opcional)</Label>
+              <Input type="date" value={editBirthDate} onChange={(e) => setEditBirthDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Cargo (opcional)</Label>
+              <Input value={editJobTitle} onChange={(e) => setEditJobTitle(e.target.value)} placeholder="Cargo..." />
+            </div>
+            <div className="space-y-2">
+              <Label>Telefone (opcional)</Label>
+              <Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="Telefone..." />
+            </div>
+            <div className="space-y-2">
+              <Label>Email (vínculo login)</Label>
               <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="ex: funcionario@empresa.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>PIN (min. 4)</Label>
+              <Input value={editPin} onChange={(e) => setEditPin(e.target.value)} inputMode="numeric" placeholder="Deixe em branco para manter" />
             </div>
             <div className="space-y-2">
               <Label>Unidade</Label>
@@ -2147,16 +2178,6 @@ export function PontoModule() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={loading}>Cancelar</Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setConflictsOpen(true)
-                void adminLoadEmailConflicts()
-              }}
-              disabled={loading}
-            >
-              Ver duplicidades
-            </Button>
             <Button
               variant="secondary"
               onClick={() => {
