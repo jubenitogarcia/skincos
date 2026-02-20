@@ -661,6 +661,12 @@ export function PontoModule() {
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
   const canAdmin = crmRole === 'ADMIN' || crmRole === 'GESTOR' || crmRole === 'GERENTE'
   const canAdminActions = canAdmin
+  const canSeeSensitive = canAdmin || (me && 'linked' in me && me.linked)
+  const maskSensitive = (value?: string | null, mask: string = '•••') => {
+    const raw = String(value || '').trim()
+    if (!raw) return '—'
+    return canSeeSensitive ? raw : mask
+  }
 
   function closeEnrollDialog() {
     enrollAbortRef.current = true
@@ -1755,11 +1761,11 @@ export function PontoModule() {
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">CPF</div>
-                      <div className="font-medium">{(me.employee as any)?.cpf || (crmMe?.user as any)?.cpf || '—'}</div>
+                      <div className="font-medium">{maskSensitive((me.employee as any)?.cpf || (crmMe?.user as any)?.cpf, '***.***.***-**')}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Data Nascimento</div>
-                      <div className="font-medium">{(me.employee as any)?.birthDate || (me.employee as any)?.dob || (crmMe?.user as any)?.birthDate || '—'}</div>
+                      <div className="font-medium">{maskSensitive((me.employee as any)?.birthDate || (me.employee as any)?.dob || (crmMe?.user as any)?.birthDate, '**/**/****')}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Cargo</div>
@@ -1771,7 +1777,7 @@ export function PontoModule() {
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Telefone</div>
-                      <div className="font-medium">{(me.employee as any)?.phone || (me.employee as any)?.phoneRaw || (crmMe?.user as any)?.phone || '—'}</div>
+                      <div className="font-medium">{maskSensitive((me.employee as any)?.phone || (me.employee as any)?.phoneRaw || (crmMe?.user as any)?.phone, '(**) *****-****')}</div>
                     </div>
                   </div>
                   {me.linked ? (
