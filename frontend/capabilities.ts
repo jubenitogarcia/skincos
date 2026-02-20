@@ -28,10 +28,9 @@ export async function fetchCapabilitiesCatalog(): Promise<CapabilitiesCatalog> {
     const text = await res.text().catch(() => '')
     throw new Error(`Failed to load capabilities (${res.status}): ${text || res.statusText}`)
   }
-  const json = await res.json()
+  const json: any = await res.json()
   if (!json || json.ok !== true || !json.data) {
     throw new Error('Capabilities payload invalid')
   }
   return json.data as CapabilitiesCatalog
 }
-

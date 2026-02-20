@@ -380,7 +380,7 @@ function stopCamera(stream: MediaStream | null) {
   } catch { /* ignore */ }
 }
 
-async function captureDescriptor(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+async function captureDescriptor(videoEl: HTMLVideoElement, mode: FaceDetectorMode): Promise<number[]> {
   await ensureFaceModels(mode)
   const faceapi = await getFaceApi()
   const detector =
@@ -405,7 +405,7 @@ async function captureDescriptor(videoEl: HTMLVideoElement, mode: FaceDetectorMo
   return Array.from(detection.descriptor)
 }
 
-async function detectDescriptorWithInfo(videoEl: HTMLVideoElement, mode: FaceDetectorMode) {
+async function detectDescriptorWithInfo(videoEl: HTMLVideoElement, mode: FaceDetectorMode): Promise<{ descriptor: number[]; score: number | null; box: any; landmarks: any }> {
   await ensureFaceModels(mode)
   const faceapi = await getFaceApi()
   const detector =
@@ -428,7 +428,7 @@ async function detectDescriptorWithInfo(videoEl: HTMLVideoElement, mode: FaceDet
     throw err
   }
   return {
-    descriptor: Array.from(detection.descriptor),
+    descriptor: Array.from(detection.descriptor) as number[],
     score: typeof score === 'number' ? score : null,
     box: detection?.detection?.box || null,
     landmarks: detection?.landmarks || null,
@@ -490,7 +490,7 @@ function getEnrollHint(detection: any, videoEl: HTMLVideoElement) {
   return 'Mantenha o rosto centralizado'
 }
 
-async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220, mode: FaceDetectorMode) {
+async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, waitMs = 220, mode: FaceDetectorMode): Promise<number[]> {
   const n = Math.max(1, Math.min(4, samples))
   const all: number[][] = []
   for (let i = 0; i < n; i++) {
@@ -552,6 +552,7 @@ export function PontoModule() {
   const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
   const [meRecordsFrom, setMeRecordsFrom] = useState('')
   const [meRecordsTo, setMeRecordsTo] = useState('')
+  const meLinked = me && 'linked' in me && me.linked ? me : null
 
   const [adminEmployees, setAdminEmployees] = useState<PontoEmployeePublic[]>([])
   const [adminDevices, setAdminDevices] = useState<PontoDevicePublic[]>([])
@@ -842,7 +843,7 @@ export function PontoModule() {
     if (faceDetectorMode === 'ssd') return
     setFaceFailCount((cur) => {
       const next = cur + 1
-      if (next >= FACE_FALLBACK_THRESHOLD && faceDetectorMode !== 'ssd') {
+      if (next >= FACE_FALLBACK_THRESHOLD) {
         void upgradeToSsd()
       }
       return next
@@ -1761,49 +1762,49 @@ export function PontoModule() {
           <CardContent className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
                 {meLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
-                {me && 'linked' in me && me.linked ? (
+                {meLinked ? (
                   <>
-                    <Badge>Funcionário: {me.employee?.name || '-'}</Badge>
-                    <Badge variant="outline">Face: {me.hasFace ? 'OK' : '—'}</Badge>
-                    <Badge variant="outline">PIN: {me.pinSet ? 'OK' : '—'}</Badge>
-                    {me.cooldown?.active ? (
-                      <Badge variant="secondary">Cooldown: {me.cooldown.secondsRemaining ?? '?'}s</Badge>
+                    <Badge>Funcionário: {meLinked.employee?.name || '-'}</Badge>
+                    <Badge variant="outline">Face: {meLinked.hasFace ? 'OK' : '—'}</Badge>
+                    <Badge variant="outline">PIN: {meLinked.pinSet ? 'OK' : '—'}</Badge>
+                    {meLinked.cooldown?.active ? (
+                      <Badge variant="secondary">Cooldown: {meLinked.cooldown.secondsRemaining ?? '?'}s</Badge>
                     ) : null}
                   </>
                 ) : null}
               </div>
 
-              {me && 'linked' in me ? (
+              {meLinked ? (
                 <div className="rounded-md border p-3 text-sm">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <div className="text-xs text-muted-foreground">Nome</div>
-                      <div className="font-medium">{me.employee?.name || crmMe?.user?.displayName || crmMe?.user?.username || crmMe?.user?.email || '—'}</div>
+                      <div className="font-medium">{meLinked.employee?.name || crmMe?.user?.displayName || crmMe?.user?.username || crmMe?.user?.email || '—'}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">CPF</div>
-                      <div className="font-medium">{maskSensitive((me.employee as any)?.cpf || (crmMe?.user as any)?.cpf, '***.***.***-**')}</div>
+                      <div className="font-medium">{maskSensitive((meLinked.employee as any)?.cpf || (crmMe?.user as any)?.cpf, '***.***.***-**')}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Data Nascimento</div>
-                      <div className="font-medium">{maskSensitive((me.employee as any)?.birthDate || (me.employee as any)?.dob || (crmMe?.user as any)?.birthDate, '**/**/****')}</div>
+                      <div className="font-medium">{maskSensitive((meLinked.employee as any)?.birthDate || (meLinked.employee as any)?.dob || (crmMe?.user as any)?.birthDate, '**/**/****')}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Cargo</div>
-                      <div className="font-medium">{(me.employee as any)?.role || (me.employee as any)?.jobTitle || (crmMe?.user as any)?.role || '—'}</div>
+                      <div className="font-medium">{(meLinked.employee as any)?.role || (meLinked.employee as any)?.jobTitle || (crmMe?.user as any)?.role || '—'}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">E-mail</div>
-                      <div className="font-medium">{me.employee?.loginEmail || me.actorEmail || crmMe?.user?.email || '—'}</div>
+                      <div className="font-medium">{meLinked.employee?.loginEmail || meLinked.actorEmail || crmMe?.user?.email || '—'}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Telefone</div>
-                      <div className="font-medium">{maskSensitive((me.employee as any)?.phone || (me.employee as any)?.phoneRaw || (crmMe?.user as any)?.phone, '(**) *****-****')}</div>
+                      <div className="font-medium">{maskSensitive((meLinked.employee as any)?.phone || (meLinked.employee as any)?.phoneRaw || (crmMe?.user as any)?.phone, '(**) *****-****')}</div>
                     </div>
                   </div>
-                  {me.linked ? (
+                  {meLinked.linked ? (
                     <div className="mt-3 text-xs text-muted-foreground">
-                      Última batida: {me.lastPunch ? `${fmtDate(me.lastPunch.at)} • ${me.lastPunch.type} • ${me.lastPunch.method || '-'}` : '—'}
+                      Última batida: {meLinked.lastPunch ? `${fmtDate(meLinked.lastPunch.at)} • ${meLinked.lastPunch.type} • ${meLinked.lastPunch.method || '-'}` : '—'}
                     </div>
                   ) : null}
                 </div>
@@ -1811,6 +1812,10 @@ export function PontoModule() {
                 <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
                   <div className="font-medium">Falha ao carregar</div>
                   <div className="opacity-80">{meError?.message || 'Erro desconhecido'}</div>
+                </div>
+              ) : me && 'linked' in me && !me.linked ? (
+                <div className="rounded-md border p-3 text-sm text-muted-foreground">
+                  Conta não vinculada a um funcionário ainda.
                 </div>
               ) : null}
 

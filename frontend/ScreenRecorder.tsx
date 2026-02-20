@@ -257,7 +257,7 @@ export function ScreenRecorder({
       const extension = settings.format === 'mp4' ? 'mp4' : 'webm'
       const filename = `recording-${timestamp}.${extension}`
 
-      if (typeof window !== 'undefined' && window.electronAPI) {
+      if (typeof window !== 'undefined' && window.electronAPI?.saveRecording) {
         // In Electron, use the native save dialog
         const buffer = await blob.arrayBuffer()
         const result = await window.electronAPI.saveRecording(buffer, filename, settings.recordingPath)

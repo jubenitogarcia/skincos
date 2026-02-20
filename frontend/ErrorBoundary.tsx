@@ -64,7 +64,7 @@ export class ErrorBoundary extends Component<Props, State> {
       if (reloaded) return
     }
 
-    this.setState({ errorInfo: errorInfo.componentStack })
+    this.setState({ errorInfo: errorInfo.componentStack || undefined })
   }
 
   render() {

@@ -90,8 +90,8 @@ export function RealTimeCollaboration({
   const [cursorPosition, setCursorPosition] = useState<{ x: number; y: number } | null>(null)
 
   const lastPulseRef = useRef<string>(Date.now().toString())
-  const heartbeatRef = useRef<number | undefined>(undefined)
-  const cursorUpdateRef = useRef<number | undefined>(undefined)
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cursorUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Initialize current user
   useEffect(() => {
