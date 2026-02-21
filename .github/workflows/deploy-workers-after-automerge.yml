@@ -107,7 +107,7 @@ jobs:
 
       - name: Checkout merge commit
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr.outputs.merge_commit_sha }}
 
