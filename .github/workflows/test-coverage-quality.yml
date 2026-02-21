@@ -54,7 +54,7 @@ jobs:
           set -euxo pipefail
           pnpm -C backend -r run test:coverage --if-present
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: js-ts-coverage
           path: |
@@ -84,7 +84,7 @@ jobs:
           cd backend
           python -m pytest tests/unit --cov=. --cov-report=xml:coverage.xml --cov-report=term
       - name: Upload coverage.xml
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: python-coverage
           path: backend/coverage.xml

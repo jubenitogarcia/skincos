@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload summary artifact
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cloudflare-alerting-apply
           path: /tmp/cloudflare-alerting-apply.summary.json
