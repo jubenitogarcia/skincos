@@ -100,8 +100,8 @@ importers:
         specifier: ^2.6.9
         version: 2.7.0
       node-webpmux:
-        specifier: 3.1.7
-        version: 3.1.7
+        specifier: 3.2.1
+        version: 3.2.1
       puppeteer:
         specifier: ^18.2.1
         version: 18.2.1
@@ -1879,6 +1879,9 @@ packages:
 
   node-webpmux@3.1.7:
     resolution: {integrity: sha512-ySkL4lBCto86OyQ0blAGzylWSECcn5I0lM3bYEhe75T8Zxt/BFUMHa8ktUguR7zwXNdS/Hms31VfSsYKN1383g==}
+
+  node-webpmux@3.2.1:
+    resolution: {integrity: sha512-MKgpq9nFgo44pIVNx/umD3nkqb2E8oqQTfmstVsfNdx9uV4cX7a4LqA+d8AZd3v5tgJXwENKUFsXNP3bRLP8nQ==}
 
   nodemon@3.1.11:
     resolution: {integrity: sha512-is96t8F/1//UHAjNPHpbsNY46ELPpftGUoSVNXwUfMk/qdjSylYrWSu1XavVTBOn526kFiOR733ATgNBCQyH0g==}
@@ -4326,6 +4329,8 @@ snapshots:
       whatwg-url: 5.0.0
 
   node-webpmux@3.1.7: {}
+
+  node-webpmux@3.2.1: {}
 
   nodemon@3.1.11:
     dependencies:
