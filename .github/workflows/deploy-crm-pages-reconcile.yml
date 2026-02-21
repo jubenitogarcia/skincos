@@ -168,7 +168,7 @@ jobs:
 
       - name: Setup Node
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
