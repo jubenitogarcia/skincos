@@ -41,6 +41,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
 - Segredos e rotação: `docs/secrets-rotation.md`
 - Observabilidade/SLOs: `docs/observability.md`
+- Workflow de criativos WhatsApp (prompt system): `backend/docs/modules/crm/whatsapp-creative-workflow.md`
 
 ## CRM (banner de demo)
 - `VITE_DEMO_DATA=false` para ocultar o aviso de dados simulados quando tudo estiver integrado.
