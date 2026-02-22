@@ -565,7 +565,8 @@ app.use('/api/instagram-module', createProxyMiddleware({
 // Insumos API proxy (same-origin for CRM UI)
 // -------------------------------------------------------------
 // Cloudflare target (default production). Override for local testing.
-const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || 'https://api.skincos.com.br'
+const isLocalEnv = String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
+const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || (isLocalEnv ? 'http://127.0.0.1:8787' : 'https://api.skincos.com.br')
 
 function isLocalSafeMode() {
     // In local/dev, default to read-only for upstream production APIs unless explicitly allowed.

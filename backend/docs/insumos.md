@@ -98,7 +98,7 @@ Para evitar CORS e manter o padrão same-origin do CRM, o backend do CRM expõe 
 
 Variável opcional:
 
-- `INSUMOS_API_TARGET` (default `https://api.skincos.com.br`)
+- `INSUMOS_API_TARGET` (prod default `https://api.skincos.com.br`; local default `http://127.0.0.1:8787`)
 - `AUTH_LOCKOUT_MAX_ATTEMPTS` (default `5`)
 - `AUTH_LOCKOUT_WINDOW_MINUTES` (default `15`)
 - `AUTH_RESET_TTL_MINUTES` (default `30`)
@@ -129,6 +129,11 @@ Observação: o deploy usa `--keep-vars` para não apagar variáveis configurada
 Para usar o Worker local no CRM (proxy via CRM API), rode o Worker e aponte o target:
 
 - `INSUMOS_API_TARGET=http://127.0.0.1:8787 ./backend/scripts/dev.sh crm`
+
+Modo dev (somente leitura, útil para auditoria local):
+
+- `ALLOW_DEV_AUTH_BYPASS=true` libera **GET** em rotas de Insumos quando o host é `localhost/127.0.0.1`.
+- `INSUMOS_AUDIT_TOKEN` habilita auditoria read-only por header `x-insumos-audit-token` (somente analytics).
 
 Smoke test (sem segredos / sem Google):
 

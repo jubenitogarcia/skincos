@@ -251,6 +251,58 @@ async function listMovimentosAggregated({ env, unidadeQ, fromIso, toIso, groupBy
     return { buckets, totals };
 }
 
+async function listCategoryTurnoverAggregated({ env, unidadeQ, fromIso, toIso, mode }) {
+    if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
+    const where = [];
+    const binds = [];
+    if (unidadeQ) {
+        where.push('m.unidade = ?');
+        binds.push(String(unidadeQ));
+    }
+    if (fromIso) {
+        where.push('m.data_hora >= ?');
+        binds.push(String(fromIso));
+    }
+    if (toIso) {
+        where.push('m.data_hora <= ?');
+        binds.push(String(toIso));
+    }
+    const tipoExpr = "UPPER(REPLACE(m.tipo, 'Í', 'I'))";
+    if (mode === 'saida') {
+        where.push(`${tipoExpr} IN ('SAIDA','SAÍDA')`);
+    } else if (mode === 'entrada') {
+        where.push(`${tipoExpr} = 'ENTRADA'`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const r = await env.DB.prepare(
+        `SELECT
+            COALESCE(NULLIF(TRIM(i.categoria), ''), 'Outros') AS categoria,
+            SUM(COALESCE(m.quantidade, 0)) AS qtd,
+            SUM(COALESCE(m.quantidade, 0) * COALESCE(i.preco_custo, 0)) AS valor,
+            COUNT(1) AS movimentos
+         FROM insumos_movements m
+         LEFT JOIN insumos_items i ON i.registro = m.registro_insumo
+         ${whereSql}
+         GROUP BY categoria
+         ORDER BY valor DESC`
+    )
+        .bind(...binds)
+        .all();
+    const categories = (r?.results || []).map((row) => ({
+        categoria: String(row?.categoria || 'Outros'),
+        qtd: Number(row?.qtd) || 0,
+        valor: Number(row?.valor) || 0,
+        movimentos: Number(row?.movimentos) || 0,
+    }));
+    return {
+        unidade: unidadeQ,
+        from: fromIso || null,
+        to: toIso || null,
+        mode: mode || 'all',
+        categories,
+    };
+}
+
 function trendsFromBuckets({ buckets, totals, unidadeQ, groupBy, from, to }) {
     return {
         unidade: unidadeQ,
@@ -433,18 +485,21 @@ export async function handleInsightsRoutes({
             const group = groupBy === 'week' || groupBy === 'month' ? groupBy : 'day';
             const { from, to, days } = resolveWindow(url, 30);
 
-            const [insumos, movimentos] = await Promise.all([
+            const fromIso = from ? from.toISOString() : null;
+            const toIso = to ? to.toISOString() : null;
+            const [insumos, movAgg, turnoverSaida, turnoverEntrada] = await Promise.all([
                 listInsumos(unidadeQ),
-                listMovimentos({
+                listMovimentosAggregated({
+                    env,
                     unidadeQ,
-                    fromIso: from ? from.toISOString() : null,
-                    toIso: to ? to.toISOString() : null
+                    fromIso,
+                    toIso,
+                    groupBy: group
                 }),
+                listCategoryTurnoverAggregated({ env, unidadeQ, fromIso, toIso, mode: 'saida' }),
+                listCategoryTurnoverAggregated({ env, unidadeQ, fromIso, toIso, mode: 'entrada' }),
             ]);
-            const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
-            const trends = computeTrends({ movimentos, insumoByCode, groupBy: group, from, to, unidade: unidadeQ });
-            const turnoverSaida = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade: unidadeQ, mode: 'saida' });
-            const turnoverEntrada = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade: unidadeQ, mode: 'entrada' });
+            const trends = trendsFromBuckets({ buckets: movAgg.buckets, totals: movAgg.totals, unidadeQ, groupBy: group, from, to });
 
             const data = {
                 alertas: buildStockAlerts(insumos),
@@ -528,7 +583,13 @@ export async function handleInsightsRoutes({
             ]);
             const insumoByCode = new Map(insumos.map((i) => [String(i.codigoBarras || '').trim(), i]));
 
-            const data = computeCategoryTurnover({ movimentos, insumoByCode, from, to, unidade, mode });
+            const data = await listCategoryTurnoverAggregated({
+                env,
+                unidadeQ: unidade,
+                fromIso: from ? from.toISOString() : null,
+                toIso: to ? to.toISOString() : null,
+                mode
+            });
             return withCORS(JSON.stringify({ success: true, data }), { status: 200 }, appOrigin);
         } catch (err) {
             return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
