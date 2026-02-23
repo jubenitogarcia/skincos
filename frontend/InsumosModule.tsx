@@ -1283,6 +1283,9 @@ export function InsumosModule() {
   const [alertasStatus, setAlertasStatus] = React.useState<AlertasStatusFilter>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
+  type AlertasSortKey = 'produto' | 'categoria' | 'status' | 'acao' | 'atual' | 'min' | 'dif' | 'percentual'
+  const [alertasSortKey, setAlertasSortKey] = React.useState<AlertasSortKey>('status')
+  const [alertasSortDir, setAlertasSortDir] = React.useState<'asc' | 'desc'>('asc')
   const [offlineQueueCount, setOfflineQueueCount] = React.useState(0)
   const [offlineDialogOpen, setOfflineDialogOpen] = React.useState(false)
   const [offlineItems, setOfflineItems] = React.useState<OfflineQueueItem[]>([])
@@ -5266,17 +5269,6 @@ export function InsumosModule() {
     )
   }, [alertasLinhas])
 
-  const alertasLinhasFiltradas = React.useMemo(() => {
-    const q = alertasBusca.trim().toLowerCase()
-    return alertasLinhas.filter((a) => {
-      if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
-      if (alertasStatus !== 'TODOS' && !a.tags.includes(alertasStatus as any)) return false
-      if (!q) return true
-      const hay = [a.produto, a.categoria, a.marca, a.codigoBarras, a.qualityMessage].filter(Boolean).join(' ').toLowerCase()
-      return hay.includes(q)
-    })
-  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasStatus])
-
   type AlertasRecommendation =
     | { kind: 'TRANSFERENCIA'; fromUnidade?: string | null; toUnidade?: string | null; qty?: number | null }
     | { kind: 'ENTRADA'; qty?: number | null }
@@ -5310,6 +5302,78 @@ export function InsumosModule() {
 
     return map
   }, [overviewActionables])
+
+  const alertasLinhasFiltradas = React.useMemo(() => {
+    const q = alertasBusca.trim().toLowerCase()
+    return alertasLinhas.filter((a) => {
+      if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
+      if (alertasStatus !== 'TODOS' && !a.tags.includes(alertasStatus as any)) return false
+      if (!q) return true
+      const hay = [a.produto, a.categoria, a.marca, a.codigoBarras, a.qualityMessage].filter(Boolean).join(' ').toLowerCase()
+      return hay.includes(q)
+    })
+  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasStatus])
+
+  const alertasLinhasOrdenadas = React.useMemo(() => {
+    const rows = alertasLinhasFiltradas.map((row, index) => ({ row, index }))
+    const statusOrder: AlertaStatusTag[] = ['URGENTE', 'ATENCAO', 'VENCENDO', 'EXPIRADO', 'INFO']
+    const statusRank = (tags: AlertaStatusTag[]) => {
+      for (let i = 0; i < statusOrder.length; i++) {
+        if (tags.includes(statusOrder[i])) return i
+      }
+      return statusOrder.length
+    }
+    const actionLabel = (row: AlertasLinha) => {
+      const code = String(row.codigoBarras || '').trim()
+      const rec = code ? alertasRecommendationByCode.get(code) || null : null
+      if (rec?.kind === 'TRANSFERENCIA') {
+        return `transferencia ${rec.fromUnidade || ''} ${rec.toUnidade || ''}`.trim()
+      }
+      if (rec?.kind === 'ENTRADA') return 'reposicao'
+      if (row.qualityMessage) return String(row.qualityMessage)
+      if (row.tags.includes('EXPIRADO')) return 'expirado'
+      if (row.tags.includes('VENCENDO')) return 'vencendo'
+      return ''
+    }
+    const dir = alertasSortDir === 'asc' ? 1 : -1
+    const compareText = (a: string, b: string) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+    rows.sort((a, b) => {
+      const ra = a.row
+      const rb = b.row
+      let cmp = 0
+      switch (alertasSortKey) {
+        case 'produto':
+          cmp = compareText(String(ra.produto || ''), String(rb.produto || ''))
+          break
+        case 'categoria':
+          cmp = compareText(String(ra.categoria || ''), String(rb.categoria || ''))
+          break
+        case 'status':
+          cmp = statusRank(ra.tags) - statusRank(rb.tags)
+          break
+        case 'acao':
+          cmp = compareText(actionLabel(ra), actionLabel(rb))
+          break
+        case 'atual':
+          cmp = (Number(ra.estoqueAtual) || 0) - (Number(rb.estoqueAtual) || 0)
+          break
+        case 'min':
+          cmp = (Number(ra.estoqueMinimo) || 0) - (Number(rb.estoqueMinimo) || 0)
+          break
+        case 'dif':
+          cmp = (Number(ra.diferenca) || 0) - (Number(rb.diferenca) || 0)
+          break
+        case 'percentual':
+          cmp = (Number(ra.percentual) || 0) - (Number(rb.percentual) || 0)
+          break
+        default:
+          cmp = 0
+      }
+      if (cmp !== 0) return cmp * dir
+      return a.index - b.index
+    })
+    return rows.map((r) => r.row)
+  }, [alertasLinhasFiltradas, alertasRecommendationByCode, alertasSortDir, alertasSortKey])
 
   const fmtAge = React.useCallback((ts?: number) => {
     const t = Number(ts) || 0
@@ -7016,77 +7080,122 @@ export function InsumosModule() {
                                 </div>
                               </CardHeader>
                               {panelOpen ? (
-                                <CardContent className="space-y-3">
-            <div className="space-y-2">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Status</div>
-                    <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="TODOS">Todos</SelectItem>
-                        <SelectItem value="ATENCAO">Atenção</SelectItem>
-                        <SelectItem value="URGENTE">Crítico</SelectItem>
-                        <SelectItem value="VENCENDO">Vencendo</SelectItem>
-                        <SelectItem value="EXPIRADO">Expirado</SelectItem>
-                        <SelectItem value="INFO">Info</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                    <Select
-                      value={alertasCategoria || '__ALL__'}
-                      onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__ALL__">Todas</SelectItem>
-                        {alertasCategorias.map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
-                    <Input value={alertasBusca} onChange={(e) => setAlertasBusca(e.target.value)} placeholder="produto, categoria, código…" />
-                  </div>
-                </div>
-                <div className="flex items-center justify-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPurchaseDialogOpen(true)}
-                    disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                    title="Ver lista completa de reposição"
-                  >
-                    Lista de compra
-                  </Button>
-                </div>
+                                <CardContent className="space-y-2">
+                                  <div className="flex flex-wrap items-end gap-2">
+                                    <div className="w-36">
+                                      <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
+                                      <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="TODOS">Todos</SelectItem>
+                                          <SelectItem value="ATENCAO">Atenção</SelectItem>
+                                          <SelectItem value="URGENTE">Crítico</SelectItem>
+                                          <SelectItem value="VENCENDO">Vencendo</SelectItem>
+                                          <SelectItem value="EXPIRADO">Expirado</SelectItem>
+                                          <SelectItem value="INFO">Info</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="w-44">
+                                      <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
+                                      <Select
+                                        value={alertasCategoria || '__ALL__'}
+                                        onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="__ALL__">Todas</SelectItem>
+                                          {alertasCategorias.map((c) => (
+                                            <SelectItem key={c} value={c}>
+                                              {c}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="min-w-[220px] flex-1">
+                                      <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
+                                      <Input
+                                        value={alertasBusca}
+                                        onChange={(e) => setAlertasBusca(e.target.value)}
+                                        placeholder="produto, categoria, código…"
+                                      />
+                                    </div>
+                                    <div className="ml-auto">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setPurchaseDialogOpen(true)}
+                                        disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                                        title="Ver lista completa de reposição"
+                                      >
+                                        Lista de compra
+                                      </Button>
+                                    </div>
+                                  </div>
 
-                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                  <table className="w-full table-auto text-sm">
-                    <thead className="bg-black/30 text-blue-100/80">
-                      <tr>
-                          <th className="text-left p-3 w-[24%]">Produto</th>
-                          <th className="text-left p-3 w-[14%]">Categoria</th>
-                          <th className="text-left p-3 w-[14%]">Status</th>
-                          <th className="text-left p-3 w-[20%]">Ação recomendada</th>
-                          <th className="text-right p-3 w-[8%]">Atual</th>
-                          <th className="text-right p-3 hidden sm:table-cell w-[6%]">Mín</th>
-                          <th className="hidden lg:table-cell text-right p-3 w-[7%]">Dif</th>
-                          <th className="hidden lg:table-cell text-right p-3 w-[7%]">%</th>
-                        </tr>
-                      </thead>
+                                  <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+                                    <table className="w-full table-fixed text-sm">
+                                      <thead className="bg-black/30 text-blue-100/80">
+                                        <tr>
+                                          {(
+                                            [
+                                              { key: 'produto', label: 'Produto', align: 'text-left', widthClass: 'w-[24%]' },
+                                              { key: 'categoria', label: 'Categoria', align: 'text-left', widthClass: 'w-[14%]' },
+                                              { key: 'status', label: 'Status', align: 'text-left', widthClass: 'w-[14%]' },
+                                              { key: 'acao', label: 'Ação recomendada', align: 'text-left', widthClass: 'w-[20%]' },
+                                              { key: 'atual', label: 'Atual', align: 'text-right', widthClass: 'w-[8%]' },
+                                              { key: 'min', label: 'Mín', align: 'text-right hidden sm:table-cell', widthClass: 'w-[6%]' },
+                                              { key: 'dif', label: 'Dif', align: 'text-right hidden lg:table-cell', widthClass: 'w-[7%]' },
+                                              { key: 'percentual', label: '%', align: 'text-right hidden lg:table-cell', widthClass: 'w-[7%]' }
+                                            ] as Array<{ key: AlertasSortKey; label: string; align: string; widthClass?: string }>
+                                          ).map((col) => {
+                                            const isActive = alertasSortKey === col.key
+                                            return (
+                                              <th
+                                                key={col.label}
+                                                className={`p-3 ${col.align} ${col.widthClass || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
+                                              >
+                                                <div className={`flex items-center ${col.align.includes('right') ? 'justify-end' : 'justify-start'} gap-2`}>
+                                                  <button
+                                                    type="button"
+                                                    className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
+                                                    onClick={() => {
+                                                      if (alertasSortKey === col.key) {
+                                                        setAlertasSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                                        return
+                                                      }
+                                                      setAlertasSortKey(col.key)
+                                                      setAlertasSortDir(col.key === 'status' ? 'asc' : 'desc')
+                                                    }}
+                                                    aria-label={`Ordenar ${col.label}`}
+                                                    title={`Ordenar ${col.label}`}
+                                                  >
+                                                    {col.label}
+                                                  </button>
+                                                  <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
+                                                    {isActive && alertasSortDir === 'asc' ? (
+                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                                      </svg>
+                                                    ) : (
+                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                                      </svg>
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              </th>
+                                            )
+                                          })}
+                                        </tr>
+                                      </thead>
                     <tbody className="divide-y divide-white/5">
-                      {alertasLinhasFiltradas.slice(0, 120).map((a, idx) => {
+                      {alertasLinhasOrdenadas.slice(0, 120).map((a, idx) => {
                         const code = String(a.codigoBarras || '').trim()
                         const rec = code ? alertasRecommendationByCode.get(code) || null : null
                         const canQuick = !!code && isAuthed
@@ -7234,7 +7343,7 @@ export function InsumosModule() {
                           </tr>
                         )
                       })}
-                      {!alertasLinhasFiltradas.length ? (
+                      {!alertasLinhasOrdenadas.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={8}>
                             {renderListPlaceholder(insightsLoading, 'Sem alertas.')}
