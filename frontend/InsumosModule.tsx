@@ -1557,7 +1557,6 @@ export function InsumosModule() {
       // ignore
     }
   }, [loadingPercent, overviewResumo?.valorEstoqueTotal, showOverviewLoadingProgress])
-
   const renderInlinePercent = React.useCallback(
     (active: boolean, className = '') => {
       if (!active) return null
