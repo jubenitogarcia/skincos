@@ -93,7 +93,9 @@ class WhatsAppClient:
                         if is_ready:
                             logger.info(f"✅ Endpoint saudável: {api_url}{status_path}")
                             return True
-                        logger.warning(f"⚠️ Endpoint responde mas não está ready: {api_url}{status_path}")
+                        logger.warning(
+                            f"⚠️ Endpoint responde mas não está ready: {api_url}{status_path}"
+                        )
                         continue
                 except requests.exceptions.RequestException:
                     continue
@@ -132,22 +134,34 @@ class WhatsAppClient:
                     **kwargs,
                 )
                 if response.status_code in [502, 503, 504]:
-                    logger.warning(f"⚠️ Gateway error {response.status_code}, tentando próximo endpoint...")
-                    self._current_endpoint_index = (self._current_endpoint_index + 1) % len(self._endpoints)
+                    logger.warning(
+                        f"⚠️ Gateway error {response.status_code}, tentando próximo endpoint..."
+                    )
+                    self._current_endpoint_index = (
+                        self._current_endpoint_index + 1
+                    ) % len(self._endpoints)
                     continue
-                logger.info(f"📊 Resposta: {response.status_code} de {current_endpoint}")
+                logger.info(
+                    f"📊 Resposta: {response.status_code} de {current_endpoint}"
+                )
                 return response
             except requests.exceptions.RequestException as e:
                 logger.warning(f"⚠️ Erro conexão {current_endpoint}: {e}")
                 last_exception = e
-                self._current_endpoint_index = (self._current_endpoint_index + 1) % len(self._endpoints)
+                self._current_endpoint_index = (self._current_endpoint_index + 1) % len(
+                    self._endpoints
+                )
                 time.sleep(1)
                 continue
-        error_msg = f"Todos os endpoints WhatsApp falharam. Último erro: {last_exception}"
+        error_msg = (
+            f"Todos os endpoints WhatsApp falharam. Último erro: {last_exception}"
+        )
         logger.error(f"❌ {error_msg}")
         raise requests.exceptions.ConnectionError(error_msg)
 
-    def send_message(self, phone_number: str, message: str, **kwargs) -> requests.Response:
+    def send_message(
+        self, phone_number: str, message: str, **kwargs
+    ) -> requests.Response:
         endpoint_path = "/send"
         payload_formats = [
             {"number": phone_number, "message": message},
@@ -159,7 +173,9 @@ class WhatsAppClient:
             if kwargs:
                 final_payload.update(kwargs)
             try:
-                logger.info(f"📤 Enviando via {endpoint_path} com formato: {list(payload.keys())}")
+                logger.info(
+                    f"📤 Enviando via {endpoint_path} com formato: {list(payload.keys())}"
+                )
                 response = self._make_request("POST", endpoint_path, json=final_payload)
                 if response.status_code != 400:
                     return response
@@ -171,7 +187,9 @@ class WhatsAppClient:
         logger.error(f"❌ {error_msg}")
         raise requests.exceptions.RequestException(error_msg)
 
-    def send_media(self, phone_number: str, media_url: str, caption: Optional[str] = None, **kwargs) -> requests.Response:
+    def send_media(
+        self, phone_number: str, media_url: str, caption: Optional[str] = None, **kwargs
+    ) -> requests.Response:
         if not media_url:
             raise ValueError("URL da mídia é obrigatória")
         payload = {"number": phone_number, "mediaUrl": media_url}
@@ -189,11 +207,15 @@ class MessageSender:
         config = ConfigManager.get_config()
         self.whatsapp_config = config.get("whatsapp_config", {})
 
-    def send_message(self, phone_number: str, message: str, media_url: Optional[str] = None, **kwargs) -> Optional[Any]:
+    def send_message(
+        self, phone_number: str, message: str, media_url: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
         idempotency_key = kwargs.pop("idempotency_key", None)
         audit_context = kwargs.pop("audit_context", None)
         stream = kwargs.pop("audit_stream", "whatsapp_sends")
-        force = bool(kwargs.pop("force", False)) or str(os.environ.get("SKINCOS_FORCE_SEND", "")).lower() in (
+        force = bool(kwargs.pop("force", False)) or str(
+            os.environ.get("SKINCOS_FORCE_SEND", "")
+        ).lower() in (
             "1",
             "true",
             "yes",
@@ -209,7 +231,11 @@ class MessageSender:
             raise ValueError("Número de telefone é obrigatório")
         phone_number = self._format_phone_number(phone_number)
 
-        if idempotency_key and not force and outbox.idempotency_key_sent(stream, str(idempotency_key)):
+        if (
+            idempotency_key
+            and not force
+            and outbox.idempotency_key_sent(stream, str(idempotency_key))
+        ):
             last = outbox.last_event_for_key(stream, str(idempotency_key))
             outbox.append_event(
                 stream,
@@ -226,7 +252,11 @@ class MessageSender:
                 },
             )
             logger.warning(f"⏭️ Skip: já enviado (idempotency_key={idempotency_key})")
-            return {"status": "skipped", "idempotency_key": str(idempotency_key), "skipped": True}
+            return {
+                "status": "skipped",
+                "idempotency_key": str(idempotency_key),
+                "skipped": True,
+            }
 
         outbox.append_event(
             stream,
@@ -253,24 +283,33 @@ class MessageSender:
                 )
             else:
                 logger.info("📝 Sem mídia")
-                response = self.client.send_message(phone_number=phone_number, message=message, **kwargs)
+                response = self.client.send_message(
+                    phone_number=phone_number, message=message, **kwargs
+                )
             logger.info(f"🔄 {response.status_code}")
             if response.ok:
                 if response.content:
                     try:
                         result = response.json()
                     except Exception:
-                        result = {"raw": (response.text or "")[:2000], "json_parse_error": True}
+                        result = {
+                            "raw": (response.text or "")[:2000],
+                            "json_parse_error": True,
+                        }
                 else:
                     result = {}
                 outbox.append_event(
                     stream,
                     {
                         "status": "sent",
-                        "idempotency_key": str(idempotency_key) if idempotency_key else None,
+                        "idempotency_key": (
+                            str(idempotency_key) if idempotency_key else None
+                        ),
                         "phone": phone_number,
                         "http_status": response.status_code,
-                        "result": result if isinstance(result, dict) else {"result": result},
+                        "result": (
+                            result if isinstance(result, dict) else {"result": result}
+                        ),
                         "context": audit_context,
                     },
                 )
@@ -281,7 +320,9 @@ class MessageSender:
                 stream,
                 {
                     "status": "error",
-                    "idempotency_key": str(idempotency_key) if idempotency_key else None,
+                    "idempotency_key": (
+                        str(idempotency_key) if idempotency_key else None
+                    ),
                     "phone": phone_number,
                     "http_status": response.status_code,
                     "error": error_msg,
@@ -295,7 +336,9 @@ class MessageSender:
                 stream,
                 {
                     "status": "exception",
-                    "idempotency_key": str(idempotency_key) if idempotency_key else None,
+                    "idempotency_key": (
+                        str(idempotency_key) if idempotency_key else None
+                    ),
                     "phone": phone_number,
                     "error": str(e),
                     "context": audit_context,
@@ -303,6 +346,8 @@ class MessageSender:
             )
             logger.error(f"❌ Erro envio: {str(e)}")
             raise
+
+        return None
 
     def _format_phone_number(self, phone_number: str) -> str:
         cleaned = "".join(filter(str.isdigit, phone_number))
@@ -314,7 +359,9 @@ class MessageSender:
             return f"55{cleaned}"
         return cleaned
 
-    def send_test_message(self, message: str, media_url: Optional[str] = None, **kwargs) -> Optional[Any]:
+    def send_test_message(
+        self, message: str, media_url: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
         config = ConfigManager.get_config()
         test_phone = config.get("global", {}).get("test_phone_number")
         if not test_phone:
@@ -322,7 +369,9 @@ class MessageSender:
         logger.info(f"🧪 TESTE: {test_phone}")
         return self.send_message(test_phone, message, media_url, **kwargs)
 
-    def send_production_message(self, message: str, media_url: Optional[str] = None, **kwargs) -> Optional[Any]:
+    def send_production_message(
+        self, message: str, media_url: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
         config = ConfigManager.get_config()
         prod_phone = config.get("global", {}).get("production_phone_number")
         if not prod_phone:

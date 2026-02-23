@@ -3,6 +3,7 @@ import React, { useState, Suspense, lazy, useMemo } from 'react'
 import { ContextDebugger } from './ContextDebugger'
 import { ErrorBoundary } from '@/ErrorBoundary'
 import { NotificationProvider, useAuth, useNotifications } from '@/contexts'
+import { LoadingPercentText, LoadingScreen } from '@/LoadingPattern'
 import { AuthScreen } from '@/AuthScreen'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
@@ -550,19 +551,12 @@ export default function AppFunctionalNeatlab() {
 	    if (initializing) {
 	        return (
 	            <>
-	                <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-corporate-950 via-corporate-900 to-corporate-800 p-6">
-	                    <div className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-6 text-center text-white shadow-2xl">
-	                        <div className="text-3xl mb-4">⏳</div>
-	                        <div className="text-lg font-semibold">Carregando sessão…</div>
-	                        <div className="text-sm text-blue-100/70 mt-1">Aguarde enquanto verificamos sua sessão.</div>
-	                        <div className="mt-6 flex items-center justify-center">
-	                            <Button variant="secondary" size="lg" disabled className="gap-2">
-	                                <span className="animate-pulse">🔄</span>
-	                                {`Carregando ${Math.max(0, Math.min(100, Number.isFinite(initProgress as any) ? (initProgress as any) : 0))}%`}
-	                            </Button>
-	                        </div>
-	                    </div>
-	                </div>
+	                <LoadingScreen
+	                    title="Carregando sessão..."
+	                    subtitle="Aguarde enquanto verificamos sua sessão."
+	                    percent={Math.max(0, Math.min(100, Number.isFinite(initProgress as any) ? (initProgress as any) : 0))}
+	                    buttonLabel="Carregando dados"
+	                />
 	                <BuildCornerBadge />
 	            </>
 	        )
@@ -810,6 +804,7 @@ export default function AppFunctionalNeatlab() {
                                             }}
                                             disabled={isLocked}
                                             aria-disabled={isLocked}
+                                            aria-label={m.label}
                                             title={isLocked ? `${m.label} (Em breve)` : m.label}
                                             className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 animate-slide-up ${isLocked ? 'opacity-50 cursor-not-allowed' : ''
                                                 }`}
@@ -1284,14 +1279,9 @@ export default function AppFunctionalNeatlab() {
                                 <ErrorBoundary>
                                     <Suspense fallback={
                                         <div className="glass-morphism rounded-2xl p-8 border border-white/20 animate-pulse">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-8 h-8 rounded-xl bg-gradient-blue animate-spin flex items-center justify-center">
-                                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-white font-semibold">Carregando módulo...</div>
-                                                    <div className="text-blue-300/60 text-sm">Preparando interface empresarial</div>
-                                                </div>
+                                            <div className="space-y-1">
+                                                <LoadingPercentText label="Carregando módulo" className="text-white/90" showPercent={false} />
+                                                <div className="text-blue-300/60 text-sm">Preparando interface empresarial</div>
                                             </div>
                                         </div>
                                     }>

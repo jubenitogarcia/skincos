@@ -7350,12 +7350,10 @@ export function InsumosModule() {
                           </td>
                         </tr>
                       ) : null}
-                    </tbody>
-                  </table>
-                </div>
-            </div>
-
-                                </CardContent>
+                                </tbody>
+                              </table>
+                            </div>
+                          </CardContent>
                               ) : null}
                             </Card>
                           </div>

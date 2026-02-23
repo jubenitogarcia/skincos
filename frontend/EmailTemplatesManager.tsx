@@ -34,6 +34,7 @@ import {
   Layout
 } from "@phosphor-icons/react"
 import { toast } from 'sonner'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 interface EmailTemplate {
   id: string
@@ -497,7 +498,11 @@ export function EmailTemplatesManager() {
       )}
 
       {/* Status / Erros */}
-      {loading && <p className="text-sm text-muted-foreground">Carregando templates...</p>}
+      {loading && (
+        <p className="text-sm text-muted-foreground">
+          <LoadingPercentText label="Carregando templates" showPercent={false} />
+        </p>
+      )}
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       {/* Templates Grid */}
