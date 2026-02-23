@@ -9030,7 +9030,6 @@ export function InsumosModule() {
                 <div className="flex flex-col items-center leading-tight">
                   <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
                   <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                  <span className="text-[11px] text-blue-200/60">Estoque</span>
                 </div>
                 <div className="flex flex-col items-center leading-tight">
                   <span className="text-emerald-300">
@@ -9039,7 +9038,6 @@ export function InsumosModule() {
                   <span className="text-red-300">
                     -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
                   </span>
-                  <span className="text-[11px] text-blue-200/60">Valor</span>
                 </div>
               </>
             )}
