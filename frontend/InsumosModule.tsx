@@ -1274,6 +1274,30 @@ export function InsumosModule() {
     if (overviewPeriod === '1y') return 'Último ano'
     return 'Personalizado'
   }, [overviewPeriod])
+
+  React.useEffect(() => {
+    const now = new Date()
+    const yyyyMmDd = (d: Date) => d.toISOString().slice(0, 10)
+    if (overviewPeriod === 'custom') {
+      const fromIso = dateInputToIso(overviewCustomFrom)
+      const toIso = dateInputToIso(overviewCustomTo)
+      if (!fromIso || !toIso) return
+      const nextFrom = isoToBrDate(fromIso)
+      const nextTo = isoToBrDate(toIso)
+      if (nextFrom !== movDe) setMovDe(nextFrom)
+      if (nextTo !== movAte) setMovAte(nextTo)
+      return
+    }
+
+    const start = new Date(now)
+    if (overviewPeriod === '7d') start.setDate(start.getDate() - 7)
+    else if (overviewPeriod === '30d') start.setDate(start.getDate() - 30)
+    else start.setFullYear(start.getFullYear() - 1)
+    const nextFrom = isoToBrDate(yyyyMmDd(start))
+    const nextTo = isoToBrDate(yyyyMmDd(now))
+    if (nextFrom !== movDe) setMovDe(nextFrom)
+    if (nextTo !== movAte) setMovAte(nextTo)
+  }, [movAte, movDe, overviewCustomFrom, overviewCustomTo, overviewPeriod])
   const [overviewRoi, setOverviewRoi] = React.useState<RoiInsights | null>(null)
   const [overviewQuality, setOverviewQuality] = React.useState<QualityReport | null>(null)
   const [qualityMatchesOpen, setQualityMatchesOpen] = React.useState(false)
@@ -7025,7 +7049,7 @@ export function InsumosModule() {
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                            <Card className="bg-black/20 border border-white/10">
                               <CardHeader className="relative pr-24">
-                                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center">
                                   <div className="flex items-center gap-3 min-w-0">
                                     <button
                                       type="button"
@@ -7045,9 +7069,9 @@ export function InsumosModule() {
                                     </button>
                                     <CardTitle className="text-white text-base">Alertas</CardTitle>
                                   </div>
-                                  <div className="flex flex-wrap items-center gap-2 ml-auto">
+                                  <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                                      <SelectTrigger className="h-8 w-28">
+                                      <SelectTrigger className="h-8 w-24">
                                         <SelectValue placeholder="Tipo" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7063,7 +7087,7 @@ export function InsumosModule() {
                                       value={alertasCategoria || '__ALL__'}
                                       onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
                                     >
-                                      <SelectTrigger className="h-8 w-40">
+                                      <SelectTrigger className="h-8 w-36">
                                         <SelectValue placeholder="Categoria" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7079,21 +7103,26 @@ export function InsumosModule() {
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 w-48"
+                                      className="h-8 min-w-[140px] flex-1 max-w-[320px]"
                                     />
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-8"
-                                      onClick={() => setPurchaseDialogOpen(true)}
-                                      disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                                      title="Ver lista completa de reposição"
-                                    >
-                                      Lista de compra
-                                    </Button>
                                   </div>
                                 </div>
                                 <div className="absolute top-2 right-2 flex items-center gap-2">
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                    onClick={() => setPurchaseDialogOpen(true)}
+                                    disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                                    title="Lista de compra"
+                                    aria-label="Lista de compra"
+                                  >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      <circle cx="9" cy="20" r="1.6" fill="currentColor" />
+                                      <circle cx="17" cy="20" r="1.6" fill="currentColor" />
+                                    </svg>
+                                  </Button>
                                   <Button
 	                                    size="icon"
 	                                    variant="ghost"
@@ -7354,9 +7383,9 @@ export function InsumosModule() {
                                       <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                                     </svg>
                                   </button>
-                                  <div className="flex items-center gap-2 min-w-0 w-full">
+                                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                                     <CardTitle className="text-white text-base">Gráficos</CardTitle>
-                                    <div className="flex items-center gap-2 ml-auto">
+                                    <div className="flex items-center gap-2">
                                       <Button
                                         variant="outline"
                                         size="sm"
@@ -8803,7 +8832,7 @@ export function InsumosModule() {
 		      >
 		        <Card className="bg-black/20 border border-white/10">
                 <CardHeader className="relative pr-24">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center">
                     <div className="flex items-center gap-3 min-w-0">
                       <button
                         type="button"
@@ -8815,10 +8844,10 @@ export function InsumosModule() {
 		                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
 		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
 		                </svg>
-		              </button>
+                      </button>
                       <CardTitle className="text-white text-lg">Movimentações</CardTitle>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 ml-auto">
+                    <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
                       <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
                         <SelectTrigger className="h-8 w-28">
                           <SelectValue placeholder="Tipo" />
@@ -8830,13 +8859,11 @@ export function InsumosModule() {
                           <SelectItem value="AJUSTE">Ajuste</SelectItem>
                         </SelectContent>
                       </Select>
-                      <BrDatePickerInput value={movDe} onChange={setMovDe} placeholder="De" ariaLabel="De" className="h-8 w-28" />
-                      <BrDatePickerInput value={movAte} onChange={setMovAte} placeholder="Até" ariaLabel="Até" className="h-8 w-28" />
                       <Input
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 w-44"
+                        className="h-8 min-w-[140px] flex-1 max-w-[320px]"
                       />
                     </div>
                   </div>
