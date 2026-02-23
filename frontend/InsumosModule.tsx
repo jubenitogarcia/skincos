@@ -6980,7 +6980,16 @@ export function InsumosModule() {
                                     <CardTitle className="text-white text-base">Alertas</CardTitle>
                                     <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
                                       <span className="inline-flex items-center gap-1">
-                                        <span>Crítico</span>
+                                        <span
+                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/15 text-red-300 border border-red-400/40"
+                                          title="Crítico"
+                                          aria-label="Crítico"
+                                        >
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                            <path d="M12 7v7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                                            <circle cx="12" cy="17" r="1.5" fill="currentColor" />
+                                          </svg>
+                                        </span>
                                         <span className="font-mono text-blue-50">
                                           {showOverviewLoadingProgress ? (
                                             <span className="inline-flex items-center gap-2">
@@ -6993,7 +7002,24 @@ export function InsumosModule() {
                                         </span>
                                       </span>
                                       <span className="inline-flex items-center gap-1">
-                                        <span>Atenção</span>
+                                        <span
+                                          className="inline-flex h-5 w-5 items-center justify-center text-amber-300"
+                                          title="Atenção"
+                                          aria-label="Atenção"
+                                        >
+                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                            <path
+                                              d="M12 3l9 16H3l9-16z"
+                                              fill="currentColor"
+                                              fillOpacity="0.15"
+                                              stroke="currentColor"
+                                              strokeWidth="1.8"
+                                              strokeLinejoin="round"
+                                            />
+                                            <path d="M12 9v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                            <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
+                                          </svg>
+                                        </span>
                                         <span className="font-mono text-blue-50">
                                           {showOverviewLoadingProgress ? (
                                             <span className="inline-flex items-center gap-2">
@@ -7039,7 +7065,7 @@ export function InsumosModule() {
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 min-w-[140px] flex-1 max-w-[320px]"
+                                      className="h-8 min-w-[140px] flex-1 max-w-[320px] ml-auto"
                                     />
                                   </div>
                                 </div>
@@ -7369,7 +7395,7 @@ export function InsumosModule() {
                                     <div className="flex items-center gap-2">
                                       <Button
                                         variant="outline"
-                                        size="sm"
+                                        size="icon"
                                         onClick={() => {
                                           if (chartSlots.length >= MAX_CHARTS) return
                                           setChartSlots((prev) => [
@@ -7378,11 +7404,31 @@ export function InsumosModule() {
                                           ])
                                         }}
                                         disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+                                        title="Adicionar gráfico"
+                                        aria-label="Adicionar gráfico"
                                       >
-                                        + Adicionar
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                                        </svg>
                                       </Button>
-                                      <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
-                                        Resetar
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+                                        disabled={overviewLoading || insightsLoading}
+                                        title="Resetar gráficos"
+                                        aria-label="Resetar gráficos"
+                                      >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path
+                                            d="M20 12a8 8 0 1 1-2.34-5.66"
+                                            stroke="currentColor"
+                                            strokeWidth="2.2"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+                                          <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
                                       </Button>
                                     </div>
                                   </div>
