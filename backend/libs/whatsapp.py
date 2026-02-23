@@ -165,24 +165,22 @@ class WhatsAppClient:
     ) -> requests.Response:
         endpoint_path = "/send"
         payload_formats = [
-            {"number": phone_number, "message": message},
-            {"phone": phone_number, "message": message},
+            ("number", {"number": phone_number, "message": message}),
+            ("phone", {"phone": phone_number, "message": message}),
         ]
         last_exception = None
-        for payload in payload_formats:
+        for format_label, payload in payload_formats:
             final_payload = payload.copy()
             if kwargs:
                 final_payload.update(kwargs)
             try:
-                logger.info(
-                    f"📤 Enviando via {endpoint_path} com formato: {list(payload.keys())}"
-                )
+                logger.info(f"📤 Enviando via {endpoint_path} (formato={format_label})")
                 response = self._make_request("POST", endpoint_path, json=final_payload)
                 if response.status_code != 400:
                     return response
             except requests.exceptions.RequestException as e:
                 last_exception = e
-                logger.warning(f"⚠️ Erro no formato {list(payload.keys())}: {e}")
+                logger.warning(f"⚠️ Erro ao enviar (formato={format_label}): {e}")
                 continue
         error_msg = f"Não foi possível enviar a mensagem. Último erro: {last_exception}"
         logger.error(f"❌ {error_msg}")
