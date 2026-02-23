@@ -40,10 +40,8 @@ ensure_backend_deps() {
 }
 
 resolve_env_flag() {
-  if [[ -n "${ENV_NAME:-}" ]]; then
-    ENV_FLAG=(--env "$ENV_NAME")
-  else
-    ENV_FLAG=()
+  if [[ -z "${ENV_NAME:-}" ]]; then
+    ENV_NAME=""
   fi
 }
 
@@ -64,34 +62,49 @@ resolve_build_var_flag() {
     sha="$(git rev-parse HEAD 2>/dev/null || true)"
   fi
   if [[ -n "${sha:-}" ]]; then
-    BUILD_VAR_FLAG=(--var "PONTO_BUILD_SHA:${sha}")
+    BUILD_VAR_VALUE="${sha}"
   else
-    BUILD_VAR_FLAG=()
+    BUILD_VAR_VALUE=""
   fi
 }
 
 deploy_api() {
   echo "[workers] Deploying skincos-api..."
-  (
-    cd "$BACKEND_DIR"
-    # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
-    run_pnpm -F @skincos/api-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}" "${BUILD_VAR_FLAG[@]}"
-  )
+  pushd "$BACKEND_DIR" >/dev/null
+  # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
+  local args=(--config wrangler.toml --keep-vars)
+  if [[ -n "${ENV_NAME:-}" ]]; then
+    args+=(--env "$ENV_NAME")
+  fi
+  if [[ -n "${BUILD_VAR_VALUE:-}" ]]; then
+    args+=(--var "PONTO_BUILD_SHA:${BUILD_VAR_VALUE}")
+  fi
+  run_pnpm -F @skincos/api-worker exec wrangler deploy "${args[@]}"
+  popd >/dev/null
 }
 
 deploy_insumos() {
   echo "[workers] Applying D1 migrations (best effort) ..."
-  (
-    cd "$BACKEND_DIR"
-    # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
-    # Best-effort: D1 remote access requires extra API token scopes. Keep deploy unblocked.
-    run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" --config wrangler.toml "${ENV_FLAG[@]}" || true
-  )
+  pushd "$BACKEND_DIR" >/dev/null
+  # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
+  # Best-effort: D1 remote access requires extra API token scopes. Keep deploy unblocked.
+  local d1_args=(--config wrangler.toml)
+  if [[ -n "${ENV_NAME:-}" ]]; then
+    d1_args+=(--env "$ENV_NAME")
+  fi
+  run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" "${d1_args[@]}" || true
+  popd >/dev/null
   echo "[workers] Deploying skincos-insumos..."
-  (
-    cd "$BACKEND_DIR"
-    run_pnpm -F @skincos/insumos-worker exec wrangler deploy --config wrangler.toml --keep-vars "${ENV_FLAG[@]}" "${BUILD_VAR_FLAG[@]}"
-  )
+  pushd "$BACKEND_DIR" >/dev/null
+  local args=(--config wrangler.toml --keep-vars)
+  if [[ -n "${ENV_NAME:-}" ]]; then
+    args+=(--env "$ENV_NAME")
+  fi
+  if [[ -n "${BUILD_VAR_VALUE:-}" ]]; then
+    args+=(--var "PONTO_BUILD_SHA:${BUILD_VAR_VALUE}")
+  fi
+  run_pnpm -F @skincos/insumos-worker exec wrangler deploy "${args[@]}"
+  popd >/dev/null
 }
 
 deploy_by_changes() {
@@ -151,9 +164,8 @@ cmd="${1:-help}"
 shift || true
 
 ENV_NAME="${DEPLOY_ENV:-}"
-ENV_FLAG=()
 INSUMOS_DB_NAME=""
-BUILD_VAR_FLAG=()
+BUILD_VAR_VALUE=""
 
 ensure_backend_deps
 

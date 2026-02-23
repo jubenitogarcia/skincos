@@ -16,6 +16,7 @@ import { Separator } from "@/separator"
 import { Alert, AlertDescription } from "@/alert"
 import { toast } from 'sonner'
 import * as QRCode from 'qrcode'
+import { LoadingPercentText } from '@/LoadingPattern'
 import {
   WhatsappLogo,
   Play,
@@ -580,8 +581,7 @@ export function WhatsAppUnifiedHub() {
         )}
         {instance?.status === 'qr_pending' && !hasQR && (
           <div className="text-xs text-blue-600 flex items-center gap-1">
-            <Spinner className="w-3 h-3 animate-spin" />
-            Carregando QR...
+            <LoadingPercentText label="Carregando QR" className="text-blue-600" showPercent={false} />
           </div>
         )}
       </div>
@@ -640,8 +640,7 @@ export function WhatsAppUnifiedHub() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Spinner className="w-8 h-8 animate-spin" />
-        <span className="ml-2">Carregando WhatsApp Hub...</span>
+        <LoadingPercentText label="Carregando WhatsApp Hub" showPercent={false} />
       </div>
     )
   }

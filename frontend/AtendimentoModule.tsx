@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { ErrorBoundary } from '@/ErrorBoundary'
 import { useAuth } from '@/contexts'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 const WhatsAppUnifiedHub = lazy(() => import('@/WhatsAppUnifiedHub').then(m => ({ default: m.WhatsAppUnifiedHub })))
 const WhatsAppN8nModule = lazy(() => import('@/WhatsAppN8nModule').then(m => ({ default: m.WhatsAppN8nModule })))
@@ -27,7 +28,7 @@ function TabShell({ title, children }: { title: string; children: React.ReactNod
       <Suspense
         fallback={
           <div className="glass-morphism rounded-2xl p-6 border border-white/20 animate-pulse text-white">
-            Carregando módulo...
+            <LoadingPercentText label="Carregando módulo" className="text-white/90" showPercent={false} />
           </div>
         }
       >

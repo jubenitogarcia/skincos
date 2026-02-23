@@ -4,6 +4,7 @@ import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Separator } from '@/separator'
 import { fetchCapabilitiesCatalog, type CapabilitiesCatalog } from '@/capabilities'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 function stringifyPorts(ports?: Record<string, number | string>) {
   if (!ports) return null
@@ -117,7 +118,12 @@ export function CapabilitiesCenter() {
             Catálogo do monorepo (core + capabilities) carregado do backend.
           </p>
           <p className="text-xs text-blue-300/60 mt-1">
-            Status: {loadingStatus ? 'carregando…' : (status?.ok ? `ok (${status.ts || 'agora'})` : 'indisponível')}
+            Status:{' '}
+            {loadingStatus ? (
+              <LoadingPercentText label="Carregando" className="text-xs" showPercent={false} />
+            ) : (
+              status?.ok ? `ok (${status.ts || 'agora'})` : 'indisponível'
+            )}
           </p>
         </div>
         <Button
@@ -132,7 +138,9 @@ export function CapabilitiesCenter() {
       {loading && (
         <Card className="glass-morphism border-white/20">
           <CardHeader>
-            <CardTitle className="text-white">Carregando…</CardTitle>
+            <CardTitle className="text-white">
+              <LoadingPercentText label="Carregando" className="text-white/90" showPercent={false} />
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-blue-200/80">Buscando `capabilities.json` via `/api/core/capabilities`.</CardContent>
         </Card>

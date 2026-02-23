@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { InstagramStudioPro } from '@/InstagramStudioPro'
 import { ThreadsStudio } from '@/ThreadsStudio'
 import { csrfHeader } from '@/csrf'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 type SocialPlatform = 'instagram' | 'facebook' | 'threads'
 
@@ -686,7 +687,11 @@ export function SocialNetworksStudio() {
                   disabled={setupLoading}
                   className="bg-white/[0.06] border-white/20 text-white"
                 >
-                  {setupLoading ? 'Carregando…' : 'Recarregar status'}
+                  {setupLoading ? (
+                    <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                  ) : (
+                    'Recarregar status'
+                  )}
                 </Button>
 
                 {setupAuthed === true ? (
@@ -889,7 +894,11 @@ export function SocialNetworksStudio() {
                       disabled={accountsLoading}
                       className="bg-white/[0.06] border-white/20 text-white"
                     >
-                      {accountsLoading ? 'Carregando…' : 'Atualizar contas'}
+                      {accountsLoading ? (
+                        <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                      ) : (
+                        'Atualizar contas'
+                      )}
                     </Button>
                     {missingAccounts.length ? (
                       <Badge variant="outline" className="border-yellow-200/40 text-yellow-100">
@@ -1057,7 +1066,11 @@ export function SocialNetworksStudio() {
                     disabled={metricsLoading || setupAuthed !== true}
                     className="bg-white/[0.06] border-white/20 text-white"
                   >
-                    {metricsLoading ? 'Carregando…' : 'Carregar métricas'}
+                    {metricsLoading ? (
+                      <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                    ) : (
+                      'Carregar métricas'
+                    )}
                   </Button>
                 </div>
                 {lastJobsRun ? (
@@ -1218,7 +1231,11 @@ export function SocialNetworksStudio() {
                   <div className="text-sm text-blue-200/80">Somente minha unidade ({unitKey})</div>
                 </div>
                 <Button variant="outline" onClick={() => refreshQueue()} disabled={queueLoading} className="bg-white/[0.06] border-white/20 text-white">
-                  {queueLoading ? 'Carregando…' : 'Carregar'}
+                  {queueLoading ? (
+                    <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                  ) : (
+                    'Carregar'
+                  )}
                 </Button>
                 <Badge variant="outline" className="border-white/20 text-white">
                   {visibleQueueGroups.length} grupo(s)
@@ -1241,7 +1258,11 @@ export function SocialNetworksStudio() {
                           variant="outline"
                           className="bg-white/[0.06] border-white/20 text-white"
                         >
-                          {queueResultsLoading[`${g.group.dateKey}:${g.group.groupKey}`] ? 'Carregando…' : 'Resultados'}
+                          {queueResultsLoading[`${g.group.dateKey}:${g.group.groupKey}`] ? (
+                            <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                          ) : (
+                            'Resultados'
+                          )}
                         </Button>
                         {queueJobIds[`${g.group.dateKey}:${g.group.groupKey}`] ? (
                           <Button

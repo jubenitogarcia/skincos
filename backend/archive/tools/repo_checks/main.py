@@ -2,13 +2,18 @@
 import argparse, hashlib, json, os, subprocess, sys
 from typing import List, Dict
 
+
 def sha(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
 
 def run(cmd: List[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
-def finding(title: str, body_md: str, category: str, key: str, labels=None, severity="info") -> Dict:
+
+def finding(
+    title: str, body_md: str, category: str, key: str, labels=None, severity="info"
+) -> Dict:
     fp_source = f"{category}:{key}:{title}"
     return {
         "title": title,
@@ -19,6 +24,7 @@ def finding(title: str, body_md: str, category: str, key: str, labels=None, seve
         "labels": labels or [],
         "fingerprint": sha(fp_source),
     }
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -90,6 +96,7 @@ def main():
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(findings, f, ensure_ascii=False, indent=2)
+
 
 if __name__ == "__main__":
     sys.exit(main())

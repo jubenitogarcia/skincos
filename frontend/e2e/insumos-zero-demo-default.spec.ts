@@ -47,11 +47,11 @@ test.describe('insumos', () => {
     })
 
     await page.goto('/?insumos=1')
-    await expect(page.getByText('Insumos')).toBeVisible({ timeout: 30000 })
-    await page.getByText('Insumos').click()
+    const insumosNav = page.getByRole('button', { name: 'Insumos' })
+    await expect(insumosNav).toBeVisible({ timeout: 30000 })
+    await insumosNav.click()
 
     await page.waitForTimeout(1200)
     await expect(page.getByText('DADOS SIMULADOS')).toHaveCount(0)
   })
 })
-

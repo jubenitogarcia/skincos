@@ -8,7 +8,6 @@ This module replaces the old nested path `libs.integrations.google.auth`.
 
 from typing import Any, Mapping, Sequence
 
-
 DEFAULT_DRIVE_SCOPES: Sequence[str] = ("https://www.googleapis.com/auth/drive",)
 DEFAULT_SHEETS_READONLY_SCOPES: Sequence[str] = (
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -32,10 +31,14 @@ def credentials_from_service_account_info(
             private_key += "\n"
         normalized["private_key"] = private_key
 
-    return service_account.Credentials.from_service_account_info(normalized, scopes=list(scopes))
+    return service_account.Credentials.from_service_account_info(
+        normalized, scopes=list(scopes)
+    )
 
 
-def build_service(api: str, version: str, credentials, *, cache_discovery: bool = False):
+def build_service(
+    api: str, version: str, credentials, *, cache_discovery: bool = False
+):
     from googleapiclient.discovery import build
 
     return build(api, version, credentials=credentials, cache_discovery=cache_discovery)
@@ -47,7 +50,9 @@ def build_drive_service(
     scopes: Sequence[str] = DEFAULT_DRIVE_SCOPES,
     cache_discovery: bool = False,
 ):
-    credentials = credentials_from_service_account_info(service_account_info, scopes=scopes)
+    credentials = credentials_from_service_account_info(
+        service_account_info, scopes=scopes
+    )
     return build_service("drive", "v3", credentials, cache_discovery=cache_discovery)
 
 
@@ -57,7 +62,9 @@ def build_sheets_service(
     scopes: Sequence[str] = DEFAULT_SHEETS_READONLY_SCOPES,
     cache_discovery: bool = False,
 ):
-    credentials = credentials_from_service_account_info(service_account_info, scopes=scopes)
+    credentials = credentials_from_service_account_info(
+        service_account_info, scopes=scopes
+    )
     return build_service("sheets", "v4", credentials, cache_discovery=cache_discovery)
 
 
@@ -69,4 +76,3 @@ __all__ = [
     "build_drive_service",
     "build_sheets_service",
 ]
-

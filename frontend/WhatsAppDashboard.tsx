@@ -10,6 +10,7 @@ import { Separator } from "@/separator"
 import { Alert, AlertDescription } from "@/alert"
 import { Progress } from '@/progress'
 import { toast } from 'sonner'
+import { LoadingPercentText } from '@/LoadingPattern'
 import {
   WhatsappLogo,
   PaperPlane,
@@ -521,8 +522,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
           <ScrollArea className="flex-1">
             {loadingChats ? (
               <div className="flex items-center justify-center py-8">
-                <Spinner className="w-6 h-6 animate-spin text-gray-400" />
-                <span className="ml-2 text-gray-600">Carregando conversas...</span>
+                <LoadingPercentText label="Carregando conversas" className="text-gray-600" showPercent={false} />
               </div>
             ) : filteredChats.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
@@ -574,8 +574,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               <ScrollArea className="flex-1 px-6 py-4">
                 {loadingMessages ? (
                   <div className="flex items-center justify-center py-8">
-                    <Spinner className="w-6 h-6 animate-spin text-gray-400" />
-                    <span className="ml-2 text-gray-600">Carregando mensagens...</span>
+                    <LoadingPercentText label="Carregando mensagens" className="text-gray-600" showPercent={false} />
                   </div>
                 ) : (
                   <>

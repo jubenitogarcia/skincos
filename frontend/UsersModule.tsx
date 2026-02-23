@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 type Invite = {
   id: string
@@ -306,7 +307,11 @@ export function UsersModule() {
               </SelectContent>
             </Select>
             <Button variant="secondary" onClick={() => void load()} disabled={loading}>
-              {loading ? 'Carregando…' : 'Recarregar'}
+              {loading ? (
+                <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+              ) : (
+                'Recarregar'
+              )}
             </Button>
             <Button variant="outline" onClick={() => setInviteOpen(true)} disabled={!isAuthed || !canManageInvites}>
               Convidar usuário
@@ -477,7 +482,11 @@ export function UsersModule() {
                       {!invites.length ? (
                         <tr>
                           <td className="p-2 text-blue-100/70" colSpan={5}>
-                            {invitesLoading ? 'Carregando…' : 'Sem tokens.'}
+                            {invitesLoading ? (
+                              <LoadingPercentText label="Carregando" showPercent={false} />
+                            ) : (
+                              'Sem tokens.'
+                            )}
                           </td>
                         </tr>
                       ) : null}

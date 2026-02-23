@@ -16,6 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/avatar"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/dialog"
 import { RadioGroup, RadioGroupItem } from "@/radio-group"
 import { toast } from 'sonner'
+import { LoadingPercentText } from '@/LoadingPattern'
 import {
   WhatsappLogo,
   Image as ImageIcon,
@@ -3334,7 +3335,9 @@ export function WhatsAppBusinessHub() {
                               <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Contas 1–9 (localhost)</div>
                               <DropdownMenuSeparator />
                               {waInstances.length === 0 && (
-                                <div className="px-2 py-1.5 text-xs text-muted-foreground">Carregando…</div>
+                                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                  <LoadingPercentText label="Carregando" showPercent={false} />
+                                </div>
                               )}
                               {waInstances.map(inst => (
                                 <div key={inst.instance} className="px-2 py-1.5 flex items-center justify-between gap-2">
@@ -3946,7 +3949,9 @@ export function WhatsAppBusinessHub() {
                         </DialogHeader>
                         <div className="space-y-2 text-sm">
                           {commonGroups === null && (
-                            <p className="text-muted-foreground">Carregando…</p>
+                            <p className="text-muted-foreground">
+                              <LoadingPercentText label="Carregando" showPercent={false} />
+                            </p>
                           )}
                           {Array.isArray(commonGroups) && commonGroups.length === 0 && (
                             <p className="text-muted-foreground">Nenhum grupo em comum encontrado.</p>
@@ -5232,7 +5237,9 @@ export function WhatsAppBusinessHub() {
                   ) : (
                     <Card className="glass-morphism border-white/10">
                       <CardContent className="p-6 text-center">
-                        <p className="text-blue-100/60">Carregando status do orchestrator...</p>
+                        <p className="text-blue-100/60">
+                          <LoadingPercentText label="Carregando status do orchestrator" showPercent={false} />
+                        </p>
                       </CardContent>
                     </Card>
                   )}
@@ -5253,7 +5260,9 @@ export function WhatsAppBusinessHub() {
             <div className="text-xs text-muted-foreground">Contas 1–9 em localhost</div>
             <div className="divide-y rounded border">
               {waInstances.length === 0 && (
-                <div className="p-3 text-sm text-muted-foreground">Carregando…</div>
+                <div className="p-3 text-sm text-muted-foreground">
+                  <LoadingPercentText label="Carregando" showPercent={false} />
+                </div>
               )}
               {waInstances.map((inst) => (
                 <div key={inst.instance} className="p-3 flex items-center justify-between gap-3 flex-wrap md:flex-nowrap">
