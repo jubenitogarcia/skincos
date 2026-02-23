@@ -174,13 +174,11 @@ class WhatsAppClient:
             if kwargs:
                 final_payload.update(kwargs)
             try:
-                logger.info(f"📤 Enviando via {endpoint_path} (formato={format_label})")
                 response = self._make_request("POST", endpoint_path, json=final_payload)
                 if response.status_code != 400:
                     return response
             except requests.exceptions.RequestException as e:
                 last_exception = e
-                logger.warning(f"⚠️ Erro ao enviar (formato={format_label}): {e}")
                 continue
         error_msg = f"Não foi possível enviar a mensagem. Último erro: {last_exception}"
         logger.error(f"❌ {error_msg}")
