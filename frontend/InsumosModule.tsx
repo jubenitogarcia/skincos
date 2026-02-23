@@ -1542,6 +1542,21 @@ export function InsumosModule() {
     return (Number.isNaN(baixo) ? 0 : baixo) + (Number.isNaN(vencendo) ? 0 : vencendo)
   }, [overviewNotifications?.counts?.expiringSoon, overviewNotifications?.counts?.lowStock])
 
+  React.useEffect(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('skincos:insumos:estoque', {
+          detail: {
+            value: overviewResumo?.valorEstoqueTotal ?? null,
+            loading: showOverviewLoadingProgress,
+            percent: loadingPercent
+          }
+        })
+      )
+    } catch {
+      // ignore
+    }
+  }, [loadingPercent, overviewResumo?.valorEstoqueTotal, showOverviewLoadingProgress])
   const renderInlinePercent = React.useCallback(
     (active: boolean, className = '') => {
       if (!active) return null
@@ -6689,96 +6704,6 @@ export function InsumosModule() {
       ) : null}
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-                  Estoque
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewResumo?.valorEstoqueTotal != null
-                      ? fmtMoneyBRLCompact(Number(overviewResumo.valorEstoqueTotal) || 0)
-                      : '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-                  Crítico
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewCriticosCount ?? '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-                  Atenção
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewAtencaoCount ?? '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
-                  Movimentações
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    <>
-                      +{overviewMovResumo?.entradaQtd ?? '-'} • -{overviewMovResumo?.saidaQtd ?? '-'}
-                    </>
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
-
         <div className="flex flex-col gap-3">
           <Droppable droppableId="overview-panels">
             {(dropProvided) => (
@@ -7053,6 +6978,60 @@ export function InsumosModule() {
                                       </svg>
                                     </button>
                                     <CardTitle className="text-white text-base">Alertas</CardTitle>
+                                    <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
+                                      <span className="inline-flex items-center gap-1">
+                                        <span
+                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/15 text-red-300 border border-red-400/40"
+                                          title="Crítico"
+                                          aria-label="Crítico"
+                                        >
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                            <path d="M12 7v7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                                            <circle cx="12" cy="17" r="1.5" fill="currentColor" />
+                                          </svg>
+                                        </span>
+                                        <span className="font-mono text-blue-50">
+                                          {showOverviewLoadingProgress ? (
+                                            <span className="inline-flex items-center gap-2">
+                                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                                              {loadingPercent}%
+                                            </span>
+                                          ) : (
+                                            overviewCriticosCount ?? '-'
+                                          )}
+                                        </span>
+                                      </span>
+                                      <span className="inline-flex items-center gap-1">
+                                        <span
+                                          className="inline-flex h-5 w-5 items-center justify-center text-amber-300"
+                                          title="Atenção"
+                                          aria-label="Atenção"
+                                        >
+                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                            <path
+                                              d="M12 3l9 16H3l9-16z"
+                                              fill="currentColor"
+                                              fillOpacity="0.15"
+                                              stroke="currentColor"
+                                              strokeWidth="1.8"
+                                              strokeLinejoin="round"
+                                            />
+                                            <path d="M12 9v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                            <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
+                                          </svg>
+                                        </span>
+                                        <span className="font-mono text-blue-50">
+                                          {showOverviewLoadingProgress ? (
+                                            <span className="inline-flex items-center gap-2">
+                                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                                              {loadingPercent}%
+                                            </span>
+                                          ) : (
+                                            overviewAtencaoCount ?? '-'
+                                          )}
+                                        </span>
+                                      </span>
+                                    </div>
                                   </div>
                                   <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
@@ -7086,7 +7065,7 @@ export function InsumosModule() {
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 min-w-[140px] flex-1 max-w-[320px]"
+                                      className="h-8 min-w-[140px] flex-1 max-w-[320px] ml-auto"
                                     />
                                   </div>
                                 </div>
@@ -7416,7 +7395,7 @@ export function InsumosModule() {
                                     <div className="flex items-center gap-2">
                                       <Button
                                         variant="outline"
-                                        size="sm"
+                                        size="icon"
                                         onClick={() => {
                                           if (chartSlots.length >= MAX_CHARTS) return
                                           setChartSlots((prev) => [
@@ -7425,11 +7404,31 @@ export function InsumosModule() {
                                           ])
                                         }}
                                         disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+                                        title="Adicionar gráfico"
+                                        aria-label="Adicionar gráfico"
                                       >
-                                        + Adicionar
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                                        </svg>
                                       </Button>
-                                      <Button variant="outline" size="sm" onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)} disabled={overviewLoading || insightsLoading}>
-                                        Resetar
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+                                        disabled={overviewLoading || insightsLoading}
+                                        title="Resetar gráficos"
+                                        aria-label="Resetar gráficos"
+                                      >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path
+                                            d="M20 12a8 8 0 1 1-2.34-5.66"
+                                            stroke="currentColor"
+                                            strokeWidth="2.2"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+                                          <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
                                       </Button>
                                     </div>
                                   </div>
@@ -8891,7 +8890,7 @@ export function InsumosModule() {
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 min-w-[140px] flex-1 max-w-[320px]"
+                        className="h-8 min-w-[140px] flex-1 max-w-[320px] ml-auto"
                       />
                     </div>
                   </div>
@@ -9043,45 +9042,78 @@ export function InsumosModule() {
                     ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string; widthClass?: string }>
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
+                    const hasSummary = col.key === 'estoque' || col.key === 'valor'
+                    const renderSummary = () => {
+                      if (!hasSummary) return null
+                      if (showOverviewLoadingProgress) {
+                        return (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-blue-200/70">
+                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                            <span className="font-mono">{loadingPercent}%</span>
+                          </span>
+                        )
+                      }
+                      if (col.key === 'estoque') {
+                        return (
+                          <div className="flex flex-col items-center text-[11px] leading-tight font-mono">
+                            <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
+                            <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+                          </div>
+                        )
+                      }
+                      return (
+                        <div className="flex flex-col items-center text-[11px] leading-tight font-mono">
+                          <span className="text-emerald-300">
+                            +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
+                          </span>
+                          <span className="text-red-300">
+                            -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
+                          </span>
+                        </div>
+                      )
+                    }
                     return (
                       <th
                         key={col.label}
                         className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap' : ''} ${col.widthClass || ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
                       >
-	                        <div className="flex items-center justify-center gap-2">
-                            {col.key ? (
-                              <button
-                                type="button"
-                                className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
-                                onClick={() => {
-                                  if (movSortKey === col.key) {
-                                    setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                    return
-                                  }
-                                  setMovSortKey(col.key!)
-                                  setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
-                                }}
-                                aria-label={`Ordenar ${col.label}`}
-                                title={`Ordenar ${col.label}`}
-                              >
-                                {col.label}
-                              </button>
-                            ) : (
-                              <span>{col.label}</span>
-                            )}
-                            {col.key ? (
-                              <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
-                                {isActive && movSortDir === 'asc' ? (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                ) : (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                )}
-                              </span>
-                            ) : null}
+	                        <div className={`flex ${hasSummary ? 'flex-col items-center gap-1' : 'items-center justify-center gap-2'}`}>
+                            {renderSummary()}
+                            <div className="flex items-center justify-center gap-2">
+                              {col.key ? (
+                                <button
+                                  type="button"
+                                  className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
+                                  onClick={() => {
+                                    if (movSortKey === col.key) {
+                                      setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                      return
+                                    }
+                                    setMovSortKey(col.key!)
+                                    setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
+                                  }}
+                                  aria-label={`Ordenar ${col.label}`}
+                                  title={`Ordenar ${col.label}`}
+                                >
+                                  {col.label}
+                                </button>
+                              ) : (
+                                <span>{col.label}</span>
+                              )}
+                              {col.key ? (
+                                <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
+                                  {isActive && movSortDir === 'asc' ? (
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  ) : (
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </span>
+                              ) : null}
+                            </div>
 	                        </div>
 	                      </th>
                     )
