@@ -1542,6 +1542,22 @@ export function InsumosModule() {
     return (Number.isNaN(baixo) ? 0 : baixo) + (Number.isNaN(vencendo) ? 0 : vencendo)
   }, [overviewNotifications?.counts?.expiringSoon, overviewNotifications?.counts?.lowStock])
 
+  React.useEffect(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('skincos:insumos:estoque', {
+          detail: {
+            value: overviewResumo?.valorEstoqueTotal ?? null,
+            loading: showOverviewLoadingProgress,
+            percent: loadingPercent
+          }
+        })
+      )
+    } catch {
+      // ignore
+    }
+  }, [loadingPercent, overviewResumo?.valorEstoqueTotal, showOverviewLoadingProgress])
+
   const renderInlinePercent = React.useCallback(
     (active: boolean, className = '') => {
       if (!active) return null
@@ -6689,96 +6705,6 @@ export function InsumosModule() {
       ) : null}
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-                  Estoque
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewResumo?.valorEstoqueTotal != null
-                      ? fmtMoneyBRLCompact(Number(overviewResumo.valorEstoqueTotal) || 0)
-                      : '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-                  Crítico
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewCriticosCount ?? '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-                  Atenção
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewAtencaoCount ?? '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
-                  Movimentações
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    <>
-                      +{overviewMovResumo?.entradaQtd ?? '-'} • -{overviewMovResumo?.saidaQtd ?? '-'}
-                    </>
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
-
         <div className="flex flex-col gap-3">
           <Droppable droppableId="overview-panels">
             {(dropProvided) => (
@@ -7053,6 +6979,34 @@ export function InsumosModule() {
                                       </svg>
                                     </button>
                                     <CardTitle className="text-white text-base">Alertas</CardTitle>
+                                    <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
+                                      <span className="inline-flex items-center gap-1">
+                                        <span>Crítico</span>
+                                        <span className="font-mono text-blue-50">
+                                          {showOverviewLoadingProgress ? (
+                                            <span className="inline-flex items-center gap-2">
+                                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                                              {loadingPercent}%
+                                            </span>
+                                          ) : (
+                                            overviewCriticosCount ?? '-'
+                                          )}
+                                        </span>
+                                      </span>
+                                      <span className="inline-flex items-center gap-1">
+                                        <span>Atenção</span>
+                                        <span className="font-mono text-blue-50">
+                                          {showOverviewLoadingProgress ? (
+                                            <span className="inline-flex items-center gap-2">
+                                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                                              {loadingPercent}%
+                                            </span>
+                                          ) : (
+                                            overviewAtencaoCount ?? '-'
+                                          )}
+                                        </span>
+                                      </span>
+                                    </div>
                                   </div>
                                   <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
@@ -8874,6 +8828,20 @@ export function InsumosModule() {
 		                </svg>
                       </button>
                       <CardTitle className="text-white text-lg">Movimentações</CardTitle>
+                      <div className="hidden sm:flex items-center gap-2 text-xs text-blue-200/70">
+                        <span className="font-mono text-blue-50">
+                          {showOverviewLoadingProgress ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                              {loadingPercent}%
+                            </span>
+                          ) : (
+                            <>
+                              +{overviewMovResumo?.entradaQtd ?? '-'} • -{overviewMovResumo?.saidaQtd ?? '-'}
+                            </>
+                          )}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
                       <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
