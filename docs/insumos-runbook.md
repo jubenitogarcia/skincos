@@ -36,6 +36,16 @@ Esperado:
 - `200` com sessão ativa
 - `401` quando não autenticado (comportamento esperado fora da sessão)
 
+### 3.2.1 Auditoria read‑only (opcional)
+Se `INSUMOS_AUDIT_TOKEN` estiver configurado no Worker:
+```bash
+curl -sS -H "x-insumos-audit-token: <token>" \
+  "https://crm.skincos.com.br/api/insumos/analytics/overview?lite=1&unidade=novo-hamburgo"
+```
+Esperado:
+- `200` sem necessidade de sessão
+- Resposta **somente analytics** (sem itens completos)
+
 ### 3.3 Políticas por item (erros comuns)
 - Exemplo de erro esperado quando política do item exige validade:
   - `POLICY_REQUIRES_EXPIRY` → “Este item exige Data de validade pela política do item.”
@@ -95,3 +105,9 @@ Critérios:
 - Habilitar auto-merge só com checks obrigatórios verdes.
 - Evitar editar em paralelo os mesmos arquivos grandes (`InsumosModule.tsx`, `App.tsx`) sem sincronizar `origin/main`.
 - CI guard anti-demo: `backend/scripts/ci-no-demo-guard.sh` (executado em `.github/workflows/ci-smoke.yml`).
+
+## 8) Desenvolvimento local seguro
+- Local usa proxy CRM → Worker local por padrão.
+- Para auditoria local sem login, habilitar:
+  - `ALLOW_DEV_AUTH_BYPASS=true` (somente GET, apenas `localhost/127.0.0.1`).
+- Para evitar dados reais, mantenha `INSUMOS_API_TARGET` apontando para o Worker local.

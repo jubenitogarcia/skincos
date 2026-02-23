@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 interface QRModalProps {
     isOpen: boolean
@@ -315,7 +316,9 @@ export const QRModal: React.FC<QRModalProps> = ({
             return (
                 <div className="flex items-center justify-center h-64">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-600">Carregando QR...</span>
+                    <span className="ml-3 text-gray-600">
+                        <LoadingPercentText label="Carregando QR" showPercent={false} />
+                    </span>
                 </div>
             )
         }

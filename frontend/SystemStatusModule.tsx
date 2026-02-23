@@ -7,6 +7,7 @@ import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
+import { LoadingPercentButton, LoadingPercentText } from '@/LoadingPattern'
 
 type StatusKind = 'ok' | 'warn' | 'error' | 'unknown'
 
@@ -378,10 +379,7 @@ export function SystemStatusModule() {
     <div className="max-w-4xl mx-auto space-y-6">
       {loading ? (
         <div className="flex items-center justify-end">
-          <Button variant="secondary" size="sm" disabled className="gap-2">
-            <span className="animate-pulse">⏳</span>
-            {`Carregando status ${loadingProgress}%`}
-          </Button>
+          <LoadingPercentButton percent={loadingProgress} label="Carregando status" size="sm" />
         </div>
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -485,7 +483,11 @@ export function SystemStatusModule() {
                     Disparar backup
                   </Button>
                   <Button variant="secondary" onClick={loadBackups} disabled={backupLoading}>
-                    {backupLoading ? 'Carregando…' : 'Recarregar'}
+                    {backupLoading ? (
+                      <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                    ) : (
+                      'Recarregar'
+                    )}
                   </Button>
                 </div>
               </div>
@@ -580,7 +582,11 @@ export function SystemStatusModule() {
                     {!backupItems.length ? (
                       <tr>
                         <td className="p-3 text-blue-100/70" colSpan={4}>
-                          {backupLoading ? 'Carregando…' : 'Sem backups.'}
+                          {backupLoading ? (
+                            <LoadingPercentText label="Carregando" showPercent={false} />
+                          ) : (
+                            'Sem backups.'
+                          )}
                         </td>
                       </tr>
                     ) : null}
@@ -625,7 +631,11 @@ export function SystemStatusModule() {
                       className="max-w-xs"
                     />
                     <Button variant="secondary" onClick={loadUsers} disabled={usersLoading}>
-                      {usersLoading ? 'Carregando…' : 'Recarregar'}
+                      {usersLoading ? (
+                        <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                      ) : (
+                        'Recarregar'
+                      )}
                     </Button>
                     <Button onClick={() => { setOneTimePassword(null); setUserCreateOpen(true) }}>
                       Novo usuário
@@ -671,7 +681,11 @@ export function SystemStatusModule() {
                       {!users.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={4}>
-                            {usersLoading ? 'Carregando…' : 'Sem usuários.'}
+                            {usersLoading ? (
+                              <LoadingPercentText label="Carregando" showPercent={false} />
+                            ) : (
+                              'Sem usuários.'
+                            )}
                           </td>
                         </tr>
                       ) : null}
@@ -790,7 +804,11 @@ export function SystemStatusModule() {
                     Auditoria • Unidade: <span className="text-blue-50 font-semibold">{formatUnitLabel(insumosUnit)}</span>
                   </div>
                   <Button variant="secondary" onClick={loadAudit} disabled={auditLoading}>
-                    {auditLoading ? 'Carregando…' : 'Recarregar'}
+                    {auditLoading ? (
+                      <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                    ) : (
+                      'Recarregar'
+                    )}
                   </Button>
                 </div>
                 <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
@@ -818,7 +836,11 @@ export function SystemStatusModule() {
                       {!auditRows.length ? (
                         <tr>
                           <td className="p-3 text-blue-100/70" colSpan={4}>
-                            {auditLoading ? 'Carregando…' : 'Sem logs.'}
+                            {auditLoading ? (
+                              <LoadingPercentText label="Carregando" showPercent={false} />
+                            ) : (
+                              'Sem logs.'
+                            )}
                           </td>
                         </tr>
                       ) : null}

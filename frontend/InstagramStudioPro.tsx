@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/avatar"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/dialog"
 import { toast } from 'sonner'
 import { csrfHeader } from '@/csrf'
+import { LoadingPercentText } from '@/LoadingPattern'
 import {
   InstagramLogo,
   Heart,
@@ -1105,7 +1106,11 @@ export function InstagramStudioPro() {
                   <CardDescription>Conecta no serviço em `:3103` via proxy `/api/instagram-module`</CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                  {moduleLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                  {moduleLoading ? (
+                    <Badge variant="secondary">
+                      <LoadingPercentText label="Carregando" className="text-xs text-white/80" showPercent={false} />
+                    </Badge>
+                  ) : null}
                   <Button variant="outline" size="sm" onClick={() => refreshInstagramModule()}>
                     Atualizar
                   </Button>
@@ -1628,7 +1633,11 @@ export function InstagramStudioPro() {
                     </Select>
                   </div>
                   <div className="flex items-center justify-end gap-2">
-                    {graphLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                    {graphLoading ? (
+                      <Badge variant="secondary">
+                        <LoadingPercentText label="Carregando" className="text-xs text-white/80" showPercent={false} />
+                      </Badge>
+                    ) : null}
                     {graphError ? <Badge variant="destructive">{graphError}</Badge> : null}
                     <Button variant="outline" onClick={() => selectedMediaForComments && loadGraphComments(selectedMediaForComments)}>
                       Atualizar

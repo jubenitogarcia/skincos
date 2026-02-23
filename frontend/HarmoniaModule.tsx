@@ -5,6 +5,7 @@ import { Badge } from '@/badge'
 import { Input } from '@/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 const WhatsAppUnifiedHub = React.lazy(() => import('@/WhatsAppUnifiedHub').then((m) => ({ default: m.WhatsAppUnifiedHub })))
 const OmnichannelCenter = React.lazy(() => import('@/OmnichannelCenter').then((m) => ({ default: m.OmnichannelCenter })))
@@ -382,7 +383,11 @@ export function HarmoniaModule() {
                           </div>
                           <div className="flex items-center gap-2">
                             <Button variant="outline" className="h-8" onClick={() => loadInbox('reset')} disabled={inboxLoading || !unitSlug}>
-                              {inboxLoading ? 'Carregando…' : 'Recarregar'}
+                              {inboxLoading ? (
+                                <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                              ) : (
+                                'Recarregar'
+                              )}
                             </Button>
                             <Button
                               variant="secondary"
@@ -449,19 +454,37 @@ export function HarmoniaModule() {
                 </TabsList>
 
                 <TabsContent value="whatsapp">
-                  <React.Suspense fallback={<div className="text-sm text-blue-100/70 p-3">Carregando WhatsApp…</div>}>
+                  <React.Suspense
+                    fallback={
+                      <div className="text-sm text-blue-100/70 p-3">
+                        <LoadingPercentText label="Carregando WhatsApp" showPercent={false} />
+                      </div>
+                    }
+                  >
                     <WhatsAppUnifiedHub />
                   </React.Suspense>
                 </TabsContent>
 
                 <TabsContent value="instagram">
-                  <React.Suspense fallback={<div className="text-sm text-blue-100/70 p-3">Carregando Instagram…</div>}>
+                  <React.Suspense
+                    fallback={
+                      <div className="text-sm text-blue-100/70 p-3">
+                        <LoadingPercentText label="Carregando Instagram" showPercent={false} />
+                      </div>
+                    }
+                  >
                     <InstagramStudioPro />
                   </React.Suspense>
                 </TabsContent>
 
                 <TabsContent value="omnichannel" className="space-y-3">
-                  <React.Suspense fallback={<div className="text-sm text-blue-100/70 p-3">Carregando Omnichannel…</div>}>
+                  <React.Suspense
+                    fallback={
+                      <div className="text-sm text-blue-100/70 p-3">
+                        <LoadingPercentText label="Carregando Omnichannel" showPercent={false} />
+                      </div>
+                    }
+                  >
                     <OmnichannelCenter
                       activities={[] as any}
                       onStartConversation={(channel) => {
@@ -474,7 +497,13 @@ export function HarmoniaModule() {
                 </TabsContent>
 
                 <TabsContent value="helpdesk">
-                  <React.Suspense fallback={<div className="text-sm text-blue-100/70 p-3">Carregando Help Desk…</div>}>
+                  <React.Suspense
+                    fallback={
+                      <div className="text-sm text-blue-100/70 p-3">
+                        <LoadingPercentText label="Carregando Help Desk" showPercent={false} />
+                      </div>
+                    }
+                  >
                     <HelpDeskModule />
                   </React.Suspense>
                 </TabsContent>

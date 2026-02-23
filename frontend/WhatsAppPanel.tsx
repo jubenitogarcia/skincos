@@ -3,6 +3,7 @@ import { detectWhatsAppMediaType, sendWhatsAppMessage, sendWhatsAppAttachments, 
 import { performAction } from './actionsRegistry'
 import { QRModal } from './QRModal'
 import WhatsAppDashboard from './WhatsAppDashboard'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 interface GatewayStatus {
     ready?: boolean
@@ -528,7 +529,13 @@ export const WhatsAppPanel: React.FC = () => {
         setShowQRModal(true)
     }
 
-    if (loading) return <div className="p-6">Carregando status do WhatsApp...</div>
+    if (loading) {
+        return (
+            <div className="p-6">
+                <LoadingPercentText label="Carregando status do WhatsApp" showPercent={false} />
+            </div>
+        )
+    }
     if (error) return <div className="p-6 text-red-600">Erro ao conectar ao gateway ({GATEWAY_BASE}): {error}</div>
 
     // 🚀 REDIRECIONAMENTO: Mostrar dashboard completo quando conectado
@@ -686,7 +693,15 @@ export const WhatsAppPanel: React.FC = () => {
                                     {loadingMessages && <span className="text-[10px] text-gray-500 animate-pulse">Atualizando...</span>}
                                 </div>
                                 <div className="border rounded max-h-72 overflow-auto bg-gray-50 divide-y relative">
-                                    {messagesHasMore && <button onClick={loadMoreMessages} disabled={loadingMore} className="w-full bg-white sticky top-0 text-[10px] py-1 border-b hover:bg-gray-100">{loadingMore ? 'Carregando...' : 'Carregar mais'}</button>}
+                                    {messagesHasMore && (
+                                        <button onClick={loadMoreMessages} disabled={loadingMore} className="w-full bg-white sticky top-0 text-[10px] py-1 border-b hover:bg-gray-100">
+                                            {loadingMore ? (
+                                                <LoadingPercentText label="Carregando" className="text-[10px] text-gray-600" showPercent={false} />
+                                            ) : (
+                                                'Carregar mais'
+                                            )}
+                                        </button>
+                                    )}
                                     {messages.length === 0 && !loadingMessages && <div className="p-3 text-xs text-gray-500">Nenhuma mensagem</div>}
                                     {messages.map(m => {
                                         const sys = m.direction === 'system'

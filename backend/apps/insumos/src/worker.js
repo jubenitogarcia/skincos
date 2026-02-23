@@ -1044,6 +1044,56 @@ export default {
         const userAgent = getUserAgent(request);
         const idempotencyKey = request.headers.get('idempotency-key') || request.headers.get('Idempotency-Key') || '';
         const isSecureContext = url.protocol === 'https:';
+        const host = String(url.hostname || '').toLowerCase();
+        const isLocalHost = host === 'localhost' || host === '::1' || host.startsWith('127.');
+        const devBypassEnabled = String(env?.ALLOW_DEV_AUTH_BYPASS || '').trim().toLowerCase() === 'true';
+        const devBypassActive = devBypassEnabled && isLocalHost && !isSecureContext;
+        const devBypassUser = devBypassActive
+            ? {
+                username: 'dev',
+                displayName: 'Dev Local',
+                email: 'dev@local',
+                role: 'ADMIN',
+                ativo: true,
+                allowedUnits: [],
+                allowedModules: [],
+            }
+            : null;
+        const auditToken = String(env?.INSUMOS_AUDIT_TOKEN || '').trim();
+        const auditHeader = String(request.headers.get('x-insumos-audit-token') || '').trim();
+        const auditBypassActive = !!auditToken && auditHeader && auditHeader === auditToken && request.method === 'GET';
+        const isAuditBypassPath = (pathname) => {
+            const p = String(pathname || '');
+            return (
+                p === '/analytics/overview' ||
+                p === '/analytics/insights' ||
+                p === '/analytics/trends' ||
+                p === '/analytics/category-turnover'
+            );
+        };
+        const isDevBypassPath = (pathname) => {
+            const p = String(pathname || '');
+            return (
+                p === '/insumos' ||
+                p.startsWith('/insumos/') ||
+                p === '/movimentacoes' ||
+                p.startsWith('/movimentacoes/') ||
+                p === '/analytics/overview' ||
+                p === '/analytics/insights' ||
+                p === '/analytics/trends' ||
+                p === '/analytics/category-turnover' ||
+                p === '/alertas/estoque' ||
+                p === '/relatorios/estoque' ||
+                p === '/quality/report' ||
+                p === '/categorias' ||
+                p.startsWith('/categorias/') ||
+                p === '/prefs' ||
+                p.startsWith('/prefs/') ||
+                p === '/share' ||
+                p.startsWith('/share/')
+            );
+        };
+        const readBypassActive = (devBypassActive && isDevBypassPath(url.pathname)) || (auditBypassActive && isAuditBypassPath(url.pathname));
 
         const withCORS = (body, init = {}) => {
             const res = withCORSBase(body, init, appOrigin);
@@ -1223,6 +1273,10 @@ export default {
         let sessionUser = null;
         const loadSessionUser = async () => {
             if (sessionUser) return sessionUser;
+            if (devBypassActive && devBypassUser && sessionUsername === devBypassUser.username) {
+                sessionUser = { ...devBypassUser };
+                return sessionUser;
+            }
             if (!sessionUsername) return null;
             const userDb = await d1GetUserByUsername(env, sessionUsername);
             if (!userDb || !userDb.ativo) return null;
@@ -1349,6 +1403,8 @@ export default {
             deleteAuthCookies: () => deleteAuthCookies({ secure: isSecureContext }),
             validateUsername,
             MAX_PROFILE_PHOTO_URL_CHARS,
+            devBypass: devBypassActive,
+            devBypassUser,
             d1: {
                 enabled: true,
                 getUserByUsername: (u) => d1GetUserByUsername(env, u),
@@ -1379,7 +1435,7 @@ export default {
 
 
         const isPublicEndpoint = url.pathname === "/api/metrics" || url.pathname === "/metrics";
-        if (!isPublicEndpoint && !url.pathname.startsWith("/auth/")) {
+        if (!isPublicEndpoint && !url.pathname.startsWith("/auth/") && !readBypassActive) {
             if (!sessionUsername) {
                 return withCORS(
                     JSON.stringify({ error: "Not authenticated" }),

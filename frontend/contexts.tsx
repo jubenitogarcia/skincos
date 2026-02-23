@@ -279,28 +279,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={value}>
-      {shouldShowLoadingOverlay && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          color: 'white',
-          fontFamily: 'system-ui',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999
-        }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🔄</div>
-            <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Carregando…</div>
-            <div style={{ opacity: 0.9 }}>{initProgress}%</div>
-          </div>
-        </div>
-      )}
       {children}
     </AuthContext.Provider>
   )

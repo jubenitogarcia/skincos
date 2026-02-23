@@ -7,6 +7,7 @@ import { Separator } from '@/separator'
 import { Switch } from '@/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 type JobMeta = {
   id: string
@@ -269,7 +270,11 @@ export function JobsCenter() {
             <Badge className="bg-white/10 text-white border-white/20">{jobs.length}</Badge>
           </CardHeader>
           <CardContent className="space-y-2">
-            {loading && <div className="text-blue-200/70 text-sm">Carregando…</div>}
+            {loading && (
+              <div className="text-blue-200/70 text-sm">
+                <LoadingPercentText label="Carregando" showPercent={false} />
+              </div>
+            )}
             {!loading && jobs.length === 0 && (
               <div className="text-blue-200/70 text-sm">
                 Nenhum job executado ainda. Use o painel acima.
@@ -334,7 +339,11 @@ export function JobsCenter() {
                 onClick={() => refreshLog().catch(() => {})}
                 disabled={!selectedJobId || loadingLog}
               >
-                {loadingLog ? '…' : 'Atualizar'}
+                {loadingLog ? (
+                  <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                ) : (
+                  'Atualizar'
+                )}
               </Button>
             </div>
           </CardHeader>

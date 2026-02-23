@@ -17,6 +17,8 @@ export async function handleAuthRoutes({
     deleteAuthCookies,
     validateUsername,
     MAX_PROFILE_PHOTO_URL_CHARS,
+    devBypass,
+    devBypassUser,
     d1,
     appendAuditLog,
     ip,
@@ -324,6 +326,9 @@ export async function handleAuthRoutes({
 
         // GET /auth/me
         if (url.pathname === "/auth/me") {
+            if (devBypass && devBypassUser) {
+                return withCORS(JSON.stringify({ success: true, user: devBypassUser, csrfToken: 'dev-bypass' }), { status: 200 }, appOrigin);
+            }
             if (!sessionUsername) {
                 return withCORS(JSON.stringify({ error: "Not authenticated" }), { status: 401 }, appOrigin);
             }
@@ -355,6 +360,9 @@ export async function handleAuthRoutes({
 
         // POST /auth/refresh
         if (url.pathname === "/auth/refresh" && request.method === "POST") {
+            if (devBypass && devBypassUser) {
+                return withCORS(JSON.stringify({ success: true, user: devBypassUser, csrfToken: 'dev-bypass' }), { status: 200 }, appOrigin);
+            }
             if (!sessionUsername) {
                 return withCORS(JSON.stringify({ error: "Not authenticated" }), { status: 401 }, appOrigin);
             }

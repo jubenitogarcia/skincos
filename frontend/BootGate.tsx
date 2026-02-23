@@ -11,6 +11,7 @@
  */
 import React, { ReactNode, useEffect, useRef, useState } from 'react'
 import { errorReporter, BootError } from '@/ErrorReporter'
+import { LoadingScreen } from '@/LoadingPattern'
 
 function BootFailureScreen({ error, onRetry }: { error: BootError; onRetry: () => void }) {
   const getErrorIcon = (type: BootError['type']) => {
@@ -199,6 +200,17 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
   const [bootPhase, setBootPhase] = useState<'preflight' | 'initialization' | 'ready' | 'failed'>('preflight')
   const bootPhaseRef = useRef(bootPhase)
   const bootStartedRef = useRef(false)
+  const bootProgress = React.useMemo(() => {
+    const steps = [
+      bootState.envReady,
+      bootState.configReady,
+      bootState.backendHealthy,
+      bootState.featureFlagsLoaded
+    ]
+    const total = steps.length || 1
+    const done = steps.filter(Boolean).length
+    return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
+  }, [bootState])
 
   useEffect(() => {
     bootPhaseRef.current = bootPhase
@@ -330,54 +342,32 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
   // Show loading screen during boot
   if (!isReady) {
     return (
-      <div style={{ 
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        color: 'white',
-        fontFamily: 'system-ui',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 9999
-      }}>
-        <div style={{ textAlign: 'center', maxWidth: '400px', padding: '2rem' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem', animation: 'spin 2s linear infinite' }}>🚀</div>
-          <div style={{ fontSize: '1.5rem', marginBottom: '1rem', fontWeight: 'bold' }}>
-            Carregando CRM...
-          </div>
-          <div style={{ fontSize: '0.9rem', opacity: 0.8, marginBottom: '2rem' }}>
-            {bootPhase === 'preflight' ? 'Verificando ambiente...' :
-             bootPhase === 'initialization' ? 'Conectando aos serviços...' :
-             'Finalizando inicialização...'}
-          </div>
-          <div style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: '1rem' }}>
-            Se demorar, force o reload (⌘R) ou confira os logs.
-          </div>
-          
-          {/* Boot status indicators */}
-          <div style={{ textAlign: 'left', marginTop: '2rem' }}>
-            <BootStatusItem label="Environment" ready={bootState.envReady} />
-            <BootStatusItem label="Configuration" ready={bootState.configReady} />
-            <BootStatusItem label="Backend Health" ready={bootState.backendHealthy} />
-            <BootStatusItem label="Feature Flags" ready={bootState.featureFlagsLoaded} />
-          </div>
-          
-          {/* Boot phase indicator */}
-          <div style={{ 
-            marginTop: '1.5rem', 
-            fontSize: '0.8rem', 
-            opacity: 0.7 
-          }}>
-            Fase: {bootPhase === 'preflight' ? 'Verificação Inicial' : 
-                   bootPhase === 'initialization' ? 'Inicialização' : 
-                   bootPhase === 'ready' ? 'Pronto' : 'Falha'}
-          </div>
+      <LoadingScreen
+        overlay
+        title="Carregando CRM..."
+        subtitle={
+          bootPhase === 'preflight'
+            ? 'Verificando ambiente...'
+            : bootPhase === 'initialization'
+              ? 'Conectando aos serviços...'
+              : 'Finalizando inicialização...'
+        }
+        percent={bootProgress}
+        note="Se demorar, force o reload (⌘R) ou confira os logs."
+      >
+        <div className="space-y-2 text-xs text-blue-100/70">
+          <BootStatusItem label="Environment" ready={bootState.envReady} />
+          <BootStatusItem label="Configuration" ready={bootState.configReady} />
+          <BootStatusItem label="Backend Health" ready={bootState.backendHealthy} />
+          <BootStatusItem label="Feature Flags" ready={bootState.featureFlagsLoaded} />
         </div>
-      </div>
+
+        <div className="pt-3 text-xs text-blue-200/70">
+          Fase: {bootPhase === 'preflight' ? 'Verificação Inicial' :
+            bootPhase === 'initialization' ? 'Inicialização' :
+              bootPhase === 'ready' ? 'Pronto' : 'Falha'}
+        </div>
+      </LoadingScreen>
     )
   }
 
@@ -392,29 +382,14 @@ export function BootGate({ children, timeout = DEFAULT_BOOT_TIMEOUT_MS }: BootGa
 
 function BootStatusItem({ label, ready }: { label: string; ready: boolean }) {
   return (
-    <div style={{ 
-      display: 'flex', 
-      alignItems: 'center', 
-      marginBottom: '0.5rem',
-      fontSize: '0.8rem'
-    }}>
-      <div style={{ 
-        width: '12px', 
-        height: '12px', 
-        borderRadius: '50%',
-        backgroundColor: ready ? '#10B981' : '#6B7280',
-        marginRight: '0.5rem',
-        animation: ready ? 'none' : 'pulse 2s infinite'
-      }} />
-      <span style={{ opacity: ready ? 1 : 0.7 }}>{label}</span>
-      <span style={{ marginLeft: 'auto', fontSize: '0.7rem' }}>
-        {ready ? '✅' : (
-          <img
-            src="/icons/hourglass.png"
-            alt=""
-            aria-hidden
-            style={{ width: '14px', height: '14px', display: 'inline-block', verticalAlign: 'text-bottom' }}
-          />
+    <div className="flex items-center gap-2">
+      <span className={`inline-flex h-2.5 w-2.5 rounded-full ${ready ? 'bg-emerald-400' : 'bg-white/30 animate-pulse'}`} />
+      <span className={ready ? 'text-blue-100' : 'text-blue-200/70'}>{label}</span>
+      <span className="ml-auto">
+        {ready ? (
+          <span className="text-[10px] text-emerald-300">OK</span>
+        ) : (
+          <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
         )}
       </span>
     </div>

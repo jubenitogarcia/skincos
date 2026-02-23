@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { DEFAULT_UNIT_OPTIONS, type UnitOption } from '@/unitSelection'
 import * as QRCode from 'qrcode'
+import { LoadingPercentText } from '@/LoadingPattern'
 
 type ApiError = { ok?: boolean; error?: string; message?: string; code?: string; hint?: string }
 
@@ -1700,7 +1701,11 @@ export function PontoModule() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" title={buildShaRaw || undefined}>Build: {buildSha}</Badge>
-              {diagLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+              {diagLoading ? (
+                <Badge variant="secondary">
+                  <LoadingPercentText label="Carregando" className="text-xs text-white/80" showPercent={false} />
+                </Badge>
+              ) : null}
               {diagError ? <Badge variant="destructive">Erro</Badge> : null}
               <Button variant="secondary" onClick={loadDiagnostics} disabled={diagLoading}>Atualizar</Button>
             </div>
@@ -1761,7 +1766,11 @@ export function PontoModule() {
           </CardHeader>
           <CardContent className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                {meLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+                {meLoading ? (
+                  <Badge variant="secondary">
+                    <LoadingPercentText label="Carregando" className="text-xs text-white/80" showPercent={false} />
+                  </Badge>
+                ) : null}
                 {meLinked ? (
                   <>
                     <Badge>Funcionário: {meLinked.employee?.name || '-'}</Badge>
@@ -1888,7 +1897,13 @@ export function PontoModule() {
             {meStep === 'face' ? (
               <div className="space-y-3">
                 {meFaceStatus ? (
-                  <div className="text-sm text-muted-foreground">{meFaceStatus}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {meFaceStatus.toLowerCase().includes('carregando') ? (
+                      <LoadingPercentText label={meFaceStatus} className="text-muted-foreground" showPercent={false} />
+                    ) : (
+                      meFaceStatus
+                    )}
+                  </div>
                 ) : null}
                 <div className="rounded-xl overflow-hidden border bg-black">
                   <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
@@ -1896,7 +1911,9 @@ export function PontoModule() {
                 {modelsError ? <div className="text-sm text-red-600">Não foi possível carregar a análise facial.</div> : null}
                 {modelsReady === 'loading' ? (
                   <div className="space-y-1">
-                    <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                    <div className="text-sm text-muted-foreground">
+                      <LoadingPercentText label={(modelsMessage || 'Carregando modelos faciais').replace(/[.…]+$/, '')} className="text-muted-foreground" showPercent={false} />
+                    </div>
                     <div className="h-2 rounded bg-muted/40 overflow-hidden">
                       <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
                     </div>
@@ -2158,7 +2175,9 @@ export function PontoModule() {
             ) : null}
             {modelsReady === 'loading' ? (
               <div className="space-y-1">
-                <div className="text-sm text-muted-foreground">{modelsMessage || 'Carregando modelos faciais…'}</div>
+                <div className="text-sm text-muted-foreground">
+                  <LoadingPercentText label={(modelsMessage || 'Carregando modelos faciais').replace(/[.…]+$/, '')} className="text-muted-foreground" showPercent={false} />
+                </div>
                 <div className="h-2 rounded bg-muted/40 overflow-hidden">
                   <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
                 </div>
@@ -2262,7 +2281,11 @@ export function PontoModule() {
             <DialogDescription>Resolva conflitos de vínculo por email.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            {conflictsLoading ? <div className="text-sm text-muted-foreground">Carregando...</div> : null}
+            {conflictsLoading ? (
+              <div className="text-sm text-muted-foreground">
+                <LoadingPercentText label="Carregando" showPercent={false} />
+              </div>
+            ) : null}
             {conflictsError ? <div className="text-sm text-destructive">{conflictsError}</div> : null}
             {!conflictsLoading && !emailConflicts.length ? (
               <div className="text-sm text-muted-foreground">Nenhuma duplicidade encontrada.</div>
@@ -2312,7 +2335,11 @@ export function PontoModule() {
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Button onClick={adminLoadSelectedRecords} disabled={selectedRecordsLoading || !selectedEmployeeId}>Atualizar</Button>
-              {selectedRecordsLoading ? <Badge variant="secondary">Carregando…</Badge> : null}
+              {selectedRecordsLoading ? (
+                <Badge variant="secondary">
+                  <LoadingPercentText label="Carregando" className="text-xs text-white/80" showPercent={false} />
+                </Badge>
+              ) : null}
               {selectedRecordsError ? <Badge variant="destructive">Erro</Badge> : null}
             </div>
             {selectedRecordsError ? (
