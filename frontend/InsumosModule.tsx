@@ -9009,7 +9009,7 @@ export function InsumosModule() {
 
           <div className="flex items-center justify-end" />
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
           <div>
             <span className="font-mono">{movimentacoesView.length}</span>
             {movTotal != null ? (
@@ -9018,6 +9018,31 @@ export function InsumosModule() {
                 de <span className="font-mono">{movTotal}</span>
               </>
             ) : null}
+          </div>
+          <div className="flex items-center gap-6 text-xs font-mono text-blue-100/80">
+            {showOverviewLoadingProgress ? (
+              <span className="inline-flex items-center gap-2 text-blue-200/70">
+                <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                {loadingPercent}%
+              </span>
+            ) : (
+              <>
+                <div className="flex flex-col items-center leading-tight">
+                  <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
+                  <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+                  <span className="text-[11px] text-blue-200/60">Estoque</span>
+                </div>
+                <div className="flex flex-col items-center leading-tight">
+                  <span className="text-emerald-300">
+                    +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
+                  </span>
+                  <span className="text-red-300">
+                    -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
+                  </span>
+                  <span className="text-[11px] text-blue-200/60">Valor</span>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {movHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
