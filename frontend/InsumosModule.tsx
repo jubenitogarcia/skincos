@@ -9009,7 +9009,7 @@ export function InsumosModule() {
 
           <div className="flex items-center justify-end" />
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
           <div>
             <span className="font-mono">{movimentacoesView.length}</span>
             {movTotal != null ? (
@@ -9018,6 +9018,31 @@ export function InsumosModule() {
                 de <span className="font-mono">{movTotal}</span>
               </>
             ) : null}
+          </div>
+          <div className="flex items-center gap-6 text-xs font-mono text-blue-100/80">
+            {showOverviewLoadingProgress ? (
+              <span className="inline-flex items-center gap-2 text-blue-200/70">
+                <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                {loadingPercent}%
+              </span>
+            ) : (
+              <>
+                <div className="flex flex-col items-center leading-tight">
+                  <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
+                  <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
+                  <span className="text-[11px] text-blue-200/60">Estoque</span>
+                </div>
+                <div className="flex flex-col items-center leading-tight">
+                  <span className="text-emerald-300">
+                    +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
+                  </span>
+                  <span className="text-red-300">
+                    -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
+                  </span>
+                  <span className="text-[11px] text-blue-200/60">Valor</span>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {movHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
@@ -9042,78 +9067,45 @@ export function InsumosModule() {
                     ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string; widthClass?: string }>
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
-                    const hasSummary = col.key === 'estoque' || col.key === 'valor'
-                    const renderSummary = () => {
-                      if (!hasSummary) return null
-                      if (showOverviewLoadingProgress) {
-                        return (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-blue-200/70">
-                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                            <span className="font-mono">{loadingPercent}%</span>
-                          </span>
-                        )
-                      }
-                      if (col.key === 'estoque') {
-                        return (
-                          <div className="flex flex-col items-center text-[11px] leading-tight font-mono">
-                            <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
-                            <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                          </div>
-                        )
-                      }
-                      return (
-                        <div className="flex flex-col items-center text-[11px] leading-tight font-mono">
-                          <span className="text-emerald-300">
-                            +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
-                          </span>
-                          <span className="text-red-300">
-                            -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
-                          </span>
-                        </div>
-                      )
-                    }
                     return (
                       <th
                         key={col.label}
                         className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap' : ''} ${col.widthClass || ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
                       >
-	                        <div className={`flex ${hasSummary ? 'flex-col items-center gap-1' : 'items-center justify-center gap-2'}`}>
-                            {renderSummary()}
-                            <div className="flex items-center justify-center gap-2">
-                              {col.key ? (
-                                <button
-                                  type="button"
-                                  className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
-                                  onClick={() => {
-                                    if (movSortKey === col.key) {
-                                      setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                      return
-                                    }
-                                    setMovSortKey(col.key!)
-                                    setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
-                                  }}
-                                  aria-label={`Ordenar ${col.label}`}
-                                  title={`Ordenar ${col.label}`}
-                                >
-                                  {col.label}
-                                </button>
-                              ) : (
-                                <span>{col.label}</span>
-                              )}
-                              {col.key ? (
-                                <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
-                                  {isActive && movSortDir === 'asc' ? (
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  ) : (
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  )}
-                                </span>
-                              ) : null}
-                            </div>
+	                        <div className="flex items-center justify-center gap-2">
+                            {col.key ? (
+                              <button
+                                type="button"
+                                className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
+                                onClick={() => {
+                                  if (movSortKey === col.key) {
+                                    setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                    return
+                                  }
+                                  setMovSortKey(col.key!)
+                                  setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
+                                }}
+                                aria-label={`Ordenar ${col.label}`}
+                                title={`Ordenar ${col.label}`}
+                              >
+                                {col.label}
+                              </button>
+                            ) : (
+                              <span>{col.label}</span>
+                            )}
+                            {col.key ? (
+                              <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
+                                {isActive && movSortDir === 'asc' ? (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                ) : (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </span>
+                            ) : null}
 	                        </div>
 	                      </th>
                     )
