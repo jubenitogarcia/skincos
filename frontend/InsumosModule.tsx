@@ -1316,6 +1316,7 @@ export function InsumosModule() {
   type AlertasStatusFilter = 'TODOS' | 'ATENCAO' | 'URGENTE' | 'VENCENDO' | 'EXPIRADO' | 'INFO'
   const [alertasStatus, setAlertasStatus] = React.useState<AlertasStatusFilter>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
+  const [alertasMarca, setAlertasMarca] = React.useState('')
   const [alertasBusca, setAlertasBusca] = React.useState('')
   type AlertasSortKey = 'produto' | 'categoria' | 'status' | 'acao' | 'atual' | 'min' | 'dif' | 'percentual'
   const [alertasSortKey, setAlertasSortKey] = React.useState<AlertasSortKey>('status')
@@ -1526,6 +1527,20 @@ export function InsumosModule() {
     isDashboardLoading || !authLoaded || !healthLoaded
   const showOverviewLoadingProgress =
     overviewLoading || (canUseApi && isAuthed && shouldShowDashboardLoading)
+
+  const overviewCriticosCount = React.useMemo(() => {
+    const criticos = Number(overviewResumo?.criticos ?? NaN)
+    const expirados = Number(overviewNotifications?.counts?.expiredWithStock ?? NaN)
+    if (Number.isNaN(criticos) && Number.isNaN(expirados)) return null
+    return (Number.isNaN(criticos) ? 0 : criticos) + (Number.isNaN(expirados) ? 0 : expirados)
+  }, [overviewNotifications?.counts?.expiredWithStock, overviewResumo?.criticos])
+
+  const overviewAtencaoCount = React.useMemo(() => {
+    const baixo = Number(overviewNotifications?.counts?.lowStock ?? NaN)
+    const vencendo = Number(overviewNotifications?.counts?.expiringSoon ?? NaN)
+    if (Number.isNaN(baixo) && Number.isNaN(vencendo)) return null
+    return (Number.isNaN(baixo) ? 0 : baixo) + (Number.isNaN(vencendo) ? 0 : vencendo)
+  }, [overviewNotifications?.counts?.expiringSoon, overviewNotifications?.counts?.lowStock])
 
   const renderInlinePercent = React.useCallback(
     (active: boolean, className = '') => {
@@ -5341,19 +5356,31 @@ export function InsumosModule() {
     const q = alertasBusca.trim().toLowerCase()
     return alertasLinhas.filter((a) => {
       if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
-      if (alertasStatus !== 'TODOS' && !a.tags.includes(alertasStatus as any)) return false
+      if (alertasMarca && String(a.marca || '') !== alertasMarca) return false
+      if (alertasStatus !== 'TODOS') {
+        if (alertasStatus === 'ATENCAO') {
+          if (!a.tags.includes('ATENCAO') && !a.tags.includes('VENCENDO')) return false
+        } else if (alertasStatus === 'URGENTE') {
+          if (!a.tags.includes('URGENTE') && !a.tags.includes('EXPIRADO')) return false
+        } else if (!a.tags.includes(alertasStatus as any)) {
+          return false
+        }
+      }
       if (!q) return true
       const hay = [a.produto, a.categoria, a.marca, a.codigoBarras, a.qualityMessage].filter(Boolean).join(' ').toLowerCase()
       return hay.includes(q)
     })
-  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasStatus])
+  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasMarca, alertasStatus])
 
   const alertasLinhasOrdenadas = React.useMemo(() => {
     const rows = alertasLinhasFiltradas.map((row, index) => ({ row, index }))
-    const statusOrder: AlertaStatusTag[] = ['URGENTE', 'ATENCAO', 'VENCENDO', 'EXPIRADO', 'INFO']
+    const statusOrder: AlertaStatusTag[] = ['URGENTE', 'ATENCAO', 'INFO']
     const statusRank = (tags: AlertaStatusTag[]) => {
+      const derived = new Set(tags)
+      if (derived.has('EXPIRADO')) derived.add('URGENTE')
+      if (derived.has('VENCENDO')) derived.add('ATENCAO')
       for (let i = 0; i < statusOrder.length; i++) {
-        if (tags.includes(statusOrder[i])) return i
+        if (derived.has(statusOrder[i])) return i
       }
       return statusOrder.length
     }
@@ -5365,8 +5392,8 @@ export function InsumosModule() {
       }
       if (rec?.kind === 'ENTRADA') return 'reposicao'
       if (row.qualityMessage) return String(row.qualityMessage)
-      if (row.tags.includes('EXPIRADO')) return 'expirado'
-      if (row.tags.includes('VENCENDO')) return 'vencendo'
+      if (row.tags.includes('EXPIRADO')) return 'descarte'
+      if (row.tags.includes('VENCENDO')) return 'saida'
       return ''
     }
     const dir = alertasSortDir === 'asc' ? 1 : -1
@@ -6662,13 +6689,13 @@ export function InsumosModule() {
       ) : null}
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
               <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
                 <span className="inline-flex items-center gap-2">
                   <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-                  Valor em estoque
+                  Estoque
                 </span>
                 <span className="text-xs text-blue-200/70 font-mono">
                   {showOverviewLoadingProgress ? (
@@ -6700,7 +6727,7 @@ export function InsumosModule() {
                       {loadingPercent}%
                     </span>
                   ) : (
-                    overviewResumo?.criticos ?? '-'
+                    overviewCriticosCount ?? '-'
                   )}
                 </span>
               </CardTitle>
@@ -6721,49 +6748,7 @@ export function InsumosModule() {
                       {loadingPercent}%
                     </span>
                   ) : (
-                    overviewNotifications?.counts?.lowStock ?? '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                  Vencendo
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewNotifications?.counts?.expiringSoon ?? '-'
-                  )}
-                </span>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                  Expirado
-                </span>
-                <span className="text-xs text-blue-200/70 font-mono">
-                  {showOverviewLoadingProgress ? (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                      {loadingPercent}%
-                    </span>
-                  ) : (
-                    overviewNotifications?.counts?.expiredWithStock ?? '-'
+                    overviewAtencaoCount ?? '-'
                   )}
                 </span>
               </CardTitle>
@@ -7078,8 +7063,6 @@ export function InsumosModule() {
                                         <SelectItem value="TODOS">Todos</SelectItem>
                                         <SelectItem value="ATENCAO">Atenção</SelectItem>
                                         <SelectItem value="URGENTE">Crítico</SelectItem>
-                                        <SelectItem value="VENCENDO">Vencendo</SelectItem>
-                                        <SelectItem value="EXPIRADO">Expirado</SelectItem>
                                         <SelectItem value="INFO">Info</SelectItem>
                                       </SelectContent>
                                     </Select>
@@ -7167,23 +7150,21 @@ export function InsumosModule() {
                                                 key={col.label}
                                                 className={`p-3 ${col.align} ${col.widthClass || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
                                               >
-                                                <div className={`flex items-center ${col.align.includes('right') ? 'justify-end' : 'justify-start'} gap-2`}>
-                                                  <button
-                                                    type="button"
-                                                    className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
-                                                    onClick={() => {
-                                                      if (alertasSortKey === col.key) {
-                                                        setAlertasSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                                        return
-                                                      }
-                                                      setAlertasSortKey(col.key)
-                                                      setAlertasSortDir(col.key === 'status' ? 'asc' : 'desc')
-                                                    }}
-                                                    aria-label={`Ordenar ${col.label}`}
-                                                    title={`Ordenar ${col.label}`}
-                                                  >
-                                                    {col.label}
-                                                  </button>
+                                                <button
+                                                  type="button"
+                                                  className={`w-full inline-flex items-center ${col.align.includes('right') ? 'justify-end' : 'justify-start'} gap-2 cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
+                                                  onClick={() => {
+                                                    if (alertasSortKey === col.key) {
+                                                      setAlertasSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                                      return
+                                                    }
+                                                    setAlertasSortKey(col.key)
+                                                    setAlertasSortDir(col.key === 'status' ? 'asc' : 'desc')
+                                                  }}
+                                                  aria-label={`Ordenar ${col.label}`}
+                                                  title={`Ordenar ${col.label}`}
+                                                >
+                                                  <span>{col.label}</span>
                                                   <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
                                                     {isActive && alertasSortDir === 'asc' ? (
                                                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -7195,7 +7176,7 @@ export function InsumosModule() {
                                                       </svg>
                                                     )}
                                                   </span>
-                                                </div>
+                                                </button>
                                               </th>
                                             )
                                           })}
@@ -7211,8 +7192,15 @@ export function InsumosModule() {
                         const qualitySeverity = a.qualitySeverity || (qualityIssue as any)?.severity
                         const canQualityEdit = !!qualityIssue && isAuthed && (!!qualityIssue.registro || !!qualityIssue.codigoBarras || !!qualityIssue.produto)
                         const hasQualityAction = !!qualityIssue
-                        const hasExpiringAction = !rec && (a.tags.includes('EXPIRADO') || a.tags.includes('VENCENDO'))
+                        const isVencendo = a.tags.includes('VENCENDO')
+                        const isExpirado = a.tags.includes('EXPIRADO')
+                        const hasExpiringAction = !rec && (isExpirado || isVencendo)
                         const hasAnyAction = !!rec || hasExpiringAction || hasQualityAction
+                        const displayTagsSet = new Set<AlertaStatusTag>()
+                        if (a.tags.includes('URGENTE') || isExpirado) displayTagsSet.add('URGENTE')
+                        if (a.tags.includes('ATENCAO') || isVencendo) displayTagsSet.add('ATENCAO')
+                        if (a.tags.includes('INFO')) displayTagsSet.add('INFO')
+                        const displayTags = Array.from(displayTagsSet)
                         return (
                           <tr
                             key={`${a.key}-${idx}`}
@@ -7225,11 +7213,33 @@ export function InsumosModule() {
                             title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
                           >
                             <td className="p-3 text-blue-50 align-top">
-                              <div className="text-blue-50 break-words">{a.produto || '-'}</div>
+                              <div className="flex flex-wrap items-center gap-2 text-blue-50 break-words">
+                                <span>{a.produto || '-'}</span>
+                                {isVencendo ? (
+                                  <Badge variant="secondary" className="border text-[10px] px-1 py-0 h-4 leading-4">
+                                    Venc.
+                                  </Badge>
+                                ) : null}
+                                {isExpirado ? (
+                                  <Badge variant="destructive" className="border text-[10px] px-1 py-0 h-4 leading-4">
+                                    Exp.
+                                  </Badge>
+                                ) : null}
+                              </div>
                               <div className="hidden md:block text-xs text-blue-200/60 font-mono break-all">{a.codigoBarras || '-'}</div>
                               {a.marca ? (
                                 <div className="mt-1">
-                                  <Badge style={buildTagStyle(getMarcaBgColor(a.marca))} className="border">
+                                  <Badge
+                                    style={buildTagStyle(getMarcaBgColor(a.marca))}
+                                    className="border cursor-pointer hover:opacity-80"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      const value = String(a.marca || '')
+                                      if (!value) return
+                                      setAlertasMarca((prev) => (prev === value ? '' : value))
+                                    }}
+                                    title="Filtrar por marca"
+                                  >
                                     {a.marca}
                                   </Badge>
                                 </div>
@@ -7247,14 +7257,32 @@ export function InsumosModule() {
                               ) : null}
                             </td>
                             <td className="p-3 text-blue-100/80 hidden sm:table-cell">
-                              <Badge style={buildTagStyle(getCategoriaBgColor(a.categoria || 'Outros'))} className="border">
+                              <Badge
+                                style={buildTagStyle(getCategoriaBgColor(a.categoria || 'Outros'))}
+                                className="border cursor-pointer hover:opacity-80"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const value = String(a.categoria || 'Outros')
+                                  setAlertasCategoria((prev) => (prev === value ? '' : value))
+                                }}
+                                title="Filtrar por categoria"
+                              >
                                 {a.categoria || 'Outros'}
                               </Badge>
                             </td>
                             <td className="p-3">
                               <div className="flex flex-wrap gap-1">
-                                {(a.tags || []).map((t) => (
-                                  <Badge key={t} variant={alertaTagVariant(t)}>
+                                {displayTags.map((t) => (
+                                  <Badge
+                                    key={t}
+                                    variant={alertaTagVariant(t)}
+                                    className="cursor-pointer hover:opacity-80"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setAlertasStatus((prev) => (prev === t ? 'TODOS' : (t as AlertasStatusFilter)))
+                                    }}
+                                    title="Filtrar por status"
+                                  >
                                     {alertaTagLabel(t)}
                                   </Badge>
                                 ))}
@@ -7308,11 +7336,11 @@ export function InsumosModule() {
                                       openQuickOperation('BAIXA', {
                                         codigoBarras: code,
                                         quantidade: 1,
-                                        obs: a.tags.includes('EXPIRADO') ? 'Descartar (expirado)' : 'Priorizar consumo (vencendo)'
+                                        obs: a.tags.includes('EXPIRADO') ? 'Descarte (expirado)' : 'Saída (vencendo)'
                                       })
                                     }}
                                   >
-                                    {a.tags.includes('EXPIRADO') ? 'Baixar' : 'Usar'}
+                                    {a.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
                                   </Button>
                                 ) : null}
                                 {hasQualityAction ? (
