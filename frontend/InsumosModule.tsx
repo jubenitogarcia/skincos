@@ -299,6 +299,16 @@ function fmtMoneyBRL0(value: number) {
   }
 }
 
+function fmtMoneyBRLCompact(value: number) {
+  if (!Number.isFinite(value)) return '-'
+  const abs = Math.abs(value)
+  if (abs >= 1000) {
+    const rounded = Math.round(value / 1000)
+    return `R$ ${rounded}k`
+  }
+  return fmtMoneyBRL0(value)
+}
+
 const CATEGORIA_CORES: Record<string, string> = {
   toxina: '#1e3a8a',
   'toxina botulínica': '#1e3a8a',
@@ -6631,131 +6641,133 @@ export function InsumosModule() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
-                Valor em estoque
+              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />
+                  Valor em estoque
+                </span>
+                <span className="text-xs text-blue-200/70 font-mono">
+                  {showOverviewLoadingProgress ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                      {loadingPercent}%
+                    </span>
+                  ) : (
+                    overviewResumo?.valorEstoqueTotal != null
+                      ? fmtMoneyBRLCompact(Number(overviewResumo.valorEstoqueTotal) || 0)
+                      : '-'
+                  )}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">
-                {overviewResumo?.valorEstoqueTotal != null ? fmtMoneyBRL(Number(overviewResumo.valorEstoqueTotal) || 0) : '-'}
-              </div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">{overviewResumo?.totalInsumos ?? '-'} itens</div>
-              )}
-            </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
-                Crítico
+              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />
+                  Crítico
+                </span>
+                <span className="text-xs text-blue-200/70 font-mono">
+                  {showOverviewLoadingProgress ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                      {loadingPercent}%
+                    </span>
+                  ) : (
+                    overviewResumo?.criticos ?? '-'
+                  )}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewResumo?.criticos ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">abaixo do mínimo</div>
-              )}
-            </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
-                Atenção
+              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/icons/warning.png" alt="" aria-hidden className="h-5 w-5" />
+                  Atenção
+                </span>
+                <span className="text-xs text-blue-200/70 font-mono">
+                  {showOverviewLoadingProgress ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                      {loadingPercent}%
+                    </span>
+                  ) : (
+                    overviewNotifications?.counts?.lowStock ?? '-'
+                  )}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.lowStock ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">estoque baixo</div>
-              )}
-            </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
-                Vencendo
+              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/icons/hourglass.png" alt="" aria-hidden className="h-5 w-5" />
+                  Vencendo
+                </span>
+                <span className="text-xs text-blue-200/70 font-mono">
+                  {showOverviewLoadingProgress ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                      {loadingPercent}%
+                    </span>
+                  ) : (
+                    overviewNotifications?.counts?.expiringSoon ?? '-'
+                  )}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiringSoon ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">janela próxima</div>
-              )}
-            </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
-                Expirado
+              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/icons/dinamite.png" alt="" aria-hidden className="h-5 w-5" />
+                  Expirado
+                </span>
+                <span className="text-xs text-blue-200/70 font-mono">
+                  {showOverviewLoadingProgress ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                      {loadingPercent}%
+                    </span>
+                  ) : (
+                    overviewNotifications?.counts?.expiredWithStock ?? '-'
+                  )}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-lg text-blue-50 font-mono">{overviewNotifications?.counts?.expiredWithStock ?? '-'}</div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">risco imediato</div>
-              )}
-            </CardContent>
           </Card>
 
           <Card className="bg-black/20 border border-white/10">
             <CardHeader className="flex items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm flex items-center gap-2">
-                <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
-                Movimentações
+              <CardTitle className="text-white text-sm flex items-center gap-2 w-full justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />
+                  Movimentações
+                </span>
+                <span className="text-xs text-blue-200/70 font-mono">
+                  {showOverviewLoadingProgress ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+                      {loadingPercent}%
+                    </span>
+                  ) : (
+                    <>
+                      +{overviewMovResumo?.entradaQtd ?? '-'} • -{overviewMovResumo?.saidaQtd ?? '-'}
+                    </>
+                  )}
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-xs text-blue-200/60">{overviewPeriodLabel}</div>
-              <div className="text-sm text-blue-100/80">
-                <span className="font-mono">+{overviewMovResumo?.entradaQtd ?? '-'}</span> •{' '}
-                <span className="font-mono">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-              </div>
-              {showOverviewLoadingProgress ? (
-                <div className="text-xs text-blue-200/70 inline-flex items-center gap-2">
-                  <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                  Carregando {loadingPercent}%
-                </div>
-              ) : (
-                <div className="text-xs text-blue-200/60">
-                  saldo: <span className="font-mono">{overviewMovResumo ? fmtMoneyBRL(overviewMovResumo.saldoLiquido || 0) : '-'}</span>
-                </div>
-              )}
-            </CardContent>
-	        </Card>
+          </Card>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -7012,54 +7024,77 @@ export function InsumosModule() {
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                            <Card className="bg-black/20 border border-white/10">
-		                              <CardHeader className="relative pr-24">
-                                <div className="flex items-start gap-3 min-w-0">
-                                  <button
-                                    type="button"
-                                    {...handleProps}
-                                    className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                                    title="Arraste para mover"
-                                    aria-label="Mover"
-                                  >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path
-                                        d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
-                                        stroke="currentColor"
-                                        strokeWidth="3"
-                                        strokeLinecap="round"
-                                      />
-                                    </svg>
-                                  </button>
-                                  <div className="space-y-1 min-w-0">
+                              <CardHeader className="relative pr-24">
+                                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <button
+                                      type="button"
+                                      {...handleProps}
+                                      className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                      title="Arraste para mover"
+                                      aria-label="Mover"
+                                    >
+                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path
+                                          d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
+                                          stroke="currentColor"
+                                          strokeWidth="3"
+                                          strokeLinecap="round"
+                                        />
+                                      </svg>
+                                    </button>
                                     <CardTitle className="text-white text-base">Alertas</CardTitle>
-                                    <div className="flex flex-wrap items-center gap-2 text-xs text-blue-200/60">
-                                      <span>
-                                        estoque:{' '}
-                                        <span className="font-mono">
-                                          {Number.isFinite(Number(overviewNotifications?.counts?.lowStock))
-                                            ? Number(overviewNotifications?.counts?.lowStock)
-                                            : (Array.isArray(insightsAlertas) ? insightsAlertas.length : 0)}
-                                        </span>
-                                      </span>
-                                      <span>•</span>
-                                      <span>
-                                        validade:{' '}
-                                        <span className="font-mono">
-                                          {(Number(overviewNotifications?.counts?.expiringSoon) || 0) + (Number(overviewNotifications?.counts?.expiredWithStock) || 0)}
-                                        </span>
-                                      </span>
-                                      <span>•</span>
-                                      <span>
-                                        cadastro:{' '}
-                                        <span className="font-mono">
-                                          {overviewQuality?.summary?.total != null ? overviewQuality.summary.total : 0}
-                                        </span>
-                                      </span>
-                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2 ml-auto">
+                                    <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
+                                      <SelectTrigger className="h-8 w-28">
+                                        <SelectValue placeholder="Tipo" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="TODOS">Todos</SelectItem>
+                                        <SelectItem value="ATENCAO">Atenção</SelectItem>
+                                        <SelectItem value="URGENTE">Crítico</SelectItem>
+                                        <SelectItem value="VENCENDO">Vencendo</SelectItem>
+                                        <SelectItem value="EXPIRADO">Expirado</SelectItem>
+                                        <SelectItem value="INFO">Info</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Select
+                                      value={alertasCategoria || '__ALL__'}
+                                      onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
+                                    >
+                                      <SelectTrigger className="h-8 w-40">
+                                        <SelectValue placeholder="Categoria" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__ALL__">Todas</SelectItem>
+                                        {alertasCategorias.map((c) => (
+                                          <SelectItem key={c} value={c}>
+                                            {c}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <Input
+                                      value={alertasBusca}
+                                      onChange={(e) => setAlertasBusca(e.target.value)}
+                                      placeholder="Buscar"
+                                      className="h-8 w-48"
+                                    />
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8"
+                                      onClick={() => setPurchaseDialogOpen(true)}
+                                      disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                                      title="Ver lista completa de reposição"
+                                    >
+                                      Lista de compra
+                                    </Button>
                                   </div>
                                 </div>
-	                                <div className="absolute top-2 right-2 flex items-center gap-2">
-	                                  <Button
+                                <div className="absolute top-2 right-2 flex items-center gap-2">
+                                  <Button
 	                                    size="icon"
 	                                    variant="ghost"
 	                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
@@ -7081,63 +7116,6 @@ export function InsumosModule() {
                               </CardHeader>
                               {panelOpen ? (
                                 <CardContent className="space-y-2">
-                                  <div className="flex flex-wrap items-end gap-2">
-                                    <div className="w-36">
-                                      <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
-                                      <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                                        <SelectTrigger>
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="TODOS">Todos</SelectItem>
-                                          <SelectItem value="ATENCAO">Atenção</SelectItem>
-                                          <SelectItem value="URGENTE">Crítico</SelectItem>
-                                          <SelectItem value="VENCENDO">Vencendo</SelectItem>
-                                          <SelectItem value="EXPIRADO">Expirado</SelectItem>
-                                          <SelectItem value="INFO">Info</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                    <div className="w-44">
-                                      <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                                      <Select
-                                        value={alertasCategoria || '__ALL__'}
-                                        onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
-                                      >
-                                        <SelectTrigger>
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="__ALL__">Todas</SelectItem>
-                                          {alertasCategorias.map((c) => (
-                                            <SelectItem key={c} value={c}>
-                                              {c}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                    <div className="min-w-[220px] flex-1">
-                                      <div className="text-xs text-blue-200/70 mb-1">Buscar</div>
-                                      <Input
-                                        value={alertasBusca}
-                                        onChange={(e) => setAlertasBusca(e.target.value)}
-                                        placeholder="produto, categoria, código…"
-                                      />
-                                    </div>
-                                    <div className="ml-auto">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setPurchaseDialogOpen(true)}
-                                        disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                                        title="Ver lista completa de reposição"
-                                      >
-                                        Lista de compra
-                                      </Button>
-                                    </div>
-                                  </div>
-
                                   <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
                                     <table className="w-full table-fixed text-sm">
                                       <thead className="bg-black/30 text-blue-100/80">
@@ -7363,8 +7341,8 @@ export function InsumosModule() {
 	                      return (
 	                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                          <Card className="bg-black/20 border border-white/10">
-		                            <CardHeader className="relative pr-24">
-                                <div className="flex items-start gap-3 min-w-0">
+                              <CardHeader className="relative pr-24">
+                                <div className="flex items-center gap-3 min-w-0">
                                   <button
                                     type="button"
                                     {...handleProps}
@@ -7376,9 +7354,9 @@ export function InsumosModule() {
                                       <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                                     </svg>
                                   </button>
-                                  <div className="min-w-0">
+                                  <div className="flex items-center gap-2 min-w-0 w-full">
                                     <CardTitle className="text-white text-base">Gráficos</CardTitle>
-                                    <div className="flex items-center gap-2 mt-2">
+                                    <div className="flex items-center gap-2 ml-auto">
                                       <Button
                                         variant="outline"
                                         size="sm"
@@ -7398,7 +7376,7 @@ export function InsumosModule() {
                                       </Button>
                                     </div>
                                   </div>
-	                                </div>
+                                </div>
 	                                <div className="absolute top-2 right-2 flex items-center gap-2">
 	                                  <Button
 	                                    size="icon"
@@ -8824,11 +8802,12 @@ export function InsumosModule() {
 	        className="space-y-3 flex-1 min-w-0"
 		      >
 		        <Card className="bg-black/20 border border-white/10">
-			          <CardHeader className="relative pr-24">
-			            <div className="flex items-start gap-3 min-w-0">
-			              <button
-			                type="button"
-			                {...dragProvided.dragHandleProps}
+                <CardHeader className="relative pr-24">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        type="button"
+                        {...dragProvided.dragHandleProps}
 			                className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
 			                title="Arraste para mover"
 			                aria-label="Mover"
@@ -8837,12 +8816,31 @@ export function InsumosModule() {
 		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
 		                </svg>
 		              </button>
-		              <div className="min-w-0">
-		                <CardTitle className="text-white text-lg">Movimentações</CardTitle>
-			                <div className="text-sm text-blue-100/70">Histórico operacional (entradas, saídas, ajustes e transferências).</div>
-			              </div>
-			            </div>
-		              <div className="absolute top-2 right-2 flex items-center gap-1">
+                      <CardTitle className="text-white text-lg">Movimentações</CardTitle>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 ml-auto">
+                      <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
+                        <SelectTrigger className="h-8 w-28">
+                          <SelectValue placeholder="Tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="TODOS">Todos</SelectItem>
+                          <SelectItem value="ENTRADA">Entrada</SelectItem>
+                          <SelectItem value="SAÍDA">Saída</SelectItem>
+                          <SelectItem value="AJUSTE">Ajuste</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <BrDatePickerInput value={movDe} onChange={setMovDe} placeholder="De" ariaLabel="De" className="h-8 w-28" />
+                      <BrDatePickerInput value={movAte} onChange={setMovAte} placeholder="Até" ariaLabel="Até" className="h-8 w-28" />
+                      <Input
+                        value={movSearch}
+                        onChange={(e) => setMovSearch(e.target.value)}
+                        placeholder="Buscar"
+                        className="h-8 w-44"
+                      />
+                    </div>
+                  </div>
+                  <div className="absolute top-2 right-2 flex items-center gap-1">
 		                <Button
 		                  size="icon"
 		                  variant="ghost"
@@ -8955,41 +8953,7 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="w-48">
-            <div className="text-xs text-blue-200/70 mb-1">Tipo</div>
-            <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="TODOS">Todos</SelectItem>
-                <SelectItem value="ENTRADA">Entrada</SelectItem>
-                <SelectItem value="SAÍDA">Saída</SelectItem>
-                <SelectItem value="AJUSTE">Ajuste</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="w-48">
-            <div className="text-xs text-blue-200/70 mb-1">De</div>
-            <BrDatePickerInput value={movDe} onChange={setMovDe} placeholder="DD/MM/AA" ariaLabel="De" />
-          </div>
-          <div className="w-48">
-            <div className="text-xs text-blue-200/70 mb-1">Até</div>
-            <BrDatePickerInput value={movAte} onChange={setMovAte} placeholder="DD/MM/AA" ariaLabel="Até" />
-          </div>
-          <div className="min-w-[220px] flex-1">
-            <div className="text-xs text-blue-200/70 mb-1">Buscar insumo</div>
-            <Input
-              value={movSearch}
-              onChange={(e) => setMovSearch(e.target.value)}
-              placeholder="nome, marca, categoria, código"
-              className="w-full"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end" />
+          <div className="flex items-center justify-end" />
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
           <div>
