@@ -44,6 +44,16 @@ function BuildHeaderBadge() {
     )
 }
 
+function fmtMoneyBRLCompact(value: number) {
+    const num = Number(value) || 0
+    try {
+        return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 0 }).format(num)
+    } catch {
+        const rounded = Math.round(num / 1000)
+        return `R$ ${rounded}k`
+    }
+}
+
 type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
 
 type ApiError = {
@@ -340,6 +350,11 @@ export default function AppFunctionalNeatlab() {
 			        unidades: string[]
 			        allowedUnits: string[]
 			    } | null>(null)
+                    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<{
+                        value: number | null
+                        loading: boolean
+                        percent: number | null
+                    } | null>(null)
 				    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
 				    const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
 				    const setSelectedUnitRef = React.useRef(setSelectedUnit)
@@ -400,6 +415,21 @@ export default function AppFunctionalNeatlab() {
 			            window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: effectiveUnit } }))
 			        } catch { /* ignore */ }
 			    }, [active, effectiveUnit])
+
+                React.useEffect(() => {
+                    const handler = (event: Event) => {
+                        const detail = (event as CustomEvent)?.detail || {}
+                        const rawValue = detail?.value
+                        const value = rawValue == null || Number.isNaN(Number(rawValue)) ? null : Number(rawValue)
+                        setInsumosHeaderEstoque({
+                            value,
+                            loading: Boolean(detail?.loading),
+                            percent: typeof detail?.percent === 'number' ? detail.percent : null
+                        })
+                    }
+                    window.addEventListener('skincos:insumos:estoque', handler)
+                    return () => window.removeEventListener('skincos:insumos:estoque', handler)
+                }, [])
 
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
 	    React.useEffect(() => {
@@ -1065,6 +1095,21 @@ export default function AppFunctionalNeatlab() {
 	                                </div>
 
 		                                <div className="flex items-center gap-4">
+		                                    {active === 'insumos' ? (
+		                                        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
+		                                            <span className="uppercase tracking-wide text-blue-200/60">Estoque</span>
+		                                            <span className="font-mono text-blue-50">
+		                                                {insumosHeaderEstoque?.loading ? (
+		                                                    <span className="inline-flex items-center gap-2">
+		                                                        <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+		                                                        {typeof insumosHeaderEstoque?.percent === 'number' ? `${insumosHeaderEstoque.percent}%` : '...'}
+		                                                    </span>
+		                                                ) : (
+		                                                    insumosHeaderEstoque?.value != null ? fmtMoneyBRLCompact(insumosHeaderEstoque.value) : '-'
+		                                                )}
+		                                            </span>
+		                                        </div>
+		                                    ) : null}
 		                                    <BuildHeaderBadge />
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-center gap-1">
