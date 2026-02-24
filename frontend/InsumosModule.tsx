@@ -1845,15 +1845,36 @@ export function InsumosModule() {
     }
   }, [])
 
+  const dragScrollYRef = React.useRef<number | null>(null)
+
+  const onDragStartLayout = React.useCallback(() => {
+    if (typeof window === 'undefined') return
+    dragScrollYRef.current = window.scrollY
+  }, [])
+
   const onDragEndLayout = React.useCallback(
     (result: DropResult) => {
-      if (!result.destination) return
-      if (result.source.droppableId !== result.destination.droppableId) return
+      const restore = dragScrollYRef.current
+      dragScrollYRef.current = null
+      const restoreScroll = () => {
+        if (restore != null && typeof window !== 'undefined') {
+          requestAnimationFrame(() => window.scrollTo({ top: restore }))
+        }
+      }
+      if (!result.destination) {
+        restoreScroll()
+        return
+      }
+      if (result.source.droppableId !== result.destination.droppableId) {
+        restoreScroll()
+        return
+      }
 
       if (result.source.droppableId === 'overview-panels') {
         const next = moveIdInList(visibleOverviewPanels, result.source.index, result.destination.index)
         persistOverviewPanels(next)
         scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
+        restoreScroll()
         return
       }
 
@@ -1861,6 +1882,7 @@ export function InsumosModule() {
         const next = moveIdInList(visibleMainPanels, result.source.index, result.destination.index)
         persistMainPanels(next)
         scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
+        restoreScroll()
       }
     },
     [
@@ -5625,7 +5647,7 @@ export function InsumosModule() {
           </div>
         </div>
       ) : null}
-      <DragDropContext onDragEnd={onDragEndLayout}>
+      <DragDropContext onDragStart={onDragStartLayout} onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
         <DialogContent size="wideTable" className={dialogWideClass}>
           <DialogHeader>
@@ -6937,8 +6959,8 @@ export function InsumosModule() {
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                            <Card className="bg-black/20 border border-white/10">
-                              <CardHeader className="relative pr-24">
-                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center">
+                              <CardHeader className="flex flex-col gap-2">
+                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
                                   <div className="flex items-center gap-3 min-w-0">
                                     <button
                                       type="button"
@@ -7058,42 +7080,42 @@ export function InsumosModule() {
                                       placeholder="Buscar"
                                       className="h-8 min-w-[140px] flex-1 max-w-[320px]"
                                     />
-                                  </div>
-                                </div>
-                                <div className="absolute top-2 right-2 flex items-center gap-2">
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                    onClick={() => setPurchaseDialogOpen(true)}
-                                    disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                                    title="Lista de compra"
-                                    aria-label="Lista de compra"
-                                  >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                      <circle cx="9" cy="20" r="1.6" fill="currentColor" />
-                                      <circle cx="17" cy="20" r="1.6" fill="currentColor" />
-                                    </svg>
-                                  </Button>
-                                  <Button
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                        onClick={() => setPurchaseDialogOpen(true)}
+                                        disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                                        title="Lista de compra"
+                                        aria-label="Lista de compra"
+                                      >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                          <circle cx="9" cy="20" r="1.6" fill="currentColor" />
+                                          <circle cx="17" cy="20" r="1.6" fill="currentColor" />
+                                        </svg>
+                                      </Button>
+                                      <Button
 	                                    size="icon"
 	                                    variant="ghost"
 	                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
 	                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
-                                    title={panelOpen ? 'Contrair' : 'Expandir'}
-                                    aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                                  >
-                                    {panelOpen ? (
-                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                      </svg>
-                                    ) : (
-                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                      </svg>
-                                    )}
-                                  </Button>
+                                        title={panelOpen ? 'Contrair' : 'Expandir'}
+                                        aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                                      >
+                                        {panelOpen ? (
+                                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                            <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                        ) : (
+                                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                        )}
+                                      </Button>
+                                    </div>
+                                  </div>
                                 </div>
                               </CardHeader>
                               {panelOpen ? (
@@ -7368,81 +7390,79 @@ export function InsumosModule() {
 	                      return (
 	                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                          <Card className="bg-black/20 border border-white/10">
-                              <CardHeader className="relative pr-24">
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <button
-                                    type="button"
-                                    {...handleProps}
-                                    className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                                    title="Arraste para mover"
-                                    aria-label="Mover"
-                                  >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                                    </svg>
-                                  </button>
-                                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                              <CardHeader className="flex flex-col gap-2">
+                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:justify-between">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <button
+                                      type="button"
+                                      {...handleProps}
+                                      className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+                                      title="Arraste para mover"
+                                      aria-label="Mover"
+                                    >
+                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                                      </svg>
+                                    </button>
                                     <CardTitle className="text-white text-base">Gráficos</CardTitle>
-                                    <div className="flex items-center gap-2">
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        onClick={() => {
-                                          if (chartSlots.length >= MAX_CHARTS) return
-                                          setChartSlots((prev) => [
-                                            ...prev,
-                                            { presetId: 'movements', groupBy: 'tempo', mode: 'inout', metric: 'qtd', view: 'bar', topN: 8 }
-                                          ])
-                                        }}
-                                        disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
-                                        title="Adicionar gráfico"
-                                        aria-label="Adicionar gráfico"
-                                      >
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                          <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                                        </svg>
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
-                                        disabled={overviewLoading || insightsLoading}
-                                        title="Resetar gráficos"
-                                        aria-label="Resetar gráficos"
-                                      >
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                          <path
-                                            d="M20 12a8 8 0 1 1-2.34-5.66"
-                                            stroke="currentColor"
-                                            strokeWidth="2.2"
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                          />
-                                          <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                      </Button>
-                                    </div>
                                   </div>
-                                </div>
-	                                <div className="absolute top-2 right-2 flex items-center gap-2">
-	                                  <Button
-	                                    size="icon"
-	                                    variant="ghost"
-	                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
-                                    title={panelOpen ? 'Contrair' : 'Expandir'}
-                                    aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                                  >
-                                    {panelOpen ? (
-                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                  <div className="flex flex-1 items-center justify-end gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      onClick={() => {
+                                        if (chartSlots.length >= MAX_CHARTS) return
+                                        setChartSlots((prev) => [
+                                          ...prev,
+                                          { presetId: 'movements', groupBy: 'tempo', mode: 'inout', metric: 'qtd', view: 'bar', topN: 8 }
+                                        ])
+                                      }}
+                                      disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
+                                      title="Adicionar gráfico"
+                                      aria-label="Adicionar gráfico"
+                                    >
+                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
                                       </svg>
-                                    ) : (
-                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+                                      disabled={overviewLoading || insightsLoading}
+                                      title="Resetar gráficos"
+                                      aria-label="Resetar gráficos"
+                                    >
+                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path
+                                          d="M20 12a8 8 0 1 1-2.34-5.66"
+                                          stroke="currentColor"
+                                          strokeWidth="2.2"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                        />
+                                        <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                                       </svg>
-                                    )}
-                                  </Button>
+                                    </Button>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                                      onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
+                                      title={panelOpen ? 'Contrair' : 'Expandir'}
+                                      aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                                    >
+                                      {panelOpen ? (
+                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                      ) : (
+                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                      )}
+                                    </Button>
+                                  </div>
                                 </div>
                               </CardHeader>
                             {panelOpen ? (
@@ -8849,8 +8869,8 @@ export function InsumosModule() {
 	        className="space-y-3 flex-1 min-w-0"
 		      >
 		        <Card className="bg-black/20 border border-white/10">
-                <CardHeader className="relative pr-24">
-                  <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center">
+                <CardHeader className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <button
                         type="button"
@@ -8912,68 +8932,73 @@ export function InsumosModule() {
                         placeholder="Buscar"
                         className="h-8 min-w-[140px] w-64"
                       />
-                    </div>
-                  </div>
-                  <div className="absolute top-2 right-2 flex items-center gap-1">
+                      <div className="flex items-center gap-2 shrink-0">
 		                <Button
 		                  size="icon"
 		                  variant="ghost"
 		                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
 		                  onClick={() => openInsumosListModal()}
-                  title="Abrir lista de insumos"
-                  aria-label="Abrir lista de insumos"
-                >
-                  <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-6 w-6" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                  onClick={() => {
-                    const deIso = dateInputToIso(movDe)
-                    const ateIso = dateInputToIso(movAte)
-                    const params = new URLSearchParams({
-                      unidade,
-                      ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
-                      ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-                      ...(deIso ? { de: deIso } : {}),
-                      ...(ateIso ? { ate: ateIso } : {})
-                    })
-                    window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
-                  }}
-                  disabled={!isAuthed}
-                  title="Exportar CSV"
-                  aria-label="Exportar CSV"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path
-                      d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                  onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
-                title={movPanelOpen ? 'Contrair' : 'Expandir'}
-                aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
-              >
-                {movPanelOpen ? (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                      title="Abrir lista de insumos"
+                      aria-label="Abrir lista de insumos"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path d="M8 6h12M8 12h12M8 18h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                        <circle cx="5" cy="6" r="1.5" fill="currentColor" />
+                        <circle cx="5" cy="12" r="1.5" fill="currentColor" />
+                        <circle cx="5" cy="18" r="1.5" fill="currentColor" />
+                      </svg>
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                      onClick={() => {
+                        const deIso = dateInputToIso(movDe)
+                        const ateIso = dateInputToIso(movAte)
+                        const params = new URLSearchParams({
+                          unidade,
+                          ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
+                          ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+                          ...(deIso ? { de: deIso } : {}),
+                          ...(ateIso ? { ate: ateIso } : {})
+                        })
+                        window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+                      }}
+                      disabled={!isAuthed}
+                      title="Exportar CSV"
+                      aria-label="Exportar CSV"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16"
+                          stroke="currentColor"
+                          strokeWidth="2.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                      onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
+                    title={movPanelOpen ? 'Contrair' : 'Expandir'}
+                    aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
+                  >
+                    {movPanelOpen ? (
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : (
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
 		                )}
 		              </Button>
-		            </div>
+                      </div>
+                    </div>
+                  </div>
 		          </CardHeader>
           {movPanelOpen ? (
             <CardContent className="space-y-3">
