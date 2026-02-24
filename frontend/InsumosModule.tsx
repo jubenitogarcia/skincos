@@ -1249,11 +1249,6 @@ export function InsumosModule() {
     'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
   >('dataHora')
   const [movSortDir, setMovSortDir] = React.useState<'asc' | 'desc'>('desc')
-  const [movPagina, setMovPagina] = React.useState(1)
-  const [movLimite, setMovLimite] = React.useState(50)
-  const [movTotal, setMovTotal] = React.useState<number | null>(null)
-  const [movHasMore, setMovHasMore] = React.useState(false)
-  const movRef = React.useRef<Movimentacao[]>([])
   const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
@@ -1314,9 +1309,11 @@ export function InsumosModule() {
 	  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
 	  const [insightsTurnover, setInsightsTurnover] = React.useState<{ saida?: any; entrada?: any } | null>(null)
   type AlertasStatusFilter = 'TODOS' | 'ATENCAO' | 'URGENTE' | 'VENCENDO' | 'EXPIRADO' | 'INFO'
+  type AlertasFluxoFilter = 'TODOS' | 'ENTRADA' | 'SAIDA' | 'DESCARTE' | 'TRANSFERENCIA'
   const [alertasStatus, setAlertasStatus] = React.useState<AlertasStatusFilter>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasMarca, setAlertasMarca] = React.useState('')
+  const [alertasFluxo, setAlertasFluxo] = React.useState<AlertasFluxoFilter>('TODOS')
   const [alertasBusca, setAlertasBusca] = React.useState('')
   type AlertasSortKey = 'produto' | 'categoria' | 'status' | 'acao' | 'atual' | 'min' | 'dif' | 'percentual'
   const [alertasSortKey, setAlertasSortKey] = React.useState<AlertasSortKey>('status')
@@ -3496,37 +3493,39 @@ export function InsumosModule() {
     if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
   }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos, insumosListModalOpen])
 
-  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number; append?: boolean }) => {
+  const loadMovimentacoes = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setMovLoading(true)
     try {
-      const append = opts?.append === true
-      const pagina = Math.max(1, opts?.pagina ?? (append ? movPagina + 1 : 1))
-      const limite = Math.max(1, Math.min(200, opts?.limite ?? movLimite))
-      const params = new URLSearchParams()
-      params.set('unidade', unidade)
-      params.set('limite', String(limite))
-      params.set('pagina', String(pagina))
-      if (movTipo !== 'TODOS') params.set('tipo', movTipo)
-      const codigo = selectedCodigoBarras.trim()
-      if (codigo) params.set('codigoBarras', codigo)
-      const deIso = dateInputToIso(movDe)
-      const ateIso = dateInputToIso(movAte)
-      if (deIso) params.set('de', deIso)
-      if (ateIso) params.set('ate', ateIso)
-      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
-        `/movimentacoes?${params.toString()}`
-      )
-      const list = (out as any)?.movimentos ?? out?.data
-      const items = Array.isArray(list) ? list : []
-      const merged = append ? [...(movRef.current || []), ...items] : items
+      const limite = 200
+      let pagina = 1
+      let merged: Movimentacao[] = []
+      let totalOut: number | null = null
+      while (true) {
+        const params = new URLSearchParams()
+        params.set('unidade', unidade)
+        params.set('limite', String(limite))
+        params.set('pagina', String(pagina))
+        if (movTipo !== 'TODOS') params.set('tipo', movTipo)
+        const codigo = selectedCodigoBarras.trim()
+        if (codigo) params.set('codigoBarras', codigo)
+        const deIso = dateInputToIso(movDe)
+        const ateIso = dateInputToIso(movAte)
+        if (deIso) params.set('de', deIso)
+        if (ateIso) params.set('ate', ateIso)
+        const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
+          `/movimentacoes?${params.toString()}`
+        )
+        const list = (out as any)?.movimentos ?? out?.data
+        const items = Array.isArray(list) ? list : []
+        merged = [...merged, ...items]
+        const total = Number((out as any)?.resumo?.totalMovimentacoes)
+        if (Number.isFinite(total)) totalOut = total
+        if (items.length < limite) break
+        if (totalOut != null && merged.length >= totalOut) break
+        pagina += 1
+      }
       setMovimentacoes(merged)
-      const total = Number((out as any)?.resumo?.totalMovimentacoes)
-      const totalOut = Number.isFinite(total) ? total : null
-      setMovTotal(totalOut)
-      setMovPagina(pagina)
-      setMovLimite(limite)
-      setMovHasMore(totalOut != null ? merged.length < totalOut : items.length >= limite)
       setMovLoadError(null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -3536,45 +3535,19 @@ export function InsumosModule() {
         code: (e as any)?.code ? String((e as any).code) : undefined
       })
       setMovimentacoes([])
-      setMovTotal(null)
-      setMovHasMore(false)
     } finally {
-      if (!opts?.append) setMovLoaded(true)
+      setMovLoaded(true)
       setMovLoading(false)
     }
-  }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, selectedCodigoBarras, unidade])
-
-  const loadMoreMovimentacoes = React.useCallback(() => {
-    if (!canUseApi || !isAuthed) return
-    if (movLoading) return
-    if (!movHasMore) return
-    void loadMovimentacoes({ append: true, limite: movLimite })
-  }, [canUseApi, isAuthed, loadMovimentacoes, movHasMore, movLimite, movLoading])
-
-  const onMovScroll = React.useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const el = e.currentTarget
-      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
-      if (remaining < 220) loadMoreMovimentacoes()
-    },
-    [loadMoreMovimentacoes]
-  )
+  }, [canUseApi, isAuthed, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
   React.useEffect(() => {
-    const el = movListContainerRef.current
-    if (!el) return
-    if (!movHasMore || movLoading) return
-    if (el.scrollHeight <= el.clientHeight + 80) loadMoreMovimentacoes()
-  }, [loadMoreMovimentacoes, movHasMore, movLoading, movimentacoes.length])
-
-  React.useEffect(() => {
-    setMovPagina(1)
     try {
       movListContainerRef.current?.scrollTo?.({ top: 0 })
     } catch {
       // ignore
     }
-  }, [unidade, movAte, movDe, movLimite, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
+  }, [unidade, movAte, movDe, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -5367,11 +5340,28 @@ export function InsumosModule() {
     return map
   }, [overviewActionables])
 
+  const getAlertaFluxo = React.useCallback(
+    (row: AlertasLinha) => {
+      const code = String(row.codigoBarras || '').trim()
+      const rec = code ? alertasRecommendationByCode.get(code) || null : null
+      if (rec?.kind === 'TRANSFERENCIA') return 'TRANSFERENCIA'
+      if (rec?.kind === 'ENTRADA') return 'ENTRADA'
+      if (row.tags.includes('EXPIRADO')) return 'DESCARTE'
+      if (row.tags.includes('VENCENDO')) return 'SAIDA'
+      return ''
+    },
+    [alertasRecommendationByCode]
+  )
+
   const alertasLinhasFiltradas = React.useMemo(() => {
     const q = alertasBusca.trim().toLowerCase()
     return alertasLinhas.filter((a) => {
       if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
       if (alertasMarca && String(a.marca || '') !== alertasMarca) return false
+      if (alertasFluxo !== 'TODOS') {
+        const fluxo = getAlertaFluxo(a)
+        if (fluxo !== alertasFluxo) return false
+      }
       if (alertasStatus !== 'TODOS') {
         if (alertasStatus === 'ATENCAO') {
           if (!a.tags.includes('ATENCAO') && !a.tags.includes('VENCENDO')) return false
@@ -5385,7 +5375,7 @@ export function InsumosModule() {
       const hay = [a.produto, a.categoria, a.marca, a.codigoBarras, a.qualityMessage].filter(Boolean).join(' ').toLowerCase()
       return hay.includes(q)
     })
-  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasMarca, alertasStatus])
+  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasMarca, alertasStatus, alertasFluxo, getAlertaFluxo])
 
   const alertasLinhasOrdenadas = React.useMemo(() => {
     const rows = alertasLinhasFiltradas.map((row, index) => ({ row, index }))
@@ -5610,10 +5600,6 @@ export function InsumosModule() {
     pickInsumoForMov,
     selectedCodigoBarras
   ])
-
-  React.useEffect(() => {
-    movRef.current = movimentacoes
-  }, [movimentacoes])
 
   return (
     <div ref={rootRef} className="px-3 py-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -6977,7 +6963,7 @@ export function InsumosModule() {
                                         />
                                       </svg>
                                     </button>
-                                    <CardTitle className="text-white text-base">Alertas</CardTitle>
+                                    <CardTitle className="text-white text-base">Avisos</CardTitle>
                                     <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
                                       <span className="inline-flex items-center gap-1">
                                         <span
@@ -7033,10 +7019,10 @@ export function InsumosModule() {
                                       </span>
                                     </div>
                                   </div>
-                                  <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
+                                  <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 justify-end">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
                                       <SelectTrigger className="h-8 w-24">
-                                        <SelectValue placeholder="Tipo" />
+                                        <SelectValue placeholder="Status" />
                                       </SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="TODOS">Todos</SelectItem>
@@ -7053,7 +7039,7 @@ export function InsumosModule() {
                                         <SelectValue placeholder="Categoria" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="__ALL__">Todas</SelectItem>
+                                        <SelectItem value="__ALL__">Todos</SelectItem>
                                         {alertasCategorias.map((c) => (
                                           <SelectItem key={c} value={c}>
                                             {c}
@@ -7061,11 +7047,23 @@ export function InsumosModule() {
                                         ))}
                                       </SelectContent>
                                     </Select>
+                                    <Select value={alertasFluxo} onValueChange={(v) => setAlertasFluxo(v as any)}>
+                                      <SelectTrigger className="h-8 w-28">
+                                        <SelectValue placeholder="Fluxo" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="TODOS">Todos</SelectItem>
+                                        <SelectItem value="ENTRADA">Entrada</SelectItem>
+                                        <SelectItem value="SAIDA">Saída</SelectItem>
+                                        <SelectItem value="DESCARTE">Descarte</SelectItem>
+                                        <SelectItem value="TRANSFERENCIA">Transferência</SelectItem>
+                                      </SelectContent>
+                                    </Select>
                                     <Input
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 min-w-[140px] flex-1 max-w-[320px] ml-auto"
+                                      className="h-8 min-w-[140px] flex-1 max-w-[320px]"
                                     />
                                   </div>
                                 </div>
@@ -8874,10 +8872,10 @@ export function InsumosModule() {
                       </button>
                       <CardTitle className="text-white text-lg">Movimentações</CardTitle>
                     </div>
-                    <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
+                    <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 justify-end">
                       <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
                         <SelectTrigger className="h-8 w-28">
-                          <SelectValue placeholder="Tipo" />
+                          <SelectValue placeholder="Fluxo" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="TODOS">Todos</SelectItem>
@@ -8887,10 +8885,45 @@ export function InsumosModule() {
                         </SelectContent>
                       </Select>
                       <Input
+                        value={movFilterProduto}
+                        onChange={(e) => setMovFilterProduto(e.target.value)}
+                        placeholder="Produto"
+                        className="h-8 min-w-[140px] w-48"
+                      />
+                      <Select
+                        value={movFilterCategoria || '__ALL__'}
+                        onValueChange={(v) => setMovFilterCategoria(v === '__ALL__' ? '' : String(v))}
+                      >
+                        <SelectTrigger className="h-8 w-36">
+                          <SelectValue placeholder="Categoria" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__ALL__">Todos</SelectItem>
+                          {lotCategorias.map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={movFilterMarca || '__ALL__'} onValueChange={(v) => setMovFilterMarca(v === '__ALL__' ? '' : String(v))}>
+                        <SelectTrigger className="h-8 w-32">
+                          <SelectValue placeholder="Marca" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__ALL__">Todos</SelectItem>
+                          {insumosMarcas.map((m) => (
+                            <SelectItem key={m} value={m}>
+                              {m}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 min-w-[140px] flex-1 max-w-[320px] ml-auto"
+                        className="h-8 min-w-[140px] w-64"
                       />
                     </div>
                   </div>
@@ -9007,49 +9040,7 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-          <div className="flex items-center justify-end" />
-
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
-          <div>
-            <span className="font-mono">{movimentacoesView.length}</span>
-            {movTotal != null ? (
-              <>
-                {' '}
-                de <span className="font-mono">{movTotal}</span>
-              </>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-6 text-xs font-mono text-blue-100/80">
-            {showOverviewLoadingProgress ? (
-              <span className="inline-flex items-center gap-2 text-blue-200/70">
-                <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                {loadingPercent}%
-              </span>
-            ) : (
-              <>
-                <div className="flex flex-col items-center leading-tight">
-                  <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
-                  <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                  <span className="text-[11px] text-blue-200/60">Estoque</span>
-                </div>
-                <div className="flex flex-col items-center leading-tight">
-                  <span className="text-emerald-300">
-                    +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
-                  </span>
-                  <span className="text-red-300">
-                    -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
-                  </span>
-                  <span className="text-[11px] text-blue-200/60">Valor</span>
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {movHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
-          </div>
-        </div>
-
-        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+        <div ref={movListContainerRef} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="w-full table-fixed text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
@@ -9067,78 +9058,45 @@ export function InsumosModule() {
                     ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string; widthClass?: string }>
                   ).map((col) => {
                     const isActive = !!col.key && movSortKey === col.key
-                    const hasSummary = col.key === 'estoque' || col.key === 'valor'
-                    const renderSummary = () => {
-                      if (!hasSummary) return null
-                      if (showOverviewLoadingProgress) {
-                        return (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-blue-200/70">
-                            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                            <span className="font-mono">{loadingPercent}%</span>
-                          </span>
-                        )
-                      }
-                      if (col.key === 'estoque') {
-                        return (
-                          <div className="flex flex-col items-center text-[11px] leading-tight font-mono">
-                            <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
-                            <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                          </div>
-                        )
-                      }
-                      return (
-                        <div className="flex flex-col items-center text-[11px] leading-tight font-mono">
-                          <span className="text-emerald-300">
-                            +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
-                          </span>
-                          <span className="text-red-300">
-                            -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
-                          </span>
-                        </div>
-                      )
-                    }
                     return (
                       <th
                         key={col.label}
                         className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap' : ''} ${col.widthClass || ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
                       >
-	                        <div className={`flex ${hasSummary ? 'flex-col items-center gap-1' : 'items-center justify-center gap-2'}`}>
-                            {renderSummary()}
-                            <div className="flex items-center justify-center gap-2">
-                              {col.key ? (
-                                <button
-                                  type="button"
-                                  className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
-                                  onClick={() => {
-                                    if (movSortKey === col.key) {
-                                      setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                      return
-                                    }
-                                    setMovSortKey(col.key!)
-                                    setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
-                                  }}
-                                  aria-label={`Ordenar ${col.label}`}
-                                  title={`Ordenar ${col.label}`}
-                                >
-                                  {col.label}
-                                </button>
-                              ) : (
-                                <span>{col.label}</span>
-                              )}
-                              {col.key ? (
-                                <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
-                                  {isActive && movSortDir === 'asc' ? (
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  ) : (
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  )}
-                                </span>
-                              ) : null}
-                            </div>
+	                        <div className="flex items-center justify-center gap-2">
+                            {col.key ? (
+                              <button
+                                type="button"
+                                className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
+                                onClick={() => {
+                                  if (movSortKey === col.key) {
+                                    setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+                                    return
+                                  }
+                                  setMovSortKey(col.key!)
+                                  setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
+                                }}
+                                aria-label={`Ordenar ${col.label}`}
+                                title={`Ordenar ${col.label}`}
+                              >
+                                {col.label}
+                              </button>
+                            ) : (
+                              <span>{col.label}</span>
+                            )}
+                            {col.key ? (
+                              <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
+                                {isActive && movSortDir === 'asc' ? (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                ) : (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </span>
+                            ) : null}
 	                        </div>
 	                      </th>
                     )
