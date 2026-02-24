@@ -1309,9 +1309,11 @@ export function InsumosModule() {
 	  const [insightsTrends, setInsightsTrends] = React.useState<any | null>(null)
 	  const [insightsTurnover, setInsightsTurnover] = React.useState<{ saida?: any; entrada?: any } | null>(null)
   type AlertasStatusFilter = 'TODOS' | 'ATENCAO' | 'URGENTE' | 'VENCENDO' | 'EXPIRADO' | 'INFO'
+  type AlertasFluxoFilter = 'TODOS' | 'ENTRADA' | 'SAIDA' | 'DESCARTE' | 'TRANSFERENCIA'
   const [alertasStatus, setAlertasStatus] = React.useState<AlertasStatusFilter>('TODOS')
   const [alertasCategoria, setAlertasCategoria] = React.useState('')
   const [alertasMarca, setAlertasMarca] = React.useState('')
+  const [alertasFluxo, setAlertasFluxo] = React.useState<AlertasFluxoFilter>('TODOS')
   const [alertasBusca, setAlertasBusca] = React.useState('')
   type AlertasSortKey = 'produto' | 'categoria' | 'status' | 'acao' | 'atual' | 'min' | 'dif' | 'percentual'
   const [alertasSortKey, setAlertasSortKey] = React.useState<AlertasSortKey>('status')
@@ -5338,11 +5340,28 @@ export function InsumosModule() {
     return map
   }, [overviewActionables])
 
+  const getAlertaFluxo = React.useCallback(
+    (row: AlertasLinha) => {
+      const code = String(row.codigoBarras || '').trim()
+      const rec = code ? alertasRecommendationByCode.get(code) || null : null
+      if (rec?.kind === 'TRANSFERENCIA') return 'TRANSFERENCIA'
+      if (rec?.kind === 'ENTRADA') return 'ENTRADA'
+      if (row.tags.includes('EXPIRADO')) return 'DESCARTE'
+      if (row.tags.includes('VENCENDO')) return 'SAIDA'
+      return ''
+    },
+    [alertasRecommendationByCode]
+  )
+
   const alertasLinhasFiltradas = React.useMemo(() => {
     const q = alertasBusca.trim().toLowerCase()
     return alertasLinhas.filter((a) => {
       if (alertasCategoria && String(a.categoria || '') !== alertasCategoria) return false
       if (alertasMarca && String(a.marca || '') !== alertasMarca) return false
+      if (alertasFluxo !== 'TODOS') {
+        const fluxo = getAlertaFluxo(a)
+        if (fluxo !== alertasFluxo) return false
+      }
       if (alertasStatus !== 'TODOS') {
         if (alertasStatus === 'ATENCAO') {
           if (!a.tags.includes('ATENCAO') && !a.tags.includes('VENCENDO')) return false
@@ -5356,7 +5375,7 @@ export function InsumosModule() {
       const hay = [a.produto, a.categoria, a.marca, a.codigoBarras, a.qualityMessage].filter(Boolean).join(' ').toLowerCase()
       return hay.includes(q)
     })
-  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasMarca, alertasStatus])
+  }, [alertasBusca, alertasCategoria, alertasLinhas, alertasMarca, alertasStatus, alertasFluxo, getAlertaFluxo])
 
   const alertasLinhasOrdenadas = React.useMemo(() => {
     const rows = alertasLinhasFiltradas.map((row, index) => ({ row, index }))
@@ -6944,7 +6963,7 @@ export function InsumosModule() {
                                         />
                                       </svg>
                                     </button>
-                                    <CardTitle className="text-white text-base">Alertas</CardTitle>
+                                    <CardTitle className="text-white text-base">Avisos</CardTitle>
                                     <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
                                       <span className="inline-flex items-center gap-1">
                                         <span
@@ -7000,10 +7019,10 @@ export function InsumosModule() {
                                       </span>
                                     </div>
                                   </div>
-                                  <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
+                                  <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 justify-end">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
                                       <SelectTrigger className="h-8 w-24">
-                                        <SelectValue placeholder="Tipo" />
+                                        <SelectValue placeholder="Status" />
                                       </SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="TODOS">Todos</SelectItem>
@@ -7020,7 +7039,7 @@ export function InsumosModule() {
                                         <SelectValue placeholder="Categoria" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="__ALL__">Todas</SelectItem>
+                                        <SelectItem value="__ALL__">Todos</SelectItem>
                                         {alertasCategorias.map((c) => (
                                           <SelectItem key={c} value={c}>
                                             {c}
@@ -7028,11 +7047,23 @@ export function InsumosModule() {
                                         ))}
                                       </SelectContent>
                                     </Select>
+                                    <Select value={alertasFluxo} onValueChange={(v) => setAlertasFluxo(v as any)}>
+                                      <SelectTrigger className="h-8 w-28">
+                                        <SelectValue placeholder="Fluxo" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="TODOS">Todos</SelectItem>
+                                        <SelectItem value="ENTRADA">Entrada</SelectItem>
+                                        <SelectItem value="SAIDA">Saída</SelectItem>
+                                        <SelectItem value="DESCARTE">Descarte</SelectItem>
+                                        <SelectItem value="TRANSFERENCIA">Transferência</SelectItem>
+                                      </SelectContent>
+                                    </Select>
                                     <Input
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 min-w-[140px] flex-1 max-w-[320px] ml-auto"
+                                      className="h-8 min-w-[140px] flex-1 max-w-[320px]"
                                     />
                                   </div>
                                 </div>
