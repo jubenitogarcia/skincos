@@ -1249,11 +1249,6 @@ export function InsumosModule() {
     'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
   >('dataHora')
   const [movSortDir, setMovSortDir] = React.useState<'asc' | 'desc'>('desc')
-  const [movPagina, setMovPagina] = React.useState(1)
-  const [movLimite, setMovLimite] = React.useState(50)
-  const [movTotal, setMovTotal] = React.useState<number | null>(null)
-  const [movHasMore, setMovHasMore] = React.useState(false)
-  const movRef = React.useRef<Movimentacao[]>([])
   const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
@@ -3496,37 +3491,39 @@ export function InsumosModule() {
     if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
   }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos, insumosListModalOpen])
 
-  const loadMovimentacoes = React.useCallback(async (opts?: { pagina?: number; limite?: number; append?: boolean }) => {
+  const loadMovimentacoes = React.useCallback(async () => {
     if (!canUseApi || !isAuthed) return
     setMovLoading(true)
     try {
-      const append = opts?.append === true
-      const pagina = Math.max(1, opts?.pagina ?? (append ? movPagina + 1 : 1))
-      const limite = Math.max(1, Math.min(200, opts?.limite ?? movLimite))
-      const params = new URLSearchParams()
-      params.set('unidade', unidade)
-      params.set('limite', String(limite))
-      params.set('pagina', String(pagina))
-      if (movTipo !== 'TODOS') params.set('tipo', movTipo)
-      const codigo = selectedCodigoBarras.trim()
-      if (codigo) params.set('codigoBarras', codigo)
-      const deIso = dateInputToIso(movDe)
-      const ateIso = dateInputToIso(movAte)
-      if (deIso) params.set('de', deIso)
-      if (ateIso) params.set('ate', ateIso)
-      const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
-        `/movimentacoes?${params.toString()}`
-      )
-      const list = (out as any)?.movimentos ?? out?.data
-      const items = Array.isArray(list) ? list : []
-      const merged = append ? [...(movRef.current || []), ...items] : items
+      const limite = 200
+      let pagina = 1
+      let merged: Movimentacao[] = []
+      let totalOut: number | null = null
+      while (true) {
+        const params = new URLSearchParams()
+        params.set('unidade', unidade)
+        params.set('limite', String(limite))
+        params.set('pagina', String(pagina))
+        if (movTipo !== 'TODOS') params.set('tipo', movTipo)
+        const codigo = selectedCodigoBarras.trim()
+        if (codigo) params.set('codigoBarras', codigo)
+        const deIso = dateInputToIso(movDe)
+        const ateIso = dateInputToIso(movAte)
+        if (deIso) params.set('de', deIso)
+        if (ateIso) params.set('ate', ateIso)
+        const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
+          `/movimentacoes?${params.toString()}`
+        )
+        const list = (out as any)?.movimentos ?? out?.data
+        const items = Array.isArray(list) ? list : []
+        merged = [...merged, ...items]
+        const total = Number((out as any)?.resumo?.totalMovimentacoes)
+        if (Number.isFinite(total)) totalOut = total
+        if (items.length < limite) break
+        if (totalOut != null && merged.length >= totalOut) break
+        pagina += 1
+      }
       setMovimentacoes(merged)
-      const total = Number((out as any)?.resumo?.totalMovimentacoes)
-      const totalOut = Number.isFinite(total) ? total : null
-      setMovTotal(totalOut)
-      setMovPagina(pagina)
-      setMovLimite(limite)
-      setMovHasMore(totalOut != null ? merged.length < totalOut : items.length >= limite)
       setMovLoadError(null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -3536,45 +3533,19 @@ export function InsumosModule() {
         code: (e as any)?.code ? String((e as any).code) : undefined
       })
       setMovimentacoes([])
-      setMovTotal(null)
-      setMovHasMore(false)
     } finally {
-      if (!opts?.append) setMovLoaded(true)
+      setMovLoaded(true)
       setMovLoading(false)
     }
-  }, [canUseApi, isAuthed, movAte, movDe, movLimite, movPagina, movTipo, selectedCodigoBarras, unidade])
-
-  const loadMoreMovimentacoes = React.useCallback(() => {
-    if (!canUseApi || !isAuthed) return
-    if (movLoading) return
-    if (!movHasMore) return
-    void loadMovimentacoes({ append: true, limite: movLimite })
-  }, [canUseApi, isAuthed, loadMovimentacoes, movHasMore, movLimite, movLoading])
-
-  const onMovScroll = React.useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const el = e.currentTarget
-      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
-      if (remaining < 220) loadMoreMovimentacoes()
-    },
-    [loadMoreMovimentacoes]
-  )
+  }, [canUseApi, isAuthed, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
   React.useEffect(() => {
-    const el = movListContainerRef.current
-    if (!el) return
-    if (!movHasMore || movLoading) return
-    if (el.scrollHeight <= el.clientHeight + 80) loadMoreMovimentacoes()
-  }, [loadMoreMovimentacoes, movHasMore, movLoading, movimentacoes.length])
-
-  React.useEffect(() => {
-    setMovPagina(1)
     try {
       movListContainerRef.current?.scrollTo?.({ top: 0 })
     } catch {
       // ignore
     }
-  }, [unidade, movAte, movDe, movLimite, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
+  }, [unidade, movAte, movDe, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -5610,10 +5581,6 @@ export function InsumosModule() {
     pickInsumoForMov,
     selectedCodigoBarras
   ])
-
-  React.useEffect(() => {
-    movRef.current = movimentacoes
-  }, [movimentacoes])
 
   return (
     <div ref={rootRef} className="px-3 py-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -9007,47 +8974,7 @@ export function InsumosModule() {
           </div>
         ) : null}
 
-          <div className="flex items-center justify-end" />
-
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-blue-100/70">
-          <div>
-            <span className="font-mono">{movimentacoesView.length}</span>
-            {movTotal != null ? (
-              <>
-                {' '}
-                de <span className="font-mono">{movTotal}</span>
-              </>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-6 text-xs font-mono text-blue-100/80">
-            {showOverviewLoadingProgress ? (
-              <span className="inline-flex items-center gap-2 text-blue-200/70">
-                <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                {loadingPercent}%
-              </span>
-            ) : (
-              <>
-                <div className="flex flex-col items-center leading-tight">
-                  <span className="text-emerald-300">+{overviewMovResumo?.entradaQtd ?? '-'}</span>
-                  <span className="text-red-300">-{overviewMovResumo?.saidaQtd ?? '-'}</span>
-                </div>
-                <div className="flex flex-col items-center leading-tight">
-                  <span className="text-emerald-300">
-                    +{overviewMovResumo?.entradaValor != null ? fmtMoneyBRL(overviewMovResumo.entradaValor) : '-'}
-                  </span>
-                  <span className="text-red-300">
-                    -{overviewMovResumo?.saidaValor != null ? fmtMoneyBRL(overviewMovResumo.saidaValor) : '-'}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {movHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
-          </div>
-        </div>
-
-        <div ref={movListContainerRef} onScroll={onMovScroll} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
+        <div ref={movListContainerRef} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="w-full table-fixed text-sm">
             <thead className="bg-black/30 text-blue-100/80">
               <tr>
