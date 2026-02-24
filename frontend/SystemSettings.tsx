@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useKV } from '@/spark-mock'
+import { useKV, isDemoEnabled } from '@/spark-mock'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Button } from "@/button"
 import { Badge } from "@/badge"
@@ -274,8 +274,11 @@ export function SystemGear() {
     }
   }
 
+  const demoEnabled = isDemoEnabled()
+
   // Simulate system monitoring
   useEffect(() => {
+    if (!demoEnabled) return
     const interval = setInterval(() => {
       // Randomly update system status for demo
       const statuses = ['operational', 'warning', 'error']
@@ -293,7 +296,7 @@ export function SystemGear() {
     }, 10000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [demoEnabled])
 
   return (
     <div className="space-y-6">
