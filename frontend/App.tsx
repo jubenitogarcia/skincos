@@ -437,8 +437,8 @@ export default function AppFunctionalNeatlab() {
                 }, [estoqueThresholds])
 
                 const estoqueBadgeTone = React.useMemo(() => {
-                    const value = insumosHeaderEstoque?.value
-                    if (!Number.isFinite(Number(value))) return 'neutral'
+                    const value = Number(insumosHeaderEstoque?.value)
+                    if (!Number.isFinite(value)) return 'neutral'
                     if (value < estoqueThresholds.critical) return 'critical'
                     if (value < estoqueThresholds.warning) return 'warning'
                     return 'ok'

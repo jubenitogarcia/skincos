@@ -4697,74 +4697,6 @@ export function InsumosModule() {
     []
   )
 
-  const resolveChartSlot = React.useCallback(
-    (slot: ChartSlotConfig) => {
-      const preset = presetSupports(slot.presetId)
-      const groupBy: ChartGroupBy | undefined =
-        slot.presetId === 'distribution'
-          ? slot.groupBy === 'marca' || slot.groupBy === 'item'
-            ? slot.groupBy
-            : 'categoria'
-          : slot.presetId === 'movements'
-            ? slot.groupBy === 'categoria'
-              ? 'categoria'
-              : 'tempo'
-            : undefined
-      const mode: MovementsMode | undefined =
-        slot.presetId === 'movements'
-          ? slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout'
-            ? slot.mode
-            : groupBy === 'categoria'
-              ? 'saida'
-              : 'inout'
-          : undefined
-      const viewOptions = presetViewOptions({ ...slot, groupBy, mode })
-      const rawView = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as ChartView
-      const view = viewOptions.includes(rawView) ? rawView : viewOptions[0]
-      const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as ChartMetric
-      const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
-      const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
-      const layout = (preset as any).layout as ChartLayout | undefined
-      return { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout }
-    },
-    [presetSupports, presetViewOptions]
-  )
-
-  const chartSlotsView = React.useMemo(() => {
-    const search = chartsSearch.trim().toLowerCase()
-    return chartSlots
-      .map((slot, idx) => ({ slot, idx, meta: resolveChartSlot(slot) }))
-      .filter(({ slot, meta }) => {
-        if (chartsFilterTipo !== '__ALL__' && slot.presetId !== chartsFilterTipo) return false
-        if (chartsFilterY !== '__ALL__' && meta.groupBy !== chartsFilterY) return false
-        if (chartsFilterX !== '__ALL__' && meta.metric !== chartsFilterX) return false
-        if (chartsFilterView !== '__ALL__' && meta.view !== chartsFilterView) return false
-        if (chartsFilterTop !== '__ALL__' && String(meta.topN) !== String(chartsFilterTop)) return false
-        if (!search) return true
-        const hay = [
-          meta.preset.label,
-          slot.presetId,
-          meta.groupBy || '',
-          meta.metric,
-          meta.view,
-          meta.mode || '',
-          String(meta.topN)
-        ]
-          .join(' ')
-          .toLowerCase()
-        return hay.includes(search)
-      })
-  }, [
-    chartSlots,
-    chartsFilterTipo,
-    chartsFilterY,
-    chartsFilterX,
-    chartsFilterView,
-    chartsFilterTop,
-    chartsSearch,
-    resolveChartSlot
-  ])
-
 	  const stockAgg = React.useMemo(() => {
 	    const byCategoria = new Map<string, { name: string; qtd: number; valor: number }>()
 	    const byMarca = new Map<string, { name: string; qtd: number; valor: number }>()
@@ -4870,18 +4802,86 @@ export function InsumosModule() {
     []
   )
 
-	  const presetViewOptions = React.useCallback((slot: ChartSlotConfig): ChartView[] => {
-	    if (slot.presetId === 'distribution') {
-	      const gb = slot.groupBy === 'item' ? 'item' : slot.groupBy === 'marca' ? 'marca' : 'categoria'
-	      return gb === 'item' ? ['bar'] : ['pie', 'bar']
-	    }
+  const presetViewOptions = React.useCallback((slot: ChartSlotConfig): ChartView[] => {
+    if (slot.presetId === 'distribution') {
+      const gb = slot.groupBy === 'item' ? 'item' : slot.groupBy === 'marca' ? 'marca' : 'categoria'
+      return gb === 'item' ? ['bar'] : ['pie', 'bar']
+    }
 	    if (slot.presetId === 'movements') {
 	      const gb = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
 	      return gb === 'tempo' ? ['bar', 'line'] : ['bar', 'pie']
 	    }
-	    if (slot.presetId === 'roi_risk') return ['bar', 'pie']
-	    return ['bar', 'line']
-	  }, [])
+    if (slot.presetId === 'roi_risk') return ['bar', 'pie']
+    return ['bar', 'line']
+  }, [])
+
+  const resolveChartSlot = React.useCallback(
+    (slot: ChartSlotConfig) => {
+      const preset = presetSupports(slot.presetId)
+      const groupBy: ChartGroupBy | undefined =
+        slot.presetId === 'distribution'
+          ? slot.groupBy === 'marca' || slot.groupBy === 'item'
+            ? slot.groupBy
+            : 'categoria'
+          : slot.presetId === 'movements'
+            ? slot.groupBy === 'categoria'
+              ? 'categoria'
+              : 'tempo'
+            : undefined
+      const mode: MovementsMode | undefined =
+        slot.presetId === 'movements'
+          ? slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout'
+            ? slot.mode
+            : groupBy === 'categoria'
+              ? 'saida'
+              : 'inout'
+          : undefined
+      const viewOptions = presetViewOptions({ ...slot, groupBy, mode })
+      const rawView = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as ChartView
+      const view = viewOptions.includes(rawView) ? rawView : viewOptions[0]
+      const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as ChartMetric
+      const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+      const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
+      const layout = (preset as any).layout as ChartLayout | undefined
+      return { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout }
+    },
+    [presetSupports, presetViewOptions]
+  )
+
+  const chartSlotsView = React.useMemo(() => {
+    const search = chartsSearch.trim().toLowerCase()
+    return chartSlots
+      .map((slot, idx) => ({ slot, idx, meta: resolveChartSlot(slot) }))
+      .filter(({ slot, meta }) => {
+        if (chartsFilterTipo !== '__ALL__' && slot.presetId !== chartsFilterTipo) return false
+        if (chartsFilterY !== '__ALL__' && meta.groupBy !== chartsFilterY) return false
+        if (chartsFilterX !== '__ALL__' && meta.metric !== chartsFilterX) return false
+        if (chartsFilterView !== '__ALL__' && meta.view !== chartsFilterView) return false
+        if (chartsFilterTop !== '__ALL__' && String(meta.topN) !== String(chartsFilterTop)) return false
+        if (!search) return true
+        const hay = [
+          meta.preset.label,
+          slot.presetId,
+          meta.groupBy || '',
+          meta.metric,
+          meta.view,
+          meta.mode || '',
+          String(meta.topN)
+        ]
+          .join(' ')
+          .toLowerCase()
+        return hay.includes(search)
+      })
+  }, [
+    chartSlots,
+    chartsFilterTipo,
+    chartsFilterY,
+    chartsFilterX,
+    chartsFilterView,
+    chartsFilterTop,
+    chartsSearch,
+    resolveChartSlot
+  ])
 
   const renderChart = React.useCallback(
     (slot: ChartSlotConfig, opts?: { height?: number }) => {
