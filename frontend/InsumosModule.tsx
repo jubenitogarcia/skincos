@@ -8927,41 +8927,6 @@ export function InsumosModule() {
                         </SelectContent>
                       </Select>
                       <Input
-                        value={movFilterProduto}
-                        onChange={(e) => setMovFilterProduto(e.target.value)}
-                        placeholder="Produto"
-                        className="h-8 min-w-[140px] w-48"
-                      />
-                      <Select
-                        value={movFilterCategoria || '__ALL__'}
-                        onValueChange={(v) => setMovFilterCategoria(v === '__ALL__' ? '' : String(v))}
-                      >
-                        <SelectTrigger className="h-8 w-36">
-                          <SelectValue placeholder="Categoria" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__ALL__">Todos</SelectItem>
-                          {lotCategorias.map((c) => (
-                            <SelectItem key={c} value={c}>
-                              {c}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Select value={movFilterMarca || '__ALL__'} onValueChange={(v) => setMovFilterMarca(v === '__ALL__' ? '' : String(v))}>
-                        <SelectTrigger className="h-8 w-32">
-                          <SelectValue placeholder="Marca" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__ALL__">Todos</SelectItem>
-                          {insumosMarcas.map((m) => (
-                            <SelectItem key={m} value={m}>
-                              {m}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
