@@ -8885,7 +8885,7 @@ export function InsumosModule() {
                       </button>
                       <CardTitle className="text-white text-lg">Movimentações</CardTitle>
                     </div>
-                    <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 justify-end">
+                    <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
                       <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
                         <SelectTrigger className="h-8 w-28">
                           <SelectValue placeholder="Fluxo" />
@@ -8930,7 +8930,7 @@ export function InsumosModule() {
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 min-w-[140px] w-64"
+                        className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
                       />
                       <div className="flex items-center gap-2 shrink-0">
 		                <Button
@@ -9002,50 +9002,6 @@ export function InsumosModule() {
 		          </CardHeader>
           {movPanelOpen ? (
             <CardContent className="space-y-3">
-
-        {(selectedCodigoBarras.trim() || movFilterCategoria.trim() || movFilterMarca.trim() || movSearch.trim()) ? (
-          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <span className="text-blue-200/70">Filtrando por:</span>{' '}
-              {selectedCodigoBarras.trim() ? (
-                <>
-                  {selectedInsumo?.produto ? <span className="text-blue-50 font-semibold">{selectedInsumo.produto}</span> : <span className="text-blue-50 font-semibold">Insumo</span>}{' '}
-                  • <span className="font-mono">{selectedCodigoBarras.trim()}</span>
-                </>
-              ) : null}
-              {movFilterCategoria.trim() ? (
-                <>
-                  {selectedCodigoBarras.trim() ? <span className="text-blue-200/60"> • </span> : null}
-                  <span className="text-blue-50 font-semibold">{movFilterCategoria.trim()}</span>
-                </>
-              ) : null}
-              {movFilterMarca.trim() ? (
-                <>
-                  {(selectedCodigoBarras.trim() || movFilterCategoria.trim()) ? <span className="text-blue-200/60"> • </span> : null}
-                  <span className="text-blue-50 font-semibold">{movFilterMarca.trim()}</span>
-                </>
-              ) : null}
-              {movSearch.trim() ? (
-                <>
-                  {(selectedCodigoBarras.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? <span className="text-blue-200/60"> • </span> : null}
-                  <span className="text-blue-50 font-semibold">{movSearch.trim()}</span>
-                </>
-              ) : null}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setSelectedCodigoBarras('')
-                setMovFilterCategoria('')
-                setMovFilterMarca('')
-                setMovSearch('')
-              }}
-            >
-              Limpar
-            </Button>
-          </div>
-        ) : null}
 
         <div ref={movListContainerRef} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="w-full table-fixed text-sm">
