@@ -275,7 +275,10 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(modules.map((m) => m.key)), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio']),
+		        [DEFAULT_MODULE_KEY]
+		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
@@ -308,14 +311,24 @@ export default function AppFunctionalNeatlab() {
 
     const sidebarExpanded = sidebarPinned || !sidebarCanHover || sidebarHover
 
-    // Persist active module to survive remounts/reloads and avoid accidental resets
-	    const [active, setActive] = useState<string>(() => {
-	        try {
-	            const saved = localStorage.getItem('app.activeModule')
-	            const candidate = saved || DEFAULT_MODULE_KEY
-	            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
-	        } catch { return DEFAULT_MODULE_KEY }
-	    })
+	    // Persist active module to survive remounts/reloads and avoid accidental resets
+		    const [active, setActive] = useState<string>(() => {
+		        try {
+		            const saved = localStorage.getItem('app.activeModule')
+		            const candidate = saved || DEFAULT_MODULE_KEY
+		            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
+		        } catch { return DEFAULT_MODULE_KEY }
+		    })
+		    const [visitedModuleKeys, setVisitedModuleKeys] = useState<string[]>(() => [DEFAULT_MODULE_KEY])
+		    const mountedModuleKeys = useMemo(() => {
+		        if (visitedModuleKeys.includes(active)) return visitedModuleKeys
+		        return [...visitedModuleKeys, active]
+		    }, [active, visitedModuleKeys])
+		    React.useEffect(() => {
+		        if (!visitedModuleKeys.includes(active)) {
+		            setVisitedModuleKeys((prev) => (prev.includes(active) ? prev : [...prev, active]))
+		        }
+		    }, [active, visitedModuleKeys])
 
 	    React.useEffect(() => {
 	        if (UNLOCKED_MODULE_KEYS.has(active)) return
@@ -453,12 +466,16 @@ export default function AppFunctionalNeatlab() {
                             ? 'bg-rose-500/30 text-rose-100 border-rose-400/40'
                             : 'bg-white/10 text-blue-100/70 border-white/15'
 
+			    const insumosMounted = useMemo(() => mountedModuleKeys.includes('insumos'), [mountedModuleKeys])
+			    const lastInsumosUnitRef = React.useRef<string | null>(null)
 			    React.useEffect(() => {
-			        if (active !== 'insumos') return
+			        if (!insumosMounted) return
+			        if (lastInsumosUnitRef.current === effectiveUnit) return
+			        lastInsumosUnitRef.current = effectiveUnit
 			        try {
 			            window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: effectiveUnit } }))
 			        } catch { /* ignore */ }
-			    }, [active, effectiveUnit])
+			    }, [effectiveUnit, insumosMounted])
 
                 React.useEffect(() => {
                     const handler = (event: Event) => {
@@ -572,8 +589,12 @@ export default function AppFunctionalNeatlab() {
 				        return () => ac.abort()
 						    }, [active, isAuthenticated, user?.allowedUnits?.join('|'), user?.username])
 
+		    const lastInsumosOverviewRef = React.useRef<string | null>(null)
 		    React.useEffect(() => {
-		        if (active !== 'insumos') return
+		        if (!insumosMounted) return
+		        const nextKey = `${insumosOverviewPeriod}|${insumosOverviewFrom}|${insumosOverviewTo}`
+		        if (lastInsumosOverviewRef.current === nextKey) return
+		        lastInsumosOverviewRef.current = nextKey
 		        try {
 		            window.dispatchEvent(
 		                new CustomEvent('skincos:insumos:overview', {
@@ -581,7 +602,7 @@ export default function AppFunctionalNeatlab() {
 		                })
 		            )
 		        } catch { /* ignore */ }
-		    }, [active, insumosOverviewFrom, insumosOverviewPeriod, insumosOverviewTo])
+		    }, [insumosMounted, insumosOverviewFrom, insumosOverviewPeriod, insumosOverviewTo])
 
     const modulesSorted = useMemo(() => {
         const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
@@ -613,17 +634,6 @@ export default function AppFunctionalNeatlab() {
                 (m) => m.label.toLowerCase().includes(search.toLowerCase()) || m.key.includes(search.toLowerCase())
             ),
         [permittedModulesSorted, search]
-    )
-
-    // Resolve active module once for rendering content independently of sidebar filtering
-    const activeModule = useMemo(
-        () =>
-            permittedModulesSorted.find((m) => m.key === active) ||
-            permittedModulesSorted.find((m) => m.key === DEFAULT_MODULE_KEY) ||
-            permittedUnlockedModules[0] ||
-            permittedModulesSorted[0] ||
-            modules.find((m) => m.key === DEFAULT_MODULE_KEY),
-        [DEFAULT_MODULE_KEY, active, permittedModulesSorted, permittedUnlockedModules]
     )
 
 	    if (initializing) {
@@ -1463,9 +1473,20 @@ export default function AppFunctionalNeatlab() {
                                             </div>
                                         </div>
                                     }>
-                                        <div className="animate-fade-in">
-                                            {activeModule?.component}
-                                        </div>
+                                    <div className="animate-fade-in">
+                                        {mountedModuleKeys
+                                            .map((key) => permittedModulesSorted.find((m) => m.key === key))
+                                            .filter((m) => Boolean(m) && UNLOCKED_MODULE_KEYS.has((m as any).key))
+                                            .map((m) => {
+                                                const moduleEntry = m as (typeof modules)[number]
+                                                const isActive = moduleEntry.key === active
+                                                return (
+                                                    <div key={moduleEntry.key} hidden={!isActive}>
+                                                        {moduleEntry.component}
+                                                    </div>
+                                                )
+                                            })}
+                                    </div>
                                     </Suspense>
                                     <ContextDebugger />
                                 </ErrorBoundary>
