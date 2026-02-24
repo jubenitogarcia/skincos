@@ -22,28 +22,6 @@ const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
 // Demo banners are not allowed. Keep the UI strictly real-data oriented.
 
-function BuildCornerBadge() {
-    const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
-    const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
-    return (
-        <div className="fixed bottom-3 right-3 z-50 pointer-events-none">
-            <Badge variant="outline" className="bg-black/40 text-white border-white/20 opacity-70 text-[10px]">
-                build:{buildSha}
-            </Badge>
-        </div>
-    )
-}
-
-function BuildHeaderBadge() {
-    const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
-    const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
-    return (
-        <Badge variant="outline" className="bg-white/[0.06] text-white border-white/20 text-[10px] px-2 py-1">
-            Build: {buildSha}
-        </Badge>
-    )
-}
-
 function fmtMoneyBRLCompact(value: number) {
     const num = Number(value) || 0
     try {
@@ -587,7 +565,6 @@ export default function AppFunctionalNeatlab() {
 	                    percent={Math.max(0, Math.min(100, Number.isFinite(initProgress as any) ? (initProgress as any) : 0))}
 	                    buttonLabel="Carregando dados"
 	                />
-	                <BuildCornerBadge />
 	            </>
 	        )
 	    }
@@ -596,7 +573,6 @@ export default function AppFunctionalNeatlab() {
         return (
             <>
                 <AuthScreen />
-                <BuildCornerBadge />
             </>
         )
     }
@@ -618,7 +594,6 @@ export default function AppFunctionalNeatlab() {
                         </div>
                     </div>
                 </div>
-                <BuildCornerBadge />
             </>
         )
     }
@@ -906,13 +881,12 @@ export default function AppFunctionalNeatlab() {
 				                                    <div className="hidden lg:flex items-center gap-2">
 				                                        {active === 'insumos' ? (
 					                                            <>
-					                                                <span className="text-xs text-blue-200/70">Unidade</span>
 					                                                <Select
 					                                                    value={selectedUnit}
 			                                                    onValueChange={(v) => setSelectedUnit(v)}
 			                                                >
 				                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
-				                                                        <SelectValue placeholder="Selecione" />
+				                                                        <SelectValue placeholder="Unidade" />
 				                                                    </SelectTrigger>
 				                                                    <SelectContent>
 				                                                        {insumosUnitsForHeaderSelect.map((u) => (
@@ -1075,30 +1049,27 @@ export default function AppFunctionalNeatlab() {
 				                                            </div>
 				                                        ) : null}
 				                                        {active === 'unit-monitor' ? (
-				                                            <>
-				                                                <span className="text-xs text-blue-200/70">Unidade</span>
-			                                                <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
-			                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
-			                                                        <SelectValue placeholder="Selecione" />
-			                                                    </SelectTrigger>
-			                                                    <SelectContent>
-			                                                        {unitMonitorUnitsForHeaderSelect.map((u) => (
-			                                                            <SelectItem key={u} value={u}>
-			                                                                {formatUnitLabel(u)}
-			                                                            </SelectItem>
-			                                                        ))}
-			                                                    </SelectContent>
-			                                                </Select>
-			                                            </>
+				                                            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
+				                                                <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
+				                                                    <SelectValue placeholder="Unidade" />
+				                                                </SelectTrigger>
+				                                                <SelectContent>
+				                                                    {unitMonitorUnitsForHeaderSelect.map((u) => (
+				                                                        <SelectItem key={u} value={u}>
+				                                                            {formatUnitLabel(u)}
+				                                                        </SelectItem>
+				                                                    ))}
+				                                                </SelectContent>
+				                                            </Select>
 			                                        ) : null}
 		                                    </div>
 	                                </div>
 
 		                                <div className="flex items-center gap-4">
 		                                    {active === 'insumos' ? (
-		                                        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
+		                                        <div className="flex items-center gap-2 min-w-[160px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
 		                                            <span className="uppercase tracking-wide text-blue-200/60">Estoque</span>
-		                                            <span className="font-mono text-blue-50">
+		                                            <span className="ml-auto text-right font-mono text-blue-50">
 		                                                {insumosHeaderEstoque?.loading ? (
 		                                                    <span className="inline-flex items-center gap-2">
 		                                                        <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
@@ -1110,7 +1081,6 @@ export default function AppFunctionalNeatlab() {
 		                                            </span>
 		                                        </div>
 		                                    ) : null}
-		                                    <BuildHeaderBadge />
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-center gap-1">
 		                                            <Button
@@ -1341,7 +1311,6 @@ export default function AppFunctionalNeatlab() {
                     </div>
                 </div>
             </div>
-            <BuildCornerBadge />
         </NotificationProvider>
     )
 }
