@@ -8885,7 +8885,7 @@ export function InsumosModule() {
                       </button>
                       <CardTitle className="text-white text-lg">Movimentações</CardTitle>
                     </div>
-                    <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 justify-end">
+                    <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
                       <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
                         <SelectTrigger className="h-8 w-28">
                           <SelectValue placeholder="Fluxo" />
@@ -8930,7 +8930,7 @@ export function InsumosModule() {
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 min-w-[140px] w-64"
+                        className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
                       />
                       <div className="flex items-center gap-2 shrink-0">
 		                <Button
