@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useKV } from '@/spark-mock'
+import { useKV, isDemoEnabled } from '@/spark-mock'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Button } from "@/button"
 import { Badge } from "@/badge"
@@ -85,9 +85,11 @@ export function BackupRecoveryCenter() {
   const [autoBackupEnabled, setAutoBackupEnabled] = useKV('auto-backup-enabled', true)
   const [storageQuota, setStorageQuota] = useKV('storage-quota', { used: 250, total: 1000 }) // GB
   const { addNotification } = useNotifications()
+  const demoEnabled = isDemoEnabled()
 
   // Initialize with demo data
   useEffect(() => {
+    if (!demoEnabled) return
     if (backupJobs.length === 0) {
       const demoJobs: BackupJob[] = [
         {
@@ -216,7 +218,7 @@ export function BackupRecoveryCenter() {
       ]
       setRestorePoints(demoRestorePoints)
     }
-  }, [backupJobs.length, setBackupJobs, setBackupHistory, setRestorePoints])
+  }, [backupJobs.length, demoEnabled, setBackupJobs, setBackupHistory, setRestorePoints])
 
   const runBackupJob = async (jobId: string) => {
     const job = backupJobs.find(j => j.id === jobId)

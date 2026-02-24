@@ -150,8 +150,14 @@ export function WhatsAppUnifiedHub() {
   const fetchOrchestratorStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/wa-orchestrator/channels')
-      if (!response.ok) throw new Error('Failed to fetch channels status')
-      
+      if (!response.ok) throw new Error(`Failed to fetch channels status (HTTP ${response.status})`)
+
+      const contentType = response.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await response.text().catch(() => '')
+        throw new Error(`Invalid response format from channels status (HTTP ${response.status})${text ? `: ${text.slice(0, 120)}` : ''}`)
+      }
+
       const channelsData = await response.json()
       
       // Transform channels response to match expected OrchestratorStatus interface

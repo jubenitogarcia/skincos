@@ -3276,7 +3276,7 @@ export function InsumosModule() {
 
   const loadProxyStatus = React.useCallback(async () => {
     try {
-      const out = await apiJson<InsumosProxyStatus>('/_proxy-status')
+      const out = await apiJson<InsumosProxyStatus>('/api/insumos/_proxy-status')
       setProxyStatus(out || null)
     } catch {
       setProxyStatus(null)

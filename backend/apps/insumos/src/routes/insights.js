@@ -377,8 +377,11 @@ export async function handleInsightsRoutes({
     buildResumoEstoque,
     d1,
 }) {
-    const listInsumos = async (unidadeQ) => {
+    const listInsumos = async (unidadeQ, opts = {}) => {
         if (!d1?.enabled) throw new Error('D1_ONLY');
+        if (opts?.lite && typeof d1.listInsumosLite === 'function') {
+            return d1.listInsumosLite({ unidade: unidadeQ });
+        }
         return d1.listInsumos({ unidade: unidadeQ });
     };
 
@@ -421,7 +424,7 @@ export async function handleInsightsRoutes({
             const { from, to, days } = resolveWindow(url, 30);
 
             const [insumos, movAgg] = await Promise.all([
-                listInsumos(unidadeQ),
+                listInsumos(unidadeQ, { lite: isLite }),
                 listMovimentosAggregated({
                     env,
                     unidadeQ,

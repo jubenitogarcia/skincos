@@ -275,7 +275,7 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set([DEFAULT_MODULE_KEY, 'unit-monitor', 'instagram-studio', 'ponto', 'atendimento']), [])
+		    const UNLOCKED_MODULE_KEYS = useMemo(() => new Set(modules.map((m) => m.key)), [])
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
