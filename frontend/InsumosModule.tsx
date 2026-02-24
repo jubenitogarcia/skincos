@@ -1241,7 +1241,6 @@ export function InsumosModule() {
   const movGroupTransfers = true
   const [movDe, setMovDe] = React.useState('')
   const [movAte, setMovAte] = React.useState('')
-  const [movFilterProduto, setMovFilterProduto] = React.useState('')
   const [movFilterCategoria, setMovFilterCategoria] = React.useState('')
   const [movFilterMarca, setMovFilterMarca] = React.useState('')
   const [movSearch, setMovSearch] = React.useState('')
@@ -3547,7 +3546,7 @@ export function InsumosModule() {
     } catch {
       // ignore
     }
-  }, [unidade, movAte, movDe, movTipo, selectedCodigoBarras, movFilterProduto, movFilterCategoria, movFilterMarca])
+  }, [unidade, movAte, movDe, movTipo, selectedCodigoBarras, movFilterCategoria, movFilterMarca])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -5455,7 +5454,6 @@ export function InsumosModule() {
   const movimentacoesView = React.useMemo(() => {
     const list = Array.isArray(movimentacoes) ? movimentacoes : []
     const selectedCode = selectedCodigoBarras.trim()
-    const filterProduto = normalizeText(movFilterProduto)
     const filterCategoria = normalizeText(movFilterCategoria)
     const filterMarca = normalizeText(movFilterMarca)
     const filterSearch = normalizeText(movSearch)
@@ -5480,10 +5478,6 @@ export function InsumosModule() {
           ) {
             return false
           }
-        } else if (filterProduto) {
-          const insumo = pickInsumoForMov(m)
-          const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
-          if (!produtoNome || produtoNome !== filterProduto) return false
         }
 
         if (filterCategoria) {
@@ -5594,7 +5588,6 @@ export function InsumosModule() {
     movTipo,
     movFilterCategoria,
     movFilterMarca,
-    movFilterProduto,
     movSearch,
     movimentacoes,
     pickInsumoForMov,
@@ -8884,12 +8877,6 @@ export function InsumosModule() {
                           <SelectItem value="AJUSTE">Ajuste</SelectItem>
                         </SelectContent>
                       </Select>
-                      <Input
-                        value={movFilterProduto}
-                        onChange={(e) => setMovFilterProduto(e.target.value)}
-                        placeholder="Produto"
-                        className="h-8 min-w-[140px] w-48"
-                      />
                       <Select
                         value={movFilterCategoria || '__ALL__'}
                         onValueChange={(v) => setMovFilterCategoria(v === '__ALL__' ? '' : String(v))}
@@ -8991,7 +8978,7 @@ export function InsumosModule() {
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 
-        {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim() || movSearch.trim()) ? (
+        {(selectedCodigoBarras.trim() || movFilterCategoria.trim() || movFilterMarca.trim() || movSearch.trim()) ? (
           <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <span className="text-blue-200/70">Filtrando por:</span>{' '}
@@ -9000,26 +8987,22 @@ export function InsumosModule() {
                   {selectedInsumo?.produto ? <span className="text-blue-50 font-semibold">{selectedInsumo.produto}</span> : <span className="text-blue-50 font-semibold">Insumo</span>}{' '}
                   • <span className="font-mono">{selectedCodigoBarras.trim()}</span>
                 </>
-              ) : movFilterProduto.trim() ? (
-                <>
-                  <span className="text-blue-50 font-semibold">{movFilterProduto.trim()}</span>
-                </>
               ) : null}
               {movFilterCategoria.trim() ? (
                 <>
-                  {(selectedCodigoBarras.trim() || movFilterProduto.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  {selectedCodigoBarras.trim() ? <span className="text-blue-200/60"> • </span> : null}
                   <span className="text-blue-50 font-semibold">{movFilterCategoria.trim()}</span>
                 </>
               ) : null}
               {movFilterMarca.trim() ? (
                 <>
-                  {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  {(selectedCodigoBarras.trim() || movFilterCategoria.trim()) ? <span className="text-blue-200/60"> • </span> : null}
                   <span className="text-blue-50 font-semibold">{movFilterMarca.trim()}</span>
                 </>
               ) : null}
               {movSearch.trim() ? (
                 <>
-                  {(selectedCodigoBarras.trim() || movFilterProduto.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? <span className="text-blue-200/60"> • </span> : null}
+                  {(selectedCodigoBarras.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? <span className="text-blue-200/60"> • </span> : null}
                   <span className="text-blue-50 font-semibold">{movSearch.trim()}</span>
                 </>
               ) : null}
@@ -9029,7 +9012,6 @@ export function InsumosModule() {
               size="sm"
               onClick={() => {
                 setSelectedCodigoBarras('')
-                setMovFilterProduto('')
                 setMovFilterCategoria('')
                 setMovFilterMarca('')
                 setMovSearch('')
@@ -9152,10 +9134,10 @@ export function InsumosModule() {
                           setSelectedCodigoBarras('')
                           setMovFilterCategoria('')
                           setMovFilterMarca('')
-                          setMovFilterProduto((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
+                          setMovSearch((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
                         }}
                         title="Filtrar por produto"
-                        aria-pressed={normalizeText(movFilterProduto) === normalizeText(produtoNome)}
+                        aria-pressed={normalizeText(movSearch) === normalizeText(produtoNome)}
                       >
                         <span className="line-clamp-2">{produtoNome}</span>
                       </button>
@@ -9176,7 +9158,7 @@ export function InsumosModule() {
                               const c = String(categoriaNome || '').trim()
                               if (!c || c === '-') return
                               setSelectedCodigoBarras('')
-                              setMovFilterProduto('')
+                              setMovSearch('')
                               setMovFilterCategoria((prev) => (normalizeText(prev) === normalizeText(c) ? '' : c))
                             }}
                             title="Filtrar por categoria"
@@ -9199,7 +9181,7 @@ export function InsumosModule() {
                               const b = String(marcaNome || '').trim()
                               if (!b || b === '-') return
                               setSelectedCodigoBarras('')
-                              setMovFilterProduto('')
+                              setMovSearch('')
                               setMovFilterMarca((prev) => (normalizeText(prev) === normalizeText(b) ? '' : b))
                             }}
                             title="Filtrar por marca"
