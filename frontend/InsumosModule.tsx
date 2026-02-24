@@ -9003,50 +9003,6 @@ export function InsumosModule() {
           {movPanelOpen ? (
             <CardContent className="space-y-3">
 
-        {(selectedCodigoBarras.trim() || movFilterCategoria.trim() || movFilterMarca.trim() || movSearch.trim()) ? (
-          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80 flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <span className="text-blue-200/70">Filtrando por:</span>{' '}
-              {selectedCodigoBarras.trim() ? (
-                <>
-                  {selectedInsumo?.produto ? <span className="text-blue-50 font-semibold">{selectedInsumo.produto}</span> : <span className="text-blue-50 font-semibold">Insumo</span>}{' '}
-                  • <span className="font-mono">{selectedCodigoBarras.trim()}</span>
-                </>
-              ) : null}
-              {movFilterCategoria.trim() ? (
-                <>
-                  {selectedCodigoBarras.trim() ? <span className="text-blue-200/60"> • </span> : null}
-                  <span className="text-blue-50 font-semibold">{movFilterCategoria.trim()}</span>
-                </>
-              ) : null}
-              {movFilterMarca.trim() ? (
-                <>
-                  {(selectedCodigoBarras.trim() || movFilterCategoria.trim()) ? <span className="text-blue-200/60"> • </span> : null}
-                  <span className="text-blue-50 font-semibold">{movFilterMarca.trim()}</span>
-                </>
-              ) : null}
-              {movSearch.trim() ? (
-                <>
-                  {(selectedCodigoBarras.trim() || movFilterCategoria.trim() || movFilterMarca.trim()) ? <span className="text-blue-200/60"> • </span> : null}
-                  <span className="text-blue-50 font-semibold">{movSearch.trim()}</span>
-                </>
-              ) : null}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setSelectedCodigoBarras('')
-                setMovFilterCategoria('')
-                setMovFilterMarca('')
-                setMovSearch('')
-              }}
-            >
-              Limpar
-            </Button>
-          </div>
-        ) : null}
-
         <div ref={movListContainerRef} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
           <table className="w-full table-fixed text-sm">
             <thead className="bg-black/30 text-blue-100/80">
