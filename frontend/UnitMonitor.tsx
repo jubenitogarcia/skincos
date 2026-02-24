@@ -315,6 +315,7 @@ export function UnitMonitor() {
   const [gatewayInfo, setGatewayInfo] = useState<UnitMonitorGatewayInfo | null>(null)
   const [gatewayReachable, setGatewayReachable] = useState<'unknown' | 'ok' | 'fail'>('unknown')
   const [gatewayCheckBusy, setGatewayCheckBusy] = useState(false)
+  const canQueryGateway = !!proxyStatus?.targetConfigured
 
   const copyText = async (text: string) => {
     try {
@@ -655,10 +656,10 @@ export function UnitMonitor() {
   }, [])
 
   useEffect(() => {
-    if (!effectiveUnit) return
+    if (!effectiveUnit || !canQueryGateway) return
     loadServerState().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveUnit])
+  }, [effectiveUnit, canQueryGateway])
 
   useEffect(() => {
     if (selectedCameraId) return
@@ -667,7 +668,7 @@ export function UnitMonitor() {
   }, [cameras, selectedCameraId])
 
   useEffect(() => {
-    if (mainTab !== 'rtsp') return
+    if (mainTab !== 'rtsp' || !canQueryGateway) return
     refreshStreamingStatus().catch(() => {})
     refreshRtspRecorders().catch(() => {})
     if (effectiveUnit && selectedCameraId) loadRtspSegments(effectiveUnit, selectedCameraId).catch(() => {})
@@ -679,7 +680,7 @@ export function UnitMonitor() {
     }, 5000)
 
     return () => window.clearInterval(t)
-  }, [mainTab, effectiveUnit, selectedCameraId])
+  }, [mainTab, effectiveUnit, selectedCameraId, canQueryGateway])
 
   return (
     <>

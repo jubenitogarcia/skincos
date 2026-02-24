@@ -521,6 +521,79 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
   });
 }
 
+export async function d1ListInsumosLite({ env, unidade }) {
+  const itemsRes = await env.DB.prepare(
+    `SELECT
+        registro,
+        codigo_barras,
+        produto,
+        categoria,
+        marca,
+        especificacao,
+        concentracao,
+        volume,
+        calibre,
+        tipo_unidade,
+        fonte,
+        preco_custo,
+        estoque_minimo,
+        lote,
+        data_validade,
+        policy_requires_lot,
+        policy_requires_expiry,
+        policy_fefo,
+        data_cadastro,
+        data_atualizacao
+     FROM insumos_items
+     ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC`
+  ).all();
+  const items = itemsRes?.results || [];
+  const registros = items.map((it) => String(it?.registro || '').trim()).filter(Boolean);
+
+  const stocksRes = await env.DB.prepare(
+    `SELECT registro, quantidade
+     FROM insumos_stocks
+     WHERE unidade = ?`
+  ).bind(String(unidade || '').trim()).all();
+  const stocks = stocksRes?.results || [];
+  const byRegistro = new Map();
+  for (const s of stocks) {
+    const reg = String(s.registro || '').trim();
+    if (!reg) continue;
+    byRegistro.set(reg, toInt(s.quantidade, 0));
+  }
+
+  return items.map((it) => {
+    const registro = String(it.registro || '').trim();
+    const estoqueAtual = toInt(byRegistro.get(registro), 0);
+    const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    return {
+      registro,
+      codigoBarras: String(it.codigo_barras || ''),
+      codigosBarras: [],
+      categoria: String(it.categoria || ''),
+      marca: String(it.marca || ''),
+      produto: String(it.produto || ''),
+      especificacao: String(it.especificacao || ''),
+      concentracao: String(it.concentracao || ''),
+      volume: String(it.volume || ''),
+      calibre: String(it.calibre || ''),
+      tipoUnidade: String(it.tipo_unidade || ''),
+      fonte: String(it.fonte || ''),
+      lote: String(it.lote || ''),
+      precoCusto: toNumber(it.preco_custo, 0),
+      estoqueAtual,
+      estoqueMinimo: toInt(it.estoque_minimo, 0),
+      dataValidade: dataValidade || null,
+      statusValidade: calcularStatusValidade(dataValidade),
+      policyRequiresLot: normalizePolicyFlag(it.policy_requires_lot),
+      policyRequiresExpiry: normalizePolicyFlag(it.policy_requires_expiry),
+      policyFefo: normalizePolicyFlag(it.policy_fefo),
+      estoques: { [String(unidade || '').trim()]: estoqueAtual },
+    };
+  });
+}
+
 export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, limite }) {
   const page = Math.max(1, toInt(pagina, 1) || 1);
   const lim = Math.max(1, Math.min(1000, toInt(limite, 200) || 200));

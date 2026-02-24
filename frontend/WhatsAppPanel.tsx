@@ -622,7 +622,7 @@ export const WhatsAppPanel: React.FC = () => {
                             <p className="text-lg font-semibold text-green-900">Conectado</p>
                         </div>
                         <div className="p-4 rounded border bg-gradient-to-br from-blue-50 to-blue-100">
-                            <p className="text-xs font-medium text-blue-700">Mensagens (demo)</p>
+                            <p className="text-xs font-medium text-blue-700">Mensagens</p>
                             <p className="text-lg font-semibold text-blue-900">—</p>
                         </div>
                         <div className="p-4 rounded border bg-gradient-to-br from-purple-50 to-purple-100">

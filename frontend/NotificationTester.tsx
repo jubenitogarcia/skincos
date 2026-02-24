@@ -3,7 +3,7 @@ import { useNotifications } from '@/contexts'
 import { Button } from "@/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Badge } from "@/badge"
-import { useKV } from '@/spark-mock'
+import { isDemoEnabled } from '@/spark-mock'
 import {
   Robot,
   Sparkle,
@@ -27,20 +27,23 @@ function generateMockNotifications(count = 5) {
 
 export function NotificationTester() {
   const { notifications, unreadCount, isConnected } = useNotifications()
+  const demoEnabled = isDemoEnabled()
 
   // Generate mock notifications for demonstration
   const generateTestNotifications = () => {
+    if (!demoEnabled) return
     generateMockNotifications()
   }
 
   // Auto-generate notifications on component mount for demo
   useEffect(() => {
+    if (!demoEnabled) return
     const timer = setTimeout(() => {
       generateMockNotifications()
     }, 3000) // Generate after 3 seconds
 
     return () => clearTimeout(timer)
-  }, [])
+  }, [demoEnabled])
 
   return (
     <Card className="mb-6 border-accent/20 bg-accent/5">
@@ -102,6 +105,7 @@ export function NotificationTester() {
               onClick={generateTestNotifications}
               size="sm"
               className="bg-accent hover:bg-accent/90"
+              disabled={!demoEnabled}
             >
               <Sparkle className="h-4 w-4 mr-2" />
               Gerar Notificações de Teste

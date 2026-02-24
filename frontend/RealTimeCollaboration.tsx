@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useKV } from '@/spark-mock'
+import { useKV, isDemoEnabled } from '@/spark-mock'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Button } from "@/button"
 import { Badge } from "@/badge"
@@ -88,6 +88,7 @@ export function RealTimeCollaboration({
   const [showCursors, setShowCursors] = useState(true)
   const [connectionLatency, setConnectionLatency] = useState(0)
   const [cursorPosition, setCursorPosition] = useState<{ x: number; y: number } | null>(null)
+  const demoEnabled = isDemoEnabled()
 
   const lastPulseRef = useRef<string>(Date.now().toString())
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -269,6 +270,7 @@ export function RealTimeCollaboration({
 
   // Mock some other users for demo
   useEffect(() => {
+    if (!demoEnabled) return
     if (activeUsers.length === 1) {
       const mockUsers: ActiveUser[] = [
         {
@@ -319,7 +321,7 @@ export function RealTimeCollaboration({
         setActiveUsers(prev => [...prev, ...mockUsers.slice(0, Math.floor(Math.random() * 2) + 1)])
       }
     }
-  }, [activeUsers.length, setActiveUsers])
+  }, [activeUsers.length, demoEnabled, setActiveUsers])
 
   return (
     <div className="space-y-4">
