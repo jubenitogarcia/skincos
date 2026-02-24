@@ -1540,19 +1540,33 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     try {
+      const entradaValor = Number.isFinite(Number(overviewMovResumo?.entradaValor))
+        ? Number(overviewMovResumo?.entradaValor)
+        : null
+      const saidaValor = Number.isFinite(Number(overviewMovResumo?.saidaValor))
+        ? Number(overviewMovResumo?.saidaValor)
+        : null
       window.dispatchEvent(
         new CustomEvent('skincos:insumos:estoque', {
           detail: {
             value: overviewResumo?.valorEstoqueTotal ?? null,
             loading: showOverviewLoadingProgress,
-            percent: loadingPercent
+            percent: loadingPercent,
+            entradaValor,
+            saidaValor
           }
         })
       )
     } catch {
       // ignore
     }
-  }, [loadingPercent, overviewResumo?.valorEstoqueTotal, showOverviewLoadingProgress])
+  }, [
+    loadingPercent,
+    overviewMovResumo?.entradaValor,
+    overviewMovResumo?.saidaValor,
+    overviewResumo?.valorEstoqueTotal,
+    showOverviewLoadingProgress
+  ])
   const renderInlinePercent = React.useCallback(
     (active: boolean, className = '') => {
       if (!active) return null
@@ -4558,7 +4572,7 @@ export function InsumosModule() {
 	      { id: 'roi_risk', label: 'ROI (perdas & risco)', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'square' }
 	    ]
 
-	  const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
+  const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
 	    try {
 	      const raw = window.localStorage.getItem(CHARTS_SLOTS_KEY)
 	      if (!raw) return DEFAULT_CHART_SLOTS
@@ -4633,6 +4647,13 @@ export function InsumosModule() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   })
 
+  const [chartsFilterTipo, setChartsFilterTipo] = React.useState<ChartPresetId | '__ALL__'>('__ALL__')
+  const [chartsFilterY, setChartsFilterY] = React.useState<ChartGroupBy | '__ALL__'>('__ALL__')
+  const [chartsFilterX, setChartsFilterX] = React.useState<ChartMetric | '__ALL__'>('__ALL__')
+  const [chartsFilterView, setChartsFilterView] = React.useState<ChartView | '__ALL__'>('__ALL__')
+  const [chartsFilterTop, setChartsFilterTop] = React.useState<'5' | '8' | '10' | '15' | '__ALL__'>('__ALL__')
+  const [chartsSearch, setChartsSearch] = React.useState('')
+
   React.useEffect(() => {
     try {
       window.localStorage.setItem(CHARTS_SLOTS_KEY, JSON.stringify(chartSlots))
@@ -4675,6 +4696,74 @@ export function InsumosModule() {
     },
     []
   )
+
+  const resolveChartSlot = React.useCallback(
+    (slot: ChartSlotConfig) => {
+      const preset = presetSupports(slot.presetId)
+      const groupBy: ChartGroupBy | undefined =
+        slot.presetId === 'distribution'
+          ? slot.groupBy === 'marca' || slot.groupBy === 'item'
+            ? slot.groupBy
+            : 'categoria'
+          : slot.presetId === 'movements'
+            ? slot.groupBy === 'categoria'
+              ? 'categoria'
+              : 'tempo'
+            : undefined
+      const mode: MovementsMode | undefined =
+        slot.presetId === 'movements'
+          ? slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout'
+            ? slot.mode
+            : groupBy === 'categoria'
+              ? 'saida'
+              : 'inout'
+          : undefined
+      const viewOptions = presetViewOptions({ ...slot, groupBy, mode })
+      const rawView = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as ChartView
+      const view = viewOptions.includes(rawView) ? rawView : viewOptions[0]
+      const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as ChartMetric
+      const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
+      const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
+      const layout = (preset as any).layout as ChartLayout | undefined
+      return { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout }
+    },
+    [presetSupports, presetViewOptions]
+  )
+
+  const chartSlotsView = React.useMemo(() => {
+    const search = chartsSearch.trim().toLowerCase()
+    return chartSlots
+      .map((slot, idx) => ({ slot, idx, meta: resolveChartSlot(slot) }))
+      .filter(({ slot, meta }) => {
+        if (chartsFilterTipo !== '__ALL__' && slot.presetId !== chartsFilterTipo) return false
+        if (chartsFilterY !== '__ALL__' && meta.groupBy !== chartsFilterY) return false
+        if (chartsFilterX !== '__ALL__' && meta.metric !== chartsFilterX) return false
+        if (chartsFilterView !== '__ALL__' && meta.view !== chartsFilterView) return false
+        if (chartsFilterTop !== '__ALL__' && String(meta.topN) !== String(chartsFilterTop)) return false
+        if (!search) return true
+        const hay = [
+          meta.preset.label,
+          slot.presetId,
+          meta.groupBy || '',
+          meta.metric,
+          meta.view,
+          meta.mode || '',
+          String(meta.topN)
+        ]
+          .join(' ')
+          .toLowerCase()
+        return hay.includes(search)
+      })
+  }, [
+    chartSlots,
+    chartsFilterTipo,
+    chartsFilterY,
+    chartsFilterX,
+    chartsFilterView,
+    chartsFilterTop,
+    chartsSearch,
+    resolveChartSlot
+  ])
 
 	  const stockAgg = React.useMemo(() => {
 	    const byCategoria = new Map<string, { name: string; qtd: number; valor: number }>()
@@ -6982,7 +7071,7 @@ export function InsumosModule() {
                                     <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
                                       <span className="inline-flex items-center gap-1">
                                         <span
-                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/15 text-red-300 border border-red-400/40"
+                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/40 text-red-50"
                                           title="Crítico"
                                           aria-label="Crítico"
                                         >
@@ -7004,7 +7093,7 @@ export function InsumosModule() {
                                       </span>
                                       <span className="inline-flex items-center gap-1">
                                         <span
-                                          className="inline-flex h-5 w-5 items-center justify-center text-amber-300"
+                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/35 text-amber-100"
                                           title="Atenção"
                                           aria-label="Atenção"
                                         >
@@ -7012,9 +7101,9 @@ export function InsumosModule() {
                                             <path
                                               d="M12 3l9 16H3l9-16z"
                                               fill="currentColor"
-                                              fillOpacity="0.15"
+                                              fillOpacity="0.45"
                                               stroke="currentColor"
-                                              strokeWidth="1.8"
+                                              strokeWidth="1.4"
                                               strokeLinejoin="round"
                                             />
                                             <path d="M12 9v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -7034,13 +7123,13 @@ export function InsumosModule() {
                                       </span>
                                     </div>
                                   </div>
-                                  <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 justify-end">
+                                  <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
                                       <SelectTrigger className="h-8 w-24">
                                         <SelectValue placeholder="Status" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="TODOS">Todos</SelectItem>
+                                        <SelectItem value="TODOS">–</SelectItem>
                                         <SelectItem value="ATENCAO">Atenção</SelectItem>
                                         <SelectItem value="URGENTE">Crítico</SelectItem>
                                         <SelectItem value="INFO">Info</SelectItem>
@@ -7054,7 +7143,7 @@ export function InsumosModule() {
                                         <SelectValue placeholder="Categoria" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="__ALL__">Todos</SelectItem>
+                                        <SelectItem value="__ALL__">–</SelectItem>
                                         {alertasCategorias.map((c) => (
                                           <SelectItem key={c} value={c}>
                                             {c}
@@ -7067,7 +7156,7 @@ export function InsumosModule() {
                                         <SelectValue placeholder="Fluxo" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="TODOS">Todos</SelectItem>
+                                        <SelectItem value="TODOS">–</SelectItem>
                                         <SelectItem value="ENTRADA">Entrada</SelectItem>
                                         <SelectItem value="SAIDA">Saída</SelectItem>
                                         <SelectItem value="DESCARTE">Descarte</SelectItem>
@@ -7078,7 +7167,7 @@ export function InsumosModule() {
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 min-w-[140px] flex-1 max-w-[320px]"
+                                      className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
                                     />
                                     <div className="flex items-center gap-2 shrink-0">
                                       <Button
@@ -7284,9 +7373,12 @@ export function InsumosModule() {
                               <div className="flex flex-wrap gap-2">
                                 {rec?.kind === 'TRANSFERENCIA' ? (
                                   <Button
-                                    variant="outline"
-                                    className="h-8 px-2 text-xs"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 bg-sky-500/30 text-sky-100 hover:bg-sky-500/45"
                                     disabled={!canQuick}
+                                    title="Transferir"
+                                    aria-label="Transferir"
                                     onClick={(e) => {
                                       e.stopPropagation()
                                       openQuickOperation('TRANSFERENCIA', {
@@ -7298,14 +7390,25 @@ export function InsumosModule() {
                                       })
                                     }}
                                   >
-                                    Transferir
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path
+                                        d="M7 7h10m0 0-3-3m3 3-3 3M17 17H7m0 0 3-3m-3 3 3 3"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
                                   </Button>
                                 ) : null}
                                 {rec?.kind === 'ENTRADA' ? (
                                   <Button
-                                    variant="outline"
-                                    className="h-8 px-2 text-xs"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 bg-emerald-500/30 text-emerald-100 hover:bg-emerald-500/45"
                                     disabled={!canQuick}
+                                    title="Entrada"
+                                    aria-label="Entrada"
                                     onClick={(e) => {
                                       e.stopPropagation()
                                       openQuickOperation('ENTRADA', {
@@ -7315,14 +7418,25 @@ export function InsumosModule() {
                                       })
                                     }}
                                   >
-                                    Entrada
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path
+                                        d="M12 5v10m0 0-4-4m4 4 4-4M5 19h14"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
                                   </Button>
                                 ) : null}
                                 {hasExpiringAction ? (
                                   <Button
-                                    variant={a.tags.includes('EXPIRADO') ? 'destructive' : 'secondary'}
-                                    className="h-8 px-2 text-xs"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 bg-rose-500/35 text-rose-100 hover:bg-rose-500/50"
                                     disabled={!canQuick}
+                                    title={a.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
+                                    aria-label={a.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
                                     onClick={(e) => {
                                       e.stopPropagation()
                                       openQuickOperation('BAIXA', {
@@ -7332,7 +7446,15 @@ export function InsumosModule() {
                                       })
                                     }}
                                   >
-                                    {a.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                      <path
+                                        d="M12 19V9m0 0-4 4m4-4 4 4M5 5h14"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
                                   </Button>
                                 ) : null}
                                 {hasQualityAction ? (
@@ -7391,7 +7513,7 @@ export function InsumosModule() {
 	                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
 		                          <Card className="bg-black/20 border border-white/10">
                               <CardHeader className="flex flex-col gap-2">
-                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:justify-between">
+                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
                                   <div className="flex items-center gap-3 min-w-0">
                                     <button
                                       type="button"
@@ -7406,10 +7528,74 @@ export function InsumosModule() {
                                     </button>
                                     <CardTitle className="text-white text-base">Gráficos</CardTitle>
                                   </div>
-                                  <div className="flex flex-1 items-center justify-end gap-2">
+                                  <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
+                                    <Select value={chartsFilterTipo} onValueChange={(v) => setChartsFilterTipo(v as any)}>
+                                      <SelectTrigger className="h-8 w-32">
+                                        <SelectValue placeholder="Tipo" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__ALL__">–</SelectItem>
+                                        <SelectItem value="distribution">Distribuição</SelectItem>
+                                        <SelectItem value="movements">Movimentações</SelectItem>
+                                        <SelectItem value="roi_risk">ROI</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Select value={chartsFilterY} onValueChange={(v) => setChartsFilterY(v as any)}>
+                                      <SelectTrigger className="h-8 w-28">
+                                        <SelectValue placeholder="Eixo Y" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__ALL__">–</SelectItem>
+                                        <SelectItem value="categoria">Categoria</SelectItem>
+                                        <SelectItem value="marca">Marca</SelectItem>
+                                        <SelectItem value="item">Item</SelectItem>
+                                        <SelectItem value="tempo">Tempo</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Select value={chartsFilterX} onValueChange={(v) => setChartsFilterX(v as any)}>
+                                      <SelectTrigger className="h-8 w-24">
+                                        <SelectValue placeholder="Eixo X" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__ALL__">–</SelectItem>
+                                        <SelectItem value="qtd">Qtd</SelectItem>
+                                        <SelectItem value="valor">R$</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Select value={chartsFilterView} onValueChange={(v) => setChartsFilterView(v as any)}>
+                                      <SelectTrigger className="h-8 w-32">
+                                        <SelectValue placeholder="Representação" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__ALL__">–</SelectItem>
+                                        <SelectItem value="pie">Pizza</SelectItem>
+                                        <SelectItem value="bar">Barras</SelectItem>
+                                        <SelectItem value="line">Linhas</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Select value={chartsFilterTop} onValueChange={(v) => setChartsFilterTop(v as any)}>
+                                      <SelectTrigger className="h-8 w-24">
+                                        <SelectValue placeholder="Top" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__ALL__">–</SelectItem>
+                                        <SelectItem value="5">Top 5</SelectItem>
+                                        <SelectItem value="8">Top 8</SelectItem>
+                                        <SelectItem value="10">Top 10</SelectItem>
+                                        <SelectItem value="15">Top 15</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Input
+                                      value={chartsSearch}
+                                      onChange={(e) => setChartsSearch(e.target.value)}
+                                      placeholder="Buscar"
+                                      className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
+                                    />
+                                    <div className="flex items-center gap-2 shrink-0">
                                     <Button
-                                      variant="outline"
+                                      variant="ghost"
                                       size="icon"
+                                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
                                       onClick={() => {
                                         if (chartSlots.length >= MAX_CHARTS) return
                                         setChartSlots((prev) => [
@@ -7426,8 +7612,9 @@ export function InsumosModule() {
                                       </svg>
                                     </Button>
                                     <Button
-                                      variant="outline"
+                                      variant="ghost"
                                       size="icon"
+                                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
                                       onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
                                       disabled={overviewLoading || insightsLoading}
                                       title="Resetar gráficos"
@@ -7462,52 +7649,29 @@ export function InsumosModule() {
                                         </svg>
                                       )}
                                     </Button>
+                                    </div>
                                   </div>
                                 </div>
                               </CardHeader>
                             {panelOpen ? (
                               <CardContent className="space-y-3">
               <div
-                className={`grid gap-3 ${chartSlots.length === 1
+                className={`grid gap-3 ${chartSlotsView.length <= 1
                   ? 'grid-cols-1'
-                  : chartSlots.length === 2
+                  : chartSlotsView.length === 2
                     ? 'grid-cols-1 lg:grid-cols-2'
                     : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
                   }`}
               >
-	                {chartSlots.map((slot, idx) => {
-	                  const preset = presetSupports(slot.presetId)
-	                  const groupBy: ChartGroupBy | undefined =
-	                    slot.presetId === 'distribution'
-	                      ? slot.groupBy === 'marca' || slot.groupBy === 'item'
-	                        ? slot.groupBy
-	                        : 'categoria'
-	                      : slot.presetId === 'movements'
-	                        ? slot.groupBy === 'categoria'
-	                          ? 'categoria'
-	                          : 'tempo'
-	                        : undefined
-	                  const mode: MovementsMode | undefined =
-	                    slot.presetId === 'movements'
-	                      ? slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout'
-	                        ? slot.mode
-	                        : groupBy === 'categoria'
-	                          ? 'saida'
-	                          : 'inout'
-	                      : undefined
-	                  const viewOptions = presetViewOptions({ ...slot, groupBy, mode })
-	                  const rawView = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as any
-	                  const view = viewOptions.includes(rawView) ? rawView : viewOptions[0]
-	                  const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as any
-	                  const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
-	                  const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
-	                  const layout = (preset as any).layout as ChartLayout | undefined
-                  const baseH = chartSlots.length === 1 ? 360 : chartSlots.length === 2 ? 300 : 260
-                  const height = layout === 'tall' ? baseH + (chartSlots.length === 1 ? 180 : 120) : baseH
-                  const cardSpan = chartSlots.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
+	                {chartSlotsView.length ? (
+                    chartSlotsView.map(({ slot, idx, meta }) => {
+                      const { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout } = meta
+                      const baseH = chartSlotsView.length === 1 ? 360 : chartSlotsView.length === 2 ? 300 : 260
+                      const height = layout === 'tall' ? baseH + (chartSlotsView.length === 1 ? 180 : 120) : baseH
+                      const cardSpan = chartSlotsView.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
 
-                  return (
-                    <Card key={`${slot.presetId}-${idx}`} className={`bg-black/20 border border-white/10 ${cardSpan}`}>
+                      return (
+                        <Card key={`${slot.presetId}-${idx}`} className={`bg-black/20 border border-white/10 ${cardSpan}`}>
 	                      <CardHeader className="space-y-2">
 	                        <div className="flex items-center gap-2">
 	                          <Select
@@ -7684,8 +7848,13 @@ export function InsumosModule() {
                         {renderChart({ ...slot, view, metric, topN }, { height })}
                       </CardContent>
                     </Card>
-                  )
-                })}
+                      )
+                    })
+                  ) : (
+                    <div className="rounded-xl border border-white/10 bg-black/10 p-6 text-sm text-blue-100/70">
+                      Nenhum gráfico encontrado para esses filtros.
+                    </div>
+                  )}
               </div>
 
 	                              </CardContent>
@@ -8891,7 +9060,7 @@ export function InsumosModule() {
                           <SelectValue placeholder="Fluxo" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="TODOS">Todos</SelectItem>
+                          <SelectItem value="TODOS">–</SelectItem>
                           <SelectItem value="ENTRADA">Entrada</SelectItem>
                           <SelectItem value="SAÍDA">Saída</SelectItem>
                           <SelectItem value="AJUSTE">Ajuste</SelectItem>
@@ -8905,7 +9074,7 @@ export function InsumosModule() {
                           <SelectValue placeholder="Categoria" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__ALL__">Todos</SelectItem>
+                          <SelectItem value="__ALL__">–</SelectItem>
                           {lotCategorias.map((c) => (
                             <SelectItem key={c} value={c}>
                               {c}
@@ -8918,7 +9087,7 @@ export function InsumosModule() {
                           <SelectValue placeholder="Marca" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__ALL__">Todos</SelectItem>
+                          <SelectItem value="__ALL__">–</SelectItem>
                           {insumosMarcas.map((m) => (
                             <SelectItem key={m} value={m}>
                               {m}
