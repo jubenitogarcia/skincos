@@ -20,6 +20,7 @@ const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
 const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
+const INSUMOS_ESTOQUE_THRESHOLDS_KEY = 'skincos.insumos.estoque.thresholds.v1'
 // Demo banners are not allowed. Keep the UI strictly real-data oriented.
 
 function fmtMoneyBRLCompact(value: number) {
@@ -328,11 +329,34 @@ export default function AppFunctionalNeatlab() {
 			        unidades: string[]
 			        allowedUnits: string[]
 			    } | null>(null)
-                    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<{
+				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<{
                         value: number | null
                         loading: boolean
                         percent: number | null
+                        entradaValor?: number | null
+                        saidaValor?: number | null
                     } | null>(null)
+                    const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
+                    const [estoqueThresholds, setEstoqueThresholds] = useState<{ warning: number; critical: number }>(() => {
+                        try {
+                            const raw = localStorage.getItem(INSUMOS_ESTOQUE_THRESHOLDS_KEY)
+                            if (raw) {
+                                const parsed = JSON.parse(raw || '{}')
+                                const warning = Number(parsed?.warning)
+                                const critical = Number(parsed?.critical)
+                                if (Number.isFinite(warning) && Number.isFinite(critical)) {
+                                    return { warning, critical }
+                                }
+                            }
+                        } catch { /* ignore */ }
+                        return { warning: defaultEstoqueThresholds.warning, critical: defaultEstoqueThresholds.critical }
+                    })
+                    const [estoqueThresholdsOpen, setEstoqueThresholdsOpen] = useState(false)
+                    const [estoqueThresholdsDraft, setEstoqueThresholdsDraft] = useState<{ warning: string; critical: string }>({
+                        warning: String(estoqueThresholds.warning),
+                        critical: String(estoqueThresholds.critical)
+                    })
+                    const [estoqueThresholdsError, setEstoqueThresholdsError] = useState<string | null>(null)
 				    const unitOptions = useMemo(() => DEFAULT_UNIT_OPTIONS, [])
 				    const { selectedUnit, setSelectedUnit, effectiveUnit } = useGlobalUnitSelection(unitOptions)
 				    const setSelectedUnitRef = React.useRef(setSelectedUnit)
@@ -387,6 +411,48 @@ export default function AppFunctionalNeatlab() {
 		            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
 		            .join(' ')
 
+                const parseCurrencyInput = React.useCallback((raw: string) => {
+                    if (!raw) return null
+                    const cleaned = String(raw)
+                        .replace(/[^\d,.-]/g, '')
+                        .replace(/\./g, '')
+                        .replace(',', '.')
+                    const value = Number(cleaned)
+                    return Number.isFinite(value) ? value : null
+                }, [])
+
+                React.useEffect(() => {
+                    if (!estoqueThresholdsOpen) return
+                    setEstoqueThresholdsDraft({
+                        warning: String(estoqueThresholds.warning),
+                        critical: String(estoqueThresholds.critical)
+                    })
+                    setEstoqueThresholdsError(null)
+                }, [estoqueThresholds, estoqueThresholdsOpen])
+
+                React.useEffect(() => {
+                    try {
+                        localStorage.setItem(INSUMOS_ESTOQUE_THRESHOLDS_KEY, JSON.stringify(estoqueThresholds))
+                    } catch { /* ignore */ }
+                }, [estoqueThresholds])
+
+                const estoqueBadgeTone = React.useMemo(() => {
+                    const value = Number(insumosHeaderEstoque?.value)
+                    if (!Number.isFinite(value)) return 'neutral'
+                    if (value < estoqueThresholds.critical) return 'critical'
+                    if (value < estoqueThresholds.warning) return 'warning'
+                    return 'ok'
+                }, [estoqueThresholds.critical, estoqueThresholds.warning, insumosHeaderEstoque?.value])
+
+                const estoqueBadgeClass =
+                    estoqueBadgeTone === 'ok'
+                        ? 'bg-emerald-500/25 text-emerald-100 border-emerald-400/40'
+                        : estoqueBadgeTone === 'warning'
+                          ? 'bg-amber-500/30 text-amber-100 border-amber-400/40'
+                          : estoqueBadgeTone === 'critical'
+                            ? 'bg-rose-500/30 text-rose-100 border-rose-400/40'
+                            : 'bg-white/10 text-blue-100/70 border-white/15'
+
 			    React.useEffect(() => {
 			        if (active !== 'insumos') return
 			        try {
@@ -399,10 +465,14 @@ export default function AppFunctionalNeatlab() {
                         const detail = (event as CustomEvent)?.detail || {}
                         const rawValue = detail?.value
                         const value = rawValue == null || Number.isNaN(Number(rawValue)) ? null : Number(rawValue)
+                        const entradaValor = Number.isFinite(Number(detail?.entradaValor)) ? Number(detail?.entradaValor) : null
+                        const saidaValor = Number.isFinite(Number(detail?.saidaValor)) ? Number(detail?.saidaValor) : null
                         setInsumosHeaderEstoque({
                             value,
                             loading: Boolean(detail?.loading),
-                            percent: typeof detail?.percent === 'number' ? detail.percent : null
+                            percent: typeof detail?.percent === 'number' ? detail.percent : null,
+                            entradaValor,
+                            saidaValor
                         })
                     }
                     window.addEventListener('skincos:insumos:estoque', handler)
@@ -684,6 +754,75 @@ export default function AppFunctionalNeatlab() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            <Dialog open={estoqueThresholdsOpen} onOpenChange={setEstoqueThresholdsOpen}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>Faixas do estoque</DialogTitle>
+                        <DialogDescription>
+                            Defina quando o estoque fica amarelo ou vermelho. Valores em reais.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        {estoqueThresholdsError ? (
+                            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-100">
+                                {estoqueThresholdsError}
+                            </div>
+                        ) : null}
+                        <div>
+                            <div className="text-xs text-blue-200/70 mb-1">Atenção (amarelo) abaixo de</div>
+                            <Input
+                                value={estoqueThresholdsDraft.warning}
+                                onChange={(e) => setEstoqueThresholdsDraft((prev) => ({ ...prev, warning: e.target.value }))}
+                                placeholder="ex: 50000"
+                            />
+                        </div>
+                        <div>
+                            <div className="text-xs text-blue-200/70 mb-1">Crítico (vermelho) abaixo de</div>
+                            <Input
+                                value={estoqueThresholdsDraft.critical}
+                                onChange={(e) => setEstoqueThresholdsDraft((prev) => ({ ...prev, critical: e.target.value }))}
+                                placeholder="ex: 20000"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter className="gap-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setEstoqueThresholds({
+                                    warning: defaultEstoqueThresholds.warning,
+                                    critical: defaultEstoqueThresholds.critical
+                                })
+                                setEstoqueThresholdsOpen(false)
+                            }}
+                        >
+                            Resetar padrão
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
+                                const warning = parseCurrencyInput(estoqueThresholdsDraft.warning)
+                                const critical = parseCurrencyInput(estoqueThresholdsDraft.critical)
+                                if (!Number.isFinite(Number(warning)) || !Number.isFinite(Number(critical))) {
+                                    setEstoqueThresholdsError('Informe valores numéricos válidos.')
+                                    return
+                                }
+                                if ((warning as number) <= (critical as number)) {
+                                    setEstoqueThresholdsError('Atenção deve ser maior que Crítico.')
+                                    return
+                                }
+                                setEstoqueThresholds({
+                                    warning: warning as number,
+                                    critical: critical as number
+                                })
+                                setEstoqueThresholdsOpen(false)
+                            }}
+                        >
+                            Salvar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Premium Background with animated gradient */}
             <div className="min-h-screen relative overflow-hidden">
@@ -950,47 +1089,47 @@ export default function AppFunctionalNeatlab() {
 					                                                        </>
 					                                                    ) : null}
 
-					                                                    <Button
-					                                                    size="icon"
-					                                                        variant="ghost"
-					                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
-				                                                        onClick={() => {
-			                                                            try {
-			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
-			                                                            } catch { /* ignore */ }
+						                                                    <Button
+						                                                    size="icon"
+						                                                        variant="ghost"
+						                                                        className="h-9 w-9 rounded-md bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35"
+					                                                        onClick={() => {
+				                                                            try {
+				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
+				                                                            } catch { /* ignore */ }
 	                                                        }}
 			                                                        title="Entrada"
 			                                                        aria-label="Entrada"
 			                                                    >
-			                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-9 w-9" />
+				                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
 			                                                    </Button>
-			                                                    <Button
-			                                                    size="icon"
-			                                                        variant="ghost"
-			                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
-			                                                        onClick={() => {
-			                                                            try {
-			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
-			                                                            } catch { /* ignore */ }
+						                                                    <Button
+						                                                    size="icon"
+						                                                        variant="ghost"
+						                                                        className="h-9 w-9 rounded-md bg-rose-500/30 text-rose-100 hover:bg-rose-500/40"
+					                                                        onClick={() => {
+				                                                            try {
+				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
+				                                                            } catch { /* ignore */ }
 	                                                        }}
 			                                                        title="Saída"
 			                                                        aria-label="Saída"
 			                                                    >
-			                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-9 w-9" />
+				                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
 			                                                    </Button>
-			                                                    <Button
-			                                                    size="icon"
-			                                                        variant="ghost"
-			                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
-			                                                        onClick={() => {
-			                                                            try {
-			                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
-			                                                            } catch { /* ignore */ }
+				                                                    <Button
+				                                                    size="icon"
+				                                                        variant="ghost"
+				                                                        className="h-9 w-9 rounded-md bg-sky-500/30 text-sky-100 hover:bg-sky-500/40"
+				                                                        onClick={() => {
+				                                                            try {
+				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
+				                                                            } catch { /* ignore */ }
 	                                                        }}
 			                                                        title="Transferência"
 			                                                        aria-label="Transferência"
 				                                                    >
-				                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-9 w-9" />
+					                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
 					                                                    </Button>
 					
 			                                                </div>
@@ -1067,9 +1206,18 @@ export default function AppFunctionalNeatlab() {
 
 		                                <div className="flex items-center gap-4">
 		                                    {active === 'insumos' ? (
-		                                        <div className="flex items-center gap-2 min-w-[160px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
-		                                            <span className="uppercase tracking-wide text-blue-200/60">Estoque</span>
-		                                            <span className="ml-auto text-right font-mono text-blue-50">
+		                                        <div className="flex items-start gap-2 min-w-[180px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
+		                                            <button
+		                                                type="button"
+		                                                className="inline-flex"
+		                                                onClick={() => setEstoqueThresholdsOpen(true)}
+		                                                title="Editar faixas de estoque"
+		                                                aria-label="Editar faixas de estoque"
+		                                            >
+		                                                <Badge className={`uppercase tracking-wide border ${estoqueBadgeClass}`}>Estoque</Badge>
+		                                            </button>
+		                                            <span className="ml-auto text-right">
+		                                                <span className="block font-mono text-blue-50">
 		                                                {insumosHeaderEstoque?.loading ? (
 		                                                    <span className="inline-flex items-center gap-2">
 		                                                        <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
@@ -1078,6 +1226,21 @@ export default function AppFunctionalNeatlab() {
 		                                                ) : (
 		                                                    insumosHeaderEstoque?.value != null ? fmtMoneyBRLCompact(insumosHeaderEstoque.value) : '-'
 		                                                )}
+		                                                </span>
+		                                                {!insumosHeaderEstoque?.loading ? (
+		                                                    <span className="mt-1 flex flex-col items-end text-[10px] leading-tight">
+		                                                        <span className="text-emerald-300">
+		                                                            {insumosHeaderEstoque?.entradaValor != null
+		                                                                ? `+ ${fmtMoneyBRLCompact(insumosHeaderEstoque.entradaValor)}`
+		                                                                : '-'}
+		                                                        </span>
+		                                                        <span className="text-rose-300">
+		                                                            {insumosHeaderEstoque?.saidaValor != null
+		                                                                ? `- ${fmtMoneyBRLCompact(insumosHeaderEstoque.saidaValor)}`
+		                                                                : '-'}
+		                                                        </span>
+		                                                    </span>
+		                                                ) : null}
 		                                            </span>
 		                                        </div>
 		                                    ) : null}
@@ -1086,7 +1249,7 @@ export default function AppFunctionalNeatlab() {
 		                                            <Button
 		                                                size="icon"
 		                                                variant="ghost"
-		                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
 		                                                onClick={() => {
 		                                                    try {
 		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
@@ -1103,7 +1266,7 @@ export default function AppFunctionalNeatlab() {
 		                                            <Button
 		                                                size="icon"
 		                                                variant="ghost"
-		                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
 		                                                onClick={() => {
 		                                                    try {
 		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
@@ -1120,7 +1283,7 @@ export default function AppFunctionalNeatlab() {
 		                                            <Button
 		                                                size="icon"
 		                                                variant="ghost"
-		                                                className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-9 rounded-full"
+		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
 		                                                onClick={() => {
 		                                                    try {
 		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
