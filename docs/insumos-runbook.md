@@ -28,6 +28,22 @@ Esperado:
 - `storage: "d1"`
 - `dbConfigured: true`
 
+### 3.1.1 Proxy status (Pages → Worker)
+```bash
+curl -sS https://crm.skincos.com.br/api/insumos/_proxy-status
+```
+Esperado:
+- `ok: true`
+- `target` aponta para o Worker de Insumos
+
+### 3.1.2 Share history (fallback tolerante)
+```bash
+curl -sS https://crm.skincos.com.br/api/insumos/share/history?limit=12
+```
+Esperado:
+- `200` com `data: []` quando não configurado
+- `200` com itens quando o recurso estiver ativo
+
 ### 3.2 Sessão autenticada
 ```bash
 curl -sS -I https://crm.skincos.com.br/api/auth/me

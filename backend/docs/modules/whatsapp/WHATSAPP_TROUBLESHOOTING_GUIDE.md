@@ -3,6 +3,18 @@
 ## Overview
 This guide provides comprehensive troubleshooting procedures for the WhatsApp Channel-Based System, covering common issues, diagnostic methods, and recovery procedures.
 
+### Evolution API Mode (opcional)
+Se o CRM estiver configurado para usar Evolution API como provedor do orquestrador:
+
+```bash
+export WA_ORCHESTRATOR_PROVIDER=evolution
+export EVOLUTION_API_URL="http://localhost:8080"
+export EVOLUTION_API_KEY="sua-chave"
+export EVOLUTION_INSTANCE_PREFIX="crm-channel-"
+```
+
+Cada canal (1–9) é mapeado para a instância `crm-channel-{n}`.
+
 ## 📋 Environmental Prerequisites
 
 ### System Requirements

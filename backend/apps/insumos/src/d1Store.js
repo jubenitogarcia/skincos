@@ -698,6 +698,136 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
   };
 }
 
+export async function d1ListInsumosByCodigos({ env, unidades, unidade, codigos }) {
+  if (!env?.DB) return [];
+  const rawList = normalizeBarcodeList(codigos);
+  const uniq = Array.from(new Set(rawList.map((v) => String(v || '').trim()).filter(Boolean)));
+  if (!uniq.length) return [];
+
+  const chunkSize = Math.max(1, Math.floor(MAX_SQL_BINDS / 2));
+  const registrosSet = new Set();
+
+  const queryRegistros = async (chunk) => {
+    if (!chunk.length) return [];
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const res = await env.DB.prepare(
+        `SELECT DISTINCT i.registro
+         FROM insumos_items i
+         LEFT JOIN insumos_barcodes b ON b.registro = i.registro
+         WHERE i.codigo_barras IN (${placeholders})
+            OR b.codigo_barras IN (${placeholders})`
+      ).bind(...chunk, ...chunk).all();
+      return res?.results || [];
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (/too many sql variables/i.test(message) && chunk.length > 1) {
+        const splitAt = Math.max(1, Math.floor(chunk.length / 2));
+        const left = await queryRegistros(chunk.slice(0, splitAt));
+        const right = await queryRegistros(chunk.slice(splitAt));
+        return left.concat(right);
+      }
+      throw err;
+    }
+  };
+
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
+    const rows = await queryRegistros(chunk);
+    for (const row of rows) {
+      const reg = String(row?.registro || '').trim();
+      if (reg) registrosSet.add(reg);
+    }
+  }
+
+  const registros = Array.from(registrosSet);
+  if (!registros.length) return [];
+
+  const items = [];
+  const queryItems = async (chunk) => {
+    if (!chunk.length) return [];
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const res = await env.DB.prepare(
+        `SELECT
+            registro,
+            codigo_barras,
+            produto,
+            categoria,
+            marca,
+            especificacao,
+            concentracao,
+            volume,
+            calibre,
+            tipo_unidade,
+            fonte,
+            preco_custo,
+            estoque_minimo,
+            lote,
+            data_validade,
+            policy_requires_lot,
+            policy_requires_expiry,
+            policy_fefo,
+            data_cadastro,
+            data_atualizacao
+         FROM insumos_items
+         WHERE registro IN (${placeholders})`
+      ).bind(...chunk).all();
+      return res?.results || [];
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (/too many sql variables/i.test(message) && chunk.length > 1) {
+        const splitAt = Math.max(1, Math.floor(chunk.length / 2));
+        const left = await queryItems(chunk.slice(0, splitAt));
+        const right = await queryItems(chunk.slice(splitAt));
+        return left.concat(right);
+      }
+      throw err;
+    }
+  };
+
+  for (let i = 0; i < registros.length; i += MAX_SQL_BINDS) {
+    const chunk = registros.slice(i, i + MAX_SQL_BINDS);
+    const rows = await queryItems(chunk);
+    for (const row of rows) items.push(row);
+  }
+
+  const barcodesByRegistro = await loadBarcodesByRegistro(env, registros);
+  const byRegistro = await loadStocksByRegistro(env, registros);
+
+  return items.map((it) => {
+    const registro = String(it.registro || '').trim();
+    const estoques = byRegistro.get(registro) || {};
+    const estoqueAtual = toInt(estoques?.[unidade], 0);
+    const dataValidade = it.data_validade ? String(it.data_validade) : null;
+    const codigosBarras = mergeBarcodeList(String(it.codigo_barras || ''), barcodesByRegistro.get(registro));
+    return {
+      registro,
+      codigoBarras: String(it.codigo_barras || ''),
+      codigosBarras,
+      categoria: String(it.categoria || ''),
+      marca: String(it.marca || ''),
+      produto: String(it.produto || ''),
+      especificacao: String(it.especificacao || ''),
+      concentracao: String(it.concentracao || ''),
+      volume: String(it.volume || ''),
+      calibre: String(it.calibre || ''),
+      tipoUnidade: String(it.tipo_unidade || ''),
+      fonte: String(it.fonte || ''),
+      lote: String(it.lote || ''),
+      precoCusto: toNumber(it.preco_custo, 0),
+      estoqueAtual,
+      estoqueMinimo: toInt(it.estoque_minimo, 0),
+      dataValidade: dataValidade || null,
+      statusValidade: calcularStatusValidade(dataValidade),
+      policyRequiresLot: normalizePolicyFlag(it.policy_requires_lot),
+      policyRequiresExpiry: normalizePolicyFlag(it.policy_requires_expiry),
+      policyFefo: normalizePolicyFlag(it.policy_fefo),
+      estoques: Object.fromEntries((unidades || []).map((u) => [u, toInt(estoques?.[u], 0)])),
+    };
+  });
+}
+
 export async function d1ListInsumosOptions({ env, limite }) {
   const lim = Math.max(50, Math.min(500, toInt(limite, 250) || 250));
 

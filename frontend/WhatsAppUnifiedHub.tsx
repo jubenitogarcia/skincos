@@ -127,6 +127,7 @@ export function WhatsAppUnifiedHub() {
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [pollPausedUntil, setPollPausedUntil] = useState<number | null>(null)
   
   // Channel operations state
   const [startingChannels, setStartingChannels] = useState<Set<number>>(new Set())
@@ -145,9 +146,19 @@ export function WhatsAppUnifiedHub() {
   // Polling and real-time updates
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const pollGuardRef = useRef<{ failCount: number; pausedUntil: number }>({ failCount: 0, pausedUntil: 0 })
 
   // Fetch orchestrator status
-  const fetchOrchestratorStatus = useCallback(async () => {
+  const fetchOrchestratorStatus = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
+    const now = Date.now()
+    const guard = pollGuardRef.current
+    if (!force && guard.pausedUntil && now < guard.pausedUntil) {
+      return
+    }
+    if (guard.pausedUntil && now >= guard.pausedUntil) {
+      guard.pausedUntil = 0
+      setPollPausedUntil(null)
+    }
     try {
       const response = await fetch('/api/wa-orchestrator/channels')
       if (!response.ok) throw new Error(`Failed to fetch channels status (HTTP ${response.status})`)
@@ -204,8 +215,17 @@ export function WhatsAppUnifiedHub() {
       
       setOrchestratorStatus(transformedData)
       setError(null)
+      guard.failCount = 0
+      guard.pausedUntil = 0
+      setPollPausedUntil(null)
     } catch (err: any) {
-      setError(`Failed to load channels status: ${err.message}`)
+      guard.failCount += 1
+      if (guard.failCount >= 3 && !guard.pausedUntil) {
+        guard.pausedUntil = Date.now() + 60000
+        setPollPausedUntil(guard.pausedUntil)
+      }
+      const suffix = guard.pausedUntil ? ' • pausa de 60s' : ''
+      setError(`Failed to load channels status: ${err.message}${suffix}`)
       console.error('Channels status error:', err)
     } finally {
       setLoading(false)
@@ -474,6 +494,14 @@ export function WhatsAppUnifiedHub() {
   // Setup real-time conversation updates
   useEffect(() => {
     eventSourceRef.current = new EventSource('/api/conversations/events')
+    eventSourceRef.current.onerror = () => {
+      try {
+        console.warn('SSE unavailable, closing connection.')
+        eventSourceRef.current?.close()
+      } catch {
+        // ignore
+      }
+    }
     
     eventSourceRef.current.onmessage = (event) => {
       try {
@@ -661,7 +689,7 @@ export function WhatsAppUnifiedHub() {
             size="sm" 
             variant="outline" 
             className="ml-2"
-            onClick={fetchOrchestratorStatus}
+            onClick={() => fetchOrchestratorStatus({ force: true })}
           >
             Tentar Novamente
           </Button>

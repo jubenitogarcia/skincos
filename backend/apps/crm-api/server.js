@@ -11,6 +11,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware'
 
 // WhatsApp Orchestrator (backend-only)
 import { whatsappOrchestrator } from './services/whatsappOrchestrator.js'
+import { evolutionOrchestrator } from './services/evolutionOrchestrator.js'
 
 // Ponto (reconhecimento facial + batidas)
 import { registerPontoRoutes } from './server/pontoRoutes.js'
@@ -3209,6 +3210,9 @@ function channelForPort(port) {
     return null // Channel determined by REST route, not port
 }
 
+const WA_ORCHESTRATOR_PROVIDER = String(process.env.WA_ORCHESTRATOR_PROVIDER || '').toLowerCase()
+const USE_EVOLUTION_ORCHESTRATOR = WA_ORCHESTRATOR_PROVIDER === 'evolution'
+
 // Legacy compatibility - remove port 3002 reservation
 function portFor(inst) {
     // Single instance always uses official module port
@@ -3983,6 +3987,25 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
 // Get orchestrator status and all channels - enhanced with detailed information
 app.get('/api/wa-orchestrator/status', async (req, res) => {
     try {
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const status = await evolutionOrchestrator.getStatus()
+            return res.json({
+                success: true,
+                ...status,
+                availableChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
+                freeChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
+                recoverySuggestions: null,
+                endpoints: {
+                    channels: '/api/wa-orchestrator/channels',
+                    startChannel: '/api/wa-orchestrator/channels/{channel}/start',
+                    getChannelStatus: '/api/wa-orchestrator/channels/{channel}',
+                    getChannelQR: '/api/wa-orchestrator/channels/{channel}/qr',
+                    stopChannel: '/api/wa-orchestrator/channels/{channel}/stop',
+                    restartChannel: '/api/wa-orchestrator/channels/{channel}/restart'
+                }
+            })
+        }
+
         const status = whatsappOrchestrator.getStatus()
         const availableChannels = whatsappOrchestrator.getAvailableChannels()
         const freeChannels = whatsappOrchestrator.getFreeChannels()
@@ -4011,6 +4034,10 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
 // List all instances
 app.get('/api/wa-orchestrator/instances', async (req, res) => {
     try {
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const status = await evolutionOrchestrator.getStatus()
+            return res.json({ success: true, instances: status.channels })
+        }
         const status = whatsappOrchestrator.getStatus()
         res.json({ success: true, instances: status.instances })
     } catch (error) {
@@ -4305,7 +4332,7 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
 // Get all channels status
 app.get('/api/wa-orchestrator/channels', async (req, res) => {
     try {
-        const status = whatsappOrchestrator.getStatus()
+        const status = USE_EVOLUTION_ORCHESTRATOR ? await evolutionOrchestrator.getStatus() : whatsappOrchestrator.getStatus()
         res.json({
             success: true,
             channels: status.channels,
@@ -4334,6 +4361,17 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
             return res.status(400).json({
                 success: false,
                 error: 'Invalid channel. Must be between 1 and 9.'
+            })
+        }
+
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const result = await evolutionOrchestrator.startChannel(channel, name)
+            return res.json({
+                success: true,
+                instance: result.instance,
+                channel: result.instance?.channel || channel,
+                port: result.instance?.port || 3001,
+                suggestions: null
             })
         }
 
@@ -4373,6 +4411,26 @@ app.get('/api/wa-orchestrator/channels/:channel', async (req, res) => {
             })
         }
 
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const result = await evolutionOrchestrator.getChannelStatus(channel)
+            if (result.error) {
+                return res.status(404).json({
+                    success: false,
+                    error: result.error,
+                    channel
+                })
+            }
+            return res.json({
+                success: true,
+                status: result.status,
+                channel: result.channel || channel,
+                port: result.port || 3001,
+                instance: result.instance || null,
+                liveData: null,
+                warning: null
+            })
+        }
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.getInstanceStatus(port)
 
@@ -4409,6 +4467,28 @@ app.get('/api/wa-orchestrator/channels/:channel/qr', async (req, res) => {
             return res.status(400).json({
                 success: false,
                 error: 'Invalid channel. Must be between 1 and 9.'
+            })
+        }
+
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const result = await evolutionOrchestrator.getChannelQR(channel)
+            if (result?.qr) {
+                return res.json({
+                    success: true,
+                    qr: result.qr,
+                    status: result.status || 'qr_pending',
+                    channel,
+                    port: result.port || 3001,
+                    cached: false,
+                    generated: true,
+                    message: null
+                })
+            }
+            return res.status(404).json({
+                success: false,
+                error: 'QR not available',
+                channel,
+                port: result?.port || 3001
             })
         }
 
@@ -4463,6 +4543,16 @@ app.post('/api/wa-orchestrator/channels/:channel/stop', async (req, res) => {
             })
         }
 
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            await evolutionOrchestrator.stopChannel(channel)
+            return sendResponse(200, {
+                success: true,
+                channel,
+                port: 3001,
+                message: 'Channel stopped successfully'
+            })
+        }
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.stopInstance(port)
 
@@ -4507,6 +4597,17 @@ app.post('/api/wa-orchestrator/channels/:channel/restart', async (req, res) => {
             return sendResponse(400, {
                 success: false,
                 error: 'Invalid channel. Must be between 1 and 9.'
+            })
+        }
+
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            await evolutionOrchestrator.restartChannel(channel)
+            return sendResponse(200, {
+                success: true,
+                instance: null,
+                channel,
+                port: 3001,
+                suggestions: null
             })
         }
 
@@ -4556,6 +4657,13 @@ app.put('/api/wa-orchestrator/channels/:channel/metadata', async (req, res) => {
             })
         }
 
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            return res.status(501).json({
+                success: false,
+                error: 'Metadata updates are not supported for Evolution provider'
+            })
+        }
+
         const port = portForChannel(channel)
         const result = await whatsappOrchestrator.updateInstanceMetadata(port, metadata)
 
@@ -4580,6 +4688,30 @@ app.put('/api/wa-orchestrator/channels/:channel/metadata', async (req, res) => {
 // Get next available channel
 app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
     try {
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const status = await evolutionOrchestrator.getStatus()
+            const free = status.channels.find((c) => c.status === 'free')
+            if (free) {
+                return res.json({
+                    success: true,
+                    channel: free.channel,
+                    port: free.port || 3001,
+                    message: `Channel ${free.channel} is available`
+                })
+            }
+            return res.status(409).json({
+                success: false,
+                error: 'No available channels',
+                status: {
+                    totalChannels: status.totalChannels,
+                    availableChannels: status.availableChannels,
+                    freeInstances: status.freeInstances,
+                    connectedInstances: status.connectedInstances,
+                    errorInstances: status.errorInstances
+                }
+            })
+        }
+
         const channel = whatsappOrchestrator.getNextAvailableChannel()
         if (channel) {
             const port = portForChannel(channel)
