@@ -1007,12 +1007,6 @@ export default function AppFunctionalNeatlab() {
                         </div>
 
                         {/* Footer */}
-	                            <div className={`${sidebarExpanded ? 'p-4' : 'p-2'} border-t border-white/10`}>
-	                            <div className={`flex items-center gap-2 text-xs text-blue-300/60 ${sidebarExpanded ? '' : 'justify-center'}`}>
-	                                <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
-	                                {sidebarExpanded ? <span>v1.0.0 Edição Empresarial</span> : null}
-	                            </div>
-	                        </div>
                     </div>
 
                     {/* Premium Main Area */}

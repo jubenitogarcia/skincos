@@ -1859,36 +1859,19 @@ export function InsumosModule() {
     }
   }, [])
 
-  const dragScrollYRef = React.useRef<number | null>(null)
-
   const onDragStartLayout = React.useCallback(() => {
-    if (typeof window === 'undefined') return
-    dragScrollYRef.current = window.scrollY
+    // keep no-op to avoid scroll jumps after drag
   }, [])
 
   const onDragEndLayout = React.useCallback(
     (result: DropResult) => {
-      const restore = dragScrollYRef.current
-      dragScrollYRef.current = null
-      const restoreScroll = () => {
-        if (restore != null && typeof window !== 'undefined') {
-          requestAnimationFrame(() => window.scrollTo({ top: restore }))
-        }
-      }
-      if (!result.destination) {
-        restoreScroll()
-        return
-      }
-      if (result.source.droppableId !== result.destination.droppableId) {
-        restoreScroll()
-        return
-      }
+      if (!result.destination) return
+      if (result.source.droppableId !== result.destination.droppableId) return
 
       if (result.source.droppableId === 'overview-panels') {
         const next = moveIdInList(visibleOverviewPanels, result.source.index, result.destination.index)
         persistOverviewPanels(next)
         scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
-        restoreScroll()
         return
       }
 
@@ -1896,7 +1879,6 @@ export function InsumosModule() {
         const next = moveIdInList(visibleMainPanels, result.source.index, result.destination.index)
         persistMainPanels(next)
         scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
-        restoreScroll()
       }
     },
     [
@@ -2346,6 +2328,21 @@ export function InsumosModule() {
       const list = Array.isArray(out?.data) ? out.data : []
       const exact = list.filter((i) => getInsumoBarcodes(i).includes(codigo))
       return exact.length ? exact : list
+    },
+    [apiJson]
+  )
+
+  const lookupInsumosByCodigos = React.useCallback(
+    async ({ codigosBarras, ctxUnidade }: { codigosBarras: string[]; ctxUnidade: string }) => {
+      const list = Array.isArray(codigosBarras) ? codigosBarras : []
+      const cleaned = Array.from(new Set(list.map((v) => String(v || '').trim()).filter(Boolean)))
+      if (!cleaned.length) return []
+      const params = new URLSearchParams({ unidade: ctxUnidade })
+      const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos/lookup?${params.toString()}`, {
+        method: 'POST',
+        body: { codigos: cleaned }
+      })
+      return Array.isArray(out?.data) ? out.data : []
     },
     [apiJson]
   )
@@ -4488,31 +4485,30 @@ export function InsumosModule() {
 
     const token = ++movInsumosLookupTokenRef.current
     const queue = missing
-    const concurrency = 4
-    let cursor = 0
+    const chunkSize = 60
 
-    const worker = async () => {
-      while (cursor < queue.length && token === movInsumosLookupTokenRef.current) {
-        const code = queue[cursor++]
-        if (!code) continue
-        if (movInsumosLookupDoneRef.current.has(code)) continue
-        if (movInsumosLookupInflightRef.current.has(code)) continue
-        movInsumosLookupInflightRef.current.add(code)
+    const run = async () => {
+      for (let i = 0; i < queue.length && token === movInsumosLookupTokenRef.current; i += chunkSize) {
+        const chunk = queue.slice(i, i + chunkSize).filter(Boolean)
+        if (!chunk.length) continue
+        for (const code of chunk) movInsumosLookupInflightRef.current.add(code)
         try {
-          const items = await lookupInsumosByCodigo({ codigoBarras: code, ctxUnidade: unidade })
+          const items = await lookupInsumosByCodigos({ codigosBarras: chunk, ctxUnidade: unidade })
           if (token !== movInsumosLookupTokenRef.current) return
           upsertInsumosCache(items)
         } catch {
           // ignore
         } finally {
-          movInsumosLookupInflightRef.current.delete(code)
-          movInsumosLookupDoneRef.current.add(code)
+          for (const code of chunk) {
+            movInsumosLookupInflightRef.current.delete(code)
+            movInsumosLookupDoneRef.current.add(code)
+          }
         }
       }
     }
 
-    void Promise.allSettled(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()))
-  }, [canUseApi, isAuthed, lookupInsumosByCodigo, movimentacoes, selectedCodigoBarras, unidade, upsertInsumosCache])
+    void run()
+  }, [canUseApi, isAuthed, lookupInsumosByCodigos, movimentacoes, selectedCodigoBarras, unidade, upsertInsumosCache])
 
   const movPanelOpen = detailsOpen[MAIN_PANEL_OPEN_KEYS.mov] ?? true
 
@@ -7167,7 +7163,7 @@ export function InsumosModule() {
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
+                                      className="h-8 flex-1 min-w-[140px] md:min-w-0"
                                     />
                                     <div className="flex items-center gap-2 shrink-0">
                                       <Button
@@ -7589,7 +7585,7 @@ export function InsumosModule() {
                                       value={chartsSearch}
                                       onChange={(e) => setChartsSearch(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
+                                      className="h-8 flex-1 min-w-[140px] md:min-w-0"
                                     />
                                     <div className="flex items-center gap-2 shrink-0">
                                     <Button
@@ -9099,7 +9095,7 @@ export function InsumosModule() {
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 flex-1 min-w-[120px] max-w-[420px] md:min-w-0 md:max-w-none"
+                        className="h-8 flex-1 min-w-[140px] md:min-w-0"
                       />
                       <div className="flex items-center gap-2 shrink-0">
 		                <Button
