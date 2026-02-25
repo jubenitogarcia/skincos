@@ -8,6 +8,31 @@ export async function onRequest(context: any): Promise<Response> {
     const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
     const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
+    const isProductionTarget = (() => {
+        const raw = String(targetOrigin || '').trim().toLowerCase()
+        return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
+    })()
+
+    if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
+        return new Response(
+            JSON.stringify({
+                ok: true,
+                localDirect: false,
+                target: targetOrigin,
+                isProductionTarget,
+                localSafeMode: false,
+                mutationsBlocked: false
+            }),
+            {
+                status: 200,
+                headers: {
+                    'content-type': 'application/json',
+                    'cache-control': 'no-store'
+                }
+            }
+        )
+    }
+
     const targetUrl = new URL(targetOrigin)
     targetUrl.pathname = `/insumos${rest.startsWith('/') ? '' : '/'}${rest}`
     targetUrl.search = url.search
@@ -92,6 +117,13 @@ export async function onRequest(context: any): Promise<Response> {
         }
     } catch {
         // ignore
+    }
+
+    if (rest.startsWith('/share/history') && upstream.status === 404) {
+        return new Response(
+            JSON.stringify({ success: true, data: [], source: 'proxy-fallback', error: 'NOT_AVAILABLE' }),
+            { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }
+        )
     }
 
     return new Response(upstream.body, {

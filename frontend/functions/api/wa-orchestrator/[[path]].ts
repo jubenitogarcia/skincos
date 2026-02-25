@@ -7,12 +7,27 @@ export async function onRequest(context: any): Promise<Response> {
   const prefix = '/api/wa-orchestrator'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
-  const targetOrigin = String(
-    (context.env?.WA_ORCHESTRATOR_API_TARGET as string | undefined)
-      || (context.env?.CRM_API_TARGET as string | undefined)
-      || (context.env?.INSUMOS_API_TARGET as string | undefined)
-      || 'https://api.skincos.com.br'
-  )
+  const rawTargets = [
+    context.env?.WA_ORCHESTRATOR_API_TARGET as string | undefined,
+    context.env?.CRM_API_TARGET as string | undefined,
+    context.env?.INSUMOS_API_TARGET as string | undefined
+  ].map((v) => String(v || '').trim()).filter(Boolean)
+  const requestOrigin = url.origin
+
+  const pickTarget = () => {
+    for (const candidate of rawTargets) {
+      try {
+        const parsed = new URL(candidate)
+        if (parsed.origin === requestOrigin) continue
+        return candidate
+      } catch {
+        // ignore invalid
+      }
+    }
+    return 'https://api.skincos.com.br'
+  }
+
+  const targetOrigin = String(pickTarget())
   const targetUrl = new URL(targetOrigin)
   const basePath = targetUrl.pathname.replace(/\/$/, '')
   targetUrl.pathname = `${basePath}/api/wa-orchestrator${rest.startsWith('/') ? '' : '/'}${rest}`

@@ -70,6 +70,11 @@ Rotas: `/api/harmonia/*`
   - `HARMONIA_WA_CHANNEL_DEFAULT` (default: `1`)
   - `HARMONIA_WA_CHANNEL_NH` (opcional)
   - `HARMONIA_WA_CHANNEL_BSS` (opcional)
+  - Orquestrador Evolution (opcional):
+    - `WA_ORCHESTRATOR_PROVIDER=evolution`
+    - `EVOLUTION_API_URL` (ex.: `http://localhost:8080`)
+    - `EVOLUTION_API_KEY`
+    - `EVOLUTION_INSTANCE_PREFIX` (default: `crm-channel-`)
 - Google Sheets:
   - `HARMONIA_GOOGLE_SHEETS_DOC_ID`
   - `HARMONIA_GOOGLE_SHEETS_GID` (ou `HARMONIA_GOOGLE_SHEETS_TAB_NAME`)

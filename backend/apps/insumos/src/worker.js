@@ -18,6 +18,7 @@ import { handlePontoRoutes } from './routes/ponto.js';
 import {
     d1ListInsumos,
     d1ListInsumosLite,
+    d1ListInsumosByCodigos,
     d1CreateInsumo,
     d1UpdateInsumo,
     d1DeleteInsumo,
@@ -1469,6 +1470,7 @@ export default {
             listInsumosLite: ({ unidade }) => d1ListInsumosLite({ env, unidade }),
             listInsumosPaged: ({ unidade, q, pagina, limite }) => d1ListInsumosPaged({ env, unidades: UNIDADES, unidade, q, pagina, limite }),
             listInsumosOptions: ({ limite }) => d1ListInsumosOptions({ env, limite }),
+            listInsumosByCodigos: ({ unidade, codigos }) => d1ListInsumosByCodigos({ env, unidades: UNIDADES, unidade, codigos }),
             createInsumo: ({ unidade, body }) => d1CreateInsumo({ env, unidades: UNIDADES, unidade, body }),
             updateInsumo: ({ registro, body }) => d1UpdateInsumo({ env, registro, body }),
             deleteInsumo: ({ registro }) => d1DeleteInsumo({ env, registro }),

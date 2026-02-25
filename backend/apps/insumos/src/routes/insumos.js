@@ -48,6 +48,32 @@ export async function handleInsumosRoutes({
             }
         }
 
+        // POST /insumos/lookup
+        if (url.pathname === "/insumos/lookup" && request.method === "POST") {
+            try {
+                if (typeof d1.listInsumosByCodigos !== 'function') {
+                    return withCORS(JSON.stringify({ success: false, error: 'Lookup indisponível', code: 'NOT_IMPLEMENTED' }), { status: 501 }, appOrigin);
+                }
+                const body = await request.json().catch(() => ({}));
+                const raw = body?.codigos ?? body?.codigosBarras ?? body?.barcodes ?? body?.codes ?? [];
+                const list = Array.isArray(raw)
+                    ? raw.map((v) => String(v || '').trim()).filter(Boolean)
+                    : String(raw || '')
+                        .split(/[\n,;]+/g)
+                        .map((v) => String(v || '').trim())
+                        .filter(Boolean);
+                const uniq = Array.from(new Set(list));
+                const MAX_CODES = 500;
+                if (uniq.length > MAX_CODES) {
+                    return withCORS(JSON.stringify({ success: false, error: `Limite de ${MAX_CODES} códigos por requisição`, code: 'MAX_CODES' }), { status: 400 }, appOrigin);
+                }
+                const items = await d1.listInsumosByCodigos({ unidade, codigos: uniq });
+                return withCORS(JSON.stringify({ success: true, data: items }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
         // GET /insumos/options
         if (url.pathname === "/insumos/options" && request.method === "GET") {
             try {
