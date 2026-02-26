@@ -1,12 +1,17 @@
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Badge } from "@/badge"
 import { Button } from "@/button"
-import { Avatar, AvatarFallback } from "@/avatar"
+import { Input } from "@/input"
+import { ScrollArea } from "@/scroll-area"
+import { Textarea } from "@/textarea"
 import { getRelativeTime, getInitials } from "@/utils"
 import {
   Phone,
   Envelope,
   WhatsappLogo,
+  InstagramLogo,
+  FacebookLogo,
   ChatCircle,
   VideoCamera,
   CalendarBlank,
@@ -24,22 +29,267 @@ interface OmnichannelCenterProps {
 }
 
 export function OmnichannelCenter({ activities, onStartConversation }: OmnichannelCenterProps) {
+  const [provider, setProvider] = useState<string | null>(null)
+  const [selectedChannel, setSelectedChannel] = useState<number | null>(null)
+  const [conversations, setConversations] = useState<any[]>([])
+  const [selectedConversation, setSelectedConversation] = useState<any | null>(null)
+  const [messages, setMessages] = useState<any[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [loadingConversations, setLoadingConversations] = useState(false)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [sendingMessage, setSendingMessage] = useState(false)
+  const [messageInput, setMessageInput] = useState('')
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/wa-orchestrator/status')
+      const data = await res.json()
+      if (!res.ok || data?.success === false) return
+      setProvider(data?.provider || null)
+      if (data?.channels?.length) {
+        const preferred = data.channels.find((c) => c.status === 'connected') || data.channels[0]
+        if (preferred?.channel) setSelectedChannel(preferred.channel)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const loadConversations = useCallback(async () => {
+    if (!provider) return
+    setLoadingConversations(true)
+    try {
+      if (provider === 'evolution') {
+        if (!selectedChannel) return
+        const res = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations?limit=200`)
+        const data = await res.json()
+        if (res.ok && data?.success) {
+          setConversations(data.items || [])
+        }
+      } else {
+        const res = await fetch('/api/conversations')
+        const data = await res.json()
+        if (res.ok) {
+          setConversations(data?.items || data || [])
+        }
+      }
+    } finally {
+      setLoadingConversations(false)
+    }
+  }, [provider, selectedChannel])
+
+  const loadMessages = useCallback(async (conv: any) => {
+    if (!provider || !conv) return
+    setLoadingMessages(true)
+    try {
+      if (provider === 'evolution') {
+        if (!selectedChannel) return
+        const res = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`)
+        const data = await res.json()
+        if (res.ok && data?.success) {
+          setMessages(data.items || [])
+        }
+      } else {
+        const res = await fetch(`/api/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`)
+        const data = await res.json()
+        if (res.ok) {
+          setMessages(data.items || [])
+        }
+      }
+    } finally {
+      setLoadingMessages(false)
+    }
+  }, [provider, selectedChannel])
+
+  const sendMessage = useCallback(async () => {
+    if (!selectedConversation || !messageInput.trim()) return
+    setSendingMessage(true)
+    try {
+      if (provider === 'evolution') {
+        if (!selectedChannel) return
+        const res = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(selectedConversation.conversationId)}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: messageInput })
+        })
+        await res.json().catch(() => ({}))
+      } else {
+        const res = await fetch(`/api/conversations/${encodeURIComponent(selectedConversation.conversationId)}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ direction: 'outbound', type: 'text', text: messageInput })
+        })
+        await res.json().catch(() => ({}))
+      }
+      setMessageInput('')
+      loadMessages(selectedConversation)
+    } finally {
+      setSendingMessage(false)
+    }
+  }, [loadMessages, messageInput, provider, selectedChannel, selectedConversation])
+
+  useEffect(() => {
+    loadStatus()
+  }, [loadStatus])
+
+  useEffect(() => {
+    loadConversations()
+  }, [loadConversations])
+
+  const filteredConversations = useMemo(() => {
+    const term = searchQuery.trim().toLowerCase()
+    if (!term) return conversations
+    return conversations.filter((conv) => {
+      const searchable = [
+        conv.name,
+        conv.phone,
+        conv.profile,
+        conv.platform || conv.channel || conv.type || (provider === 'evolution' ? 'whatsapp' : provider),
+        conv.conversationId
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return searchable.includes(term)
+    })
+  }, [conversations, searchQuery, provider])
+
+  const getPlatformIcon = (platform?: string) => {
+    const normalized = String(platform || '').toLowerCase()
+    if (normalized.includes('instagram')) return <InstagramLogo className="h-4 w-4 text-pink-300" />
+    if (normalized.includes('facebook') || normalized.includes('messenger')) return <FacebookLogo className="h-4 w-4 text-blue-300" />
+    return <WhatsappLogo className="h-4 w-4 text-emerald-300" />
+  }
+
+  const renderOmnichannelChat = () => (
+    <Card className="glass-card">
+      <CardHeader>
+        <CardTitle className="text-white">Omnichannel</CardTitle>
+        <CardDescription className="text-blue-100/70">
+          Central única com WhatsApp, Instagram e Facebook
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="mb-4">
+          <Input
+            placeholder="Buscar por nome, telefone, perfil ou plataforma"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+          />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[600px]">
+          <Card className="glass-card lg:col-span-1">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-white">Conversas</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[500px]">
+                <div className="space-y-2">
+                  {loadingConversations && (
+                    <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
+                  )}
+                  {!loadingConversations && filteredConversations.length === 0 && (
+                    <div className="text-sm text-blue-100/60 py-4 text-center">
+                      Nenhuma conversa disponível.
+                    </div>
+                  )}
+                  {filteredConversations.map((conv) => (
+                    <div
+                      key={conv.conversationId}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-white/5 ${
+                        selectedConversation?.conversationId === conv.conversationId ? 'border-blue-500/70 bg-blue-500/15' : 'border-white/10'
+                      }`}
+                      onClick={() => {
+                        setSelectedConversation(conv)
+                        loadMessages(conv)
+                      }}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className="mt-1">{getPlatformIcon(conv.platform || conv.channel || conv.type)}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-white truncate">
+                            {conv.name || conv.conversationId}
+                          </div>
+                          <div className="text-xs text-blue-100/70 truncate mt-1">
+                            {conv.lastMessage || 'Sem mensagens'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-card lg:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-white">
+                {selectedConversation ? selectedConversation.name || selectedConversation.conversationId : 'Selecione uma conversa'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {selectedConversation ? (
+                <div className="space-y-4">
+                  <ScrollArea className="h-[400px] border border-white/10 rounded-lg p-4">
+                    <div className="space-y-3">
+                      {loadingMessages && (
+                        <div className="text-sm text-blue-100/60 text-center py-4">Carregando mensagens...</div>
+                      )}
+                      {messages.map((msg) => {
+                        const outbound = msg.direction === 'outbound' || msg.direction === 'human'
+                        return (
+                          <div key={msg.id} className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[70%] p-3 rounded-lg ${outbound ? 'bg-blue-500/40 text-white' : 'bg-white/10 text-blue-100'}`}>
+                              <div className="text-sm">
+                                {msg.text || msg.caption || `[${msg.type}]`}
+                              </div>
+                              <div className={`text-xs mt-1 ${outbound ? 'text-blue-100/80' : 'text-blue-100/60'}`}>
+                                {new Date(msg.createdAt).toLocaleTimeString()}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+
+                  <div className="flex gap-2">
+                    <Textarea
+                      placeholder="Digite sua mensagem..."
+                      value={messageInput}
+                      onChange={(e) => setMessageInput(e.target.value)}
+                      className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+                      rows={2}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          sendMessage()
+                        }
+                      }}
+                    />
+                    <Button onClick={sendMessage} disabled={!messageInput.trim() || sendingMessage}>
+                      {sendingMessage ? '...' : 'Enviar'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-[450px] text-blue-100/60">
+                  Selecione uma conversa para começar
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </CardContent>
+    </Card>
+  )
+
   if (!activities || activities.length === 0) {
     return (
       <div className="space-y-6">
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle>Sem atividades</CardTitle>
-            <CardDescription>
-              Nenhuma integração ou atividade registrada ainda. Conecte os canais para começar.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm text-muted-foreground">
-              Quando houver interações, a central Omnichannel exibirá estatísticas e histórico aqui.
-            </div>
-          </CardContent>
-        </Card>
+        {renderOmnichannelChat()}
       </div>
     )
   }
@@ -143,6 +393,8 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
           </div>
         </CardContent>
       </Card>
+
+      {renderOmnichannelChat()}
 
       {/* Quick Actions */}
       <Card className="glass-card">

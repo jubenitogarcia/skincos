@@ -4123,6 +4123,22 @@ function extractEvolutionMessageMeta(message) {
     return { text: extractEvolutionMessageText(message), caption: undefined, mediaType: undefined }
 }
 
+function normalizePlatform(raw) {
+    const value = String(raw || '').toLowerCase()
+    if (!value) return 'whatsapp'
+    if (value.includes('instagram')) return 'instagram'
+    if (value.includes('facebook') || value.includes('messenger')) return 'facebook'
+    if (value.includes('whatsapp')) return 'whatsapp'
+    return value
+}
+
+function extractPhoneFromJid(remoteJid) {
+    if (!remoteJid) return ''
+    const value = String(remoteJid)
+    if (value.includes('@')) return value.split('@')[0]
+    return value
+}
+
 function normalizeEvolutionTimestamp(value) {
     if (!value) return new Date().toISOString()
     const num = Number(value)
@@ -4264,6 +4280,8 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                 return {
                     conversationId: remoteJid,
                     name: chat.pushName || chat.name || chat.subject || remoteJid,
+                    phone: extractPhoneFromJid(remoteJid),
+                    platform: 'whatsapp',
                     lastMessage: lastMessageText || 'Sem mensagens',
                     updatedAt,
                     unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0
@@ -4278,6 +4296,8 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
             .map(c => ({
                 conversationId: c.conversationId,
                 name: c.name || c.conversationId,
+                phone: extractPhoneFromJid(c.conversationId),
+                platform: 'whatsapp',
                 lastMessage: c.lastMessage || 'Sem mensagens',
                 updatedAt: c.updatedAt || new Date().toISOString(),
                 unreadCount: c.unreadCount || 0
