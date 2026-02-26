@@ -142,19 +142,6 @@ export function AtendimentoModule() {
   const [n8nKey, setN8nKey] = useState(0)
   const [activePanel, setActivePanel] = useState<PanelKey | null>(null)
 
-  if (!canWhatsApp && !canWhatsAppN8n && !canHarmonia && !canOmnichannel && !canHelpdesk && !canInstagram) {
-    return (
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="text-white">Sem acesso ao módulo de atendimento</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-blue-100/70">
-          Solicite permissões para WhatsApp, Harmonia, Omnichannel ou Help Desk.
-        </CardContent>
-      </Card>
-    )
-  }
-
   const panelOptions = useMemo(
     () =>
       [
@@ -216,6 +203,19 @@ export function AtendimentoModule() {
     if (activePanel && panelOptions.some((panel) => panel.key === activePanel)) return
     setActivePanel(panelOptions[0]?.key ?? null)
   }, [activePanel, availableKeys, panelOptions])
+
+  if (!canWhatsApp && !canWhatsAppN8n && !canHarmonia && !canOmnichannel && !canHelpdesk && !canInstagram) {
+    return (
+      <Card className="glass-card">
+        <CardHeader>
+          <CardTitle className="text-white">Sem acesso ao módulo de atendimento</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-blue-100/70">
+          Solicite permissões para WhatsApp, Harmonia, Omnichannel ou Help Desk.
+        </CardContent>
+      </Card>
+    )
+  }
 
   const renderActivePanel = () => {
     switch (activePanel) {
