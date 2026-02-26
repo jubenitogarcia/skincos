@@ -85,79 +85,85 @@ export function AtendimentoModule() {
         <Badge variant="secondary" className="ml-0 md:ml-auto">Central</Badge>
       </div>
 
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="text-white">Canais de Atendimento</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {canWhatsApp ? (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-white">WhatsApp</div>
-              <TabShell title="WhatsApp">
-                <WhatsAppUnifiedHub />
-              </TabShell>
-            </div>
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="xl:col-span-4 space-y-4">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="text-white">Canais de Atendimento</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {canWhatsApp ? (
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-white">WhatsApp</div>
+                  <TabShell title="WhatsApp">
+                    <WhatsAppUnifiedHub />
+                  </TabShell>
+                </div>
+              ) : null}
+
+              {canInstagram ? (
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-white">Instagram (DM)</div>
+                  <TabShell title="Instagram">
+                    <InstagramStudioPro />
+                  </TabShell>
+                </div>
+              ) : null}
+
+              {canOmnichannel ? (
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-white">Omnichannel</div>
+                  <TabShell title="Omnichannel">
+                    <OmnichannelCenter
+                      activities={[] as any}
+                      onStartConversation={(channel) => {
+                        const c = String(channel || '').toLowerCase()
+                        if (c === 'whatsapp') {
+                          // no-op: WhatsApp está disponível acima
+                        }
+                      }}
+                    />
+                  </TabShell>
+                </div>
+              ) : null}
+
+              {canHelpdesk ? (
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-white">Help Desk</div>
+                  <TabShell title="Help Desk">
+                    <HelpDeskModule />
+                  </TabShell>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          {canWhatsAppN8n ? (
+            <Card className="glass-card">
+              <CardHeader>
+                <CardTitle className="text-white">Automação (WhatsApp n8n)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TabShell title="WhatsApp n8n">
+                  <WhatsAppN8nModule />
+                </TabShell>
+              </CardContent>
+            </Card>
           ) : null}
+        </div>
 
-          {canInstagram ? (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-white">Instagram (DM)</div>
-              <TabShell title="Instagram">
-                <InstagramStudioPro />
-              </TabShell>
-            </div>
+        <div className="xl:col-span-8">
+          {canHarmonia ? (
+            <Card className="glass-card">
+              <CardContent className="p-0">
+                <TabShell title="Harmonia">
+                  <HarmoniaModule mode="columns" showChannels={false} />
+                </TabShell>
+              </CardContent>
+            </Card>
           ) : null}
-
-          {canOmnichannel ? (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-white">Omnichannel</div>
-              <TabShell title="Omnichannel">
-                <OmnichannelCenter
-                  activities={[] as any}
-                  onStartConversation={(channel) => {
-                    const c = String(channel || '').toLowerCase()
-                    if (c === 'whatsapp') {
-                      // no-op: WhatsApp está disponível acima
-                    }
-                  }}
-                />
-              </TabShell>
-            </div>
-          ) : null}
-
-          {canHelpdesk ? (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-white">Help Desk</div>
-              <TabShell title="Help Desk">
-                <HelpDeskModule />
-              </TabShell>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {canWhatsAppN8n ? (
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="text-white">Automação (WhatsApp n8n)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TabShell title="WhatsApp n8n">
-              <WhatsAppN8nModule />
-            </TabShell>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {canHarmonia ? (
-        <Card className="glass-card">
-          <CardContent className="p-0">
-            <TabShell title="Harmonia">
-              <HarmoniaModule mode="expanded" showChannels={false} />
-            </TabShell>
-          </CardContent>
-        </Card>
-      ) : null}
+        </div>
+      </div>
     </div>
   )
 }

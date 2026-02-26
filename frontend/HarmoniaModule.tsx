@@ -97,13 +97,21 @@ function StatPill({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 type HarmoniaModuleProps = {
-  mode?: 'full' | 'expanded'
+  mode?: 'full' | 'expanded' | 'columns'
   showHeader?: boolean
   showChannels?: boolean
 }
 
 export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels = true }: HarmoniaModuleProps) {
-  const [tab, setTab] = React.useState<'atendimento' | 'overview' | 'conversations' | 'tasks'>('atendimento')
+  const [tab, setTab] = React.useState<'atendimento' | 'overview' | 'conversations' | 'tasks'>(() => {
+    try {
+      const stored = localStorage.getItem('harmonia.ui.tab')
+      if (stored === 'overview' || stored === 'conversations' || stored === 'tasks' || stored === 'atendimento') {
+        return stored
+      }
+    } catch { /* ignore */ }
+    return 'atendimento'
+  })
 
   const [health, setHealth] = React.useState<HarmoniaHealth | null>(null)
   const [units, setUnits] = React.useState<HarmoniaUnit[]>([])
@@ -112,9 +120,24 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
   const [error, setError] = React.useState<string | null>(null)
 
   const DEBUG_TOKEN_KEY = 'harmonia.debugToken'
+  const EXEC_TOKEN_KEY = 'harmonia.execToken'
+  const UI_UNIT_KEY = 'harmonia.ui.unitSlug'
+  const UI_CONVO_KEY = 'harmonia.ui.conversationId'
+  const UI_TAB_KEY = 'harmonia.ui.tab'
+  const UI_CHANNEL_KEY = 'harmonia.ui.channel'
+  const UI_SEARCH_KEY = 'harmonia.ui.search'
+  const UI_STAGE_KEY = 'harmonia.ui.stage'
   const [debugToken, setDebugToken] = React.useState<string>(() => {
     try {
       return localStorage.getItem(DEBUG_TOKEN_KEY) || ''
+    } catch {
+      return ''
+    }
+  })
+
+  const [execToken, setExecToken] = React.useState<string>(() => {
+    try {
+      return localStorage.getItem(EXEC_TOKEN_KEY) || ''
     } catch {
       return ''
     }
@@ -127,6 +150,13 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     } catch { /* ignore */ }
   }, [debugToken])
 
+  React.useEffect(() => {
+    try {
+      if (execToken.trim()) localStorage.setItem(EXEC_TOKEN_KEY, execToken.trim())
+      else localStorage.removeItem(EXEC_TOKEN_KEY)
+    } catch { /* ignore */ }
+  }, [execToken])
+
   const apiJson = React.useCallback(
     async <T,>(url: string, init?: RequestInit): Promise<T> => {
       const token = debugToken.trim()
@@ -136,6 +166,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
           Accept: 'application/json',
           ...(init?.body ? { 'content-type': 'application/json' } : null),
           ...(token ? { 'x-harmonia-token': token } : null),
+          ...(execToken.trim() ? { 'x-harmonia-exec-token': execToken.trim() } : null),
           ...(init?.headers || {}),
         },
         credentials: 'include',
@@ -151,7 +182,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       const err = (json || {}) as ApiErrorShape
       throw new Error(err.error || err.message || `HTTP ${res.status}`)
     },
-    [debugToken]
+    [debugToken, execToken]
   )
 
   const refresh = React.useCallback(async () => {
@@ -183,16 +214,99 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     }
   }, [showChannels, tab])
 
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(UI_TAB_KEY, tab)
+    } catch { /* ignore */ }
+  }, [tab])
+
   const dbConfigured = Boolean(health?.harmonia?.dbConfigured)
+  const execRequired = Boolean(health?.harmonia?.execTokenConfigured)
+  const canExecute = !execRequired || Boolean(execToken.trim())
 
-  const [channelTab, setChannelTab] = React.useState<'whatsapp' | 'instagram' | 'omnichannel' | 'helpdesk'>('whatsapp')
+  const [channelTab, setChannelTab] = React.useState<'whatsapp' | 'instagram' | 'omnichannel' | 'helpdesk'>(() => {
+    try {
+      const stored = localStorage.getItem('harmonia.ui.channel')
+      if (stored === 'instagram' || stored === 'omnichannel' || stored === 'helpdesk' || stored === 'whatsapp') {
+        return stored
+      }
+    } catch { /* ignore */ }
+    return 'whatsapp'
+  })
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(UI_CHANNEL_KEY, channelTab)
+    } catch { /* ignore */ }
+  }, [channelTab])
 
-  const [unitSlug, setUnitSlug] = React.useState<string>('')
+  const [unitSlug, setUnitSlug] = React.useState<string>(() => {
+    try {
+      return localStorage.getItem('harmonia.ui.unitSlug') || ''
+    } catch {
+      return ''
+    }
+  })
+  React.useEffect(() => {
+    if (!unitSlug) return
+    try {
+      localStorage.setItem(UI_UNIT_KEY, unitSlug)
+    } catch { /* ignore */ }
+  }, [unitSlug])
+
+  const [inboxSearch, setInboxSearch] = React.useState<string>(() => {
+    try {
+      return localStorage.getItem(UI_SEARCH_KEY) || ''
+    } catch {
+      return ''
+    }
+  })
+  const [inboxStage, setInboxStage] = React.useState<string>(() => {
+    try {
+      return localStorage.getItem(UI_STAGE_KEY) || 'all'
+    } catch {
+      return 'all'
+    }
+  })
+  const inboxSearchRef = React.useRef<HTMLInputElement | null>(null)
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(UI_SEARCH_KEY, inboxSearch)
+    } catch { /* ignore */ }
+  }, [inboxSearch])
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(UI_STAGE_KEY, inboxStage)
+    } catch { /* ignore */ }
+  }, [inboxStage])
+
+  React.useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase()
+      if ((event.metaKey || event.ctrlKey) && key === 'k') {
+        event.preventDefault()
+        inboxSearchRef.current?.focus()
+      }
+      if ((event.metaKey || event.ctrlKey) && key === 'r') {
+        event.preventDefault()
+        void refresh()
+      }
+      if (key === 'escape') {
+        setInboxSearch('')
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [refresh])
   const [phoneRaw, setPhoneRaw] = React.useState<string>('')
   const [conversationLoading, setConversationLoading] = React.useState(false)
   const [conversationError, setConversationError] = React.useState<string | null>(null)
   const [conversation, setConversation] = React.useState<HarmoniaConversation | null>(null)
   const [messages, setMessages] = React.useState<HarmoniaMessage[]>([])
+  const [messagesLoading, setMessagesLoading] = React.useState(false)
+  const [actionLoading, setActionLoading] = React.useState(false)
+  const [actionError, setActionError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (unitSlug) return
@@ -260,12 +374,28 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     void loadInbox('reset')
   }, [dbConfigured, loadInbox, unitSlug])
 
+  const restoreConversationOnce = React.useRef(false)
+  React.useEffect(() => {
+    if (restoreConversationOnce.current) return
+    if (!dbConfigured || !unitSlug || conversation) return
+    let stored = ''
+    try {
+      stored = localStorage.getItem(UI_CONVO_KEY) || ''
+    } catch { /* ignore */ }
+    if (stored) {
+      restoreConversationOnce.current = true
+      void openConversationById(stored)
+    }
+  }, [dbConfigured, unitSlug, conversation, openConversationById])
+
   const openConversationById = React.useCallback(
     async (id: string) => {
       const cid = String(id || '').trim()
       if (!cid) return
       setConversationLoading(true)
+      setMessagesLoading(true)
       setConversationError(null)
+      setActionError(null)
       setConversation(null)
       setMessages([])
       try {
@@ -273,13 +403,18 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
           apiJson<{ ok: boolean; data?: HarmoniaConversation }>(`/api/harmonia/conversations/${encodeURIComponent(cid)}`),
           apiJson<{ ok: boolean; data?: HarmoniaMessage[] }>(`/api/harmonia/conversations/${encodeURIComponent(cid)}/messages?limit=80`),
         ])
-        setConversation((c as any)?.data || null)
+        const convo = (c as any)?.data || null
+        setConversation(convo)
         setMessages(Array.isArray((m as any)?.data) ? (m as any).data : [])
         setTab('conversations')
+        if (convo?.id) {
+          try { localStorage.setItem(UI_CONVO_KEY, String(convo.id)) } catch { /* ignore */ }
+        }
       } catch (e: any) {
         setConversationError(e?.message || 'Falha ao abrir conversa.')
       } finally {
         setConversationLoading(false)
+        setMessagesLoading(false)
       }
     },
     [apiJson]
@@ -293,7 +428,9 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       return
     }
     setConversationLoading(true)
+    setMessagesLoading(true)
     setConversationError(null)
+    setActionError(null)
     setConversation(null)
     setMessages([])
     try {
@@ -304,12 +441,38 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       setConversation(c)
       setMessages(m)
       if (!c) setConversationError('Conversa não encontrada.')
+      if (c?.id) {
+        try { localStorage.setItem(UI_CONVO_KEY, String(c.id)) } catch { /* ignore */ }
+      }
     } catch (e: any) {
       setConversationError(e?.message || 'Falha ao buscar conversa.')
     } finally {
       setConversationLoading(false)
+      setMessagesLoading(false)
     }
   }, [apiJson, phoneRaw, unitSlug])
+
+  const patchConversation = React.useCallback(
+    async (patch: { stage?: string; lead_speed_class?: string }) => {
+      if (!conversation?.id) return
+      setActionLoading(true)
+      setActionError(null)
+      try {
+        const out = await apiJson<{ ok: boolean; data?: HarmoniaConversation }>(`/api/harmonia/conversations/${encodeURIComponent(String(conversation.id))}/patch`, {
+          method: 'POST',
+          body: JSON.stringify(patch),
+        })
+        if ((out as any)?.data) {
+          setConversation((out as any).data)
+        }
+      } catch (e: any) {
+        setActionError(e?.message || 'Falha ao aplicar ação.')
+      } finally {
+        setActionLoading(false)
+      }
+    },
+    [apiJson, conversation]
+  )
 
   const renderHeader = showHeader ? (
     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -340,6 +503,35 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     </div>
   ) : null
 
+  const stageOptions = React.useMemo(() => {
+    const set = new Set<string>()
+    inboxItems.forEach((it) => {
+      if (it?.stage) set.add(String(it.stage))
+    })
+    return Array.from(set).sort()
+  }, [inboxItems])
+
+  const filteredInboxItems = React.useMemo(() => {
+    const search = inboxSearch.trim().toLowerCase()
+    return inboxItems.filter((it) => {
+      if (inboxStage !== 'all' && String(it.stage || '') !== inboxStage) return false
+      if (!search) return true
+      const haystack = [
+        it.contact_display_name,
+        it.contact_phone_raw,
+        it.stage,
+        it.last_message_text,
+        it.last_message_direction,
+        it.unit_name,
+        it.unit_slug,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(search)
+    })
+  }, [inboxItems, inboxSearch, inboxStage])
+
   const inboxCard = (
     <Card className="bg-white/[0.06] border-white/10">
       <CardHeader>
@@ -348,9 +540,56 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       <CardContent className="space-y-3">
         {dbConfigured ? (
           <>
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[11px] text-blue-200/70">
-                Unidade: <span className="text-white/80">{unitSlug || '—'}</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>
+                <div className="text-[11px] text-blue-200/70 mb-1">Unidade</div>
+                <Select value={unitSlug} onValueChange={setUnitSlug} disabled={!dbConfigured}>
+                  <SelectTrigger className="bg-white/[0.06] border-white/10 text-white">
+                    <SelectValue placeholder="Selecione a unidade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {units.map((u) => (
+                      <SelectItem key={String(u.slug || '')} value={String(u.slug || '')}>
+                        {String(u.name || u.slug || '')}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <div className="text-[11px] text-blue-200/70 mb-1">Stage</div>
+                <Select value={inboxStage} onValueChange={setInboxStage}>
+                  <SelectTrigger className="bg-white/[0.06] border-white/10 text-white">
+                    <SelectValue placeholder="Stage" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {stageOptions.map((st) => (
+                      <SelectItem key={st} value={st}>{st}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Input
+                ref={inboxSearchRef}
+                value={inboxSearch}
+                onChange={(e) => setInboxSearch(e.target.value)}
+                placeholder="Buscar contato, telefone, mensagem..."
+                className="bg-white/[0.06] border-white/10 text-white"
+              />
+              {inboxSearch ? (
+                <Button variant="ghost" className="h-10 px-3" onClick={() => setInboxSearch('')}>
+                  Limpar
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-blue-200/60">
+                Atalho: ⌘/Ctrl+K para buscar · ⌘/Ctrl+R para atualizar
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" className="h-8" onClick={() => loadInbox('reset')} disabled={inboxLoading || !unitSlug}>
@@ -376,14 +615,22 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
               <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-100">{inboxError}</div>
             ) : null}
 
-            {inboxItems.length ? (
-              <div className="max-h-[240px] overflow-auto space-y-2 pr-1">
-                {inboxItems.map((it) => (
+            {inboxLoading && !filteredInboxItems.length ? (
+              <div className="space-y-2">
+                {[...Array(4)].map((_, idx) => (
+                  <div key={idx} className="h-14 rounded-xl border border-white/10 bg-white/[0.04] animate-pulse" />
+                ))}
+              </div>
+            ) : filteredInboxItems.length ? (
+              <div className="max-h-[320px] overflow-auto space-y-2 pr-1">
+                {filteredInboxItems.map((it) => {
+                  const isActive = conversation?.id && String(conversation.id) === String(it.id)
+                  return (
                   <button
                     key={it.id}
                     type="button"
                     onClick={() => openConversationById(it.id)}
-                    className="w-full text-left rounded-xl border border-white/10 bg-black/20 hover:bg-white/[0.06] transition-colors px-3 py-2"
+                    className={`w-full text-left rounded-xl border ${isActive ? 'border-emerald-400/50 bg-emerald-500/10' : 'border-white/10 bg-black/20'} hover:bg-white/[0.06] transition-colors px-3 py-2`}
                     title="Abrir conversa"
                   >
                     <div className="flex items-center justify-between gap-3 text-xs">
@@ -403,10 +650,11 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                       <div className="truncate">id: <span className="text-white/60">{it.id}</span></div>
                     </div>
                   </button>
-                ))}
+                  )
+                })}
               </div>
             ) : (
-              <div className="text-xs text-blue-200/70">Sem conversas ainda (ou token/DB pendente).</div>
+              <div className="text-xs text-blue-200/70">Sem conversas ainda (ou filtro sem resultados).</div>
             )}
           </>
         ) : (
@@ -543,68 +791,91 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     </Card>
   )
 
-  const conversationsSection = (
-    <div className="space-y-4">
-      <Card className="bg-white/[0.06] border-white/10">
-        <CardHeader>
-          <CardTitle className="text-white">Buscar conversa</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <div className="text-xs text-blue-200/70 mb-1">Unidade</div>
-              <Select value={unitSlug} onValueChange={setUnitSlug} disabled={!dbConfigured}>
-                <SelectTrigger className="bg-white/[0.06] border-white/10 text-white">
-                  <SelectValue placeholder="Selecione a unidade" />
-                </SelectTrigger>
-                <SelectContent>
-                  {units.map((u) => (
-                    <SelectItem key={String(u.slug || '')} value={String(u.slug || '')}>
-                      {String(u.name || u.slug || '')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="md:col-span-2">
-              <div className="text-xs text-blue-200/70 mb-1">Telefone (somente dígitos)</div>
-              <Input
-                value={phoneRaw}
-                onChange={(e) => setPhoneRaw(e.target.value)}
-                placeholder="Ex: 5511999999999"
-                className="bg-white/[0.06] border-white/10 text-white"
-                disabled={!dbConfigured}
-                inputMode="numeric"
-              />
-            </div>
+  const conversationSearchCard = (
+    <Card className="bg-white/[0.06] border-white/10">
+      <CardHeader>
+        <CardTitle className="text-white">Buscar conversa</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <div className="text-xs text-blue-200/70 mb-1">Unidade</div>
+            <Select value={unitSlug} onValueChange={setUnitSlug} disabled={!dbConfigured}>
+              <SelectTrigger className="bg-white/[0.06] border-white/10 text-white">
+                <SelectValue placeholder="Selecione a unidade" />
+              </SelectTrigger>
+              <SelectContent>
+                {units.map((u) => (
+                  <SelectItem key={String(u.slug || '')} value={String(u.slug || '')}>
+                    {String(u.name || u.slug || '')}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={findConversation} disabled={!dbConfigured || conversationLoading}>
-              {conversationLoading ? 'Buscando…' : 'Buscar'}
-            </Button>
-            <div className="text-xs text-blue-200/70">
-              Também disponível via API: `GET /api/harmonia/conversations/find?unitSlug=...&phoneRaw=...`
-            </div>
+          <div className="md:col-span-2">
+            <div className="text-xs text-blue-200/70 mb-1">Telefone (somente dígitos)</div>
+            <Input
+              value={phoneRaw}
+              onChange={(e) => setPhoneRaw(e.target.value)}
+              placeholder="Ex: 5511999999999"
+              className="bg-white/[0.06] border-white/10 text-white"
+              disabled={!dbConfigured}
+              inputMode="numeric"
+            />
           </div>
-          {conversationError ? (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
-              {conversationError}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={findConversation} disabled={!dbConfigured || conversationLoading}>
+            {conversationLoading ? 'Buscando…' : 'Buscar'}
+          </Button>
+          <div className="text-xs text-blue-200/70">
+            Também disponível via API: `GET /api/harmonia/conversations/find?unitSlug=...&phoneRaw=...`
+          </div>
+        </div>
+        {conversationError ? (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
+            {conversationError}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
 
-      {conversation ? (
+  const conversationDetailCard = conversation ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           <Card className="bg-white/[0.06] border-white/10 lg:col-span-1">
             <CardHeader>
               <CardTitle className="text-white">Conversa</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-blue-100/70">Stage</span>
-                <span className="text-white">{conversation.stage || '—'}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className="bg-white/10 text-white border border-white/10">
+                  stage: {conversation.stage || '—'}
+                </Badge>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <Button variant="secondary" className="h-8" onClick={() => patchConversation({ stage: 'resolved' })} disabled={actionLoading || !canExecute}>
+                    Resolver
+                  </Button>
+                  <Button variant="outline" className="h-8" onClick={() => patchConversation({ stage: 'followup' })} disabled={actionLoading || !canExecute}>
+                    Follow-up
+                  </Button>
+                  <Button variant="outline" className="h-8" onClick={() => patchConversation({ stage: 'handoff' })} disabled={actionLoading || !canExecute}>
+                    Handoff
+                  </Button>
+                  <Button variant="outline" className="h-8" onClick={() => patchConversation({ stage: 'paused' })} disabled={actionLoading || !canExecute}>
+                    Pausar
+                  </Button>
+                </div>
               </div>
+              {execRequired && !canExecute ? (
+                <div className="text-[11px] text-amber-200/80">
+                  Informe o `HARMONIA_EXEC_TOKEN` para habilitar ações.
+                </div>
+              ) : null}
+              {actionError ? (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-100">{actionError}</div>
+              ) : null}
               <div className="flex items-center justify-between gap-3">
                 <span className="text-blue-100/70">Contato</span>
                 <span className="text-white truncate">{conversation.contact_display_name || conversation.contact_phone_raw || '—'}</span>
@@ -656,7 +927,13 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
               <CardTitle className="text-white">Mensagens (últimas {messages.length})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {messages.length ? (
+              {messagesLoading ? (
+                <div className="space-y-2">
+                  {[...Array(4)].map((_, idx) => (
+                    <div key={idx} className="h-20 rounded-xl border border-white/10 bg-white/[0.04] animate-pulse" />
+                  ))}
+                </div>
+              ) : messages.length ? (
                 <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
                   {messages.map((m) => {
                     const dir = String(m.direction || '')
@@ -686,7 +963,18 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
             </CardContent>
           </Card>
         </div>
-      ) : null}
+      ) : (
+        <Card className="bg-white/[0.04] border-white/10">
+          <CardContent className="py-6 text-sm text-blue-100/70">
+            {conversationLoading ? 'Carregando conversa...' : 'Selecione uma conversa no inbox para ver detalhes.'}
+          </CardContent>
+        </Card>
+      )
+
+  const conversationsSection = (
+    <div className="space-y-4">
+      {conversationSearchCard}
+      {conversationDetailCard}
     </div>
   )
 
@@ -706,6 +994,74 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       </CardContent>
     </Card>
   )
+
+  const tokensCard = (
+    <Card className="bg-white/[0.06] border-white/10">
+      <CardHeader>
+        <CardTitle className="text-white">Tokens</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div>
+          <div className="text-xs text-blue-200/70 mb-1">Debug (leitura)</div>
+          <Input
+            value={debugToken}
+            onChange={(e) => setDebugToken(e.target.value)}
+            placeholder="HARMONIA_DEBUG_TOKEN"
+            className="bg-white/[0.06] border-white/10 text-white"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <div className="text-xs text-blue-200/70 mb-1">Exec (ações)</div>
+          <Input
+            value={execToken}
+            onChange={(e) => setExecToken(e.target.value)}
+            placeholder="HARMONIA_EXEC_TOKEN"
+            className="bg-white/[0.06] border-white/10 text-white"
+            autoComplete="off"
+          />
+        </div>
+        <div className="text-[11px] text-blue-200/60">
+          Tokens são opcionais quando não configurados no backend.
+        </div>
+      </CardContent>
+    </Card>
+  )
+
+  if (mode === 'columns') {
+    return (
+      <div className="p-6 space-y-4">
+        {renderHeader}
+
+        {error ? (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+        ) : null}
+
+        {!dbConfigured ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            O Harmonia está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
+            units e estatísticas.
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+          <div className="xl:col-span-4 space-y-4">
+            {inboxCard}
+            {conversationSearchCard}
+          </div>
+          <div className="xl:col-span-5 space-y-4">
+            {conversationDetailCard}
+          </div>
+          <div className="xl:col-span-3 space-y-4">
+            {tokensCard}
+            {overviewSection}
+            {tasksSection}
+            {leadsCard}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (mode === 'expanded') {
     return (
