@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-import argparse, hashlib, json, os, subprocess, sys
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
 from typing import List, Dict
 
 

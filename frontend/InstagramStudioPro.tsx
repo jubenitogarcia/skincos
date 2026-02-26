@@ -846,88 +846,89 @@ export function InstagramStudioPro() {
   }
 
   const currentInsight = insights[0]
+  const isConnected = instagram.connected
 
-  return (
-    <div className="space-y-8 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div className="text-center md:text-left">
-          <h2 className="text-3xl font-bold text-white flex items-center justify-center md:justify-start gap-3 mb-3">
-            <div className="relative">
-              <InstagramLogo className="h-8 w-8 text-pink-400" />
-              <div className="absolute -inset-1 bg-pink-400/20 rounded-full blur opacity-75 animate-pulse"></div>
-            </div>
-            Instagram Studio Pro
-          </h2>
-          <p className="text-blue-300/80 text-base leading-relaxed">
-            Gerencie posts, stories e engajamento no Instagram
-          </p>
-        </div>
-        <div className="flex space-x-4 items-center">
-          {instagram.connected && instagram.metrics && (
-            <div className="glass-morphism rounded-xl p-4 border border-white/10">
-              <div className="text-sm text-blue-200 space-y-1">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-pink-400 animate-pulse"></div>
-                  <span className="font-medium text-pink-300">Seguidores: {instagram.metrics.followers_count}</span>
-                </div>
-                <div className="text-blue-300/70">Mídias: {instagram.metrics.media_count}</div>
-                {instagram.lastSync && (
-                  <div className="text-xs text-blue-300/60">
-                    Sync: {new Date(instagram.lastSync).toLocaleTimeString('pt-BR')}
-                  </div>
-                )}
+  const header = (
+    <div className="flex items-center justify-between">
+      <div className="text-center md:text-left">
+        <h2 className="text-3xl font-bold text-white flex items-center justify-center md:justify-start gap-3 mb-3">
+          <div className="relative">
+            <InstagramLogo className="h-8 w-8 text-pink-400" />
+            <div className="absolute -inset-1 bg-pink-400/20 rounded-full blur opacity-75 animate-pulse"></div>
+          </div>
+          Instagram Studio Pro
+        </h2>
+        <p className="text-blue-300/80 text-base leading-relaxed">
+          Gerencie posts, stories e engajamento no Instagram
+        </p>
+      </div>
+      <div className="flex space-x-4 items-center">
+        {isConnected && instagram.metrics && (
+          <div className="glass-morphism rounded-xl p-4 border border-white/10">
+            <div className="text-sm text-blue-200 space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-pink-400 animate-pulse"></div>
+                <span className="font-medium text-pink-300">Seguidores: {instagram.metrics.followers_count}</span>
               </div>
-            </div>
-          )}
-          {!instagram.connected && (
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button 
-                  variant="secondary" 
-                  size="sm"
-                  className="glass-morphism border-pink-500/30 text-pink-300 hover:text-white hover:bg-pink-500/10 transition-all duration-300 hover:scale-105"
-                >
-                  Conectar Conta
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Conectar Instagram Business</DialogTitle>
-                  <DialogDescription>Informe Access Token e Business Account ID obtidos no Facebook Developers</DialogDescription>
-                </DialogHeader>
-                <ConnectInstagramForm onConnect={connectInstagram} onRefresh={refreshInstagram} />
-              </DialogContent>
-            </Dialog>
-          )}
-          {instagram.connected && (
-            <div className="flex items-center gap-3">
-              <Badge 
-                variant="outline" 
-                className="glass-morphism border-green-500/30 text-green-300 bg-green-500/10 text-xs font-medium"
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
-                  Conectado
+              <div className="text-blue-300/70">Mídias: {instagram.metrics.media_count}</div>
+              {instagram.lastSync && (
+                <div className="text-xs text-blue-300/60">
+                  Sync: {new Date(instagram.lastSync).toLocaleTimeString('pt-BR')}
                 </div>
-              </Badge>
-              <Button 
-                size="sm" 
-                variant="outline" 
-                onClick={() => syncInstagram()}
-                className="glass-morphism border-blue-500/30 text-blue-300 hover:text-white hover:bg-blue-500/10 transition-all duration-300"
-              >
-                Sync
-              </Button>
-              <Button 
-                size="sm" 
-                variant="destructive" 
-                onClick={disconnectInstagram}
-                className="glass-morphism border-red-500/30 text-red-300 hover:text-white hover:bg-red-500/10 transition-all duration-300"
-              >
-                Desconectar
-              </Button>
+              )}
             </div>
-          )}
+          </div>
+        )}
+        {!isConnected && (
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="glass-morphism border-pink-500/30 text-pink-300 hover:text-white hover:bg-pink-500/10 transition-all duration-300 hover:scale-105"
+              >
+                Conectar Conta
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Conectar Instagram Business</DialogTitle>
+                <DialogDescription>Informe Access Token e Business Account ID obtidos no Facebook Developers</DialogDescription>
+              </DialogHeader>
+              <ConnectInstagramForm onConnect={connectInstagram} onRefresh={refreshInstagram} />
+            </DialogContent>
+          </Dialog>
+        )}
+        {isConnected && (
+          <div className="flex items-center gap-3">
+            <Badge
+              variant="outline"
+              className="glass-morphism border-green-500/30 text-green-300 bg-green-500/10 text-xs font-medium"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                Conectado
+              </div>
+            </Badge>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => syncInstagram()}
+              className="glass-morphism border-blue-500/30 text-blue-300 hover:text-white hover:bg-blue-500/10 transition-all duration-300"
+            >
+              Sync
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={disconnectInstagram}
+              className="glass-morphism border-red-500/30 text-red-300 hover:text-white hover:bg-red-500/10 transition-all duration-300"
+            >
+              Desconectar
+            </Button>
+          </div>
+        )}
+        {isConnected && (
           <Dialog open={isCreatingStory} onOpenChange={setIsCreatingStory}>
             <DialogTrigger asChild>
               <Button variant="outline">
@@ -968,7 +969,9 @@ export function InstagramStudioPro() {
               </div>
             </DialogContent>
           </Dialog>
+        )}
 
+        {isConnected && (
           <Dialog open={isCreatingPost} onOpenChange={setIsCreatingPost}>
             <DialogTrigger asChild>
               <Button>
@@ -1048,10 +1051,32 @@ export function InstagramStudioPro() {
               </div>
             </DialogContent>
           </Dialog>
+        )}
         </div>
       </div>
+    )
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
+  return (
+    <div className="space-y-8 animate-fade-in">
+      {header}
+      {!isConnected ? (
+        <div className="glass-morphism rounded-2xl p-5 border border-white/10 bg-white/5">
+          <div className="text-sm text-blue-100/70">
+            Conecte sua conta para carregar feed, stories, comentários e insights.
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {['Feed', 'Stories', 'Insights'].map((label) => (
+              <div
+                key={label}
+                className="h-24 rounded-xl border border-dashed border-white/10 bg-white/5 flex items-center justify-center text-xs text-blue-100/50"
+              >
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
         <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 w-full max-w-6xl glass-morphism p-2 border-white/20 shadow-premium">
           <TabsTrigger 
             value="feed" 
@@ -1953,7 +1978,8 @@ export function InstagramStudioPro() {
             </>
           )}
         </TabsContent>
-      </Tabs>
+        </Tabs>
+      )}
     </div>
   )
 }

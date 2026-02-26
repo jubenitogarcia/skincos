@@ -1,6 +1,4 @@
-"""
-Constantes e configurações centralizadas do sistema.
-"""
+"""Constantes e configurações centralizadas do sistema."""
 
 from dataclasses import dataclass
 from typing import Optional, List
@@ -32,7 +30,7 @@ class SystemConstants:
 
 
 class ConfigConstants:
-    """Configurações centralizadas do sistema"""
+    """Configurações centralizadas do sistema."""
 
     API_ENDPOINTS = APIEndpoints()
     SYSTEM = SystemConstants()
@@ -48,14 +46,14 @@ class ConfigConstants:
 
     @classmethod
     def get_instance(cls):
-        """Retorna instância singleton"""
+        """Retorna instância singleton."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
     def load_config(cls):
-        """Carrega configuração do arquivo config.json"""
+        """Carrega configuração do arquivo config.json."""
         if cls._config is None:
             try:
                 backend_dir = os.path.dirname(os.path.dirname(__file__))
@@ -73,7 +71,7 @@ class ConfigConstants:
 
     @property
     def SCOPES(self):
-        """Retorna os scopes do Google configurados"""
+        """Retorna os scopes do Google configurados."""
         config = self.load_config()
         return config.get(
             "google_scopes",
@@ -85,13 +83,13 @@ class ConfigConstants:
 
     @property
     def EXECUTIONS(self):
-        """Retorna as configurações de execução"""
+        """Retorna as configurações de execução."""
         config = self.load_config()
         return config.get("units", {})
 
     @property
     def CELL_REFERENCES(self):
-        """Retorna as referências de células"""
+        """Retorna as referências de células."""
         executions = self.EXECUTIONS
         refs = {}
 
@@ -107,7 +105,7 @@ class ConfigConstants:
 
     @property
     def MOTIVATIONAL_PHRASES(self):
-        """Retorna as frases motivacionais configuradas"""
+        """Retorna as frases motivacionais configuradas."""
         config = self.load_config()
         return config.get(
             "motivational_phrases",
@@ -133,6 +131,6 @@ class ConfigConstants:
 
     @property
     def GLOBAL_CONFIG(self):
-        """Retorna configurações globais"""
+        """Retorna configurações globais."""
         config = self.load_config()
         return config.get("global", {})

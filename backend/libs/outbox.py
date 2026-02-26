@@ -101,13 +101,7 @@ def iter_events(stream: str) -> Iterable[Dict[str, Any]]:
 
 
 def idempotency_key_sent(stream: str, idempotency_key: str) -> bool:
-    """
-    Returns True if a SUCCESS event exists for the idempotency_key.
-
-    Convention:
-      - event["idempotency_key"] == idempotency_key
-      - event["status"] in {"sent", "success"}
-    """
+    """Return True if a SUCCESS event exists for the idempotency key."""
     key = (idempotency_key or "").strip()
     if not key:
         return False

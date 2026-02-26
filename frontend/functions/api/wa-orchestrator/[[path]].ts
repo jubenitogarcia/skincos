@@ -24,16 +24,44 @@ export async function onRequest(context: any): Promise<Response> {
         // ignore invalid
       }
     }
-    return 'https://api.skincos.com.br'
+    return 'https://wa.skincos.com.br'
   }
 
   const targetOrigin = String(pickTarget())
+  const isProductionTarget = (() => {
+    const raw = String(targetOrigin || '').trim().toLowerCase()
+    return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
+  })()
+
+  if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target: targetOrigin,
+        isProductionTarget,
+        requestOrigin,
+        targets: rawTargets,
+      }),
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'cache-control': 'no-store'
+        }
+      }
+    )
+  }
   const targetUrl = new URL(targetOrigin)
   const basePath = targetUrl.pathname.replace(/\/$/, '')
   targetUrl.pathname = `${basePath}/api/wa-orchestrator${rest.startsWith('/') ? '' : '/'}${rest}`
   targetUrl.search = url.search
 
   const headers = new Headers(request.headers)
+  if (rest.startsWith('/events')) {
+    headers.set('accept', 'text/event-stream')
+  } else {
+    headers.set('accept', 'application/json')
+  }
   headers.delete('host')
   headers.delete('content-length')
   headers.delete('content-encoding')
@@ -54,6 +82,30 @@ export async function onRequest(context: any): Promise<Response> {
 
   const outHeaders = new Headers(upstream.headers)
   outHeaders.set('Cache-Control', 'no-store')
+
+  const contentType = upstream.headers.get('content-type') || ''
+  if (contentType.includes('text/html')) {
+    const message = `Resposta inválida do orquestrador. Verifique WA_ORCHESTRATOR_API_TARGET/CRM_API_TARGET.`
+    if (rest.startsWith('/events')) {
+      return new Response(`data: ${JSON.stringify({ type: 'error', message })}\n\n`, {
+        status: 502,
+        headers: {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-store'
+        }
+      })
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: message, target: targetOrigin }),
+      {
+        status: 502,
+        headers: {
+          'content-type': 'application/json',
+          'cache-control': 'no-store'
+        }
+      }
+    )
+  }
 
   try {
     const splitSetCookie = (headerValue: string): string[] => {
