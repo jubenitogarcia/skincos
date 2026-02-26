@@ -21,7 +21,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover
     if getattr(exc, "name", None) == "requests":
         raise ModuleNotFoundError(
             "Dependência ausente: `requests`.\n"
-            "Instale as dependências do backend (ex.: `python3 -m pip install -r backend/requirements.txt`)."
+            "Instale as dependências do backend "
+            "(ex.: `python3 -m pip install -r backend/requirements.txt`)."
         ) from exc
     raise
 
@@ -95,7 +96,8 @@ class WhatsAppClient:
                             logger.info(f"✅ Endpoint saudável: {api_url}{status_path}")
                             return True
                         logger.warning(
-                            f"⚠️ Endpoint responde mas não está ready: {api_url}{status_path}"
+                            "⚠️ Endpoint responde mas não está ready: "
+                            f"{api_url}{status_path}"
                         )
                         continue
                 except requests.exceptions.RequestException:
@@ -136,7 +138,8 @@ class WhatsAppClient:
                 )
                 if response.status_code in [502, 503, 504]:
                     logger.warning(
-                        f"⚠️ Gateway error {response.status_code}, tentando próximo endpoint..."
+                        "⚠️ Gateway error "
+                        f"{response.status_code}, tentando próximo endpoint..."
                     )
                     self._current_endpoint_index = (
                         self._current_endpoint_index + 1
@@ -169,7 +172,7 @@ class WhatsAppClient:
             ("phone", {"phone": phone_number, "message": message}),
         ]
         last_exception = None
-        for format_label, payload in payload_formats:
+        for _format_label, payload in payload_formats:
             final_payload = payload.copy()
             if kwargs:
                 final_payload.update(kwargs)

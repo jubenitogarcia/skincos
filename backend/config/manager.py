@@ -58,13 +58,13 @@ class ConfigManager:
 
     @classmethod
     def reload_config(cls):
-        """Recarrega a configuração do arquivo"""
+        """Recarrega a configuração do arquivo."""
         cls._instance = None
         cls._config = None
         return cls.get_instance()
 
     def _define_schema(self) -> Dict[str, Dict[str, Any]]:
-        """Define o schema de validação da configuração"""
+        """Define o schema de validação da configuração."""
         return {
             "spreadsheet_id": {"type": str, "required": True},
             "google_service_account": {"type": dict, "required": True},
@@ -76,7 +76,7 @@ class ConfigManager:
         }
 
     def _validate_config(self):
-        """Valida a configuração carregada contra o schema"""
+        """Valida a configuração carregada contra o schema."""
         if not self._schema or not ConfigManager._config:
             logger.error("Schema não inicializado")
             return
@@ -91,9 +91,11 @@ class ConfigManager:
                 if expected_type and not isinstance(
                     ConfigManager._config[field], expected_type
                 ):
+                    expected_name = expected_type.__name__
+                    received_name = type(ConfigManager._config[field]).__name__
                     validation_errors.append(
-                        f"Tipo incorreto para {field}: esperado {expected_type.__name__}, "
-                        f"recebido {type(ConfigManager._config[field]).__name__}"
+                        f"Tipo incorreto para {field}: esperado {expected_name}, "
+                        f"recebido {received_name}"
                     )
 
         # Validações específicas
@@ -107,7 +109,7 @@ class ConfigManager:
             raise ValueError(error_msg)
 
     def _validate_whatsapp_config(self, validation_errors: list):
-        """Valida configuração específica do WhatsApp"""
+        """Valida configuração específica do WhatsApp."""
         if not ConfigManager._config:
             validation_errors.append("Configuração não inicializada")
             return
@@ -122,7 +124,7 @@ class ConfigManager:
                 )
 
     def _load_config(self) -> Dict[str, Any]:
-        """Carrega a configuração do arquivo config.json"""
+        """Carrega a configuração do arquivo config.json."""
         try:
             with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
