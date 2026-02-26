@@ -1,17 +1,15 @@
-"""
-Gerenciador centralizado de configurações com singleton pattern e validação.
-"""
+"""Gerenciador centralizado de configurações com singleton pattern e validação."""
 
 import json
 import os
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
-    """Gerenciamento centralizado de configurações com singleton pattern e validação"""
+    """Gerenciamento centralizado de configurações com singleton pattern e validação."""
 
     _instance: Optional["ConfigManager"] = None
     _config: Optional[Dict[str, Any]] = None
@@ -43,14 +41,14 @@ class ConfigManager:
 
     @classmethod
     def get_instance(cls):
-        """Retorna a instância singleton do ConfigManager"""
+        """Retorna a instância singleton do ConfigManager."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
     def get_config(cls) -> Dict[str, Any]:
-        """Retorna a configuração carregada"""
+        """Retorna a configuração carregada."""
         instance = cls.get_instance()
         if instance._config is not None:
             return instance._config.copy()
