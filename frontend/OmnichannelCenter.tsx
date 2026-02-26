@@ -6,6 +6,7 @@ import { Input } from "@/input"
 import { ScrollArea } from "@/scroll-area"
 import { Textarea } from "@/textarea"
 import { getRelativeTime } from "@/utils"
+import { buildCrmBasicAuthHeaders } from "@/waOrchestratorAuth"
 import {
   Phone,
   Envelope,
@@ -42,7 +43,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/wa-orchestrator/status')
+      const res = await fetch('/api/wa-orchestrator/status', { headers: buildCrmBasicAuthHeaders() })
       const data = await res.json()
       if (!res.ok || data?.success === false) return
       setProvider(data?.provider || null)
@@ -61,7 +62,10 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     try {
       if (provider === 'evolution') {
         if (!selectedChannel) return
-        const res = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations?limit=200`)
+        const res = await fetch(
+          `/api/wa-orchestrator/channels/${selectedChannel}/conversations?limit=200`,
+          { headers: buildCrmBasicAuthHeaders() }
+        )
         const data = await res.json()
         if (res.ok && data?.success) {
           setConversations(data.items || [])
@@ -84,7 +88,10 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     try {
       if (provider === 'evolution') {
         if (!selectedChannel) return
-        const res = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`)
+        const res = await fetch(
+          `/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`,
+          { headers: buildCrmBasicAuthHeaders() }
+        )
         const data = await res.json()
         if (res.ok && data?.success) {
           setMessages(data.items || [])
@@ -107,11 +114,14 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     try {
       if (provider === 'evolution') {
         if (!selectedChannel) return
-        const res = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(selectedConversation.conversationId)}/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: messageInput })
-        })
+        const res = await fetch(
+          `/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(selectedConversation.conversationId)}/send`,
+          {
+            method: 'POST',
+            headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ text: messageInput })
+          }
+        )
         await res.json().catch(() => ({}))
       } else {
         const res = await fetch(`/api/conversations/${encodeURIComponent(selectedConversation.conversationId)}/messages`, {

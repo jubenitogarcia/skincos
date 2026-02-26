@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/alert"
 import { toast } from 'sonner'
 import * as QRCode from 'qrcode'
 import { LoadingPercentText } from '@/LoadingPattern'
+import { buildCrmBasicAuthHeaders, getCrmBasicAuthToken } from '@/waOrchestratorAuth'
 import {
   WhatsappLogo,
   Play,
@@ -177,25 +178,15 @@ export function WhatsAppUnifiedHub() {
 
   const buildEventSourceUrl = useCallback((path: string) => {
     const url = new URL(path, window.location.origin)
-    try {
-      const auth = window.localStorage.getItem('crm.basicAuth')
-      if (auth) {
-        url.searchParams.set('auth', auth)
-      }
-    } catch {
-      // ignore localStorage access errors
-    }
+    const auth = getCrmBasicAuthToken()
+    if (auth) url.searchParams.set('auth', auth)
     return url.toString()
   }, [])
 
   const getEventStreamErrorMessage = useCallback(() => {
-    try {
-      const auth = window.localStorage.getItem('crm.basicAuth')
-      if (!auth) {
-        return 'Realtime indisponível. Se CRM_BASIC_AUTH estiver ativo, defina localStorage crm.basicAuth. Verifique /api/wa-orchestrator/_proxy-status.'
-      }
-    } catch {
-      // ignore
+    const auth = getCrmBasicAuthToken()
+    if (!auth) {
+      return 'Realtime indisponível. Se CRM_BASIC_AUTH estiver ativo, defina localStorage crm.basicAuth. Verifique /api/wa-orchestrator/_proxy-status.'
     }
     return 'Realtime indisponível. Verifique /api/wa-orchestrator/_proxy-status.'
   }, [])
@@ -203,7 +194,7 @@ export function WhatsAppUnifiedHub() {
   const loadProxyStatus = useCallback(async () => {
     setLoadingProxyStatus(true)
     try {
-      const res = await fetch('/api/wa-orchestrator/_proxy-status')
+      const res = await fetch('/api/wa-orchestrator/_proxy-status', { headers: buildCrmBasicAuthHeaders() })
       const data = await res.json()
       if (res.ok && data?.ok) setProxyStatus(data)
     } catch {
@@ -225,7 +216,7 @@ export function WhatsAppUnifiedHub() {
       setPollPausedUntil(null)
     }
     try {
-      const response = await fetch('/api/wa-orchestrator/status')
+      const response = await fetch('/api/wa-orchestrator/status', { headers: buildCrmBasicAuthHeaders() })
       const contentType = response.headers.get('content-type') || ''
       const isJson = contentType.includes('application/json')
       const payload = isJson ? await response.json() : null
@@ -336,7 +327,10 @@ export function WhatsAppUnifiedHub() {
     setLoadingConversations(true)
     try {
       const offset = reset ? 0 : conversationOffsetRef.current
-      const response = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations?limit=${CONVERSATION_PAGE_SIZE}&offset=${offset}`)
+      const response = await fetch(
+        `/api/wa-orchestrator/channels/${selectedChannel}/conversations?limit=${CONVERSATION_PAGE_SIZE}&offset=${offset}`,
+        { headers: buildCrmBasicAuthHeaders() }
+      )
       const payload = await response.json().catch(() => ({}))
       if (!response.ok || payload?.success === false) {
         throw new Error(payload?.error || `Falha ao carregar conversas (HTTP ${response.status})`)
@@ -391,7 +385,10 @@ export function WhatsAppUnifiedHub() {
     if (!selectedChannel || !conversationId) return
     setLoadingMessages(true)
     try {
-      const response = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${MESSAGE_PAGE_SIZE}&page=${page}`)
+      const response = await fetch(
+        `/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${MESSAGE_PAGE_SIZE}&page=${page}`,
+        { headers: buildCrmBasicAuthHeaders() }
+      )
       const payload = await response.json().catch(() => ({}))
       if (!response.ok || payload?.success === false) {
         throw new Error(payload?.error || `Falha ao carregar mensagens (HTTP ${response.status})`)
@@ -462,7 +459,7 @@ export function WhatsAppUnifiedHub() {
     try {
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name: instanceName })
       })
       
@@ -496,7 +493,8 @@ export function WhatsAppUnifiedHub() {
     
     try {
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/stop`, {
-        method: 'POST'
+        method: 'POST',
+        headers: buildCrmBasicAuthHeaders()
       })
       
       const result = await response.json()
@@ -565,7 +563,8 @@ export function WhatsAppUnifiedHub() {
     
     try {
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/qr`, {
-        signal: controller.signal
+        signal: controller.signal,
+        headers: buildCrmBasicAuthHeaders()
       })
       
       if (!response.ok) {
@@ -653,11 +652,14 @@ export function WhatsAppUnifiedHub() {
     setSendingMessage(true)
     try {
       if (isEvolution) {
-        const response = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(selectedConversation)}/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: messageInput })
-        })
+        const response = await fetch(
+          `/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(selectedConversation)}/send`,
+          {
+            method: 'POST',
+            headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ text: messageInput })
+          }
+        )
         const payload = await response.json().catch(() => ({}))
         if (!response.ok || payload?.success === false) {
           throw new Error(payload?.error || 'Falha ao enviar mensagem')
@@ -692,7 +694,10 @@ export function WhatsAppUnifiedHub() {
 
   const syncEvolutionWebhook = useCallback(async (channel: number) => {
     try {
-      const response = await fetch(`/api/wa-orchestrator/channels/${channel}/webhook`, { method: 'POST' })
+      const response = await fetch(`/api/wa-orchestrator/channels/${channel}/webhook`, {
+        method: 'POST',
+        headers: buildCrmBasicAuthHeaders()
+      })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok || payload?.success === false) {
         throw new Error(payload?.error || 'Falha ao sincronizar webhook')
@@ -1010,6 +1015,7 @@ export function WhatsAppUnifiedHub() {
           <Warning className="h-4 w-4 text-red-200" />
           <AlertDescription>
             Não foi possível conectar ao orquestrador do WhatsApp.
+            {error ? <div className="mt-2 text-xs text-red-100/80">{error}</div> : null}
             <Button
               size="sm"
               variant="outline"
