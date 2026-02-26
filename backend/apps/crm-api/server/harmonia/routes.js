@@ -572,11 +572,13 @@ export function createHarmoniaRouter({ varDir }) {
         const id = String(req.params.id || '').trim()
         if (!id) return res.status(400).json({ ok: false, error: 'id is required' })
         const limit = Number(req.query?.limit || 50)
+        const before = req.query?.before || req.query?.cursor || null
         try {
             const data = await store.withTransaction(async (tx) => {
-                return store.listMessagesByConversation(tx, { conversationId: id, limit })
+                return store.listMessagesByConversation(tx, { conversationId: id, limit, before })
             })
-            res.json({ ok: true, data })
+            const hasMore = Array.isArray(data) && data.length >= Math.max(1, Math.min(200, Number(limit || 50)))
+            res.json({ ok: true, data, meta: { limit, before: before || null, hasMore } })
         } catch (e) {
             res.status(500).json({ ok: false, error: e?.message || String(e) })
         }

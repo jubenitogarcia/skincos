@@ -8,16 +8,32 @@
 - `WA_ORCHESTRATOR_WEBHOOK_TOKEN=<token>` (recomendado)
 - `CRM_BASIC_AUTH=<user:pass>` (opcional)
 
-## Fluxo de ativação do canal
-1. Acesse **Atendimento → WhatsApp**.
+### Harmonia (dados e ações)
+- `DATABASE_URL=<postgres>` (obrigatório para inbox e conversas)
+- `HARMONIA_DEBUG_TOKEN=<token>` (opcional, leitura)
+- `HARMONIA_EXEC_TOKEN=<token>` (opcional, necessário para ações como “Resolver”)
+
+## Como funciona o Atendimento (UI)
+- **Coluna esquerda:** canais (WhatsApp, Instagram, Omnichannel, Help Desk) + automações n8n.
+- **Coluna central:** inbox Harmonia + conversa.
+- **Coluna direita:** health, tarefas e contexto operacional.
+
+## Fluxo de ativação do canal (WhatsApp)
+1. Acesse **Atendimento → Canais → WhatsApp**.
 2. Selecione o canal e clique em **Iniciar Canal**.
 3. Escaneie o QR Code no WhatsApp.
 4. Clique em **Sincronizar Webhook**.
+
+## Ações rápidas (Harmonia)
+- **Resolver / Follow-up / Handoff / Pausar** alteram o `stage` da conversa.
+- Se `HARMONIA_EXEC_TOKEN` estiver configurado, o token deve ser informado na UI para habilitar ações.
 
 ## Verificações rápidas (API)
 - Status do provider: `GET /api/wa-orchestrator/status`
 - Webhook manual: `POST /api/wa-orchestrator/channels/:channel/webhook`
 - SSE: `GET /api/wa-orchestrator/events`
+- Harmonia inbox: `GET /api/harmonia/conversations?unitSlug=<slug>`
+- Patch de conversa: `POST /api/harmonia/conversations/:id/patch`
 
 ## Diagnóstico de falhas
 ### Webhook 401
@@ -30,10 +46,14 @@
 - Verifique se `CRM_PUBLIC_URL` está correto.
 - Inspecione `/api/wa-orchestrator/events` no DevTools → Network (SSE).
 
-### Conversas não carregam
-- Verifique `EVOLUTION_API_URL` e `EVOLUTION_API_KEY`.
-- Teste `GET /api/wa-orchestrator/status`.
-- Confirme se o canal está conectado.
+### Inbox vazio
+- Confirme `DATABASE_URL` e `HARMONIA_DEBUG_TOKEN`.
+- Verifique `GET /api/harmonia/health`.
+- Teste `GET /api/harmonia/conversations?unitSlug=<slug>`.
+
+### Ações não funcionam
+- Confirme `HARMONIA_EXEC_TOKEN` e se o token foi preenchido na UI.
+- Verifique resposta do endpoint `/api/harmonia/conversations/:id/patch`.
 
 ## Observações
 - Conversas/mensagens usam paginação; use **Carregar mais** quando necessário.
