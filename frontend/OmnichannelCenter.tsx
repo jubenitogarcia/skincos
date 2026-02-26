@@ -5,7 +5,7 @@ import { Button } from "@/button"
 import { Input } from "@/input"
 import { ScrollArea } from "@/scroll-area"
 import { Textarea } from "@/textarea"
-import { getRelativeTime, getInitials } from "@/utils"
+import { getRelativeTime } from "@/utils"
 import {
   Phone,
   Envelope,
@@ -190,8 +190,11 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                     <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                   )}
                   {!loadingConversations && filteredConversations.length === 0 && (
-                    <div className="text-sm text-blue-100/60 py-4 text-center">
-                      Nenhuma conversa disponível.
+                    <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-4 py-6 text-center">
+                      <div className="text-sm text-blue-100/70">Nenhuma conversa ainda.</div>
+                      <div className="text-xs text-blue-100/50 mt-2">
+                        Conecte WhatsApp, Instagram ou Facebook para começar a receber mensagens aqui.
+                      </div>
                     </div>
                   )}
                   {filteredConversations.map((conv) => (
@@ -275,8 +278,13 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-center h-[450px] text-blue-100/60">
-                  Selecione uma conversa para começar
+                <div className="flex items-center justify-center h-[450px]">
+                  <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-6 py-6 text-center max-w-sm">
+                    <div className="text-sm text-blue-100/70">Nenhuma conversa selecionada</div>
+                    <div className="text-xs text-blue-100/50 mt-2">
+                      As mensagens aparecerão aqui assim que as contas estiverem conectadas.
+                    </div>
+                  </div>
                 </div>
               )}
             </CardContent>

@@ -7,6 +7,8 @@
 - `CRM_PUBLIC_URL=<https://crm.skincos.com.br ou URL do ambiente>`
 - `WA_ORCHESTRATOR_WEBHOOK_TOKEN=<token>` (recomendado)
 - `CRM_BASIC_AUTH=<user:pass>` (opcional)
+- Pages Functions:
+  - `WA_ORCHESTRATOR_API_TARGET=https://api.skincos.com.br` (rota `/api/wa-orchestrator/*`)
 
 ### Harmonia (dados e ações)
 - `DATABASE_URL=<postgres>` (obrigatório para inbox e conversas)
@@ -14,9 +16,8 @@
 - `HARMONIA_EXEC_TOKEN=<token>` (opcional, necessário para ações como “Resolver”)
 
 ## Como funciona o Atendimento (UI)
-- **Coluna esquerda:** canais (WhatsApp, Instagram, Omnichannel, Help Desk) + automações n8n.
-- **Coluna central:** inbox Harmonia + conversa.
-- **Coluna direita:** health, tarefas e contexto operacional.
+- **Coluna esquerda:** seletor de canais (WhatsApp, Instagram, Omnichannel, Help Desk, Harmonia, n8n).
+- **Coluna direita:** painel ativo do canal selecionado (carrega sob demanda).
 
 ## Fluxo de ativação do canal (WhatsApp)
 1. Acesse **Atendimento → Canais → WhatsApp**.
@@ -32,6 +33,7 @@
 - Status do provider: `GET /api/wa-orchestrator/status`
 - Webhook manual: `POST /api/wa-orchestrator/channels/:channel/webhook`
 - SSE: `GET /api/wa-orchestrator/events`
+- Proxy status: `GET /api/wa-orchestrator/_proxy-status`
 - Harmonia inbox: `GET /api/harmonia/conversations?unitSlug=<slug>`
 - Patch de conversa: `POST /api/harmonia/conversations/:id/patch`
 
@@ -45,6 +47,7 @@
 - Se necessário, configure `localStorage.setItem('crm.basicAuth','<BASE64(user:pass)>')` para SSE.
 - Verifique se `CRM_PUBLIC_URL` está correto.
 - Inspecione `/api/wa-orchestrator/events` no DevTools → Network (SSE).
+- Verifique `/api/wa-orchestrator/_proxy-status` para confirmar o target correto.
 
 ### Inbox vazio
 - Confirme `DATABASE_URL` e `HARMONIA_DEBUG_TOKEN`.
