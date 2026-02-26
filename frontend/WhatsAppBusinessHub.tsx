@@ -68,6 +68,7 @@ import { startSessionAuto, getSessionAuto, detectEndpoints, fetchChatsAuto, fetc
 import { fetchCommonGroups } from '@/whatsappIntegration'
 import { Progress } from '@/progress'
 import { Separator } from "@/separator"
+import { buildCrmBasicAuthHeaders } from "@/waOrchestratorAuth"
 
 interface WhatsAppContact {
   id: string
@@ -335,10 +336,10 @@ export function WhatsAppBusinessHub() {
   const orchestratorApiCall = useCallback(async (endpoint: string, options?: RequestInit) => {
     try {
       const response = await fetch(`/api/wa-orchestrator${endpoint}`, {
-        headers: {
+        headers: buildCrmBasicAuthHeaders({
           'Content-Type': 'application/json',
-          ...options?.headers
-        },
+          ...(options?.headers || {})
+        }),
         ...options
       })
       
