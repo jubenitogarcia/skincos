@@ -69,6 +69,8 @@ type HarmoniaMessage = {
   direction?: 'inbound' | 'outbound' | string
   provider_message_id?: string
   text?: string | null
+  message_type?: string | null
+  caption?: string | null
   created_at?: string
 }
 
@@ -85,6 +87,32 @@ function fmtDateTime(iso?: string | null) {
   } catch {
     return String(iso)
   }
+}
+
+function sortMessagesByTime(messages: HarmoniaMessage[]) {
+  return [...messages].sort((a, b) => {
+    const ta = a?.created_at ? new Date(a.created_at).getTime() : 0
+    const tb = b?.created_at ? new Date(b.created_at).getTime() : 0
+    return ta - tb
+  })
+}
+
+function resolveMediaLabel(message: HarmoniaMessage) {
+  const rawType = String(message?.message_type || '').toLowerCase()
+  if (!rawType) return null
+  if (rawType.includes('image')) return 'Imagem'
+  if (rawType.includes('audio') || rawType.includes('ptt') || rawType.includes('voice')) return 'Áudio'
+  if (rawType.includes('document') || rawType.includes('pdf') || rawType.includes('doc')) return 'Documento'
+  if (rawType.includes('video')) return 'Vídeo'
+  if (rawType.includes('sticker')) return 'Sticker'
+  return null
+}
+
+function resolveMessageCaption(message: HarmoniaMessage) {
+  const text = String(message?.text || '').trim()
+  if (text) return text
+  const caption = String(message?.caption || '').trim()
+  return caption || ''
 }
 
 function StatPill({ label, value }: { label: string; value: React.ReactNode }) {
@@ -307,6 +335,16 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
   const [messagesLoading, setMessagesLoading] = React.useState(false)
   const [actionLoading, setActionLoading] = React.useState(false)
   const [actionError, setActionError] = React.useState<string | null>(null)
+  const [actionSuccess, setActionSuccess] = React.useState<string | null>(null)
+  const [messagesHasMore, setMessagesHasMore] = React.useState(false)
+  const [messagesCursor, setMessagesCursor] = React.useState<string | null>(null)
+  const actionTimerRef = React.useRef<number | null>(null)
+
+  React.useEffect(() => {
+    return () => {
+      if (actionTimerRef.current) window.clearTimeout(actionTimerRef.current)
+    }
+  }, [])
 
   React.useEffect(() => {
     if (unitSlug) return
@@ -401,11 +439,20 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       try {
         const [c, m] = await Promise.all([
           apiJson<{ ok: boolean; data?: HarmoniaConversation }>(`/api/harmonia/conversations/${encodeURIComponent(cid)}`),
-          apiJson<{ ok: boolean; data?: HarmoniaMessage[] }>(`/api/harmonia/conversations/${encodeURIComponent(cid)}/messages?limit=80`),
+          apiJson<{ ok: boolean; data?: HarmoniaMessage[]; meta?: { limit?: number; before?: string | null; hasMore?: boolean } }>(
+            `/api/harmonia/conversations/${encodeURIComponent(cid)}/messages?limit=80`
+          ),
         ])
         const convo = (c as any)?.data || null
         setConversation(convo)
-        setMessages(Array.isArray((m as any)?.data) ? (m as any).data : [])
+        const list = Array.isArray((m as any)?.data) ? (m as any).data : []
+        const ordered = sortMessagesByTime(list)
+        setMessages(ordered)
+        const hasMore = typeof (m as any)?.meta?.hasMore === 'boolean'
+          ? Boolean((m as any)?.meta?.hasMore)
+          : list.length >= 80
+        setMessagesHasMore(hasMore)
+        setMessagesCursor(ordered[0]?.created_at || null)
         setTab('conversations')
         if (convo?.id) {
           try { localStorage.setItem(UI_CONVO_KEY, String(convo.id)) } catch { /* ignore */ }
@@ -435,11 +482,17 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     setMessages([])
     try {
       const url = `/api/harmonia/conversations/find?unitSlug=${encodeURIComponent(slug)}&phoneRaw=${encodeURIComponent(phone)}&limit=80`
-      const out = await apiJson<{ ok: boolean; data?: { conversation?: HarmoniaConversation; messages?: HarmoniaMessage[] } }>(url)
+      const out = await apiJson<{ ok: boolean; data?: { conversation?: HarmoniaConversation; messages?: HarmoniaMessage[] }; meta?: { limit?: number; before?: string | null; hasMore?: boolean } }>(url)
       const c = out?.data?.conversation || null
       const m = Array.isArray(out?.data?.messages) ? out.data!.messages! : []
       setConversation(c)
-      setMessages(m)
+      const ordered = sortMessagesByTime(m)
+      setMessages(ordered)
+      const hasMore = typeof (out as any)?.meta?.hasMore === 'boolean'
+        ? Boolean((out as any)?.meta?.hasMore)
+        : m.length >= 80
+      setMessagesHasMore(hasMore)
+      setMessagesCursor(ordered[0]?.created_at || null)
       if (!c) setConversationError('Conversa não encontrada.')
       if (c?.id) {
         try { localStorage.setItem(UI_CONVO_KEY, String(c.id)) } catch { /* ignore */ }
@@ -452,6 +505,28 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     }
   }, [apiJson, phoneRaw, unitSlug])
 
+  const loadOlderMessages = React.useCallback(async () => {
+    if (!conversation?.id || !messagesCursor || messagesLoading) return
+    setMessagesLoading(true)
+    setActionError(null)
+    try {
+      const out = await apiJson<{ ok: boolean; data?: HarmoniaMessage[]; meta?: { limit?: number; before?: string | null; hasMore?: boolean } }>(
+        `/api/harmonia/conversations/${encodeURIComponent(String(conversation.id))}/messages?limit=80&before=${encodeURIComponent(messagesCursor)}`
+      )
+      const list = Array.isArray((out as any)?.data) ? (out as any).data : []
+      const ordered = sortMessagesByTime(list)
+      setMessages((prev) => ordered.concat(prev))
+      const hasMore = typeof (out as any)?.meta?.hasMore === 'boolean'
+        ? Boolean((out as any)?.meta?.hasMore)
+        : list.length >= 80
+      setMessagesHasMore(hasMore)
+      setMessagesCursor(ordered[0]?.created_at || messagesCursor)
+    } catch (e: any) {
+      setActionError(e?.message || 'Falha ao carregar mensagens anteriores.')
+    } finally {
+      setMessagesLoading(false)
+    }
+  }, [apiJson, conversation, messagesCursor, messagesLoading])
   const patchConversation = React.useCallback(
     async (patch: { stage?: string; lead_speed_class?: string }) => {
       if (!conversation?.id) return
@@ -464,6 +539,9 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
         })
         if ((out as any)?.data) {
           setConversation((out as any).data)
+          setActionSuccess('Ação aplicada com sucesso.')
+          if (actionTimerRef.current) window.clearTimeout(actionTimerRef.current)
+          actionTimerRef.current = window.setTimeout(() => setActionSuccess(null), 2500)
         }
       } catch (e: any) {
         setActionError(e?.message || 'Falha ao aplicar ação.')
@@ -873,6 +951,11 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   Informe o `HARMONIA_EXEC_TOKEN` para habilitar ações.
                 </div>
               ) : null}
+              {actionSuccess ? (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-100">
+                  {actionSuccess}
+                </div>
+              ) : null}
               {actionError ? (
                 <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-100">{actionError}</div>
               ) : null}
@@ -927,6 +1010,17 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
               <CardTitle className="text-white">Mensagens (últimas {messages.length})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs text-blue-200/70">
+                  {messagesHasMore ? 'Há mensagens anteriores' : 'Fim do histórico'}
+                </div>
+                {messagesHasMore ? (
+                  <Button variant="outline" className="h-8" onClick={loadOlderMessages} disabled={messagesLoading}>
+                    {messagesLoading ? 'Carregando…' : 'Carregar anteriores'}
+                  </Button>
+                ) : null}
+              </div>
+
               {messagesLoading ? (
                 <div className="space-y-2">
                   {[...Array(4)].map((_, idx) => (
@@ -938,6 +1032,8 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   {messages.map((m) => {
                     const dir = String(m.direction || '')
                     const isInbound = dir === 'inbound'
+                    const mediaLabel = resolveMediaLabel(m)
+                    const caption = resolveMessageCaption(m)
                     return (
                       <div
                         key={String(m.id || m.provider_message_id || Math.random())}
@@ -950,8 +1046,15 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                           </div>
                           <div className="text-white/70">{fmtDateTime(m.created_at || null)}</div>
                         </div>
-                        <div className="mt-2 text-sm text-white whitespace-pre-wrap break-words">
-                          {m.text || <span className="text-white/60">—</span>}
+                        <div className="mt-2 space-y-1">
+                          {mediaLabel ? (
+                            <Badge className="bg-white/10 text-white border border-white/10 text-[11px] px-2 py-0.5 w-fit">
+                              {mediaLabel}
+                            </Badge>
+                          ) : null}
+                          <div className="text-sm text-white whitespace-pre-wrap break-words">
+                            {caption ? caption : <span className="text-white/60">—</span>}
+                          </div>
                         </div>
                       </div>
                     )

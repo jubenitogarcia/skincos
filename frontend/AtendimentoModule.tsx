@@ -35,6 +35,34 @@ function TabShell({ title, children }: { title: string; children: React.ReactNod
   )
 }
 
+function ChannelPanel({
+  title,
+  children,
+  onReload,
+}: {
+  title: string
+  children: React.ReactNode
+  onReload?: () => void
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-white">{title}</div>
+        {onReload ? (
+          <button
+            type="button"
+            className="text-[11px] text-blue-200/70 hover:text-white transition-colors"
+            onClick={onReload}
+          >
+            Recarregar
+          </button>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 export function AtendimentoModule() {
   const { user } = useAuth()
   const roleKey = String(user?.role || '').trim().toUpperCase()
@@ -61,6 +89,11 @@ export function AtendimentoModule() {
   const canOmnichannel = canAtendimento || hasModuleAccess('omnichannel')
   const canHelpdesk = canAtendimento || hasModuleAccess('helpdesk')
   const canInstagram = canAtendimento || hasModuleAccess('harmonia')
+
+  const [whatsAppKey, setWhatsAppKey] = React.useState(0)
+  const [instagramKey, setInstagramKey] = React.useState(0)
+  const [omniKey, setOmniKey] = React.useState(0)
+  const [helpdeskKey, setHelpdeskKey] = React.useState(0)
 
   if (!canWhatsApp && !canWhatsAppN8n && !canHarmonia && !canOmnichannel && !canHelpdesk && !canInstagram) {
     return (
@@ -93,28 +126,26 @@ export function AtendimentoModule() {
             </CardHeader>
             <CardContent className="space-y-4">
               {canWhatsApp ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold text-white">WhatsApp</div>
+                <ChannelPanel title="WhatsApp" onReload={() => setWhatsAppKey((v) => v + 1)}>
                   <TabShell title="WhatsApp">
-                    <WhatsAppUnifiedHub />
+                    <WhatsAppUnifiedHub key={`whatsapp-${whatsAppKey}`} />
                   </TabShell>
-                </div>
+                </ChannelPanel>
               ) : null}
 
               {canInstagram ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold text-white">Instagram (DM)</div>
+                <ChannelPanel title="Instagram (DM)" onReload={() => setInstagramKey((v) => v + 1)}>
                   <TabShell title="Instagram">
-                    <InstagramStudioPro />
+                    <InstagramStudioPro key={`instagram-${instagramKey}`} />
                   </TabShell>
-                </div>
+                </ChannelPanel>
               ) : null}
 
               {canOmnichannel ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold text-white">Omnichannel</div>
+                <ChannelPanel title="Omnichannel" onReload={() => setOmniKey((v) => v + 1)}>
                   <TabShell title="Omnichannel">
                     <OmnichannelCenter
+                      key={`omni-${omniKey}`}
                       activities={[] as any}
                       onStartConversation={(channel) => {
                         const c = String(channel || '').toLowerCase()
@@ -124,16 +155,15 @@ export function AtendimentoModule() {
                       }}
                     />
                   </TabShell>
-                </div>
+                </ChannelPanel>
               ) : null}
 
               {canHelpdesk ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold text-white">Help Desk</div>
+                <ChannelPanel title="Help Desk" onReload={() => setHelpdeskKey((v) => v + 1)}>
                   <TabShell title="Help Desk">
-                    <HelpDeskModule />
+                    <HelpDeskModule key={`helpdesk-${helpdeskKey}`} />
                   </TabShell>
-                </div>
+                </ChannelPanel>
               ) : null}
             </CardContent>
           </Card>
