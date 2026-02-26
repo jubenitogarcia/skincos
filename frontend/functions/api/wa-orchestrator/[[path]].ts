@@ -24,7 +24,7 @@ export async function onRequest(context: any): Promise<Response> {
         // ignore invalid
       }
     }
-    return 'https://api.skincos.com.br'
+    return 'https://wa.skincos.com.br'
   }
 
   const targetOrigin = String(pickTarget())
