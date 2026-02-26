@@ -1051,6 +1051,7 @@ export function InstagramStudioPro() {
               </div>
             </DialogContent>
           </Dialog>
+        )}
         </div>
       </div>
     )
