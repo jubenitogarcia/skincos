@@ -1,6 +1,5 @@
-import React, { Suspense, lazy, useCallback, useMemo, useEffect, useState } from 'react'
+import React, { Suspense, lazy, useCallback } from 'react'
 import { Badge } from '@/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { ErrorBoundary } from '@/ErrorBoundary'
 import { useAuth } from '@/contexts'
@@ -11,9 +10,7 @@ const WhatsAppN8nModule = lazy(() => import('@/WhatsAppN8nModule').then(m => ({ 
 const HarmoniaModule = lazy(() => import('@/HarmoniaModule').then(m => ({ default: m.HarmoniaModule })))
 const OmnichannelCenter = lazy(() => import('@/OmnichannelCenter').then(m => ({ default: m.OmnichannelCenter })))
 const HelpDeskModule = lazy(() => import('@/HelpDeskModule').then(m => ({ default: m.HelpDeskModule })))
-
-const TAB_STORAGE_KEY = 'ui.atendimento.tab'
-const TAB_QUERY_KEY = 'atendimento'
+const InstagramStudioPro = lazy(() => import('@/InstagramStudioPro').then(m => ({ default: m.InstagramStudioPro })))
 
 function TabShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -57,70 +54,15 @@ export function AtendimentoModule() {
     [allowedModulesKey, roleKey]
   )
 
-  const tabs = useMemo(
-    () => [
-      { key: 'whatsapp', label: 'WhatsApp', legacy: 'whatsapp-business', render: () => <WhatsAppUnifiedHub /> },
-      { key: 'whatsapp-n8n', label: 'WhatsApp n8n', legacy: 'whatsapp-n8n', render: () => <WhatsAppN8nModule /> },
-      { key: 'harmonia', label: 'Harmonia', legacy: 'harmonia', render: () => <HarmoniaModule /> },
-      { key: 'omnichannel', label: 'Omnichannel', legacy: 'omnichannel', render: () => <OmnichannelCenter activities={[]} /> },
-      { key: 'helpdesk', label: 'Help Desk', legacy: 'helpdesk', render: () => <HelpDeskModule /> }
-    ],
-    []
-  )
+  const canAtendimento = hasModuleAccess('atendimento')
+  const canWhatsApp = canAtendimento || hasModuleAccess('whatsapp-business')
+  const canWhatsAppN8n = canAtendimento || hasModuleAccess('whatsapp-n8n')
+  const canHarmonia = canAtendimento || hasModuleAccess('harmonia')
+  const canOmnichannel = canAtendimento || hasModuleAccess('omnichannel')
+  const canHelpdesk = canAtendimento || hasModuleAccess('helpdesk')
+  const canInstagram = canAtendimento || hasModuleAccess('harmonia')
 
-  const allowedTabs = useMemo(
-    () => tabs.filter((tab) => hasModuleAccess('atendimento') || hasModuleAccess(tab.legacy)),
-    [hasModuleAccess, tabs]
-  )
-  const allowedTabKeys = useMemo(() => allowedTabs.map((t) => t.key), [allowedTabs])
-
-  const resolveInitialTab = useCallback(
-    (keys: string[]) => {
-      if (!keys.length) return ''
-      if (typeof window === 'undefined') return keys[0]
-      const params = new URLSearchParams(window.location.search)
-      const fromUrl = params.get(TAB_QUERY_KEY)
-      if (fromUrl && keys.includes(fromUrl)) return fromUrl
-      try {
-        const stored = window.localStorage.getItem(TAB_STORAGE_KEY)
-        if (stored && keys.includes(stored)) return stored
-      } catch { /* ignore */ }
-      return keys[0]
-    },
-    []
-  )
-
-  const [activeTab, setActiveTab] = useState<string>(() => resolveInitialTab(allowedTabKeys))
-
-  useEffect(() => {
-    if (!allowedTabKeys.length) {
-      setActiveTab('')
-      return
-    }
-    const next = resolveInitialTab(allowedTabKeys)
-    setActiveTab(next)
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href)
-      const params = url.searchParams
-      params.set(TAB_QUERY_KEY, next)
-      url.search = params.toString()
-      window.history.replaceState({}, '', url.toString())
-      try { window.localStorage.setItem(TAB_STORAGE_KEY, next) } catch { /* ignore */ }
-    }
-  }, [allowedTabKeys.join('|'), resolveInitialTab])
-
-  const handleTabChange = useCallback((value: string) => {
-    setActiveTab(value)
-    if (typeof window === 'undefined') return
-    try { window.localStorage.setItem(TAB_STORAGE_KEY, value) } catch { /* ignore */ }
-    const url = new URL(window.location.href)
-    const params = url.searchParams
-    params.set(TAB_QUERY_KEY, value)
-    url.search = params.toString()
-    window.history.replaceState({}, '', url.toString())
-  }, [])
-
-  if (!allowedTabs.length) {
+  if (!canWhatsApp && !canWhatsAppN8n && !canHarmonia && !canOmnichannel && !canHelpdesk && !canInstagram) {
     return (
       <Card className="glass-card">
         <CardHeader>
@@ -145,26 +87,77 @@ export function AtendimentoModule() {
 
       <Card className="glass-card">
         <CardHeader>
-          <CardTitle className="text-white">Canais e Operações</CardTitle>
+          <CardTitle className="text-white">Canais de Atendimento</CardTitle>
         </CardHeader>
-        <CardContent>
-          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-            <TabsList className="flex flex-wrap">
-              {allowedTabs.map((tab) => (
-                <TabsTrigger key={tab.key} value={tab.key}>{tab.label}</TabsTrigger>
-              ))}
-            </TabsList>
+        <CardContent className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {canWhatsApp ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-white">WhatsApp</div>
+              <TabShell title="WhatsApp">
+                <WhatsAppUnifiedHub />
+              </TabShell>
+            </div>
+          ) : null}
 
-            {allowedTabs.map((tab) => (
-              <TabsContent key={tab.key} value={tab.key} className="mt-4">
-                <TabShell title={tab.label}>
-                  {tab.render()}
-                </TabShell>
-              </TabsContent>
-            ))}
-          </Tabs>
+          {canInstagram ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-white">Instagram (DM)</div>
+              <TabShell title="Instagram">
+                <InstagramStudioPro />
+              </TabShell>
+            </div>
+          ) : null}
+
+          {canOmnichannel ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-white">Omnichannel</div>
+              <TabShell title="Omnichannel">
+                <OmnichannelCenter
+                  activities={[] as any}
+                  onStartConversation={(channel) => {
+                    const c = String(channel || '').toLowerCase()
+                    if (c === 'whatsapp') {
+                      // no-op: WhatsApp está disponível acima
+                    }
+                  }}
+                />
+              </TabShell>
+            </div>
+          ) : null}
+
+          {canHelpdesk ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-white">Help Desk</div>
+              <TabShell title="Help Desk">
+                <HelpDeskModule />
+              </TabShell>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
+
+      {canWhatsAppN8n ? (
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="text-white">Automação (WhatsApp n8n)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TabShell title="WhatsApp n8n">
+              <WhatsAppN8nModule />
+            </TabShell>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {canHarmonia ? (
+        <Card className="glass-card">
+          <CardContent className="p-0">
+            <TabShell title="Harmonia">
+              <HarmoniaModule mode="expanded" showChannels={false} />
+            </TabShell>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   )
 }
