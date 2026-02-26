@@ -150,7 +150,11 @@ export function WhatsAppUnifiedHub() {
   // Polling and real-time updates
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
-  const pollGuardRef = useRef<{ failCount: number; pausedUntil: number }>({ failCount: 0, pausedUntil: 0 })
+  const pollGuardRef = useRef<{ failCount: number; windowStart: number; pausedUntil: number }>({
+    failCount: 0,
+    windowStart: 0,
+    pausedUntil: 0
+  })
   const evolutionPollGuardRef = useRef<{ failCount: number; windowStart: number; pausedUntil: number }>({
     failCount: 0,
     windowStart: 0,
@@ -279,12 +283,20 @@ export function WhatsAppUnifiedHub() {
       setOrchestratorStatus(transformedData)
       setError(null)
       guard.failCount = 0
+      guard.windowStart = 0
       guard.pausedUntil = 0
       setPollPausedUntil(null)
     } catch (err: any) {
-      guard.failCount += 1
-      if (guard.failCount >= 3 && !guard.pausedUntil) {
-        guard.pausedUntil = Date.now() + 60000
+      const now = Date.now()
+      const windowStart = guard.windowStart || now
+      if (now - windowStart > 30000) {
+        guard.windowStart = now
+        guard.failCount = 1
+      } else {
+        guard.failCount += 1
+      }
+      if (guard.failCount >= 5 && !guard.pausedUntil) {
+        guard.pausedUntil = now + 60000
         setPollPausedUntil(guard.pausedUntil)
       }
       const suffix = guard.pausedUntil ? ' • pausa de 60s' : ''

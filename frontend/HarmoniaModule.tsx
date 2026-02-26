@@ -69,6 +69,8 @@ type HarmoniaMessage = {
   direction?: 'inbound' | 'outbound' | string
   provider_message_id?: string
   text?: string | null
+  message_type?: string | null
+  caption?: string | null
   created_at?: string
 }
 
@@ -93,6 +95,24 @@ function sortMessagesByTime(messages: HarmoniaMessage[]) {
     const tb = b?.created_at ? new Date(b.created_at).getTime() : 0
     return ta - tb
   })
+}
+
+function resolveMediaLabel(message: HarmoniaMessage) {
+  const rawType = String(message?.message_type || '').toLowerCase()
+  if (!rawType) return null
+  if (rawType.includes('image')) return 'Imagem'
+  if (rawType.includes('audio') || rawType.includes('ptt') || rawType.includes('voice')) return 'Áudio'
+  if (rawType.includes('document') || rawType.includes('pdf') || rawType.includes('doc')) return 'Documento'
+  if (rawType.includes('video')) return 'Vídeo'
+  if (rawType.includes('sticker')) return 'Sticker'
+  return null
+}
+
+function resolveMessageCaption(message: HarmoniaMessage) {
+  const text = String(message?.text || '').trim()
+  if (text) return text
+  const caption = String(message?.caption || '').trim()
+  return caption || ''
 }
 
 function StatPill({ label, value }: { label: string; value: React.ReactNode }) {
@@ -1012,6 +1032,8 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   {messages.map((m) => {
                     const dir = String(m.direction || '')
                     const isInbound = dir === 'inbound'
+                    const mediaLabel = resolveMediaLabel(m)
+                    const caption = resolveMessageCaption(m)
                     return (
                       <div
                         key={String(m.id || m.provider_message_id || Math.random())}
@@ -1024,8 +1046,15 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                           </div>
                           <div className="text-white/70">{fmtDateTime(m.created_at || null)}</div>
                         </div>
-                        <div className="mt-2 text-sm text-white whitespace-pre-wrap break-words">
-                          {m.text || <span className="text-white/60">—</span>}
+                        <div className="mt-2 space-y-1">
+                          {mediaLabel ? (
+                            <Badge className="bg-white/10 text-white border border-white/10 text-[11px] px-2 py-0.5 w-fit">
+                              {mediaLabel}
+                            </Badge>
+                          ) : null}
+                          <div className="text-sm text-white whitespace-pre-wrap break-words">
+                            {caption ? caption : <span className="text-white/60">—</span>}
+                          </div>
                         </div>
                       </div>
                     )

@@ -239,13 +239,27 @@ export function createHarmoniaStore({ databaseUrl }) {
         const params = beforeOk ? [id, beforeTs.toISOString(), lim] : [id, lim]
         const r = await tx.query(
             beforeOk
-                ? `select id, direction, provider_message_id, text, created_at
+                ? `select
+                       id,
+                       direction,
+                       provider_message_id,
+                       text,
+                       created_at,
+                       coalesce(raw->'payload'->'message'->>'type', raw->'payload'->'message_info'->>'type') as message_type,
+                       coalesce(raw->'payload'->'message'->>'text', raw->'payload'->'message_info'->>'text') as caption
                    from harmonia.messages
                    where conversation_id=$1
                      and created_at < $2
                    order by created_at desc
                    limit $3`
-                : `select id, direction, provider_message_id, text, created_at
+                : `select
+                       id,
+                       direction,
+                       provider_message_id,
+                       text,
+                       created_at,
+                       coalesce(raw->'payload'->'message'->>'type', raw->'payload'->'message_info'->>'type') as message_type,
+                       coalesce(raw->'payload'->'message'->>'text', raw->'payload'->'message_info'->>'text') as caption
                    from harmonia.messages
                    where conversation_id=$1
                    order by created_at desc
