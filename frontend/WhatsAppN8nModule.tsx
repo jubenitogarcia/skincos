@@ -6,6 +6,10 @@ const webhookPath = '/webhook/wa/inbound/evolution'
 const webhookTestPath = '/webhook-test/wa/inbound/evolution'
 
 export function WhatsAppN8nModule() {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const fullWebhookPath = origin ? `${origin}${webhookPath}` : webhookPath
+  const fullWebhookTestPath = origin ? `${origin}${webhookTestPath}` : webhookTestPath
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -37,8 +41,8 @@ export function WhatsAppN8nModule() {
             <CardTitle className="text-white">Webhooks</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-blue-100/80">
-            <div>Produção: <code>{webhookPath}</code></div>
-            <div>Teste: <code>{webhookTestPath}</code></div>
+            <div>Produção: <code>{fullWebhookPath}</code></div>
+            <div>Teste: <code>{fullWebhookTestPath}</code></div>
             <div className="pt-2 text-xs text-blue-100/60">
               Configure a Evolution API para apontar para o webhook acima.
             </div>

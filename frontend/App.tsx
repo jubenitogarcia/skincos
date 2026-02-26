@@ -1210,7 +1210,7 @@ export default function AppFunctionalNeatlab() {
 
 		                                <div className="flex items-center gap-4">
 		                                    {active === 'insumos' ? (
-		                                        <div className="flex items-start gap-2 min-w-[180px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
+		                                        <div className="flex items-start gap-2 min-w-[220px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
 		                                            <button
 		                                                type="button"
 		                                                className="inline-flex"
@@ -1220,7 +1220,7 @@ export default function AppFunctionalNeatlab() {
 		                                            >
 		                                                <Badge className={`uppercase tracking-wide border ${estoqueBadgeClass}`}>Estoque</Badge>
 		                                            </button>
-		                                            <span className="ml-auto text-right">
+		                                            <span className="ml-auto text-right flex-1">
 		                                                <span className="block font-mono text-blue-50">
 		                                                {insumosHeaderEstoque?.loading ? (
 		                                                    <span className="inline-flex items-center gap-2">

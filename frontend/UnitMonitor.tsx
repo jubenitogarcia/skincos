@@ -688,11 +688,10 @@ export function UnitMonitor() {
 	        <div className="space-y-2">
 	          <p className="text-sm text-blue-300/80">Monitoramento e gravação RTSP por unidade (MediaMTX + ffmpeg).</p>
 	          <div className="lg:hidden space-y-2">
-	            <Label className="text-white">Unidade</Label>
-	            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
-	              <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-	                <SelectValue placeholder="Selecione" />
-	              </SelectTrigger>
+            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
+              <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
+                <SelectValue placeholder="Unidade" />
+              </SelectTrigger>
 	              <SelectContent>
 	                {unitOptionsForSelect.map((unit) => (
 	                  <SelectItem key={unit.value} value={unit.value}>

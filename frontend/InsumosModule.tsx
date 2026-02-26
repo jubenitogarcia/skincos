@@ -1859,19 +1859,45 @@ export function InsumosModule() {
     }
   }, [])
 
+  const layoutDragScrollY = React.useRef<number | null>(null)
+
   const onDragStartLayout = React.useCallback(() => {
-    // keep no-op to avoid scroll jumps after drag
+    try {
+      layoutDragScrollY.current = window.scrollY
+    } catch {
+      layoutDragScrollY.current = null
+    }
   }, [])
 
   const onDragEndLayout = React.useCallback(
     (result: DropResult) => {
-      if (!result.destination) return
-      if (result.source.droppableId !== result.destination.droppableId) return
+      const restoreScroll = () => {
+        if (layoutDragScrollY.current == null) return
+        const targetY = layoutDragScrollY.current
+        layoutDragScrollY.current = null
+        requestAnimationFrame(() => {
+          try {
+            window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior })
+          } catch {
+            window.scrollTo(0, targetY)
+          }
+        })
+      }
+
+      if (!result.destination) {
+        restoreScroll()
+        return
+      }
+      if (result.source.droppableId !== result.destination.droppableId) {
+        restoreScroll()
+        return
+      }
 
       if (result.source.droppableId === 'overview-panels') {
         const next = moveIdInList(visibleOverviewPanels, result.source.index, result.destination.index)
         persistOverviewPanels(next)
         scheduleSaveUserPrefs({ mainPanelOrder, overviewPanelOrder: next, detailsOpen })
+        restoreScroll()
         return
       }
 
@@ -1880,6 +1906,7 @@ export function InsumosModule() {
         persistMainPanels(next)
         scheduleSaveUserPrefs({ mainPanelOrder: next, overviewPanelOrder, detailsOpen })
       }
+      restoreScroll()
     },
     [
       detailsOpen,
@@ -5735,43 +5762,32 @@ export function InsumosModule() {
       <DragDropContext onDragStart={onDragStartLayout} onDragEnd={onDragEndLayout}>
       <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
         <DialogContent size="wideTable" className={dialogWideClass}>
-          <DialogHeader>
-            <DialogTitle>Insumos</DialogTitle>
+          <DialogHeader className="space-y-2">
+            <div className="flex flex-nowrap items-center gap-2 min-w-0 w-full overflow-x-auto">
+              <DialogTitle className="text-white">Insumos</DialogTitle>
+              <Input
+                value={insumosQuery}
+                onChange={(e) => setInsumosQuery(e.target.value)}
+                placeholder="Buscar por código, produto, categoria…"
+                className="h-8 flex-1 min-w-[160px] md:min-w-0 ml-auto"
+              />
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+                disabled={!isAuthed}
+                title="Exportar CSV"
+              >
+                Exportar
+              </Button>
+              <Button variant="outline" className="h-8 px-3" onClick={() => setCreateOpen((v) => !v)} disabled={!isAuthed}>
+                {createOpen ? 'Fechar' : 'Adicionar'}
+              </Button>
+            </div>
             <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  value={insumosQuery}
-                  onChange={(e) => setInsumosQuery(e.target.value)}
-                  placeholder="Buscar por código, produto, categoria…"
-                  className="w-full sm:w-80"
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
-                  disabled={!isAuthed}
-                  title="Exportar CSV"
-                >
-                  Exportar
-                </Button>
-                <Button variant="outline" onClick={() => setCreateOpen((v) => !v)} disabled={!isAuthed}>
-                  {createOpen ? 'Fechar' : 'Adicionar'}
-                </Button>
-              </div>
-              <div className="text-xs text-blue-200/60">
-                {insumosTotal != null ? (
-                  <>
-                    {filteredInsumos.length} de <span className="font-mono">{insumosTotal}</span> itens
-                  </>
-                ) : (
-                  `${filteredInsumos.length} itens`
-                )}
-              </div>
-            </div>
-
             {createOpen ? (
               <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
                 <div className="text-sm text-blue-100/70">
@@ -6111,7 +6127,6 @@ export function InsumosModule() {
                 </tbody>
               </table>
             </div>
-            {insumosHasMore ? <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div> : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -7119,9 +7134,9 @@ export function InsumosModule() {
                                       </span>
                                     </div>
                                   </div>
-                                  <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
+                                  <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
                                     <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                                      <SelectTrigger className="h-8 w-24">
+                                      <SelectTrigger className="h-8 w-24 shrink-0">
                                         <SelectValue placeholder="Status" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7135,7 +7150,7 @@ export function InsumosModule() {
                                       value={alertasCategoria || '__ALL__'}
                                       onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
                                     >
-                                      <SelectTrigger className="h-8 w-36">
+                                      <SelectTrigger className="h-8 w-36 shrink-0">
                                         <SelectValue placeholder="Categoria" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7148,7 +7163,7 @@ export function InsumosModule() {
                                       </SelectContent>
                                     </Select>
                                     <Select value={alertasFluxo} onValueChange={(v) => setAlertasFluxo(v as any)}>
-                                      <SelectTrigger className="h-8 w-28">
+                                      <SelectTrigger className="h-8 w-28 shrink-0">
                                         <SelectValue placeholder="Fluxo" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7163,7 +7178,7 @@ export function InsumosModule() {
                                       value={alertasBusca}
                                       onChange={(e) => setAlertasBusca(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 flex-1 min-w-[140px] md:min-w-0"
+                                      className="h-8 flex-1 min-w-[120px] md:min-w-0 ml-auto"
                                     />
                                     <div className="flex items-center gap-2 shrink-0">
                                       <Button
@@ -7524,9 +7539,9 @@ export function InsumosModule() {
                                     </button>
                                     <CardTitle className="text-white text-base">Gráficos</CardTitle>
                                   </div>
-                                  <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
+                                  <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
                                     <Select value={chartsFilterTipo} onValueChange={(v) => setChartsFilterTipo(v as any)}>
-                                      <SelectTrigger className="h-8 w-32">
+                                      <SelectTrigger className="h-8 w-32 shrink-0">
                                         <SelectValue placeholder="Tipo" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7537,7 +7552,7 @@ export function InsumosModule() {
                                       </SelectContent>
                                     </Select>
                                     <Select value={chartsFilterY} onValueChange={(v) => setChartsFilterY(v as any)}>
-                                      <SelectTrigger className="h-8 w-28">
+                                      <SelectTrigger className="h-8 w-28 shrink-0">
                                         <SelectValue placeholder="Eixo Y" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7549,7 +7564,7 @@ export function InsumosModule() {
                                       </SelectContent>
                                     </Select>
                                     <Select value={chartsFilterX} onValueChange={(v) => setChartsFilterX(v as any)}>
-                                      <SelectTrigger className="h-8 w-24">
+                                      <SelectTrigger className="h-8 w-24 shrink-0">
                                         <SelectValue placeholder="Eixo X" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7559,7 +7574,7 @@ export function InsumosModule() {
                                       </SelectContent>
                                     </Select>
                                     <Select value={chartsFilterView} onValueChange={(v) => setChartsFilterView(v as any)}>
-                                      <SelectTrigger className="h-8 w-32">
+                                      <SelectTrigger className="h-8 w-32 shrink-0">
                                         <SelectValue placeholder="Representação" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7570,7 +7585,7 @@ export function InsumosModule() {
                                       </SelectContent>
                                     </Select>
                                     <Select value={chartsFilterTop} onValueChange={(v) => setChartsFilterTop(v as any)}>
-                                      <SelectTrigger className="h-8 w-24">
+                                      <SelectTrigger className="h-8 w-24 shrink-0">
                                         <SelectValue placeholder="Top" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -7585,7 +7600,7 @@ export function InsumosModule() {
                                       value={chartsSearch}
                                       onChange={(e) => setChartsSearch(e.target.value)}
                                       placeholder="Buscar"
-                                      className="h-8 flex-1 min-w-[140px] md:min-w-0"
+                                      className="h-8 flex-1 min-w-[120px] md:min-w-0 ml-auto"
                                     />
                                     <div className="flex items-center gap-2 shrink-0">
                                     <Button
@@ -8337,50 +8352,71 @@ export function InsumosModule() {
                     className="space-y-3 flex-1 min-w-0"
                   >
 	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="relative pr-24">
-	              <div>
-	                <div className="text-white text-lg font-semibold">Insumos</div>
-	                <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
-	                {offlineQueueCount > 0 ? (
-	                  <div className="mt-2">
-	                    <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-	                      Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-	                    </Button>
+	            <CardHeader className="flex flex-col gap-2">
+	              <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
+	                <div className="flex items-center gap-3 min-w-0">
+	                  <button
+	                    type="button"
+	                    {...dragProvided.dragHandleProps}
+	                    className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
+	                    title="Arraste para mover"
+	                    aria-label="Mover"
+	                  >
+	                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                      <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+	                    </svg>
+	                  </button>
+	                  <div className="min-w-0">
+	                    <div className="text-white text-lg font-semibold">Insumos</div>
+	                    <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
 	                  </div>
-	                ) : null}
-	              </div>
-	              <div className="absolute top-2 right-2 flex items-center gap-1">
-	                <div
-	                  {...dragProvided.dragHandleProps}
-	                  className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-	                  title="Arraste para mover"
-	                  aria-label="Mover"
-	                  role="button"
-	                  tabIndex={0}
-	                >
-	                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-	                  </svg>
 	                </div>
-	                <Button
-	                  size="icon"
-	                  variant="ghost"
-	                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                  onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.insumos, !insumosPanelOpen)}
-                  title={insumosPanelOpen ? 'Contrair' : 'Expandir'}
-                  aria-label={insumosPanelOpen ? 'Contrair' : 'Expandir'}
-                >
-                  {insumosPanelOpen ? (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-	                  )}
-	                </Button>
+	                <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
+	                  <Input
+	                    value={insumosQuery}
+	                    onChange={(e) => setInsumosQuery(e.target.value)}
+	                    placeholder="Buscar por código, produto, categoria…"
+	                    className="h-8 flex-1 min-w-[160px] md:min-w-0 ml-auto"
+	                  />
+	                  <Button
+	                    variant="outline"
+	                    className="h-8 px-3"
+	                    onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+	                    disabled={!isAuthed}
+	                    title="Exportar CSV"
+	                  >
+	                    Exportar
+	                  </Button>
+	                  <Button variant="outline" className="h-8 px-3" onClick={() => setCreateOpen((v) => !v)} disabled={!isAuthed}>
+	                    {createOpen ? 'Fechar' : 'Adicionar'}
+	                  </Button>
+	                  <Button
+	                    size="icon"
+	                    variant="ghost"
+	                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+	                    onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.insumos, !insumosPanelOpen)}
+	                    title={insumosPanelOpen ? 'Contrair' : 'Expandir'}
+	                    aria-label={insumosPanelOpen ? 'Contrair' : 'Expandir'}
+	                  >
+	                    {insumosPanelOpen ? (
+	                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+	                      </svg>
+	                    ) : (
+	                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+	                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+	                      </svg>
+	                    )}
+	                  </Button>
+	                </div>
 	              </div>
+	              {offlineQueueCount > 0 ? (
+	                <div>
+	                  <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
+	                    Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
+	                  </Button>
+	                </div>
+	              ) : null}
 	            </CardHeader>
             {insumosPanelOpen ? (
               <CardContent className="space-y-3">
@@ -8486,45 +8522,6 @@ export function InsumosModule() {
               ))}
             </CardContent>
           </Card>
-        ) : null}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Input
-              value={insumosQuery}
-              onChange={(e) => setInsumosQuery(e.target.value)}
-              placeholder="Buscar por código, produto, categoria…"
-              className="w-80"
-            />
-            <Button
-              variant="outline"
-              onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
-              disabled={!isAuthed}
-              title="Exportar CSV"
-            >
-              Exportar
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setCreateOpen((v) => !v)}
-              disabled={!isAuthed}
-            >
-              {createOpen ? 'Fechar' : 'Adicionar'}
-            </Button>
-          </div>
-          <div className="text-xs text-blue-200/60">
-            {insumosTotal != null ? (
-              <>
-                {filteredInsumos.length} de <span className="font-mono">{insumosTotal}</span> itens
-              </>
-            ) : (
-              `${filteredInsumos.length} itens`
-            )}
-          </div>
-        </div>
-        {insumosHasMore ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs text-blue-200/60">Role até o fim para carregar mais…</div>
-          </div>
         ) : null}
 
         {createOpen ? (
@@ -9050,9 +9047,9 @@ export function InsumosModule() {
                       </button>
                       <CardTitle className="text-white text-lg">Movimentações</CardTitle>
                     </div>
-                    <div className="flex flex-1 flex-wrap md:flex-nowrap items-center gap-2 min-w-0 justify-end">
+                    <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
                       <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
-                        <SelectTrigger className="h-8 w-28">
+                        <SelectTrigger className="h-8 w-28 shrink-0">
                           <SelectValue placeholder="Fluxo" />
                         </SelectTrigger>
                         <SelectContent>
@@ -9066,7 +9063,7 @@ export function InsumosModule() {
                         value={movFilterCategoria || '__ALL__'}
                         onValueChange={(v) => setMovFilterCategoria(v === '__ALL__' ? '' : String(v))}
                       >
-                        <SelectTrigger className="h-8 w-36">
+                        <SelectTrigger className="h-8 w-36 shrink-0">
                           <SelectValue placeholder="Categoria" />
                         </SelectTrigger>
                         <SelectContent>
@@ -9079,7 +9076,7 @@ export function InsumosModule() {
                         </SelectContent>
                       </Select>
                       <Select value={movFilterMarca || '__ALL__'} onValueChange={(v) => setMovFilterMarca(v === '__ALL__' ? '' : String(v))}>
-                        <SelectTrigger className="h-8 w-32">
+                        <SelectTrigger className="h-8 w-32 shrink-0">
                           <SelectValue placeholder="Marca" />
                         </SelectTrigger>
                         <SelectContent>
@@ -9095,7 +9092,7 @@ export function InsumosModule() {
                         value={movSearch}
                         onChange={(e) => setMovSearch(e.target.value)}
                         placeholder="Buscar"
-                        className="h-8 flex-1 min-w-[140px] md:min-w-0"
+                        className="h-8 flex-1 min-w-[120px] md:min-w-0 ml-auto"
                       />
                       <div className="flex items-center gap-2 shrink-0">
 		                <Button

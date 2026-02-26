@@ -3,16 +3,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/car
 import { Button } from "@/button"
 import { Badge } from "@/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/tabs"
-import { Input } from "@/input"
 import { Textarea } from "@/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/select"
 import { Label } from "@/label"
-import { Switch } from "@/switch"
 import { ScrollArea } from "@/scroll-area"
-import { Avatar, AvatarFallback, AvatarImage } from "@/avatar"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/dialog"
-import { Progress } from '@/progress'
-import { Separator } from "@/separator"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/dialog"
 import { Alert, AlertDescription } from "@/alert"
 import { toast } from 'sonner'
 import * as QRCode from 'qrcode'
@@ -28,12 +23,8 @@ import {
   Warning,
   QrCode,
   Spinner,
-  Plus,
   Eye,
-  EyeSlash,
-  Copy,
-  Robot,
-  Lightning
+  Copy
 } from "@phosphor-icons/react"
 
 // Channel-based interfaces
@@ -41,7 +32,7 @@ interface ChannelInstance {
   id: string
   port: number
   channel: number
-  status: 'free' | 'starting' | 'qr_pending' | 'connected' | 'error' | 'stopping'
+  status: 'free' | 'available' | 'starting' | 'qr_pending' | 'connected' | 'error' | 'stopping'
   name?: string
   createdAt: string
   updatedAt: string
@@ -55,10 +46,14 @@ interface ChannelInstance {
 }
 
 interface OrchestratorStatus {
+  provider?: string
+  totalChannels?: number
+  availableChannels?: number
   totalInstances: number
   freeInstances: number
   connectedInstances: number
   errorInstances: number
+  startingInstances?: number
   instances: ChannelInstance[]
   availableChannelsList: number[]
   freeChannelsList: number[]
@@ -81,7 +76,7 @@ interface ConversationItem {
 interface MessageItem {
   id: string
   conversationId: string
-  direction: 'inbound' | 'outbound'
+  direction: 'inbound' | 'outbound' | 'human' | 'system'
   type: string
   text?: string
   caption?: string
@@ -95,6 +90,7 @@ const portToChannel = (port: number) => port - 3000
 
 const STATUS_COLORS = {
   free: 'bg-green-500',
+  available: 'bg-green-500',
   starting: 'bg-yellow-500',
   qr_pending: 'bg-blue-500',
   connected: 'bg-green-600',
@@ -104,6 +100,7 @@ const STATUS_COLORS = {
 
 const STATUS_LABELS = {
   free: 'Livre',
+  available: 'Livre',
   starting: 'Iniciando',
   qr_pending: 'Aguardando QR',
   connected: 'Conectado',
@@ -128,6 +125,8 @@ export function WhatsAppUnifiedHub() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pollPausedUntil, setPollPausedUntil] = useState<number | null>(null)
+  const [eventStreamError, setEventStreamError] = useState<string | null>(null)
+  const [evolutionPausedUntil, setEvolutionPausedUntil] = useState<number | null>(null)
   
   // Channel operations state
   const [startingChannels, setStartingChannels] = useState<Set<number>>(new Set())
@@ -142,11 +141,62 @@ export function WhatsAppUnifiedHub() {
   const [messages, setMessages] = useState<MessageItem[]>([])
   const [messageInput, setMessageInput] = useState("")
   const [sendingMessage, setSendingMessage] = useState(false)
+  const [loadingConversations, setLoadingConversations] = useState(false)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [hasMoreConversations, setHasMoreConversations] = useState(true)
+  const [messagesPage, setMessagesPage] = useState(1)
+  const [hasMoreMessages, setHasMoreMessages] = useState(true)
   
   // Polling and real-time updates
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
-  const pollGuardRef = useRef<{ failCount: number; pausedUntil: number }>({ failCount: 0, pausedUntil: 0 })
+  const pollGuardRef = useRef<{ failCount: number; windowStart: number; pausedUntil: number }>({
+    failCount: 0,
+    windowStart: 0,
+    pausedUntil: 0
+  })
+  const evolutionPollGuardRef = useRef<{ failCount: number; windowStart: number; pausedUntil: number }>({
+    failCount: 0,
+    windowStart: 0,
+    pausedUntil: 0
+  })
+  const evolutionRefreshRef = useRef<{ last: number }>({ last: 0 })
+  const conversationOffsetRef = useRef(0)
+
+  const CONVERSATION_PAGE_SIZE = 50
+  const MESSAGE_PAGE_SIZE = 50
+
+  const isEvolution = orchestratorStatus?.provider === 'evolution'
+  const hasPollingPause = !!(pollPausedUntil || evolutionPausedUntil)
+
+  useEffect(() => {
+    setEventStreamError(null)
+  }, [isEvolution])
+
+  const buildEventSourceUrl = useCallback((path: string) => {
+    const url = new URL(path, window.location.origin)
+    try {
+      const auth = window.localStorage.getItem('crm.basicAuth')
+      if (auth) {
+        url.searchParams.set('auth', auth)
+      }
+    } catch {
+      // ignore localStorage access errors
+    }
+    return url.toString()
+  }, [])
+
+  const getEventStreamErrorMessage = useCallback(() => {
+    try {
+      const auth = window.localStorage.getItem('crm.basicAuth')
+      if (!auth) {
+        return 'Realtime indisponível. Se CRM_BASIC_AUTH estiver ativo, defina localStorage crm.basicAuth.'
+      }
+    } catch {
+      // ignore
+    }
+    return 'Realtime indisponível.'
+  }, [])
 
   // Fetch orchestrator status
   const fetchOrchestratorStatus = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
@@ -160,77 +210,230 @@ export function WhatsAppUnifiedHub() {
       setPollPausedUntil(null)
     }
     try {
-      const response = await fetch('/api/wa-orchestrator/channels')
-      if (!response.ok) throw new Error(`Failed to fetch channels status (HTTP ${response.status})`)
-
+      const response = await fetch('/api/wa-orchestrator/status')
       const contentType = response.headers.get('content-type') || ''
-      if (!contentType.includes('application/json')) {
-        const text = await response.text().catch(() => '')
-        throw new Error(`Invalid response format from channels status (HTTP ${response.status})${text ? `: ${text.slice(0, 120)}` : ''}`)
+      const isJson = contentType.includes('application/json')
+      const payload = isJson ? await response.json() : null
+
+      if (!response.ok) {
+        const statusMessage =
+          payload?.error ||
+          (response.status === 401 || response.status === 403
+            ? 'Não autenticado para acessar o orquestrador.'
+            : `Falha ao consultar orquestrador (HTTP ${response.status}).`)
+        throw new Error(statusMessage)
       }
 
-      const channelsData = await response.json()
-      
-      // Transform channels response to match expected OrchestratorStatus interface
-      // Support both response formats:
-      // - {success: true, channels: [...]} (structured response)
-      // - [...] (raw array response)
-      let instances: any[] = []
-      
-      if (Array.isArray(channelsData)) {
-        // Backend returned a raw array directly
-        instances = channelsData
-      } else if (channelsData && typeof channelsData === 'object') {
-        // Backend returned a structured response
-        if (channelsData.success && Array.isArray(channelsData.channels)) {
-          instances = channelsData.channels
-        } else if (Array.isArray(channelsData.data)) {
-          // Alternative structure: {data: [...]}
-          instances = channelsData.data
+      if (!isJson) {
+        const text = await response.text().catch(() => '')
+        throw new Error(`Resposta inválida do orquestrador${text ? `: ${text.slice(0, 120)}` : ''}`)
+      }
+
+      if (payload && payload.success === false) {
+        throw new Error(payload.error || 'Falha ao carregar status do orquestrador.')
+      }
+
+      const rawInstances = Array.isArray(payload?.channels)
+        ? payload.channels
+        : Array.isArray(payload?.instances)
+          ? payload.instances
+          : Array.isArray(payload?.data)
+            ? payload.data
+            : []
+
+      const normalizedInstances: ChannelInstance[] = rawInstances.map((ch: any, index: number) => {
+        const resolvedChannel = Number.isFinite(ch?.channel)
+          ? Number(ch.channel)
+          : Number.isFinite(ch?.port)
+            ? portToChannel(Number(ch.port))
+            : index + 1
+        const status = (ch?.status === 'available' ? 'free' : ch?.status) || 'free'
+        return {
+          id: ch?.id || `channel-${resolvedChannel}`,
+          port: ch?.port ?? channelToPort(resolvedChannel),
+          channel: resolvedChannel,
+          status,
+          name: ch?.name,
+          createdAt: ch?.createdAt || new Date().toISOString(),
+          updatedAt: ch?.updatedAt || new Date().toISOString(),
+          metadata: ch?.metadata || {}
         }
-      }
-      const totalInstances = instances.length
-      const connectedInstances = instances.filter((ch: any) => ch.status === 'connected').length
-      const freeInstances = instances.filter((ch: any) => ch.status === 'free').length
-      const errorInstances = instances.filter((ch: any) => ch.status === 'error').length
-      
+      })
+
       const transformedData: OrchestratorStatus = {
-        totalInstances,
-        freeInstances,
-        connectedInstances,
-        errorInstances,
-        instances: instances.map((ch: any) => ({
-          id: ch.id || `channel-${ch.channel}`,
-          port: ch.port,
-          channel: ch.channel,
-          status: ch.status,
-          name: ch.name,
-          createdAt: ch.createdAt || new Date().toISOString(),
-          updatedAt: ch.updatedAt || new Date().toISOString(),
-          metadata: ch.metadata || {}
-        })),
-        availableChannelsList: Array.from({ length: 9 }, (_, i) => i + 1),
-        freeChannelsList: instances.filter((ch: any) => ch.status === 'free').map((ch: any) => ch.channel)
+        provider: payload?.provider,
+        totalChannels: payload?.totalChannels ?? normalizedInstances.length,
+        availableChannels: payload?.availableChannels,
+        totalInstances: payload?.totalChannels ?? normalizedInstances.length,
+        freeInstances:
+          payload?.freeInstances ?? normalizedInstances.filter((ch) => ch.status === 'free').length,
+        connectedInstances:
+          payload?.connectedInstances ?? normalizedInstances.filter((ch) => ch.status === 'connected').length,
+        errorInstances:
+          payload?.errorInstances ?? normalizedInstances.filter((ch) => ch.status === 'error').length,
+        startingInstances:
+          payload?.startingInstances ?? normalizedInstances.filter((ch) => ch.status === 'starting' || ch.status === 'qr_pending').length,
+        instances: normalizedInstances,
+        availableChannelsList:
+          payload?.availableChannelsList ?? normalizedInstances.map((ch) => ch.channel),
+        freeChannelsList:
+          payload?.freeChannelsList ?? normalizedInstances.filter((ch) => ch.status === 'free').map((ch) => ch.channel)
       }
-      
+
       setOrchestratorStatus(transformedData)
       setError(null)
       guard.failCount = 0
+      guard.windowStart = 0
       guard.pausedUntil = 0
       setPollPausedUntil(null)
     } catch (err: any) {
-      guard.failCount += 1
-      if (guard.failCount >= 3 && !guard.pausedUntil) {
-        guard.pausedUntil = Date.now() + 60000
+      const now = Date.now()
+      const windowStart = guard.windowStart || now
+      if (now - windowStart > 30000) {
+        guard.windowStart = now
+        guard.failCount = 1
+      } else {
+        guard.failCount += 1
+      }
+      if (guard.failCount >= 5 && !guard.pausedUntil) {
+        guard.pausedUntil = now + 60000
         setPollPausedUntil(guard.pausedUntil)
       }
       const suffix = guard.pausedUntil ? ' • pausa de 60s' : ''
-      setError(`Failed to load channels status: ${err.message}${suffix}`)
+      setError(`${err.message}${suffix}`)
       console.error('Channels status error:', err)
     } finally {
       setLoading(false)
     }
   }, [])
+
+  const fetchEvolutionConversations = useCallback(async ({ reset = false, force = false } = {}) => {
+    if (!selectedChannel) return
+    const guard = evolutionPollGuardRef.current
+    const now = Date.now()
+    if (!force && guard.pausedUntil && now < guard.pausedUntil) {
+      return
+    }
+    if (guard.pausedUntil && now >= guard.pausedUntil) {
+      guard.pausedUntil = 0
+      setEvolutionPausedUntil(null)
+    }
+    setLoadingConversations(true)
+    try {
+      const offset = reset ? 0 : conversationOffsetRef.current
+      const response = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations?limit=${CONVERSATION_PAGE_SIZE}&offset=${offset}`)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.error || `Falha ao carregar conversas (HTTP ${response.status})`)
+      }
+      const items = Array.isArray(payload?.items) ? payload.items : []
+      setConversations(prev => {
+        const base = reset ? [] : prev
+        const merged = [...base, ...items]
+        const byId = new Map<string, any>()
+        merged.forEach((item) => {
+          if (!item?.conversationId) return
+          byId.set(item.conversationId, item)
+        })
+        return Array.from(byId.values()).sort((a, b) => {
+          const aTime = new Date(a.updatedAt || 0).getTime()
+          const bTime = new Date(b.updatedAt || 0).getTime()
+          return bTime - aTime
+        })
+      })
+      const nextOffset = offset + items.length
+      conversationOffsetRef.current = nextOffset
+      const hasMore = typeof payload?.meta?.hasMore === 'boolean'
+        ? payload.meta.hasMore
+        : items.length >= CONVERSATION_PAGE_SIZE
+      setHasMoreConversations(hasMore)
+      guard.failCount = 0
+      guard.windowStart = 0
+      guard.pausedUntil = 0
+      setEvolutionPausedUntil(null)
+    } catch (err: any) {
+      console.error('Evolution conversations error:', err)
+      if (force) {
+        toast.error(err?.message || 'Falha ao carregar conversas')
+      }
+      const windowStart = guard.windowStart || now
+      if (now - windowStart > 30000) {
+        guard.windowStart = now
+        guard.failCount = 1
+      } else {
+        guard.failCount += 1
+      }
+      if (guard.failCount >= 5) {
+        guard.pausedUntil = now + 60000
+        setEvolutionPausedUntil(guard.pausedUntil)
+      }
+    } finally {
+      setLoadingConversations(false)
+    }
+  }, [CONVERSATION_PAGE_SIZE, selectedChannel])
+
+  const fetchEvolutionMessages = useCallback(async (conversationId: string, { page = 1, append = false } = {}) => {
+    if (!selectedChannel || !conversationId) return
+    setLoadingMessages(true)
+    try {
+      const response = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${MESSAGE_PAGE_SIZE}&page=${page}`)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.error || `Falha ao carregar mensagens (HTTP ${response.status})`)
+      }
+      const items = Array.isArray(payload?.items) ? payload.items : []
+      if (append) {
+        setMessages(prev => [...items, ...prev])
+      } else {
+        setMessages(items)
+      }
+      const total = payload?.meta?.total
+      const pages = payload?.meta?.pages
+      if (typeof total === 'number' && typeof pages === 'number') {
+        setHasMoreMessages(page < pages)
+      } else {
+        setHasMoreMessages(items.length >= MESSAGE_PAGE_SIZE)
+      }
+      setMessagesPage(page)
+    } catch (err: any) {
+      console.error('Evolution messages error:', err)
+      toast.error(err?.message || 'Falha ao carregar mensagens')
+    } finally {
+      setLoadingMessages(false)
+    }
+  }, [MESSAGE_PAGE_SIZE, selectedChannel])
+
+  useEffect(() => {
+    setSelectedConversation(null)
+    setMessages([])
+    setMessagesPage(1)
+    setHasMoreMessages(true)
+    conversationOffsetRef.current = 0
+    setHasMoreConversations(true)
+    if (isEvolution && selectedChannel) {
+      fetchEvolutionConversations({ reset: true, force: true })
+    }
+  }, [fetchEvolutionConversations, isEvolution, selectedChannel])
+
+  useEffect(() => {
+    if (selectedChannel || !orchestratorStatus) return
+    const preferred = orchestratorStatus.instances.find((inst) => inst.status === 'connected')
+    const fallback = orchestratorStatus.instances[0]
+    const next = preferred?.channel || fallback?.channel
+    if (next) setSelectedChannel(next)
+  }, [orchestratorStatus, selectedChannel])
+
+  const extractEvolutionRemoteJid = useCallback((payload: any) => {
+    const data = payload?.data || payload
+    return data?.remoteJid || data?.key?.remoteJid || data?.message?.key?.remoteJid || data?.messages?.[0]?.key?.remoteJid || null
+  }, [])
+
+  const scheduleEvolutionRefresh = useCallback(() => {
+    const now = Date.now()
+    if (now - evolutionRefreshRef.current.last < 1500) return
+    evolutionRefreshRef.current.last = now
+    fetchEvolutionConversations({ reset: true })
+  }, [fetchEvolutionConversations])
 
   // Start a specific channel
   const startChannel = useCallback(async (channel: number, instanceName?: string) => {
@@ -318,6 +521,16 @@ export function WhatsAppUnifiedHub() {
     if (!orchestratorStatus) return null
     return orchestratorStatus.instances.find(inst => inst.channel === channel) || null
   }, [orchestratorStatus])
+
+  const resolveChannelPort = useCallback(
+    (channel: number, instance?: ChannelInstance | null) => {
+      const entry = instance ?? getChannelInstance(channel)
+      if (entry?.port) return entry.port
+      if (orchestratorStatus?.provider === 'evolution') return 3001
+      return channelToPort(channel)
+    },
+    [getChannelInstance, orchestratorStatus?.provider]
+  )
 
   // QR polling state and refs for abort control
   const qrPollingRefs = useRef<Map<number, { controller: AbortController; timeout: NodeJS.Timeout }>>(new Map())
@@ -424,27 +637,56 @@ export function WhatsAppUnifiedHub() {
     
     setSendingMessage(true)
     try {
-      const port = channelToPort(selectedChannel)
-      const response = await fetch(`/api/conversations/${selectedConversation}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          text: messageInput,
-          port: port
+      if (isEvolution) {
+        const response = await fetch(`/api/wa-orchestrator/channels/${selectedChannel}/conversations/${encodeURIComponent(selectedConversation)}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: messageInput })
         })
-      })
-      
-      if (!response.ok) throw new Error('Failed to send message')
-      
-      setMessageInput("")
-      toast.success("Mensagem enviada")
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || payload?.success === false) {
+          throw new Error(payload?.error || 'Falha ao enviar mensagem')
+        }
+        setMessageInput("")
+        toast.success("Mensagem enviada")
+        fetchEvolutionMessages(selectedConversation, { page: 1, append: false })
+        fetchEvolutionConversations({ reset: true, force: true })
+      } else {
+        const port = resolveChannelPort(selectedChannel)
+        const response = await fetch(`/api/conversations/${selectedConversation}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            direction: 'outbound',
+            type: 'text',
+            text: messageInput,
+            meta: { port }
+          })
+        })
+        if (!response.ok) throw new Error('Falha ao enviar mensagem')
+        setMessageInput("")
+        toast.success("Mensagem enviada")
+      }
       
     } catch (err: any) {
       toast.error(`Erro ao enviar mensagem: ${err.message}`)
     } finally {
       setSendingMessage(false)
     }
-  }, [messageInput, selectedConversation, selectedChannel])
+  }, [fetchEvolutionConversations, fetchEvolutionMessages, isEvolution, messageInput, resolveChannelPort, selectedConversation, selectedChannel])
+
+  const syncEvolutionWebhook = useCallback(async (channel: number) => {
+    try {
+      const response = await fetch(`/api/wa-orchestrator/channels/${channel}/webhook`, { method: 'POST' })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.error || 'Falha ao sincronizar webhook')
+      }
+      toast.success('Webhook sincronizado')
+    } catch (err: any) {
+      toast.error(err?.message || 'Falha ao sincronizar webhook')
+    }
+  }, [])
 
   // Cleanup QR polling on unmount
   useEffect(() => {
@@ -491,27 +733,36 @@ export function WhatsAppUnifiedHub() {
     }
   }, [fetchOrchestratorStatus])
 
-  // Setup real-time conversation updates
+  // Setup real-time conversation updates (legacy provider)
   useEffect(() => {
-    eventSourceRef.current = new EventSource('/api/conversations/events')
+    if (isEvolution) {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+      return
+    }
+    eventSourceRef.current = new EventSource(buildEventSourceUrl('/api/conversations/events'))
+    eventSourceRef.current.onopen = () => setEventStreamError(null)
     eventSourceRef.current.onerror = () => {
       try {
         console.warn('SSE unavailable, closing connection.')
+        setEventStreamError(getEventStreamErrorMessage())
         eventSourceRef.current?.close()
       } catch {
         // ignore
       }
     }
-    
+
     eventSourceRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        
+
         switch (data.type) {
           case 'snapshot':
             setConversations(data.conversations || [])
             break
-            
+
           case 'conversation-update':
           case 'conversation-updated':
             setConversations(prev => {
@@ -522,7 +773,7 @@ export function WhatsAppUnifiedHub() {
               return next
             })
             break
-            
+
           case 'message':
           case 'new-message':
             {
@@ -537,13 +788,64 @@ export function WhatsAppUnifiedHub() {
         console.warn('Failed to parse SSE event:', err)
       }
     }
-    
+
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
       }
     }
-  }, [selectedConversation])
+  }, [buildEventSourceUrl, getEventStreamErrorMessage, isEvolution, selectedConversation])
+
+  // Evolution webhook SSE updates
+  useEffect(() => {
+    if (!isEvolution) return
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    eventSourceRef.current = new EventSource(buildEventSourceUrl('/api/wa-orchestrator/events'))
+    eventSourceRef.current.onopen = () => setEventStreamError(null)
+    eventSourceRef.current.onerror = () => {
+      try {
+        setEventStreamError(getEventStreamErrorMessage())
+        eventSourceRef.current?.close()
+      } catch {
+        // ignore
+      }
+    }
+    eventSourceRef.current.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        if (!payload?.event) return
+        if (payload.event?.startsWith('messages') || payload.event?.startsWith('chats')) {
+          scheduleEvolutionRefresh()
+          const remoteJid = extractEvolutionRemoteJid(payload)
+          if (remoteJid && remoteJid === selectedConversation) {
+            fetchEvolutionMessages(remoteJid)
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to parse evolution event:', err)
+      }
+    }
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+    }
+  }, [buildEventSourceUrl, extractEvolutionRemoteJid, fetchEvolutionMessages, getEventStreamErrorMessage, isEvolution, scheduleEvolutionRefresh, selectedConversation])
+
+  // Poll conversations for evolution provider
+  useEffect(() => {
+    if (!isEvolution) return
+    if (!selectedChannel) {
+      setConversations([])
+      return
+    }
+    fetchEvolutionConversations({ reset: true })
+    const interval = setInterval(() => fetchEvolutionConversations({ reset: true }), 10000)
+    return () => clearInterval(interval)
+  }, [fetchEvolutionConversations, isEvolution, selectedChannel])
 
   // Load messages for selected conversation
   useEffect(() => {
@@ -551,7 +853,14 @@ export function WhatsAppUnifiedHub() {
       setMessages([])
       return
     }
-    
+
+    if (isEvolution) {
+      setMessagesPage(1)
+      setHasMoreMessages(true)
+      fetchEvolutionMessages(selectedConversation, { page: 1, append: false })
+      return
+    }
+
     const loadMessages = async () => {
       try {
         const response = await fetch(`/api/conversations/${selectedConversation}/messages?limit=50`)
@@ -563,9 +872,9 @@ export function WhatsAppUnifiedHub() {
         console.warn('Failed to load messages:', err)
       }
     }
-    
+
     loadMessages()
-  }, [selectedConversation])
+  }, [fetchEvolutionMessages, isEvolution, selectedConversation])
 
   // Render channel status indicator
   const renderChannelStatus = (channel: number) => {
@@ -600,22 +909,22 @@ export function WhatsAppUnifiedHub() {
     return (
       <div className="flex items-center gap-2">
         <div className={`w-3 h-3 rounded-full ${color}`} />
-        <Icon className="w-4 h-4" />
-        <span className="text-sm font-medium">{label}</span>
+        <Icon className="w-4 h-4 text-blue-100/80" />
+        <span className="text-sm font-medium text-blue-100/80">{label}</span>
         {hasQR && (
-          <Button 
-            size="sm" 
+          <Button
+            size="sm"
             variant="outline"
             onClick={() => setQrDialogChannel(channel)}
-            className="animate-pulse"
+            className="animate-pulse border-blue-400/40 text-blue-100 hover:bg-blue-500/20"
           >
             <QrCode className="w-4 h-4 mr-1" />
             Ver QR
           </Button>
         )}
         {instance?.status === 'qr_pending' && !hasQR && (
-          <div className="text-xs text-blue-600 flex items-center gap-1">
-            <LoadingPercentText label="Carregando QR" className="text-blue-600" showPercent={false} />
+          <div className="text-xs text-blue-100/70 flex items-center gap-1">
+            <LoadingPercentText label="Carregando QR" className="text-blue-100/70" showPercent={false} />
           </div>
         )}
       </div>
@@ -629,7 +938,7 @@ export function WhatsAppUnifiedHub() {
     const isStopping = stoppingChannels.has(channel)
     const hasError = channelErrors.has(channel)
     const isConnected = instance?.status === 'connected'
-    const isActive = instance?.status && instance.status !== 'free'
+    const isActive = instance?.status && !['free', 'available'].includes(instance.status)
     
     return (
       <div className="flex items-center gap-2">
@@ -674,21 +983,21 @@ export function WhatsAppUnifiedHub() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <LoadingPercentText label="Carregando WhatsApp Hub" showPercent={false} />
+        <LoadingPercentText label="Carregando WhatsApp Hub" showPercent={false} className="text-blue-100/70" />
       </div>
     )
   }
 
   if (error) {
     return (
-      <Alert className="mx-4">
-        <Warning className="h-4 w-4" />
+      <Alert className="mx-4 border-red-500/40 bg-red-500/10 text-red-100">
+        <Warning className="h-4 w-4 text-red-200" />
         <AlertDescription>
           {error}
           <Button 
             size="sm" 
             variant="outline" 
-            className="ml-2"
+            className="ml-2 border-red-400/40 text-red-100 hover:bg-red-500/20"
             onClick={() => fetchOrchestratorStatus({ force: true })}
           >
             Tentar Novamente
@@ -724,34 +1033,34 @@ export function WhatsAppUnifiedHub() {
       {/* Header with Channel Selection */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div className="flex items-center gap-3">
-          <WhatsappLogo className="w-8 h-8 text-green-600" />
+          <WhatsappLogo className="w-8 h-8 text-emerald-400" />
           <div>
-            <h1 className="text-2xl font-bold">WhatsApp Business Hub</h1>
-            <p className="text-gray-600">Gestão unificada de canais WhatsApp</p>
+            <h1 className="text-2xl font-bold text-white">WhatsApp Business Hub</h1>
+            <p className="text-blue-100/70">Gestão unificada de canais WhatsApp</p>
           </div>
         </div>
         
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
           {/* Channel Selector - Fixed at top */}
           <div className="flex items-center gap-2">
-            <Label className="whitespace-nowrap">Canal Ativo:</Label>
+            <Label className="whitespace-nowrap text-blue-100/70">Canal ativo</Label>
             <Select value={selectedChannel?.toString() || ""} onValueChange={(value) => setSelectedChannel(parseInt(value))}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Selecione um canal">
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="Selecione o canal">
                   {selectedChannel && (
-                    <span>Canal {selectedChannel} → Porta {channelToPort(selectedChannel)}</span>
+                    <span>Canal {selectedChannel} • Porta {resolveChannelPort(selectedChannel)}</span>
                   )}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {Array.from({ length: 9 }, (_, i) => i + 1).map(channel => {
-                  const port = channelToPort(channel)
                   const instance = getChannelInstance(channel)
                   const statusLabel = instance ? STATUS_LABELS[instance.status] : 'Livre'
+                  const port = resolveChannelPort(channel, instance)
                   
                   return (
                     <SelectItem key={channel} value={channel.toString()}>
-                      Canal {channel} → Porta {port} ({statusLabel})
+                      Canal {channel} • Porta {port} ({statusLabel})
                     </SelectItem>
                   )
                 })}
@@ -760,7 +1069,12 @@ export function WhatsAppUnifiedHub() {
           </div>
 
           {orchestratorStatus && (
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              {orchestratorStatus.provider && (
+                <Badge variant="secondary" className="uppercase tracking-wide">
+                  {orchestratorStatus.provider}
+                </Badge>
+              )}
               <Badge variant="outline">
                 {orchestratorStatus.connectedInstances} conectados
               </Badge>
@@ -770,6 +1084,16 @@ export function WhatsAppUnifiedHub() {
               {orchestratorStatus.errorInstances > 0 && (
                 <Badge variant="destructive">
                   {orchestratorStatus.errorInstances} com erro
+                </Badge>
+              )}
+              {hasPollingPause && (
+                <Badge variant="outline" className="border-yellow-400/40 text-yellow-200">
+                  Atualização pausada
+                </Badge>
+              )}
+              {eventStreamError && (
+                <Badge variant="destructive">
+                  Realtime indisponível
                 </Badge>
               )}
             </div>
@@ -787,12 +1111,12 @@ export function WhatsAppUnifiedHub() {
         {/* Channels Tab - Contextual Panel */}
         <TabsContent value="channels" className="space-y-4">
           {!selectedChannel ? (
-            <Card>
+            <Card className="glass-card">
               <CardContent className="py-12">
                 <div className="text-center space-y-4">
-                  <WhatsappLogo className="w-16 h-16 text-green-600 mx-auto" />
-                  <h3 className="text-lg font-semibold">Selecione um Canal</h3>
-                  <p className="text-gray-600 max-w-md mx-auto">
+                  <WhatsappLogo className="w-16 h-16 text-emerald-400 mx-auto" />
+                  <h3 className="text-lg font-semibold text-white">Selecione um Canal</h3>
+                  <p className="text-blue-100/70 max-w-md mx-auto">
                     Escolha um canal no dropdown acima para ver suas informações e controles de gerenciamento.
                   </p>
                 </div>
@@ -801,14 +1125,14 @@ export function WhatsAppUnifiedHub() {
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Channel Info Panel */}
-              <Card className="lg:col-span-2">
+              <Card className="glass-card lg:col-span-2">
                 <CardHeader>
                   <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <WhatsappLogo className="w-8 h-8 text-green-600" />
+                      <WhatsappLogo className="w-8 h-8 text-emerald-400" />
                       <div>
-                        <CardTitle className="text-xl">Canal {selectedChannel}</CardTitle>
-                        <CardDescription>Porta {channelToPort(selectedChannel)}</CardDescription>
+                        <CardTitle className="text-xl text-white">Canal {selectedChannel}</CardTitle>
+                        <CardDescription className="text-blue-100/70">Porta {resolveChannelPort(selectedChannel)}</CardDescription>
                       </div>
                     </div>
                     {renderChannelStatus(selectedChannel)}
@@ -818,9 +1142,9 @@ export function WhatsAppUnifiedHub() {
                 <CardContent className="space-y-6">
                   {/* Channel Error Display */}
                   {channelErrors.has(selectedChannel) && (
-                    <Alert className="border-red-200 bg-red-50">
-                      <Warning className="h-4 w-4 text-red-600" />
-                      <AlertDescription className="text-red-700">
+                    <Alert className="border-red-500/40 bg-red-500/10 text-red-100">
+                      <Warning className="h-4 w-4 text-red-200" />
+                      <AlertDescription className="text-red-100/90">
                         {channelErrors.get(selectedChannel)}
                       </AlertDescription>
                     </Alert>
@@ -831,29 +1155,29 @@ export function WhatsAppUnifiedHub() {
                     const instance = getCurrentChannelInstance()
                     if (instance?.metadata) {
                       return (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 bg-white/5 rounded-lg border border-white/10">
                           {instance.metadata.phoneNumber && (
                             <div className="space-y-1">
-                              <div className="text-sm font-medium text-gray-700">Telefone</div>
-                              <div className="text-sm text-gray-900">{instance.metadata.phoneNumber}</div>
+                              <div className="text-sm font-medium text-blue-100/70">Telefone</div>
+                              <div className="text-sm text-white">{instance.metadata.phoneNumber}</div>
                             </div>
                           )}
                           {instance.metadata.errorCount !== undefined && (
                             <div className="space-y-1">
-                              <div className="text-sm font-medium text-gray-700">Erros</div>
-                              <div className="text-sm text-gray-900">{instance.metadata.errorCount}</div>
+                              <div className="text-sm font-medium text-blue-100/70">Erros</div>
+                              <div className="text-sm text-white">{instance.metadata.errorCount}</div>
                             </div>
                           )}
                           {instance.metadata.restartCount !== undefined && (
                             <div className="space-y-1">
-                              <div className="text-sm font-medium text-gray-700">Reinicializações</div>
-                              <div className="text-sm text-gray-900">{instance.metadata.restartCount}</div>
+                              <div className="text-sm font-medium text-blue-100/70">Reinicializações</div>
+                              <div className="text-sm text-white">{instance.metadata.restartCount}</div>
                             </div>
                           )}
                           {instance.metadata.lastActivity && (
                             <div className="space-y-1">
-                              <div className="text-sm font-medium text-gray-700">Última Atividade</div>
-                              <div className="text-sm text-gray-900">
+                              <div className="text-sm font-medium text-blue-100/70">Última Atividade</div>
+                              <div className="text-sm text-white">
                                 {new Date(instance.metadata.lastActivity).toLocaleString()}
                               </div>
                             </div>
@@ -866,11 +1190,11 @@ export function WhatsAppUnifiedHub() {
 
                   {/* QR Code Preview */}
                   {channelQR.has(selectedChannel) && (
-                    <div className="flex flex-col items-center space-y-4 p-6 bg-blue-50 rounded-lg border">
+                    <div className="flex flex-col items-center space-y-4 p-6 bg-blue-500/10 rounded-lg border border-blue-500/30">
                       <div className="text-center space-y-2">
-                        <QrCode className="w-8 h-8 text-blue-600 mx-auto" />
-                        <h4 className="font-semibold text-blue-900">QR Code Disponível</h4>
-                        <p className="text-sm text-blue-700">
+                        <QrCode className="w-8 h-8 text-blue-200 mx-auto" />
+                        <h4 className="font-semibold text-blue-100">QR Code Disponível</h4>
+                        <p className="text-sm text-blue-100/80">
                           QR code gerado e pronto para escaneamento
                         </p>
                       </div>
@@ -878,7 +1202,7 @@ export function WhatsAppUnifiedHub() {
                         variant="outline" 
                         size="sm"
                         onClick={() => setQrDialogChannel(selectedChannel)}
-                        className="border-blue-200 text-blue-700 hover:bg-blue-100"
+                        className="border-blue-400/40 text-blue-100 hover:bg-blue-500/20"
                       >
                         <Eye className="w-4 h-4 mr-2" />
                         Visualizar QR Code
@@ -889,10 +1213,10 @@ export function WhatsAppUnifiedHub() {
               </Card>
 
               {/* Control Panel */}
-              <Card>
+              <Card className="glass-card">
                 <CardHeader>
-                  <CardTitle className="text-lg">Controles</CardTitle>
-                  <CardDescription>Ações do canal selecionado</CardDescription>
+                  <CardTitle className="text-lg text-white">Controles</CardTitle>
+                  <CardDescription className="text-blue-100/70">Ações do canal selecionado</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {(() => {
@@ -978,13 +1302,24 @@ export function WhatsAppUnifiedHub() {
                               )}
                               {isStopping ? 'Parando...' : 'Parar Canal'}
                             </Button>
+
+                            {isEvolution && (
+                              <Button
+                                variant="outline"
+                                className="w-full border-blue-400/40 text-blue-100 hover:bg-blue-500/20"
+                                onClick={() => syncEvolutionWebhook(selectedChannel)}
+                              >
+                                <ArrowClockwise className="w-4 h-4 mr-2" />
+                                Sincronizar Webhook
+                              </Button>
+                            )}
                           </div>
                         )}
 
                         {hasError && (
                           <Button
                             variant="outline"
-                            className="w-full text-orange-600 border-orange-200 hover:bg-orange-50"
+                            className="w-full text-orange-200 border-orange-400/40 hover:bg-orange-500/20"
                             onClick={() => {
                               setChannelErrors(prev => {
                                 const newMap = new Map(prev)
@@ -1012,27 +1347,37 @@ export function WhatsAppUnifiedHub() {
         <TabsContent value="conversations" className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[600px]">
             {/* Conversations List */}
-            <Card className="lg:col-span-1">
+            <Card className="glass-card lg:col-span-1">
               <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Conversas</CardTitle>
+                <CardTitle className="text-lg text-white">Conversas</CardTitle>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[500px]">
                   <div className="space-y-2">
+                    {loadingConversations && (
+                      <div className="text-sm text-blue-100/60 py-4 text-center">
+                        Carregando conversas...
+                      </div>
+                    )}
+                    {!loadingConversations && conversations.length === 0 && (
+                      <div className="text-sm text-blue-100/60 py-4 text-center">
+                        Nenhuma conversa disponível.
+                      </div>
+                    )}
                     {conversations.map((conv) => (
                       <div
                         key={conv.conversationId}
-                        className={`p-3 rounded-lg border cursor-pointer hover:bg-gray-50 ${
-                          selectedConversation === conv.conversationId ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                        className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-white/5 ${
+                          selectedConversation === conv.conversationId ? 'border-blue-500/70 bg-blue-500/15' : 'border-white/10'
                         }`}
                         onClick={() => setSelectedConversation(conv.conversationId)}
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium text-sm truncate">
+                            <div className="font-medium text-sm truncate text-white">
                               {conv.name || conv.conversationId}
                             </div>
-                            <div className="text-xs text-gray-500 truncate mt-1">
+                            <div className="text-xs text-blue-100/70 truncate mt-1">
                               {conv.lastMessage}
                             </div>
                           </div>
@@ -1044,15 +1389,28 @@ export function WhatsAppUnifiedHub() {
                         </div>
                       </div>
                     ))}
+                    {isEvolution && hasMoreConversations && (
+                      <div className="pt-2 flex justify-center">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchEvolutionConversations({ reset: false, force: true })}
+                          disabled={loadingConversations}
+                          className="border-blue-400/40 text-blue-100 hover:bg-blue-500/20"
+                        >
+                          {loadingConversations ? 'Carregando...' : 'Carregar mais'}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </ScrollArea>
               </CardContent>
             </Card>
 
             {/* Chat Area */}
-            <Card className="lg:col-span-2">
+            <Card className="glass-card lg:col-span-2">
               <CardHeader className="pb-2">
-                <CardTitle className="text-lg">
+                <CardTitle className="text-lg text-white">
                   {selectedConversation ? `Chat: ${selectedConversation}` : 'Selecione uma conversa'}
                 </CardTitle>
               </CardHeader>
@@ -1060,31 +1418,69 @@ export function WhatsAppUnifiedHub() {
                 {selectedConversation ? (
                   <div className="space-y-4">
                     {/* Messages Area */}
-                    <ScrollArea className="h-[400px] border rounded-lg p-4">
+                    <ScrollArea className="h-[400px] border border-white/10 rounded-lg p-4">
                       <div className="space-y-3">
-                        {messages.map((msg) => (
-                          <div
-                            key={msg.id}
-                            className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
-                          >
-                            <div
-                              className={`max-w-[70%] p-3 rounded-lg ${
-                                msg.direction === 'outbound'
-                                  ? 'bg-blue-500 text-white'
-                                  : 'bg-gray-100 text-gray-900'
-                              }`}
+                        {isEvolution && hasMoreMessages && (
+                          <div className="flex justify-center pb-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => fetchEvolutionMessages(selectedConversation, { page: messagesPage + 1, append: true })}
+                              disabled={loadingMessages}
+                              className="border-blue-400/40 text-blue-100 hover:bg-blue-500/20"
                             >
-                              <div className="text-sm">
-                                {msg.text || msg.caption || `[${msg.type}]`}
-                              </div>
-                              <div className={`text-xs mt-1 ${
-                                msg.direction === 'outbound' ? 'text-blue-100' : 'text-gray-500'
-                              }`}>
-                                {new Date(msg.createdAt).toLocaleTimeString()}
+                              {loadingMessages ? 'Carregando...' : 'Carregar mensagens anteriores'}
+                            </Button>
+                          </div>
+                        )}
+                        {loadingMessages && (
+                          <div className="text-sm text-blue-100/60 text-center py-4">
+                            Carregando mensagens...
+                          </div>
+                        )}
+                        {messages.map((msg) => {
+                          const isOutbound = msg.direction === 'outbound' || msg.direction === 'human'
+                          const mediaLabelMap: Record<string, string> = {
+                            image: 'Imagem',
+                            video: 'Vídeo',
+                            audio: 'Áudio',
+                            document: 'Documento',
+                            sticker: 'Sticker',
+                            ptv: 'Vídeo curto'
+                          }
+                          const mediaLabel = msg.mediaType ? mediaLabelMap[msg.mediaType] : null
+                          const bodyText = msg.text || msg.caption || (!mediaLabel ? `[${msg.type}]` : '')
+                          return (
+                            <div
+                              key={msg.id}
+                              className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
+                            >
+                              <div
+                                className={`max-w-[70%] p-3 rounded-lg ${
+                                  isOutbound
+                                    ? 'bg-blue-500/40 text-white'
+                                    : 'bg-white/10 text-blue-100'
+                                }`}
+                              >
+                                {mediaLabel && (
+                                  <div className="text-[10px] uppercase tracking-wide text-blue-100/70 mb-1">
+                                    {mediaLabel}
+                                  </div>
+                                )}
+                                {bodyText && (
+                                  <div className="text-sm">
+                                    {bodyText}
+                                  </div>
+                                )}
+                                <div className={`text-xs mt-1 ${
+                                  isOutbound ? 'text-blue-100/80' : 'text-blue-100/60'
+                                }`}>
+                                  {new Date(msg.createdAt).toLocaleTimeString()}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     </ScrollArea>
 
@@ -1094,7 +1490,7 @@ export function WhatsAppUnifiedHub() {
                         placeholder="Digite sua mensagem..."
                         value={messageInput}
                         onChange={(e) => setMessageInput(e.target.value)}
-                        className="flex-1"
+                        className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
                         rows={2}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
@@ -1112,16 +1508,16 @@ export function WhatsAppUnifiedHub() {
                     </div>
                     
                     {!selectedChannel && (
-                      <Alert>
-                        <Warning className="h-4 w-4" />
-                        <AlertDescription>
+                      <Alert className="border-yellow-500/40 bg-yellow-500/10 text-yellow-100">
+                        <Warning className="h-4 w-4 text-yellow-200" />
+                        <AlertDescription className="text-yellow-100/80">
                           Selecione um canal ativo para enviar mensagens.
                         </AlertDescription>
                       </Alert>
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center h-[450px] text-gray-500">
+                  <div className="flex items-center justify-center h-[450px] text-blue-100/60">
                     Selecione uma conversa para começar
                   </div>
                 )}
@@ -1132,48 +1528,50 @@ export function WhatsAppUnifiedHub() {
 
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="space-y-4">
-          <Card>
+          <Card className="glass-card">
             <CardHeader>
-              <CardTitle>Analytics e Métricas</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-white">Analytics e Métricas</CardTitle>
+              <CardDescription className="text-blue-100/70">
                 Visão geral do desempenho dos canais WhatsApp
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card>
+                <Card className="glass-card">
                   <CardContent className="p-4">
-                    <div className="text-2xl font-bold text-green-600">
+                    <div className="text-2xl font-bold text-emerald-300">
                       {orchestratorStatus?.connectedInstances || 0}
                     </div>
-                    <div className="text-sm text-gray-600">Canais Conectados</div>
+                    <div className="text-sm text-blue-100/70">Canais Conectados</div>
                   </CardContent>
                 </Card>
                 
-                <Card>
+                <Card className="glass-card">
                   <CardContent className="p-4">
-                    <div className="text-2xl font-bold text-blue-600">
+                    <div className="text-2xl font-bold text-blue-300">
                       {conversations.length}
                     </div>
-                    <div className="text-sm text-gray-600">Conversas Ativas</div>
+                    <div className="text-sm text-blue-100/70">Conversas Ativas</div>
                   </CardContent>
                 </Card>
                 
-                <Card>
+                <Card className="glass-card">
                   <CardContent className="p-4">
-                    <div className="text-2xl font-bold text-purple-600">
+                    <div className="text-2xl font-bold text-purple-300">
                       {messages.length}
                     </div>
-                    <div className="text-sm text-gray-600">Mensagens Hoje</div>
+                    <div className="text-sm text-blue-100/70">
+                      {isEvolution ? 'Mensagens carregadas' : 'Mensagens Hoje'}
+                    </div>
                   </CardContent>
                 </Card>
                 
-                <Card>
+                <Card className="glass-card">
                   <CardContent className="p-4">
-                    <div className="text-2xl font-bold text-orange-600">
+                    <div className="text-2xl font-bold text-orange-300">
                       {orchestratorStatus?.errorInstances || 0}
                     </div>
-                    <div className="text-sm text-gray-600">Canais com Erro</div>
+                    <div className="text-sm text-blue-100/70">Canais com Erro</div>
                   </CardContent>
                 </Card>
               </div>
@@ -1184,10 +1582,10 @@ export function WhatsAppUnifiedHub() {
 
       {/* QR Code Dialog */}
       <Dialog open={qrDialogChannel !== null} onOpenChange={() => setQrDialogChannel(null)}>
-        <DialogContent>
+        <DialogContent className="glass-card border border-white/10 text-white">
           <DialogHeader>
-            <DialogTitle>QR Code - Canal {qrDialogChannel}</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-white">QR Code - Canal {qrDialogChannel}</DialogTitle>
+            <DialogDescription className="text-blue-100/70">
               Escaneie o QR code abaixo com seu WhatsApp para conectar o canal
             </DialogDescription>
           </DialogHeader>
