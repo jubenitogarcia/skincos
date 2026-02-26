@@ -507,7 +507,6 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       setMessagesLoading(false)
     }
   }, [apiJson, conversation, messagesCursor, messagesLoading])
-
   const patchConversation = React.useCallback(
     async (patch: { stage?: string; lead_speed_class?: string }) => {
       if (!conversation?.id) return

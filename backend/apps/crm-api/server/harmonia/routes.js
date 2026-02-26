@@ -608,6 +608,30 @@ export function createHarmoniaRouter({ varDir }) {
         }
     })
 
+    router.post('/conversations/:id/patch', requireExecToken, async (req, res) => {
+        if (!config.databaseUrl) return res.status(503).json({ ok: false, error: 'DATABASE_URL not configured' })
+        const id = String(req.params.id || '').trim()
+        if (!id) return res.status(400).json({ ok: false, error: 'id is required' })
+        const patch = {
+            stage: typeof req.body?.stage === 'string' ? req.body.stage.trim() : undefined,
+            lead_speed_class: typeof req.body?.lead_speed_class === 'string' ? req.body.lead_speed_class.trim() : undefined,
+            procedure_code: typeof req.body?.procedure_code === 'string' ? req.body.procedure_code.trim() : undefined,
+            procedure_confidence: typeof req.body?.procedure_confidence === 'number' ? req.body.procedure_confidence : undefined,
+        }
+        if (!patch.stage && !patch.lead_speed_class && !patch.procedure_code && typeof patch.procedure_confidence === 'undefined') {
+            return res.status(400).json({ ok: false, error: 'no valid patch fields provided' })
+        }
+        try {
+            const data = await store.withTransaction(async (tx) => {
+                return store.updateConversation(tx, id, patch)
+            })
+            if (!data) return res.status(404).json({ ok: false, error: 'conversation not found' })
+            res.json({ ok: true, data })
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e?.message || String(e) })
+        }
+    })
+
     router.post('/tasks/claim', requireExecToken, async (req, res) => {
         if (!config.databaseUrl) return res.status(503).json({ ok: false, error: 'DATABASE_URL not configured' })
         const limit = Number(req.body?.limit || config.tasksClaimLimit || 20)
