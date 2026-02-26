@@ -124,6 +124,8 @@ export function WhatsAppUnifiedHub() {
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [proxyStatus, setProxyStatus] = useState<{ target?: string; requestOrigin?: string; isProductionTarget?: boolean } | null>(null)
+  const [loadingProxyStatus, setLoadingProxyStatus] = useState(false)
   const [pollPausedUntil, setPollPausedUntil] = useState<number | null>(null)
   const [eventStreamError, setEventStreamError] = useState<string | null>(null)
   const [evolutionPausedUntil, setEvolutionPausedUntil] = useState<number | null>(null)
@@ -190,12 +192,25 @@ export function WhatsAppUnifiedHub() {
     try {
       const auth = window.localStorage.getItem('crm.basicAuth')
       if (!auth) {
-        return 'Realtime indisponível. Se CRM_BASIC_AUTH estiver ativo, defina localStorage crm.basicAuth.'
+        return 'Realtime indisponível. Se CRM_BASIC_AUTH estiver ativo, defina localStorage crm.basicAuth. Verifique /api/wa-orchestrator/_proxy-status.'
       }
     } catch {
       // ignore
     }
-    return 'Realtime indisponível.'
+    return 'Realtime indisponível. Verifique /api/wa-orchestrator/_proxy-status.'
+  }, [])
+
+  const loadProxyStatus = useCallback(async () => {
+    setLoadingProxyStatus(true)
+    try {
+      const res = await fetch('/api/wa-orchestrator/_proxy-status')
+      const data = await res.json()
+      if (res.ok && data?.ok) setProxyStatus(data)
+    } catch {
+      // ignore
+    } finally {
+      setLoadingProxyStatus(false)
+    }
   }, [])
 
   // Fetch orchestrator status
@@ -990,20 +1005,49 @@ export function WhatsAppUnifiedHub() {
 
   if (error) {
     return (
-      <Alert className="mx-4 border-red-500/40 bg-red-500/10 text-red-100">
-        <Warning className="h-4 w-4 text-red-200" />
-        <AlertDescription>
-          {error}
-          <Button 
-            size="sm" 
-            variant="outline" 
-            className="ml-2 border-red-400/40 text-red-100 hover:bg-red-500/20"
-            onClick={() => fetchOrchestratorStatus({ force: true })}
-          >
-            Tentar Novamente
-          </Button>
-        </AlertDescription>
-      </Alert>
+      <div className="space-y-4">
+        <Alert className="mx-4 border-red-500/40 bg-red-500/10 text-red-100">
+          <Warning className="h-4 w-4 text-red-200" />
+          <AlertDescription>
+            Não foi possível conectar ao orquestrador do WhatsApp.
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-2 border-red-400/40 text-red-100 hover:bg-red-500/20"
+              onClick={() => fetchOrchestratorStatus({ force: true })}
+            >
+              Tentar Novamente
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-2 text-blue-100/70 hover:text-white"
+              onClick={loadProxyStatus}
+              disabled={loadingProxyStatus}
+            >
+              {loadingProxyStatus ? 'Verificando...' : 'Diagnóstico'}
+            </Button>
+          </AlertDescription>
+        </Alert>
+        {proxyStatus && (
+          <div className="mx-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-blue-100/70 space-y-1">
+            <div>Target: {proxyStatus.target || '—'}</div>
+            <div>Origem: {proxyStatus.requestOrigin || '—'}</div>
+            <div>Produção: {proxyStatus.isProductionTarget ? 'sim' : 'não'}</div>
+          </div>
+        )}
+        <div className="mx-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-sm text-white">Quando estiver conectado, esta área exibirá:</div>
+          <ul className="mt-3 space-y-2 text-xs text-blue-100/70">
+            <li>• Status dos canais, QR Code e telefone conectado.</li>
+            <li>• Lista de conversas em tempo real e histórico.</li>
+            <li>• Mensagens, mídia e métricas por canal.</li>
+          </ul>
+          <div className="mt-3 text-[11px] text-blue-100/50 break-words">
+            Detalhes técnicos: {error}
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -1360,8 +1404,11 @@ export function WhatsAppUnifiedHub() {
                       </div>
                     )}
                     {!loadingConversations && conversations.length === 0 && (
-                      <div className="text-sm text-blue-100/60 py-4 text-center">
-                        Nenhuma conversa disponível.
+                      <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-4 py-6 text-center">
+                        <div className="text-sm text-blue-100/70">Nenhuma conversa ainda.</div>
+                        <div className="text-xs text-blue-100/50 mt-2">
+                          Conecte o WhatsApp e aguarde novas mensagens para aparecerem aqui.
+                        </div>
                       </div>
                     )}
                     {conversations.map((conv) => (
@@ -1517,8 +1564,13 @@ export function WhatsAppUnifiedHub() {
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center h-[450px] text-blue-100/60">
-                    Selecione uma conversa para começar
+                  <div className="flex items-center justify-center h-[450px]">
+                    <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-6 py-6 text-center max-w-sm">
+                      <div className="text-sm text-blue-100/70">Nenhuma conversa selecionada</div>
+                      <div className="text-xs text-blue-100/50 mt-2">
+                        Assim que um contato enviar mensagem, ela aparecerá aqui.
+                      </div>
+                    </div>
                   </div>
                 )}
               </CardContent>
