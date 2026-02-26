@@ -1,7 +1,4 @@
-"""
-Módulo de configurações centralizadas do sistema.
-Responsável por carregar, validar e gerenciar todas as configurações.
-"""
+"""Módulo de configurações centralizadas do sistema."""
 
 from .manager import ConfigManager
 from .constants import ConfigConstants
