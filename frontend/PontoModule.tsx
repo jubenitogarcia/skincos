@@ -510,8 +510,6 @@ async function captureDescriptorStable(videoEl: HTMLVideoElement, samples = 2, w
 
 export function PontoModule() {
 
-  const buildShaRaw = String(import.meta.env.VITE_BUILD_SHA || '').trim()
-  const buildSha = buildShaRaw ? buildShaRaw.slice(0, 7) : (import.meta.env.DEV ? 'dev' : 'unknown')
 
   const [diagOpen, setDiagOpen] = useState(false)
   const [diagLoading, setDiagLoading] = useState(false)
@@ -1700,7 +1698,6 @@ export function PontoModule() {
 
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" title={buildShaRaw || undefined}>Build: {buildSha}</Badge>
               {diagLoading ? (
                 <Badge variant="secondary">
                   <LoadingPercentText label="Carregando" className="text-xs text-white/80" showPercent={false} />

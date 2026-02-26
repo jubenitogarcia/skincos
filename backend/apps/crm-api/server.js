@@ -3983,6 +3983,157 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
 // =================================================================
 // WhatsApp Orchestrator API Endpoints (Official Module Port 3001)
 // =================================================================
+const waEventClients = new Set()
+const waWebhookMetrics = {
+    total: 0,
+    unauthorized: 0,
+    errors: 0,
+    lastAt: null,
+    lastUnauthorizedAt: null,
+    lastErrorAt: null
+}
+const waWebhookFailures = {
+    count: 0,
+    windowStart: 0,
+    lastAlertAt: 0
+}
+const WA_WEBHOOK_FAILURE_WINDOW_MS = 30000
+const WA_WEBHOOK_FAILURE_THRESHOLD = 5
+const WA_WEBHOOK_ALERT_COOLDOWN_MS = 60000
+
+function resolveCrmPublicUrl(req) {
+    const envUrl = String(process.env.CRM_PUBLIC_URL || '').trim()
+    if (envUrl) return envUrl.replace(/\/$/, '')
+    const host = req.get('host')
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'http'
+    return `${proto}://${host}`
+}
+
+function shouldAuthorizeWebhook(req) {
+    const token = String(process.env.WA_ORCHESTRATOR_WEBHOOK_TOKEN || '').trim()
+    if (!token) return true
+    const header = String(req.get('x-webhook-token') || '')
+    return header === token
+}
+
+function resolveWebhookHeaders() {
+    const headers = {}
+    const token = String(process.env.WA_ORCHESTRATOR_WEBHOOK_TOKEN || '').trim()
+    if (token) {
+        headers['x-webhook-token'] = token
+    }
+    const basic = String(process.env.CRM_BASIC_AUTH || '').trim()
+    if (basic && basic.includes(':')) {
+        headers['Authorization'] = `Basic ${Buffer.from(basic).toString('base64')}`
+    }
+    return headers
+}
+
+function recordWebhookSuccess() {
+    waWebhookMetrics.total += 1
+    waWebhookMetrics.lastAt = new Date().toISOString()
+    if (waWebhookFailures.count > 0) {
+        waWebhookFailures.count = 0
+        waWebhookFailures.windowStart = 0
+    }
+}
+
+function recordWebhookFailure(kind, req, error) {
+    const now = Date.now()
+    if (!waWebhookFailures.windowStart || now - waWebhookFailures.windowStart > WA_WEBHOOK_FAILURE_WINDOW_MS) {
+        waWebhookFailures.windowStart = now
+        waWebhookFailures.count = 0
+    }
+    waWebhookFailures.count += 1
+
+    if (kind === 'unauthorized') {
+        waWebhookMetrics.unauthorized += 1
+        waWebhookMetrics.lastUnauthorizedAt = new Date().toISOString()
+    } else {
+        waWebhookMetrics.errors += 1
+        waWebhookMetrics.lastErrorAt = new Date().toISOString()
+    }
+
+    const shouldAlert = waWebhookFailures.count >= WA_WEBHOOK_FAILURE_THRESHOLD
+        && now - waWebhookFailures.lastAlertAt > WA_WEBHOOK_ALERT_COOLDOWN_MS
+
+    if (shouldAlert) {
+        waWebhookFailures.lastAlertAt = now
+        console.error('[WA_ORCHESTRATOR] Webhook failures threshold reached', {
+            alert: true,
+            failures: waWebhookFailures.count,
+            windowMs: WA_WEBHOOK_FAILURE_WINDOW_MS,
+            kind,
+            ip: req.ip,
+            ua: req.get('user-agent'),
+            error: error?.message
+        })
+    }
+}
+
+function broadcastWaEvent(payload) {
+    const data = `data: ${JSON.stringify(payload)}\n\n`
+    waEventClients.forEach((res) => {
+        try {
+            res.write(data)
+        } catch {
+            try { res.end() } catch { /* ignore */ }
+            waEventClients.delete(res)
+        }
+    })
+}
+function extractEvolutionMessageText(message) {
+    if (!message) return ''
+    if (typeof message === 'string') return message
+    if (message.conversation) return message.conversation
+    if (message.text) return message.text
+    if (message.extendedTextMessage?.text) return message.extendedTextMessage.text
+    if (message.imageMessage?.caption) return message.imageMessage.caption
+    if (message.videoMessage?.caption) return message.videoMessage.caption
+    if (message.documentMessage?.caption) return message.documentMessage.caption
+    if (message.audioMessage) return '[Áudio]'
+    if (message.stickerMessage) return '[Sticker]'
+    return '[Mensagem]'
+}
+
+function extractEvolutionMessageMeta(message) {
+    if (!message) return { text: '', caption: undefined, mediaType: undefined }
+    if (typeof message === 'string') return { text: message, caption: undefined, mediaType: undefined }
+    if (message.conversation || message.text || message.extendedTextMessage?.text) {
+        return { text: extractEvolutionMessageText(message), caption: undefined, mediaType: undefined }
+    }
+    if (message.imageMessage) {
+        return { text: '', caption: message.imageMessage.caption, mediaType: 'image' }
+    }
+    if (message.videoMessage) {
+        return { text: '', caption: message.videoMessage.caption, mediaType: 'video' }
+    }
+    if (message.documentMessage || message.documentWithCaptionMessage) {
+        return { text: '', caption: message.documentMessage?.caption || message.documentWithCaptionMessage?.caption, mediaType: 'document' }
+    }
+    if (message.audioMessage) {
+        return { text: '', caption: undefined, mediaType: 'audio' }
+    }
+    if (message.stickerMessage) {
+        return { text: '', caption: undefined, mediaType: 'sticker' }
+    }
+    if (message.ptvMessage) {
+        return { text: '', caption: undefined, mediaType: 'ptv' }
+    }
+    return { text: extractEvolutionMessageText(message), caption: undefined, mediaType: undefined }
+}
+
+function normalizeEvolutionTimestamp(value) {
+    if (!value) return new Date().toISOString()
+    const num = Number(value)
+    if (!Number.isNaN(num)) {
+        const ts = num > 1e12 ? num : num * 1000
+        return new Date(ts).toISOString()
+    }
+    const parsed = Date.parse(String(value))
+    if (!Number.isNaN(parsed)) return new Date(parsed).toISOString()
+    return new Date().toISOString()
+}
 
 // Get orchestrator status and all channels - enhanced with detailed information
 app.get('/api/wa-orchestrator/status', async (req, res) => {
@@ -3991,7 +4142,10 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
             const status = await evolutionOrchestrator.getStatus()
             return res.json({
                 success: true,
+                provider: 'evolution',
                 ...status,
+                sseClients: waEventClients.size,
+                webhookMetrics: waWebhookMetrics,
                 availableChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
                 freeChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
                 recoverySuggestions: null,
@@ -4013,7 +4167,10 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
 
         res.json({
             success: true,
+            provider: 'legacy',
             ...status,
+            sseClients: waEventClients.size,
+            webhookMetrics: waWebhookMetrics,
             availableChannelsList: availableChannels,
             freeChannelsList: freeChannels,
             recoverySuggestions: recoverySuggestions,
@@ -4026,6 +4183,201 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
                 restartChannel: '/api/wa-orchestrator/channels/{channel}/restart'
             }
         })
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+// SSE events for evolution updates
+app.get('/api/wa-orchestrator/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.flushHeaders?.()
+    res.write(`data: ${JSON.stringify({ type: 'connected', ts: new Date().toISOString() })}\n\n`)
+    waEventClients.add(res)
+    console.info('[WA_ORCHESTRATOR] SSE connected', { clients: waEventClients.size })
+
+    const heartbeat = setInterval(() => {
+        if (res.destroyed) {
+            clearInterval(heartbeat)
+            waEventClients.delete(res)
+            return
+        }
+        try {
+            res.write(`data: ${JSON.stringify({ type: 'heartbeat', ts: new Date().toISOString() })}\n\n`)
+        } catch {
+            clearInterval(heartbeat)
+            waEventClients.delete(res)
+        }
+    }, 25000)
+
+    req.on('close', () => {
+        clearInterval(heartbeat)
+        waEventClients.delete(res)
+        console.info('[WA_ORCHESTRATOR] SSE disconnected', { clients: waEventClients.size })
+    })
+})
+
+// Evolution webhook receiver
+app.post('/api/wa-orchestrator/webhook', (req, res) => {
+    if (!shouldAuthorizeWebhook(req)) {
+        console.warn('[WA_ORCHESTRATOR] Webhook unauthorized', {
+            ip: req.ip,
+            ua: req.get('user-agent')
+        })
+        recordWebhookFailure('unauthorized', req)
+        return res.status(401).json({ success: false, error: 'Unauthorized' })
+    }
+    try {
+        const payload = req.body || {}
+        console.info('[WA_ORCHESTRATOR] Webhook event', {
+            event: payload.event,
+            instance: payload.instance
+        })
+        broadcastWaEvent(payload)
+        recordWebhookSuccess()
+        res.json({ success: true })
+    } catch (error) {
+        recordWebhookFailure('error', req, error)
+        res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+// List conversations for a channel (normalized)
+app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 200)
+        const offset = Math.max(parseInt(String(req.query.offset || '0'), 10) || 0, 0)
+
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const data = await evolutionOrchestrator.fetchChats(channel, { limit, offset })
+            const chats = Array.isArray(data) ? data : (data?.chats || data?.data || [])
+            const items = chats.map((chat) => {
+                const remoteJid = chat.remoteJid || chat.id || chat.chatId || ''
+                const lastMessageText = extractEvolutionMessageText(chat.lastMessage?.message || chat.lastMessage)
+                const updatedAt = normalizeEvolutionTimestamp(chat.updatedAt || chat.lastMessage?.messageTimestamp)
+                return {
+                    conversationId: remoteJid,
+                    name: chat.pushName || chat.name || chat.subject || remoteJid,
+                    lastMessage: lastMessageText || 'Sem mensagens',
+                    updatedAt,
+                    unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0
+                }
+            }).filter((item) => item.conversationId)
+            const hasMore = items.length >= limit
+            return res.json({ success: true, items, meta: { limit, offset, hasMore } })
+        }
+
+        const items = conversations
+            .filter(c => !c.archived)
+            .map(c => ({
+                conversationId: c.conversationId,
+                name: c.name || c.conversationId,
+                lastMessage: c.lastMessage || 'Sem mensagens',
+                updatedAt: c.updatedAt || new Date().toISOString(),
+                unreadCount: c.unreadCount || 0
+            }))
+        return res.json({ success: true, items, meta: { limit, offset, hasMore: false } })
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+// List messages for a conversation on a channel (normalized)
+app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/messages', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        const { remoteJid } = req.params
+        const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 200)
+        const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1)
+
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const data = await evolutionOrchestrator.fetchMessages(channel, remoteJid, { limit, page })
+            const records = data?.messages?.records || []
+            const items = records.map((record) => {
+                const fromMe = !!record?.key?.fromMe
+                const jid = record?.key?.remoteJid || remoteJid
+                const meta = extractEvolutionMessageMeta(record?.message)
+                return {
+                    id: record?.id || record?.key?.id || `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    conversationId: jid,
+                    direction: fromMe ? 'outbound' : 'inbound',
+                    type: meta.mediaType || record?.messageType || record?.type || 'text',
+                    text: meta.text || extractEvolutionMessageText(record?.message),
+                    caption: meta.caption,
+                    mediaType: meta.mediaType,
+                    createdAt: normalizeEvolutionTimestamp(record?.messageTimestamp || record?.timestamp)
+                }
+            })
+            const sortedItems = items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+            const meta = {
+                total: data?.messages?.total,
+                pages: data?.messages?.pages,
+                page: data?.messages?.currentPage || page,
+                limit
+            }
+            return res.json({ success: true, items: sortedItems, meta })
+        }
+
+        ensureConv(remoteJid)
+        return res.json({ success: true, items: messages[remoteJid] || [], meta: { page: 1, limit, total: (messages[remoteJid] || []).length } })
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+// Send text message through orchestrator
+app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/send', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        const { remoteJid } = req.params
+        const { text } = req.body || {}
+        if (!text || !String(text).trim()) {
+            return res.status(400).json({ success: false, error: 'text is required' })
+        }
+
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const result = await evolutionOrchestrator.sendText(channel, remoteJid, text)
+            return res.json({ success: true, result })
+        }
+
+        const record = addMessage(remoteJid, { direction: 'human', type: 'text', text })
+        broadcastNewMessage(record)
+        return res.json({ success: true, message: record })
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+// Configure webhook for evolution channel (manual sync)
+app.post('/api/wa-orchestrator/channels/:channel/webhook', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        if (!USE_EVOLUTION_ORCHESTRATOR) {
+            return res.status(400).json({ success: false, error: 'Webhook sync is only available for Evolution provider.' })
+        }
+        const webhookUrl = `${resolveCrmPublicUrl(req)}/api/wa-orchestrator/webhook`
+        const webhookHeaders = resolveWebhookHeaders()
+        const result = await evolutionOrchestrator.setWebhook(channel, webhookUrl, {
+            events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_SET'],
+            headers: webhookHeaders,
+            byEvents: false
+        })
+        res.json({ success: true, result, webhookUrl })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
     }
@@ -4366,12 +4718,25 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const result = await evolutionOrchestrator.startChannel(channel, name)
+            let webhookWarning = null
+            try {
+                const webhookUrl = `${resolveCrmPublicUrl(req)}/api/wa-orchestrator/webhook`
+                const webhookHeaders = resolveWebhookHeaders()
+                await evolutionOrchestrator.setWebhook(channel, webhookUrl, {
+                    events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_SET'],
+                    headers: webhookHeaders,
+                    byEvents: false
+                })
+            } catch (err) {
+                webhookWarning = err?.message || 'Falha ao configurar webhook do Evolution.'
+            }
             return res.json({
                 success: true,
                 instance: result.instance,
                 channel: result.instance?.channel || channel,
                 port: result.instance?.port || 3001,
-                suggestions: null
+                suggestions: null,
+                webhookWarning
             })
         }
 

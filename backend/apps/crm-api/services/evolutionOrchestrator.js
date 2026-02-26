@@ -32,6 +32,23 @@ function channelName(channel, instancePrefix) {
   return `${instancePrefix}${channel}`
 }
 
+function normalizeRemoteJid(remoteJid) {
+  if (!remoteJid) return ''
+  const value = String(remoteJid).trim()
+  if (!value) return ''
+  if (value.includes('@')) return value
+  return `${value}@s.whatsapp.net`
+}
+
+function normalizeNumber(numberOrJid) {
+  if (!numberOrJid) return ''
+  const value = String(numberOrJid).trim()
+  if (!value) return ''
+  if (value.includes('@g.us')) return value
+  if (value.includes('@s.whatsapp.net')) return value.split('@')[0]
+  return value
+}
+
 async function evolutionFetch(path, options = {}) {
   const { baseUrl, apiKey } = resolveEvolutionConfig()
   if (!baseUrl) {
@@ -203,11 +220,98 @@ async function restartChannel(channel) {
   return { success: true, channel, port: 3001 }
 }
 
+async function fetchChats(channel, { limit = 50, offset = 0 } = {}) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const res = await evolutionFetch(`/chat/findChats/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      take: limit,
+      skip: offset
+    }
+  })
+  if (!res.ok) {
+    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
+async function fetchMessages(channel, remoteJid, { limit = 50, page = 1 } = {}) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const jid = normalizeRemoteJid(remoteJid)
+  const res = await evolutionFetch(`/chat/findMessages/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      where: {
+        key: {
+          remoteJid: jid
+        }
+      },
+      offset: limit,
+      page
+    }
+  })
+  if (!res.ok) {
+    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
+async function sendText(channel, remoteJid, text) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const number = normalizeNumber(remoteJid)
+  if (!number) {
+    throw new Error('Número inválido para envio.')
+  }
+  const res = await evolutionFetch(`/message/sendText/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      number,
+      text
+    }
+  })
+  if (!res.ok) {
+    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
+async function setWebhook(channel, url, { events = [], headers = {}, byEvents = false } = {}) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const res = await evolutionFetch(`/webhook/set/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      webhook: {
+        enabled: true,
+        url,
+        events,
+        headers,
+        byEvents
+      }
+    }
+  })
+  if (!res.ok) {
+    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
 export const evolutionOrchestrator = {
   getStatus,
   getChannelStatus,
   getChannelQR,
   startChannel,
   stopChannel,
-  restartChannel
+  restartChannel,
+  fetchChats,
+  fetchMessages,
+  sendText,
+  setWebhook
 }
