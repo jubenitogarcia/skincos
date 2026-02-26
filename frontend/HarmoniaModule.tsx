@@ -96,7 +96,13 @@ function StatPill({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export function HarmoniaModule() {
+type HarmoniaModuleProps = {
+  mode?: 'full' | 'expanded'
+  showHeader?: boolean
+  showChannels?: boolean
+}
+
+export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels = true }: HarmoniaModuleProps) {
   const [tab, setTab] = React.useState<'atendimento' | 'overview' | 'conversations' | 'tasks'>('atendimento')
 
   const [health, setHealth] = React.useState<HarmoniaHealth | null>(null)
@@ -170,6 +176,12 @@ export function HarmoniaModule() {
   React.useEffect(() => {
     void refresh()
   }, [refresh])
+
+  React.useEffect(() => {
+    if (!showChannels && tab === 'atendimento') {
+      setTab('overview')
+    }
+  }, [showChannels, tab])
 
   const dbConfigured = Boolean(health?.harmonia?.dbConfigured)
 
@@ -299,34 +311,430 @@ export function HarmoniaModule() {
     }
   }, [apiJson, phoneRaw, unitSlug])
 
+  const renderHeader = showHeader ? (
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <div className="flex items-center gap-2">
+          <h2 className="text-2xl font-semibold text-white">Harmonia</h2>
+          {dbConfigured ? (
+            <Badge className="bg-emerald-500/15 text-emerald-100 border border-emerald-500/20">DB OK</Badge>
+          ) : (
+            <Badge className="bg-amber-500/15 text-amber-100 border border-amber-500/20">DB não configurado</Badge>
+          )}
+          {health?.harmonia?.openAiConfigured ? (
+            <Badge className="bg-indigo-500/15 text-indigo-100 border border-indigo-500/20">OpenAI</Badge>
+          ) : null}
+          {health?.harmonia?.googleConfigured ? (
+            <Badge className="bg-sky-500/15 text-sky-100 border border-sky-500/20">Sheets</Badge>
+          ) : null}
+        </div>
+        <p className="text-sm text-blue-100/70">
+          Central de atendimento unificada (WhatsApp + Instagram DM + Omnichannel + Help Desk) e automação de leads via Decision API.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" onClick={refresh} disabled={loading}>
+          {loading ? 'Atualizando…' : 'Atualizar'}
+        </Button>
+      </div>
+    </div>
+  ) : null
+
+  const inboxCard = (
+    <Card className="bg-white/[0.06] border-white/10">
+      <CardHeader>
+        <CardTitle className="text-white">Inbox (Harmonia / WhatsApp Leads)</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {dbConfigured ? (
+          <>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="text-[11px] text-blue-200/70">
+                Unidade: <span className="text-white/80">{unitSlug || '—'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" className="h-8" onClick={() => loadInbox('reset')} disabled={inboxLoading || !unitSlug}>
+                  {inboxLoading ? (
+                    <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
+                  ) : (
+                    'Recarregar'
+                  )}
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="h-8"
+                  onClick={() => loadInbox('more')}
+                  disabled={inboxLoading || !inboxCursor?.cursorTs || !inboxCursor?.cursorId}
+                  title={!inboxCursor ? 'Carregue primeiro' : !inboxCursor.cursorTs ? 'Sem mais páginas' : 'Carregar mais'}
+                >
+                  Mais
+                </Button>
+              </div>
+            </div>
+
+            {inboxError ? (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-100">{inboxError}</div>
+            ) : null}
+
+            {inboxItems.length ? (
+              <div className="max-h-[240px] overflow-auto space-y-2 pr-1">
+                {inboxItems.map((it) => (
+                  <button
+                    key={it.id}
+                    type="button"
+                    onClick={() => openConversationById(it.id)}
+                    className="w-full text-left rounded-xl border border-white/10 bg-black/20 hover:bg-white/[0.06] transition-colors px-3 py-2"
+                    title="Abrir conversa"
+                  >
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <div className="text-white/90 font-semibold truncate">
+                        {it.contact_display_name || it.contact_phone_raw || 'Contato'}
+                        {it.contact_opted_out_at ? <span className="ml-2 text-amber-200/80">(opt-out)</span> : null}
+                      </div>
+                      <div className="text-white/70">{fmtDateTime(it.last_activity_at || it.last_message_at || null)}</div>
+                    </div>
+                    <div className="mt-1 text-xs text-blue-100/70 truncate">
+                      {(it.last_message_text || '').trim()
+                        ? `${String(it.last_message_direction || '').toUpperCase() === 'OUTBOUND' ? 'OUT' : 'IN'}: ${it.last_message_text}`
+                        : '—'}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-blue-200/60">
+                      <div>stage: <span className="text-white/70">{it.stage || '—'}</span></div>
+                      <div className="truncate">id: <span className="text-white/60">{it.id}</span></div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-blue-200/70">Sem conversas ainda (ou token/DB pendente).</div>
+            )}
+          </>
+        ) : (
+          <div className="text-xs text-blue-200/70">Configure `DATABASE_URL` para habilitar o inbox.</div>
+        )}
+      </CardContent>
+    </Card>
+  )
+
+  const overviewSection = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Card className="bg-white/[0.06] border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white">Health</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-100/70">DB configurado</span>
+              <span className="text-white">{dbConfigured ? 'sim' : 'não'}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-100/70">Auto-migrate</span>
+              <span className="text-white">{health?.harmonia?.autoMigrate ? 'sim' : 'não'}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-100/70">Store raw</span>
+              <span className="text-white">{health?.harmonia?.storeRaw ? 'sim' : 'não'}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-100/70">Atualizado</span>
+              <span className="text-white">{fmtDateTime(health?.ts || null)}</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-white/[0.06] border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white">Units</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <StatPill label="Total" value={Array.isArray(units) ? units.length : 0} />
+            <div className="text-xs text-blue-200/70">
+              {units.slice(0, 6).map((u) => u?.slug).filter(Boolean).join(' · ') || '—'}
+              {units.length > 6 ? '…' : ''}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-white/[0.06] border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white">Tarefas</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-2">
+            <StatPill label="Pending" value={stats?.byStatus?.pending ?? 0} />
+            <StatPill label="Processing" value={stats?.byStatus?.processing ?? 0} />
+            <StatPill label="Done" value={stats?.byStatus?.done ?? 0} />
+            <StatPill label="Failed" value={stats?.byStatus?.failed ?? 0} />
+            <div className="col-span-2 text-xs text-blue-200/70">
+              Oldest pending: {fmtDateTime(stats?.oldestPendingAt ?? null)}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="bg-white/[0.06] border-white/10">
+        <CardHeader>
+          <CardTitle className="text-white">Como o Harmonia recebe mensagens</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-blue-100/80 space-y-2">
+          <div>
+            <span className="font-semibold text-white">Webhooks:</span> `POST /api/harmonia/webhook/official` (WhatsApp Official
+            Module) e `POST /api/harmonia/webhook/evolution` (Evolution/Gateway).
+          </div>
+          <div>
+            <span className="font-semibold text-white">Ingest normalizado:</span> `POST /api/harmonia/ingest`.
+          </div>
+          <div className="text-xs text-blue-200/70">
+            Dica: no WhatsApp Official Module, use `HARMONIA_WEBHOOK_URL=http://localhost:8099/api/harmonia/webhook/official`.
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+
+  const tasksSection = (
+    <Card className="bg-white/[0.06] border-white/10">
+      <CardHeader>
+        <CardTitle className="text-white">Tarefas</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <StatPill label="Pending" value={stats?.byStatus?.pending ?? 0} />
+          <StatPill label="Processing" value={stats?.byStatus?.processing ?? 0} />
+          <StatPill label="Done" value={stats?.byStatus?.done ?? 0} />
+          <StatPill label="Failed" value={stats?.byStatus?.failed ?? 0} />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3">
+            <div className="text-xs text-blue-200/70 mb-2">Por tipo</div>
+            <div className="text-sm text-white space-y-1">
+              {stats?.byType && Object.keys(stats.byType).length ? (
+                Object.entries(stats.byType)
+                  .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+                  .map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between gap-3">
+                      <span className="text-white/90">{k}</span>
+                      <span className="text-white/70">{v}</span>
+                    </div>
+                  ))
+              ) : (
+                <div className="text-blue-100/70">—</div>
+              )}
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3">
+            <div className="text-xs text-blue-200/70 mb-2">Sinais</div>
+            <div className="text-sm text-white space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-white/90">Oldest pending</span>
+                <span className="text-white/70">{fmtDateTime(stats?.oldestPendingAt ?? null)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-white/90">Oldest processing</span>
+                <span className="text-white/70">{fmtDateTime(stats?.oldestProcessingAt ?? null)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="text-xs text-blue-200/70">
+          API: `GET /api/harmonia/tasks/stats` (e manutenção via `POST /api/harmonia/maintenance/cleanup`).
+        </div>
+      </CardContent>
+    </Card>
+  )
+
+  const conversationsSection = (
+    <div className="space-y-4">
+      <Card className="bg-white/[0.06] border-white/10">
+        <CardHeader>
+          <CardTitle className="text-white">Buscar conversa</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <div className="text-xs text-blue-200/70 mb-1">Unidade</div>
+              <Select value={unitSlug} onValueChange={setUnitSlug} disabled={!dbConfigured}>
+                <SelectTrigger className="bg-white/[0.06] border-white/10 text-white">
+                  <SelectValue placeholder="Selecione a unidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {units.map((u) => (
+                    <SelectItem key={String(u.slug || '')} value={String(u.slug || '')}>
+                      {String(u.name || u.slug || '')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="md:col-span-2">
+              <div className="text-xs text-blue-200/70 mb-1">Telefone (somente dígitos)</div>
+              <Input
+                value={phoneRaw}
+                onChange={(e) => setPhoneRaw(e.target.value)}
+                placeholder="Ex: 5511999999999"
+                className="bg-white/[0.06] border-white/10 text-white"
+                disabled={!dbConfigured}
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={findConversation} disabled={!dbConfigured || conversationLoading}>
+              {conversationLoading ? 'Buscando…' : 'Buscar'}
+            </Button>
+            <div className="text-xs text-blue-200/70">
+              Também disponível via API: `GET /api/harmonia/conversations/find?unitSlug=...&phoneRaw=...`
+            </div>
+          </div>
+          {conversationError ? (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
+              {conversationError}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {conversation ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <Card className="bg-white/[0.06] border-white/10 lg:col-span-1">
+            <CardHeader>
+              <CardTitle className="text-white">Conversa</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-blue-100/70">Stage</span>
+                <span className="text-white">{conversation.stage || '—'}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-blue-100/70">Contato</span>
+                <span className="text-white truncate">{conversation.contact_display_name || conversation.contact_phone_raw || '—'}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-blue-100/70">Opt-out</span>
+                <span className="text-white">{conversation.opted_out_at ? 'sim' : 'não'}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-blue-100/70">Últ. inbound</span>
+                <span className="text-white">{fmtDateTime(conversation.last_inbound_at)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-blue-100/70">Últ. outbound</span>
+                <span className="text-white">{fmtDateTime(conversation.last_outbound_at)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-blue-100/70">Procedimento</span>
+                <span className="text-white">{conversation.procedure_code || '—'}</span>
+              </div>
+              <div className="pt-2">
+                <div className="text-[11px] text-blue-200/70 mb-1">Conversation ID</div>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs text-white/90 bg-black/30 border border-white/10 rounded-lg px-2 py-1 overflow-hidden text-ellipsis">
+                    {conversation.id || '—'}
+                  </code>
+                  <Button
+                    variant="outline"
+                    className="h-9"
+                    onClick={() => {
+                      const id = String(conversation.id || '')
+                      if (!id) return
+                      try {
+                        void navigator.clipboard.writeText(id)
+                      } catch { /* ignore */ }
+                    }}
+                    disabled={!conversation.id}
+                    title="Copiar ID"
+                  >
+                    Copiar
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/[0.06] border-white/10 lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-white">Mensagens (últimas {messages.length})</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {messages.length ? (
+                <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
+                  {messages.map((m) => {
+                    const dir = String(m.direction || '')
+                    const isInbound = dir === 'inbound'
+                    return (
+                      <div
+                        key={String(m.id || m.provider_message_id || Math.random())}
+                        className={`rounded-xl border ${isInbound ? 'border-sky-500/20 bg-sky-500/10' : 'border-emerald-500/20 bg-emerald-500/10'
+                          } p-3`}
+                      >
+                        <div className="flex items-center justify-between gap-3 text-xs">
+                          <div className="text-white/90 font-semibold">
+                            {isInbound ? 'IN' : 'OUT'} <span className="text-white/50">{m.provider_message_id ? `· ${m.provider_message_id}` : ''}</span>
+                          </div>
+                          <div className="text-white/70">{fmtDateTime(m.created_at || null)}</div>
+                        </div>
+                        <div className="mt-2 text-sm text-white whitespace-pre-wrap break-words">
+                          {m.text || <span className="text-white/60">—</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="text-sm text-blue-100/70">Sem mensagens para exibir.</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+    </div>
+  )
+
+  const leadsCard = (
+    <Card className="bg-white/[0.06] border-white/10">
+      <CardHeader>
+        <CardTitle className="text-white">Harmonia (Leads via WhatsApp)</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm text-blue-100/80 space-y-2">
+        <div>
+          Este backend é o motor de decisão/executor de mensagens do WhatsApp (webhooks + `ingest`) e mantém conversas/tarefas quando
+          `DATABASE_URL` está configurado.
+        </div>
+        <div className="text-xs text-blue-200/70">
+          Webhooks: `POST /api/harmonia/webhook/official` e `POST /api/harmonia/webhook/evolution` · Ingest: `POST /api/harmonia/ingest`
+        </div>
+      </CardContent>
+    </Card>
+  )
+
+  if (mode === 'expanded') {
+    return (
+      <div className="p-6 space-y-4">
+        {renderHeader}
+
+        {error ? (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+        ) : null}
+
+        {!dbConfigured ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            O Harmonia está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
+            units e estatísticas.
+          </div>
+        ) : null}
+
+        {leadsCard}
+        {overviewSection}
+        {inboxCard}
+        {conversationsSection}
+        {tasksSection}
+      </div>
+    )
+  }
+
   return (
     <div className="p-6 space-y-4">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold text-white">Harmonia</h2>
-            {dbConfigured ? (
-              <Badge className="bg-emerald-500/15 text-emerald-100 border border-emerald-500/20">DB OK</Badge>
-            ) : (
-              <Badge className="bg-amber-500/15 text-amber-100 border border-amber-500/20">DB não configurado</Badge>
-            )}
-            {health?.harmonia?.openAiConfigured ? (
-              <Badge className="bg-indigo-500/15 text-indigo-100 border border-indigo-500/20">OpenAI</Badge>
-            ) : null}
-            {health?.harmonia?.googleConfigured ? (
-              <Badge className="bg-sky-500/15 text-sky-100 border border-sky-500/20">Sheets</Badge>
-            ) : null}
-          </div>
-          <p className="text-sm text-blue-100/70">
-            Central de atendimento unificada (WhatsApp + Instagram DM + Omnichannel + Help Desk) e automação de leads via Decision API.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={refresh} disabled={loading}>
-            {loading ? 'Atualizando…' : 'Atualizar'}
-          </Button>
-        </div>
-      </div>
+      {renderHeader}
 
       {error ? (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
@@ -341,13 +749,14 @@ export function HarmoniaModule() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>
-          <TabsTrigger value="atendimento">Atendimento</TabsTrigger>
+          {showChannels ? <TabsTrigger value="atendimento">Atendimento</TabsTrigger> : null}
           <TabsTrigger value="overview">Visão Geral</TabsTrigger>
           <TabsTrigger value="conversations">Conversas</TabsTrigger>
           <TabsTrigger value="tasks">Tarefas</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="atendimento" className="space-y-4">
+        {showChannels ? (
+          <TabsContent value="atendimento" className="space-y-4">
           <Card className="bg-white/[0.06] border-white/10">
             <CardHeader>
               <CardTitle className="text-white">Central de Atendimento</CardTitle>
@@ -511,290 +920,20 @@ export function HarmoniaModule() {
             </CardContent>
           </Card>
 
-          <Card className="bg-white/[0.06] border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Harmonia (Leads via WhatsApp)</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-blue-100/80 space-y-2">
-              <div>
-                Este backend é o motor de decisão/executor de mensagens do WhatsApp (webhooks + `ingest`) e mantém conversas/tarefas quando
-                `DATABASE_URL` está configurado.
-              </div>
-              <div className="text-xs text-blue-200/70">
-                Webhooks: `POST /api/harmonia/webhook/official` e `POST /api/harmonia/webhook/evolution` · Ingest: `POST /api/harmonia/ingest`
-              </div>
-            </CardContent>
-          </Card>
+          {leadsCard}
         </TabsContent>
+        ) : null}
 
         <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Card className="bg-white/[0.06] border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white">Health</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-blue-100/70">DB configurado</span>
-                  <span className="text-white">{dbConfigured ? 'sim' : 'não'}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-blue-100/70">Auto-migrate</span>
-                  <span className="text-white">{health?.harmonia?.autoMigrate ? 'sim' : 'não'}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-blue-100/70">Store raw</span>
-                  <span className="text-white">{health?.harmonia?.storeRaw ? 'sim' : 'não'}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-blue-100/70">Atualizado</span>
-                  <span className="text-white">{fmtDateTime(health?.ts || null)}</span>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white/[0.06] border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white">Units</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <StatPill label="Total" value={Array.isArray(units) ? units.length : 0} />
-                <div className="text-xs text-blue-200/70">
-                  {units.slice(0, 6).map((u) => u?.slug).filter(Boolean).join(' · ') || '—'}
-                  {units.length > 6 ? '…' : ''}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white/[0.06] border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white">Tarefas</CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-2">
-                <StatPill label="Pending" value={stats?.byStatus?.pending ?? 0} />
-                <StatPill label="Processing" value={stats?.byStatus?.processing ?? 0} />
-                <StatPill label="Done" value={stats?.byStatus?.done ?? 0} />
-                <StatPill label="Failed" value={stats?.byStatus?.failed ?? 0} />
-                <div className="col-span-2 text-xs text-blue-200/70">
-                  Oldest pending: {fmtDateTime(stats?.oldestPendingAt ?? null)}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="bg-white/[0.06] border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Como o Harmonia recebe mensagens</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-blue-100/80 space-y-2">
-              <div>
-                <span className="font-semibold text-white">Webhooks:</span> `POST /api/harmonia/webhook/official` (WhatsApp Official
-                Module) e `POST /api/harmonia/webhook/evolution` (Evolution/Gateway).
-              </div>
-              <div>
-                <span className="font-semibold text-white">Ingest normalizado:</span> `POST /api/harmonia/ingest`.
-              </div>
-              <div className="text-xs text-blue-200/70">
-                Dica: no WhatsApp Official Module, use `HARMONIA_WEBHOOK_URL=http://localhost:8099/api/harmonia/webhook/official`.
-              </div>
-            </CardContent>
-          </Card>
+          {overviewSection}
         </TabsContent>
 
         <TabsContent value="conversations" className="space-y-4">
-          <Card className="bg-white/[0.06] border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Buscar conversa</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Unidade</div>
-                  <Select value={unitSlug} onValueChange={setUnitSlug} disabled={!dbConfigured}>
-                    <SelectTrigger className="bg-white/[0.06] border-white/10 text-white">
-                      <SelectValue placeholder="Selecione a unidade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {units.map((u) => (
-                        <SelectItem key={String(u.slug || '')} value={String(u.slug || '')}>
-                          {String(u.name || u.slug || '')}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="md:col-span-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Telefone (somente dígitos)</div>
-                  <Input
-                    value={phoneRaw}
-                    onChange={(e) => setPhoneRaw(e.target.value)}
-                    placeholder="Ex: 5511999999999"
-                    className="bg-white/[0.06] border-white/10 text-white"
-                    disabled={!dbConfigured}
-                    inputMode="numeric"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={findConversation} disabled={!dbConfigured || conversationLoading}>
-                  {conversationLoading ? 'Buscando…' : 'Buscar'}
-                </Button>
-                <div className="text-xs text-blue-200/70">
-                  Também disponível via API: `GET /api/harmonia/conversations/find?unitSlug=...&phoneRaw=...`
-                </div>
-              </div>
-              {conversationError ? (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
-                  {conversationError}
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          {conversation ? (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-              <Card className="bg-white/[0.06] border-white/10 lg:col-span-1">
-                <CardHeader>
-                  <CardTitle className="text-white">Conversa</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-blue-100/70">Stage</span>
-                    <span className="text-white">{conversation.stage || '—'}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-blue-100/70">Contato</span>
-                    <span className="text-white truncate">{conversation.contact_display_name || conversation.contact_phone_raw || '—'}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-blue-100/70">Opt-out</span>
-                    <span className="text-white">{conversation.opted_out_at ? 'sim' : 'não'}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-blue-100/70">Últ. inbound</span>
-                    <span className="text-white">{fmtDateTime(conversation.last_inbound_at)}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-blue-100/70">Últ. outbound</span>
-                    <span className="text-white">{fmtDateTime(conversation.last_outbound_at)}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-blue-100/70">Procedimento</span>
-                    <span className="text-white">{conversation.procedure_code || '—'}</span>
-                  </div>
-                  <div className="pt-2">
-                    <div className="text-[11px] text-blue-200/70 mb-1">Conversation ID</div>
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 text-xs text-white/90 bg-black/30 border border-white/10 rounded-lg px-2 py-1 overflow-hidden text-ellipsis">
-                        {conversation.id || '—'}
-                      </code>
-                      <Button
-                        variant="outline"
-                        className="h-9"
-                        onClick={() => {
-                          const id = String(conversation.id || '')
-                          if (!id) return
-                          try {
-                            void navigator.clipboard.writeText(id)
-                          } catch { /* ignore */ }
-                        }}
-                        disabled={!conversation.id}
-                        title="Copiar ID"
-                      >
-                        Copiar
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-white/[0.06] border-white/10 lg:col-span-2">
-                <CardHeader>
-                  <CardTitle className="text-white">Mensagens (últimas {messages.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {messages.length ? (
-                    <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
-                      {messages.map((m) => {
-                        const dir = String(m.direction || '')
-                        const isInbound = dir === 'inbound'
-                        return (
-                          <div
-                            key={String(m.id || m.provider_message_id || Math.random())}
-                            className={`rounded-xl border ${isInbound ? 'border-sky-500/20 bg-sky-500/10' : 'border-emerald-500/20 bg-emerald-500/10'
-                              } p-3`}
-                          >
-                            <div className="flex items-center justify-between gap-3 text-xs">
-                              <div className="text-white/90 font-semibold">
-                                {isInbound ? 'IN' : 'OUT'} <span className="text-white/50">{m.provider_message_id ? `· ${m.provider_message_id}` : ''}</span>
-                              </div>
-                              <div className="text-white/70">{fmtDateTime(m.created_at || null)}</div>
-                            </div>
-                            <div className="mt-2 text-sm text-white whitespace-pre-wrap break-words">
-                              {m.text || <span className="text-white/60">—</span>}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-blue-100/70">Sem mensagens para exibir.</div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          ) : null}
+          {conversationsSection}
         </TabsContent>
 
         <TabsContent value="tasks" className="space-y-4">
-          <Card className="bg-white/[0.06] border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Estatísticas</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <StatPill label="Pending" value={stats?.byStatus?.pending ?? 0} />
-                <StatPill label="Processing" value={stats?.byStatus?.processing ?? 0} />
-                <StatPill label="Done" value={stats?.byStatus?.done ?? 0} />
-                <StatPill label="Failed" value={stats?.byStatus?.failed ?? 0} />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3">
-                  <div className="text-xs text-blue-200/70 mb-2">Por tipo</div>
-                  <div className="text-sm text-white space-y-1">
-                    {stats?.byType && Object.keys(stats.byType).length ? (
-                      Object.entries(stats.byType)
-                        .sort((a, b) => (b[1] || 0) - (a[1] || 0))
-                        .map(([k, v]) => (
-                          <div key={k} className="flex items-center justify-between gap-3">
-                            <span className="text-white/90">{k}</span>
-                            <span className="text-white/70">{v}</span>
-                          </div>
-                        ))
-                    ) : (
-                      <div className="text-blue-100/70">—</div>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3">
-                  <div className="text-xs text-blue-200/70 mb-2">Sinais</div>
-                  <div className="text-sm text-white space-y-1">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-white/90">Oldest pending</span>
-                      <span className="text-white/70">{fmtDateTime(stats?.oldestPendingAt ?? null)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-white/90">Oldest processing</span>
-                      <span className="text-white/70">{fmtDateTime(stats?.oldestProcessingAt ?? null)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="text-xs text-blue-200/70">
-                API: `GET /api/harmonia/tasks/stats` (e manutenção via `POST /api/harmonia/maintenance/cleanup`).
-              </div>
-            </CardContent>
-          </Card>
+          {tasksSection}
         </TabsContent>
       </Tabs>
     </div>
