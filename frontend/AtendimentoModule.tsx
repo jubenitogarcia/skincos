@@ -135,12 +135,12 @@ export function AtendimentoModule() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+      <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
+        <div className="min-w-0">
           <h2 className="text-2xl font-semibold text-white">Atendimento</h2>
           <p className="text-sm text-blue-100/70">WhatsApp, Omnichannel, Harmonia e Help Desk em um só lugar</p>
         </div>
-        <Badge variant="secondary">Central</Badge>
+        <Badge variant="secondary" className="ml-0 md:ml-auto">Central</Badge>
       </div>
 
       <Card className="glass-card">

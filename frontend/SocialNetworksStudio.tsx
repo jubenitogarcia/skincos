@@ -640,9 +640,11 @@ export function SocialNetworksStudio() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold text-white">Redes Sociais</h2>
-        <p className="text-blue-300/80 text-sm">Instagram · Facebook · Threads — fila em R2 + publicação (Cloudflare)</p>
+      <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
+        <div className="min-w-0">
+          <h2 className="text-3xl font-bold text-white">Redes Sociais</h2>
+          <p className="text-blue-300/80 text-sm">Instagram · Facebook · Threads — fila em R2 + publicação (Cloudflare)</p>
+        </div>
       </div>
 
       <Tabs
@@ -995,10 +997,9 @@ export function SocialNetworksStudio() {
 
                 <div className="grid md:grid-cols-5 gap-3">
                   <div className="space-y-2">
-                    <Label className="text-blue-200">Unidade</Label>
                     <Select value={accountUnit} onValueChange={(v) => setAccountUnit(v)}>
                       <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-                        <SelectValue />
+                        <SelectValue placeholder="Unidade" />
                       </SelectTrigger>
                       <SelectContent>
                         {unitOptions.map((u) => (
@@ -1143,10 +1144,9 @@ export function SocialNetworksStudio() {
             <CardContent className="space-y-4">
               <div className="grid md:grid-cols-3 gap-3">
                 <div className="space-y-2">
-                  <Label className="text-blue-200">Unidade</Label>
                   <Select value={unitKey} onValueChange={(v) => setUnitKeyPersist(v)}>
                     <SelectTrigger className="bg-white/[0.06] border-white/20 text-white">
-                      <SelectValue />
+                      <SelectValue placeholder="Unidade" />
                     </SelectTrigger>
                     <SelectContent>
                       {unitOptions.map((u) => (
@@ -1221,16 +1221,26 @@ export function SocialNetworksStudio() {
               <CardDescription className="text-blue-200/70">Lista grupos por dia (ddMMyy). Publicação manual aqui ou automática via Worker cron.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-nowrap items-center gap-2 min-w-0 overflow-x-auto">
                 <div className="space-y-2">
                   <Label className="text-blue-200">dateKey</Label>
-                  <Input value={dateKey} onChange={(e) => setDateKey(e.target.value)} placeholder="ddMMyy" className="bg-white/[0.06] border-white/20 text-white w-40" />
+                  <Input
+                    value={dateKey}
+                    onChange={(e) => setDateKey(e.target.value)}
+                    placeholder="ddMMyy"
+                    className="h-8 bg-white/[0.06] border-white/20 text-white w-36"
+                  />
                 </div>
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2 mt-6">
                   <Checkbox checked={onlyMyUnit} onCheckedChange={(v) => setOnlyMyUnitPersist(!!v)} />
                   <div className="text-sm text-blue-200/80">Somente minha unidade ({unitKey})</div>
                 </div>
-                <Button variant="outline" onClick={() => refreshQueue()} disabled={queueLoading} className="bg-white/[0.06] border-white/20 text-white">
+                <Button
+                  variant="outline"
+                  onClick={() => refreshQueue()}
+                  disabled={queueLoading}
+                  className="h-8 bg-white/[0.06] border-white/20 text-white"
+                >
                   {queueLoading ? (
                     <LoadingPercentText label="Carregando" className="text-white/80" showPercent={false} />
                   ) : (
