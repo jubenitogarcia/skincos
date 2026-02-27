@@ -17,6 +17,7 @@ import {
   Play,
   Pause
 } from "@phosphor-icons/react"
+import { WhatsAppN8nModule } from "@/WhatsAppN8nModule"
 
 interface AIAutomationHubProps {
   className?: string
@@ -214,6 +215,24 @@ export function AIAutomationHub({ className }: AIAutomationHubProps) {
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="glass-card">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center space-x-2">
+                <CalendarBlank className="h-5 w-5" />
+                <span>WhatsApp n8n</span>
+              </CardTitle>
+              <CardDescription>Automação de agendamentos e atendimento via n8n</CardDescription>
+            </div>
+            <Badge variant="secondary">MVP</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <WhatsAppN8nModule embedded />
         </CardContent>
       </Card>
 

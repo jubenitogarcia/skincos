@@ -5,20 +5,22 @@ import { Badge } from '@/badge'
 const webhookPath = '/webhook/wa/inbound/evolution'
 const webhookTestPath = '/webhook-test/wa/inbound/evolution'
 
-export function WhatsAppN8nModule() {
+export function WhatsAppN8nModule({ embedded = false }: { embedded?: boolean } = {}) {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const fullWebhookPath = origin ? `${origin}${webhookPath}` : webhookPath
   const fullWebhookTestPath = origin ? `${origin}${webhookTestPath}` : webhookTestPath
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold text-white">WhatsApp n8n · Agendamentos</h2>
-          <p className="text-sm text-blue-100/70">Evolution API → n8n → Postgres → Google Calendar</p>
+      {!embedded ? (
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold text-white">WhatsApp n8n · Agendamentos</h2>
+            <p className="text-sm text-blue-100/70">Evolution API → n8n → Postgres → Google Calendar</p>
+          </div>
+          <Badge variant="secondary">MVP</Badge>
         </div>
-        <Badge variant="secondary">MVP</Badge>
-      </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card className="glass-card">

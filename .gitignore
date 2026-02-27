@@ -191,3 +191,6 @@ backend/tools/xiaomi/token_extractor_docker/
 .playwright-output/
 frontend/test-results/
 output/
+
+# Codex local state
+.codex/

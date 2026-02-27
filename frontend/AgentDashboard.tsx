@@ -24,7 +24,11 @@ import {
   CalendarBlank,
   Funnel,
   Lightning,
-  Headset
+  Headset,
+  Ticket,
+  Envelope,
+  Eye,
+  Plus
 } from "@phosphor-icons/react"
 
 interface Agent {
@@ -34,6 +38,32 @@ interface Agent {
   status: 'online' | 'busy' | 'away' | 'offline'
   department: string
   shift: string
+}
+
+interface SupportAgent {
+  id: string
+  name: string
+  email: string
+  department: string
+  status: 'available' | 'busy' | 'away' | 'offline'
+  activeTickets: number
+  totalResolved: number
+  avgResolutionTime: number
+  satisfactionRating: number
+}
+
+interface KnowledgeBaseArticle {
+  id: string
+  title: string
+  content: string
+  category: string
+  tags: string[]
+  views: number
+  helpful: number
+  notHelpful: number
+  createdBy: string
+  createdDate: string
+  lastUpdated: string
 }
 
 interface ChatMetrics {
@@ -148,6 +178,46 @@ export function AgentDashboard() {
   const [selectedPeriod, setSelectedPeriod] = useState("today")
   const [selectedDepartment, setSelectedDepartment] = useState("all")
   const [viewMode, setViewMode] = useState("overview")
+  const [supportTab, setSupportTab] = useState("agents")
+  const [supportAgents] = useKV<SupportAgent[]>("support-agents", [
+    {
+      id: "agent-001",
+      name: "Ana Costa",
+      email: "ana.costa@empresa.com",
+      department: "Suporte Técnico",
+      status: "available",
+      activeTickets: 5,
+      totalResolved: 248,
+      avgResolutionTime: 4.2,
+      satisfactionRating: 4.8
+    },
+    {
+      id: "agent-002",
+      name: "Carlos Lima",
+      email: "carlos.lima@empresa.com",
+      department: "Suporte Comercial",
+      status: "busy",
+      activeTickets: 8,
+      totalResolved: 312,
+      avgResolutionTime: 3.8,
+      satisfactionRating: 4.6
+    }
+  ])
+  const [knowledgeBase] = useKV<KnowledgeBaseArticle[]>("knowledge-base", [
+    {
+      id: "kb-001",
+      title: "Como redefinir sua senha",
+      content: "Para redefinir sua senha, acesse a página de login e clique em 'Esqueci minha senha'...",
+      category: "Conta e Acesso",
+      tags: ["senha", "login", "acesso"],
+      views: 1245,
+      helpful: 98,
+      notHelpful: 12,
+      createdBy: "Ana Costa",
+      createdDate: "2024-01-15",
+      lastUpdated: "2024-03-10"
+    }
+  ])
 
   // Calculate team performance
   const teamMetrics = metrics.reduce((acc, metric) => {
@@ -603,6 +673,123 @@ export function AgentDashboard() {
           </Card>
         </div>
       </div>
+
+      <Card className="glass-card">
+        <CardHeader>
+          <CardTitle>Agentes e Base de Conhecimento</CardTitle>
+          <CardDescription>Equipe de suporte e artigos de atendimento</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Tabs value={supportTab} onValueChange={setSupportTab}>
+            <TabsList>
+              <TabsTrigger value="agents">Agentes</TabsTrigger>
+              <TabsTrigger value="knowledge">Base de Conhecimento</TabsTrigger>
+            </TabsList>
+            <TabsContent value="agents" className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {supportAgents.map((agent) => (
+                  <Card key={agent.id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="text-lg">{agent.name}</CardTitle>
+                          <CardDescription>{agent.department}</CardDescription>
+                        </div>
+                        <Badge variant="outline">{agent.status}</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm space-y-1">
+                        <div className="flex items-center space-x-2">
+                          <Envelope className="h-4 w-4 text-muted-foreground" />
+                          <span>{agent.email}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Ticket className="h-4 w-4 text-muted-foreground" />
+                          <span>{agent.activeTickets} tickets ativos</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-muted-foreground">Resolvidos:</p>
+                          <p className="font-bold text-lg">{agent.totalResolved}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Tempo Médio:</p>
+                          <p className="font-bold text-lg">{agent.avgResolutionTime}h</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Star className="h-4 w-4 text-yellow-500 fill-current" />
+                        <span className="font-medium">{agent.satisfactionRating}</span>
+                        <span className="text-sm text-muted-foreground">satisfação</span>
+                      </div>
+                      <Button variant="outline" size="sm" className="w-full">
+                        <Eye className="h-4 w-4 mr-2" />
+                        Ver Performance
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </TabsContent>
+            <TabsContent value="knowledge" className="space-y-4">
+              <div className="flex justify-end">
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Novo Artigo
+                </Button>
+              </div>
+              <div className="space-y-4">
+                {knowledgeBase.map((article) => (
+                  <Card key={article.id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="text-lg">{article.title}</CardTitle>
+                          <CardDescription>{article.category}</CardDescription>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <p className="text-sm text-muted-foreground line-clamp-2">{article.content}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <p className="text-muted-foreground">Visualizações:</p>
+                          <p className="font-medium">{article.views}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Útil:</p>
+                          <p className="font-medium text-green-600">{article.helpful}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Não útil:</p>
+                          <p className="font-medium text-red-600">{article.notHelpful}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Criado por:</p>
+                          <p className="font-medium">{article.createdBy}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {article.tags.map((tag) => (
+                          <Badge key={tag} variant="secondary" className="text-xs">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                      <Button variant="outline" size="sm">
+                        <Eye className="h-4 w-4 mr-2" />
+                        Ver Artigo
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </div>
   )
 }
