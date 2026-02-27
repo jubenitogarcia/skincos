@@ -18,7 +18,8 @@ fi
 export WA_ORCHESTRATOR_PROVIDER="evolution"
 export EVOLUTION_API_URL="http://localhost:8080"
 export EVOLUTION_API_KEY
-export CRM_PUBLIC_URL="https://crm-api.skincos.com.br"
+export CRM_PUBLIC_URL="https://cs-api.skincos.com.br"
+export CRM_BASIC_AUTH="crm:5S-OGr036xzXSQ6unFjS4Ej0"
 export CRM_API_PORT="8099"
 export PORT="8099"
 
