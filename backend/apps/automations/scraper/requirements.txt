@@ -11,7 +11,7 @@ google-auth-oauthlib==1.1.0
 google-auth-httplib2==0.1.1
 google-api-python-client==2.108.0
 googleapis-common-protos==1.72.0
-protobuf==6.33.4
+protobuf==6.33.5
 
 # Manipulação de planilhas Excel (opcional)
 openpyxl==3.1.2
