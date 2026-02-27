@@ -1,4 +1,5 @@
 import React from 'react'
+import { useKV } from '@/spark-mock'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
 import { Badge } from '@/badge'
@@ -9,8 +10,6 @@ import { LoadingPercentText } from '@/LoadingPattern'
 
 const WhatsAppUnifiedHub = React.lazy(() => import('@/WhatsAppUnifiedHub').then((m) => ({ default: m.WhatsAppUnifiedHub })))
 const OmnichannelCenter = React.lazy(() => import('@/OmnichannelCenter').then((m) => ({ default: m.OmnichannelCenter })))
-const HelpDeskModule = React.lazy(() => import('@/HelpDeskModule').then((m) => ({ default: m.HelpDeskModule })))
-const InstagramStudioPro = React.lazy(() => import('@/InstagramStudioPro').then((m) => ({ default: m.InstagramStudioPro })))
 
 type ApiErrorShape = {
   ok?: boolean
@@ -155,35 +154,47 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
   const UI_CHANNEL_KEY = 'harmonia.ui.channel'
   const UI_SEARCH_KEY = 'harmonia.ui.search'
   const UI_STAGE_KEY = 'harmonia.ui.stage'
+  const [systemConfig, setSystemConfig] = useKV<any>('system-config', {
+    integrations: { harmonia: { debugToken: '', execToken: '' } }
+  })
   const [debugToken, setDebugToken] = React.useState<string>(() => {
     try {
-      return localStorage.getItem(DEBUG_TOKEN_KEY) || ''
+      return systemConfig?.integrations?.harmonia?.debugToken || localStorage.getItem(DEBUG_TOKEN_KEY) || ''
     } catch {
-      return ''
+      return systemConfig?.integrations?.harmonia?.debugToken || ''
     }
   })
 
   const [execToken, setExecToken] = React.useState<string>(() => {
     try {
-      return localStorage.getItem(EXEC_TOKEN_KEY) || ''
+      return systemConfig?.integrations?.harmonia?.execToken || localStorage.getItem(EXEC_TOKEN_KEY) || ''
     } catch {
-      return ''
+      return systemConfig?.integrations?.harmonia?.execToken || ''
     }
   })
 
   React.useEffect(() => {
-    try {
-      if (debugToken.trim()) localStorage.setItem(DEBUG_TOKEN_KEY, debugToken.trim())
-      else localStorage.removeItem(DEBUG_TOKEN_KEY)
-    } catch { /* ignore */ }
-  }, [debugToken])
+    const nextDebug = systemConfig?.integrations?.harmonia?.debugToken || ''
+    const nextExec = systemConfig?.integrations?.harmonia?.execToken || ''
+    if (nextDebug !== debugToken) setDebugToken(nextDebug)
+    if (nextExec !== execToken) setExecToken(nextExec)
+  }, [systemConfig?.integrations?.harmonia?.debugToken, systemConfig?.integrations?.harmonia?.execToken])
 
-  React.useEffect(() => {
-    try {
-      if (execToken.trim()) localStorage.setItem(EXEC_TOKEN_KEY, execToken.trim())
-      else localStorage.removeItem(EXEC_TOKEN_KEY)
-    } catch { /* ignore */ }
-  }, [execToken])
+  const updateIntegrationToken = React.useCallback(
+    (field: 'debugToken' | 'execToken', value: string) => {
+      setSystemConfig((prev: any) => ({
+        ...(prev || {}),
+        integrations: {
+          ...(prev?.integrations || {}),
+          harmonia: {
+            ...(prev?.integrations?.harmonia || {}),
+            [field]: value,
+          },
+        },
+      }))
+    },
+    [setSystemConfig]
+  )
 
   const apiJson = React.useCallback(
     async <T,>(url: string, init?: RequestInit): Promise<T> => {
@@ -226,7 +237,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       setUnits(Array.isArray((u as any)?.data) ? (u as any).data : [])
       setStats(((s as any)?.data as any) || null)
     } catch (e: any) {
-      setError(e?.message || 'Não foi possível carregar dados do Harmonia.')
+      setError(e?.message || 'Não foi possível carregar dados de leads.')
     } finally {
       setLoading(false)
     }
@@ -252,10 +263,10 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
   const execRequired = Boolean(health?.harmonia?.execTokenConfigured)
   const canExecute = !execRequired || Boolean(execToken.trim())
 
-  const [channelTab, setChannelTab] = React.useState<'whatsapp' | 'instagram' | 'omnichannel' | 'helpdesk'>(() => {
+  const [channelTab, setChannelTab] = React.useState<'whatsapp' | 'omnichannel'>(() => {
     try {
       const stored = localStorage.getItem('harmonia.ui.channel')
-      if (stored === 'instagram' || stored === 'omnichannel' || stored === 'helpdesk' || stored === 'whatsapp') {
+      if (stored === 'omnichannel' || stored === 'whatsapp') {
         return stored
       }
     } catch { /* ignore */ }
@@ -412,20 +423,6 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     void loadInbox('reset')
   }, [dbConfigured, loadInbox, unitSlug])
 
-  const restoreConversationOnce = React.useRef(false)
-  React.useEffect(() => {
-    if (restoreConversationOnce.current) return
-    if (!dbConfigured || !unitSlug || conversation) return
-    let stored = ''
-    try {
-      stored = localStorage.getItem(UI_CONVO_KEY) || ''
-    } catch { /* ignore */ }
-    if (stored) {
-      restoreConversationOnce.current = true
-      void openConversationById(stored)
-    }
-  }, [dbConfigured, unitSlug, conversation, openConversationById])
-
   const openConversationById = React.useCallback(
     async (id: string) => {
       const cid = String(id || '').trim()
@@ -466,6 +463,20 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     },
     [apiJson]
   )
+
+  const restoreConversationOnce = React.useRef(false)
+  React.useEffect(() => {
+    if (restoreConversationOnce.current) return
+    if (!dbConfigured || !unitSlug || conversation) return
+    let stored = ''
+    try {
+      stored = localStorage.getItem(UI_CONVO_KEY) || ''
+    } catch { /* ignore */ }
+    if (stored) {
+      restoreConversationOnce.current = true
+      void openConversationById(stored)
+    }
+  }, [dbConfigured, unitSlug, conversation, openConversationById])
 
   const findConversation = React.useCallback(async () => {
     const slug = String(unitSlug || '').trim()
@@ -556,7 +567,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div>
         <div className="flex items-center gap-2">
-          <h2 className="text-2xl font-semibold text-white">Harmonia</h2>
+          <h2 className="text-2xl font-semibold text-white">Leads & Tarefas</h2>
           {dbConfigured ? (
             <Badge className="bg-emerald-500/15 text-emerald-100 border border-emerald-500/20">DB OK</Badge>
           ) : (
@@ -570,7 +581,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
           ) : null}
         </div>
         <p className="text-sm text-blue-100/70">
-          Central de atendimento unificada (WhatsApp + Instagram DM + Omnichannel + Help Desk) e automação de leads via Decision API.
+          Central de atendimento unificada (WhatsApp + Instagram DM + Omnichannel) com automações e qualificação de leads.
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -613,7 +624,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
   const inboxCard = (
     <Card className="bg-white/[0.06] border-white/10">
       <CardHeader>
-        <CardTitle className="text-white">Inbox (Harmonia / WhatsApp Leads)</CardTitle>
+          <CardTitle className="text-white">Inbox de Leads (WhatsApp)</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {dbConfigured ? (
@@ -800,7 +811,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
 
       <Card className="bg-white/[0.06] border-white/10">
         <CardHeader>
-          <CardTitle className="text-white">Como o Harmonia recebe mensagens</CardTitle>
+          <CardTitle className="text-white">Como os leads chegam</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-blue-100/80 space-y-2">
           <div>
@@ -811,7 +822,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
             <span className="font-semibold text-white">Ingest normalizado:</span> `POST /api/harmonia/ingest`.
           </div>
           <div className="text-xs text-blue-200/70">
-            Dica: no WhatsApp Official Module, use `HARMONIA_WEBHOOK_URL=http://localhost:8099/api/harmonia/webhook/official`.
+            Dica: no módulo de WhatsApp Oficial, use o webhook desta instância.
           </div>
         </CardContent>
       </Card>
@@ -948,7 +959,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
               </div>
               {execRequired && !canExecute ? (
                 <div className="text-[11px] text-amber-200/80">
-                  Informe o `HARMONIA_EXEC_TOKEN` para habilitar ações.
+                  Informe o token de execução para habilitar ações.
                 </div>
               ) : null}
               {actionSuccess ? (
@@ -1084,7 +1095,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
   const leadsCard = (
     <Card className="bg-white/[0.06] border-white/10">
       <CardHeader>
-        <CardTitle className="text-white">Harmonia (Leads via WhatsApp)</CardTitle>
+        <CardTitle className="text-white">Leads via WhatsApp</CardTitle>
       </CardHeader>
       <CardContent className="text-sm text-blue-100/80 space-y-2">
         <div>
@@ -1106,23 +1117,29 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
       <CardContent className="space-y-3">
         <div>
           <div className="text-xs text-blue-200/70 mb-1">Debug (leitura)</div>
-          <Input
-            value={debugToken}
-            onChange={(e) => setDebugToken(e.target.value)}
-            placeholder="HARMONIA_DEBUG_TOKEN"
-            className="bg-white/[0.06] border-white/10 text-white"
-            autoComplete="off"
-          />
+            <Input
+              value={debugToken}
+              onChange={(e) => {
+                setDebugToken(e.target.value)
+                updateIntegrationToken('debugToken', e.target.value)
+              }}
+              placeholder="TOKEN_DEBUG"
+              className="bg-white/[0.06] border-white/10 text-white"
+              autoComplete="off"
+            />
         </div>
         <div>
           <div className="text-xs text-blue-200/70 mb-1">Exec (ações)</div>
-          <Input
-            value={execToken}
-            onChange={(e) => setExecToken(e.target.value)}
-            placeholder="HARMONIA_EXEC_TOKEN"
-            className="bg-white/[0.06] border-white/10 text-white"
-            autoComplete="off"
-          />
+            <Input
+              value={execToken}
+              onChange={(e) => {
+                setExecToken(e.target.value)
+                updateIntegrationToken('execToken', e.target.value)
+              }}
+              placeholder="TOKEN_EXEC"
+              className="bg-white/[0.06] border-white/10 text-white"
+              autoComplete="off"
+            />
         </div>
         <div className="text-[11px] text-blue-200/60">
           Tokens são opcionais quando não configurados no backend.
@@ -1142,7 +1159,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
 
         {!dbConfigured ? (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-            O Harmonia está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
+            O módulo de leads está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
             units e estatísticas.
           </div>
         ) : null}
@@ -1177,7 +1194,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
 
         {!dbConfigured ? (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-            O Harmonia está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
+            O módulo de leads está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
             units e estatísticas.
           </div>
         ) : null}
@@ -1201,7 +1218,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
 
       {!dbConfigured ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-          O Harmonia está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
+          O módulo de leads está ativo, mas sem persistência. Configure `DATABASE_URL` no `backend/apps/crm-api` para liberar conversas,
           units e estatísticas.
         </div>
       ) : null}
@@ -1231,8 +1248,11 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   <div className="text-xs text-blue-200/70 mb-1">Token (opcional)</div>
                   <Input
                     value={debugToken}
-                    onChange={(e) => setDebugToken(e.target.value)}
-                    placeholder="HARMONIA_DEBUG_TOKEN"
+                    onChange={(e) => {
+                      setDebugToken(e.target.value)
+                      updateIntegrationToken('debugToken', e.target.value)
+                    }}
+                    placeholder="TOKEN_DEBUG"
                     className="bg-white/[0.06] border-white/10 text-white"
                     autoComplete="off"
                   />
@@ -1241,7 +1261,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   </div>
                 </div>
                 <div className="md:col-span-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Inbox (Harmonia / WhatsApp Leads)</div>
+                  <div className="text-xs text-blue-200/70 mb-1">Inbox de Leads (WhatsApp)</div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3">
                     {dbConfigured ? (
                       <>
@@ -1316,9 +1336,7 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
               <Tabs value={channelTab} onValueChange={(v) => setChannelTab(v as any)}>
                 <TabsList className="flex flex-wrap">
                   <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
-                  <TabsTrigger value="instagram">Instagram (DM)</TabsTrigger>
                   <TabsTrigger value="omnichannel">Omnichannel</TabsTrigger>
-                  <TabsTrigger value="helpdesk">Help Desk</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="whatsapp">
@@ -1330,18 +1348,6 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                     }
                   >
                     <WhatsAppUnifiedHub />
-                  </React.Suspense>
-                </TabsContent>
-
-                <TabsContent value="instagram">
-                  <React.Suspense
-                    fallback={
-                      <div className="text-sm text-blue-100/70 p-3">
-                        <LoadingPercentText label="Carregando Instagram" showPercent={false} />
-                      </div>
-                    }
-                  >
-                    <InstagramStudioPro />
                   </React.Suspense>
                 </TabsContent>
 
@@ -1364,17 +1370,6 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   </React.Suspense>
                 </TabsContent>
 
-                <TabsContent value="helpdesk">
-                  <React.Suspense
-                    fallback={
-                      <div className="text-sm text-blue-100/70 p-3">
-                        <LoadingPercentText label="Carregando Help Desk" showPercent={false} />
-                      </div>
-                    }
-                  >
-                    <HelpDeskModule />
-                  </React.Suspense>
-                </TabsContent>
               </Tabs>
             </CardContent>
           </Card>

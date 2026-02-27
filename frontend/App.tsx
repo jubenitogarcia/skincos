@@ -214,7 +214,10 @@ export default function AppFunctionalNeatlab() {
             if (!allowed.length) return true // compat: vazio/ausente => ALL
             if (allowed.includes(key)) return true
             if (key === 'atendimento') {
-                return allowed.some((m) => ['whatsapp-business', 'whatsapp-n8n', 'harmonia', 'omnichannel', 'helpdesk'].includes(m))
+                return allowed.some((m) => ['whatsapp-business', 'harmonia', 'omnichannel'].includes(m))
+            }
+            if (key === 'ai-automation') {
+                return allowed.some((m) => ['ai-automation', 'automation', 'whatsapp-n8n'].includes(m))
             }
             return false
         },
