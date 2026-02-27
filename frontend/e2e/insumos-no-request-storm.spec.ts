@@ -43,7 +43,7 @@ test.describe('insumos', () => {
     })
 
     await page.goto('/?insumos=1')
-    const insumosNav = page.getByRole('button', { name: 'Insumos' })
+    const insumosNav = page.getByRole('button', { name: 'Insumos', exact: true })
     await expect(insumosNav).toBeVisible({ timeout: 30000 })
     await insumosNav.click()
 

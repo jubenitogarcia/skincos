@@ -71,7 +71,16 @@ interface SystemConfig {
     apiRateLimit: number
     enableQueryOptimization: boolean
   }
-  integrations: object
+  integrations: {
+    harmonia: {
+      debugToken: string
+      execToken: string
+    }
+    facebook: {
+      pageId: string
+      accessToken: string
+    }
+  }
   advanced: {
     debugMode: boolean
     logLevel: string
@@ -144,7 +153,16 @@ export function SystemConfiguration() {
       apiRateLimit: 1000,
       enableQueryOptimization: true
     },
-    integrations: {},
+    integrations: {
+      harmonia: {
+        debugToken: '',
+        execToken: ''
+      },
+      facebook: {
+        pageId: '',
+        accessToken: ''
+      }
+    },
     advanced: {
       debugMode: false,
       logLevel: 'warning',
@@ -164,6 +182,20 @@ export function SystemConfiguration() {
       [section]: {
         ...prev[section],
         [field]: value
+      }
+    }))
+    setHasChanges(true)
+  }
+
+  const updateHarmoniaIntegration = (field: 'debugToken' | 'execToken', value: string) => {
+    setConfig(prev => ({
+      ...prev,
+      integrations: {
+        ...(prev.integrations || {}),
+        harmonia: {
+          ...(prev.integrations?.harmonia || {}),
+          [field]: value
+        }
       }
     }))
     setHasChanges(true)
@@ -251,7 +283,12 @@ export function SystemConfiguration() {
         apiRateLimit: 1000,
         enableQueryOptimization: true
       },
-      integrations: {},
+      integrations: {
+        harmonia: {
+          debugToken: '',
+          execToken: ''
+        }
+      },
       advanced: {
         debugMode: false,
         logLevel: 'warning',
@@ -594,6 +631,47 @@ export function SystemConfiguration() {
                     onChange={(e) => updateConfig('performance', 'apiRateLimit', parseInt(e.target.value))}
                   />
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Integrations */}
+        <TabsContent value="integrations">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Globe className="h-5 w-5" />
+                <span>Integrações</span>
+              </CardTitle>
+              <CardDescription>
+                Tokens e credenciais de integrações internas
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <div className="text-sm font-semibold">Leads & Tarefas (Harmonia)</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label>Token de leitura</Label>
+                    <Input
+                      value={config.integrations?.harmonia?.debugToken || ''}
+                      onChange={(e) => updateHarmoniaIntegration('debugToken', e.target.value)}
+                      placeholder="TOKEN_DEBUG"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Token de execução</Label>
+                    <Input
+                      value={config.integrations?.harmonia?.execToken || ''}
+                      onChange={(e) => updateHarmoniaIntegration('execToken', e.target.value)}
+                      placeholder="TOKEN_EXEC"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Usado para autenticar ações e leitura do módulo de leads no atendimento.
+                </p>
               </div>
             </CardContent>
           </Card>
