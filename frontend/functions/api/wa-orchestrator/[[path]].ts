@@ -81,7 +81,7 @@ export async function onRequest(context: any): Promise<Response> {
   if (hasBasicAuth && !headers.has('authorization')) {
     const toBase64 = (value: string) => {
       if (typeof btoa === 'function') return btoa(value)
-      // @ts-ignore - Buffer is available in some runtimes
+      // @ts-expect-error - Buffer is available in some runtimes
       if (typeof Buffer !== 'undefined') return Buffer.from(value).toString('base64')
       return value
     }
