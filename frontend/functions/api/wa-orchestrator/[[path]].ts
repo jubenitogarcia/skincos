@@ -33,14 +33,30 @@ export async function onRequest(context: any): Promise<Response> {
     return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
   })()
 
+  const basicAuthRaw = String(context.env?.WA_ORCHESTRATOR_BASIC_AUTH || context.env?.CRM_BASIC_AUTH || '').trim()
+  const hasBasicAuth = Boolean(basicAuthRaw && basicAuthRaw.includes(':'))
+  const sanitizeUrl = (value: string) => {
+    try {
+      const u = new URL(value)
+      if (u.username || u.password) {
+        u.username = ''
+        u.password = ''
+      }
+      return u.toString()
+    } catch {
+      return value
+    }
+  }
+
   if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
     return new Response(
       JSON.stringify({
         ok: true,
-        target: targetOrigin,
+        target: sanitizeUrl(targetOrigin),
         isProductionTarget,
         requestOrigin,
-        targets: rawTargets,
+        targets: rawTargets.map(sanitizeUrl),
+        hasBasicAuth
       }),
       {
         status: 200,
@@ -61,6 +77,15 @@ export async function onRequest(context: any): Promise<Response> {
     headers.set('accept', 'text/event-stream')
   } else {
     headers.set('accept', 'application/json')
+  }
+  if (hasBasicAuth && !headers.has('authorization')) {
+    const toBase64 = (value: string) => {
+      if (typeof btoa === 'function') return btoa(value)
+      // @ts-expect-error - Buffer is available in some runtimes
+      if (typeof Buffer !== 'undefined') return Buffer.from(value).toString('base64')
+      return value
+    }
+    headers.set('authorization', `Basic ${toBase64(basicAuthRaw)}`)
   }
   headers.delete('host')
   headers.delete('content-length')
