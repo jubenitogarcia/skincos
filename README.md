@@ -5,11 +5,13 @@ Plataforma interna (local) para automações e operações da clínica.
 ## Estrutura (source of truth)
 - Backend: `backend/` (apps, automations, libs, tools, scripts)
 - Frontend (CRM/UI): `frontend/`
+  - Meta Ads (migrado): API em `backend/apps/meta-ads` e modulo UI no CRM
 
 ## Como rodar (local)
 - Stack principal (recomendado): `./backend/scripts/dev.sh watch`
 - CRM (frontend + API): `./frontend/restart_crm.sh --watch-full`
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
+ - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
 
 ## Módulo Ponto (face + PIN)
 - Backend (CRM API): expõe endpoints em `/api/ponto/*` e persiste em `backend/var/core/` (ignorado do git).
