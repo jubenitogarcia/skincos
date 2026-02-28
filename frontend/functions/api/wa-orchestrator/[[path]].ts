@@ -7,15 +7,38 @@ export async function onRequest(context: any): Promise<Response> {
   const prefix = '/api/wa-orchestrator'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
+  const runtimeEnv = (() => {
+    if (context?.env) return context.env as Record<string, string | undefined>
+    if (typeof process !== 'undefined' && (process as any)?.env) return (process as any).env as Record<string, string | undefined>
+    return {}
+  })()
   const rawTargets = [
-    context.env?.WA_ORCHESTRATOR_API_TARGET as string | undefined,
-    context.env?.CRM_API_TARGET as string | undefined,
-    context.env?.INSUMOS_API_TARGET as string | undefined
+    runtimeEnv.WA_ORCHESTRATOR_API_TARGET,
+    runtimeEnv.CRM_API_TARGET,
+    runtimeEnv.INSUMOS_API_TARGET
   ].map((v) => String(v || '').trim()).filter(Boolean)
   const requestOrigin = url.origin
 
+  const defaultTarget = (() => {
+    const host = String(url.hostname || '').toLowerCase()
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8099'
+    return 'https://cs-api.skincos.com.br'
+  })()
+
+  const isValidOrchestratorTarget = (candidate: string) => {
+    try {
+      const parsed = new URL(candidate)
+      const host = parsed.hostname.toLowerCase()
+      if (host === 'api.skincos.com.br' || host.endsWith('.skincos.workers.dev')) return false
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const pickTarget = () => {
     for (const candidate of rawTargets) {
+      if (!isValidOrchestratorTarget(candidate)) continue
       try {
         const parsed = new URL(candidate)
         if (parsed.origin === requestOrigin) continue
@@ -24,7 +47,7 @@ export async function onRequest(context: any): Promise<Response> {
         // ignore invalid
       }
     }
-    return 'https://wa.skincos.com.br'
+    return defaultTarget
   }
 
   const targetOrigin = String(pickTarget())
@@ -33,7 +56,7 @@ export async function onRequest(context: any): Promise<Response> {
     return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
   })()
 
-  const basicAuthRaw = String(context.env?.WA_ORCHESTRATOR_BASIC_AUTH || context.env?.CRM_BASIC_AUTH || '').trim()
+  const basicAuthRaw = String(runtimeEnv.WA_ORCHESTRATOR_BASIC_AUTH || runtimeEnv.CRM_BASIC_AUTH || '').trim()
   const hasBasicAuth = Boolean(basicAuthRaw && basicAuthRaw.includes(':'))
   const sanitizeUrl = (value: string) => {
     try {
