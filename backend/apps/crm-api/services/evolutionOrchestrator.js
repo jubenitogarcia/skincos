@@ -1,5 +1,6 @@
 const DEFAULT_CHANNELS = Array.from({ length: 9 }, (_, i) => i + 1)
 const DEFAULT_INSTANCE_PREFIX = 'crm-channel-'
+const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
 
 function resolveEvolutionConfig() {
   const baseUrl =
@@ -47,6 +48,61 @@ function normalizeNumber(numberOrJid) {
   if (value.includes('@g.us')) return value
   if (value.includes('@s.whatsapp.net')) return value.split('@')[0]
   return value
+}
+
+function extractQrCandidate(result) {
+  if (!result) return null
+  return (
+    result?.qrcode ||
+    result?.qr ||
+    result?.instance?.qrcode ||
+    result?.base64 ||
+    result?.instance?.base64 ||
+    result?.code ||
+    result?.instance?.code ||
+    null
+  )
+}
+
+function extractQrFromText(text) {
+  if (!text) return null
+  const dataUrlMatch = text.match(/data:image\/png;base64,[A-Za-z0-9+/=]+/)
+  if (dataUrlMatch) return dataUrlMatch[0]
+  const jsonFieldMatch = text.match(/"(?:base64|qrcode|qr|code)"\s*:\s*"([^"]+)"/i)
+  if (jsonFieldMatch?.[1]) return jsonFieldMatch[1]
+  return null
+}
+
+function normalizeQrValue(raw) {
+  if (raw == null) return null
+  const value = String(raw).trim()
+  if (!value) return null
+
+  if (value.startsWith('data:image')) {
+    return value.replace(/\\\//g, '/')
+  }
+
+  const unescaped = value.replace(/\\\//g, '/')
+  if (unescaped.startsWith('data:image')) return unescaped
+
+  const looksLikeBase64 = /^[A-Za-z0-9+/]+={0,2}$/.test(value) && value.length > 120
+  if (looksLikeBase64) {
+    if (value.startsWith('iVBOR')) return `data:image/png;base64,${value}`
+    if (value.startsWith('/9j/')) return `data:image/jpeg;base64,${value}`
+    return `data:image/png;base64,${value}`
+  }
+
+  return value
+}
+
+function debugQr(event, payload = {}) {
+  if (!DEBUG_QR) return
+  try {
+    const serialized = JSON.stringify(payload)
+    console.log(`[WA_QR_DEBUG] ${event} ${serialized}`)
+  } catch {
+    console.log(`[WA_QR_DEBUG] ${event}`)
+  }
 }
 
 async function evolutionFetch(path, options = {}) {
@@ -107,11 +163,21 @@ async function ensureInstance(channel, instanceName) {
 
 async function connectInstance(instanceName) {
   const res = await evolutionFetch(`/instance/connect/${encodeURIComponent(instanceName)}`)
+  debugQr('connectInstance:response', {
+    instanceName,
+    ok: res.ok,
+    status: res.status,
+    hasJson: !!res.json,
+    jsonKeys: res.json ? Object.keys(res.json).slice(0, 12) : [],
+    textLength: res.text ? res.text.length : 0
+  })
   if (!res.ok) {
     const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
     throw new Error(message)
   }
-  return res.json || null
+  if (res.json) return res.json
+  if (res.text) return { rawText: res.text }
+  return null
 }
 
 async function getStatus() {
@@ -172,9 +238,23 @@ async function getChannelQR(channel) {
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
   const result = await connectInstance(name)
-  const qr = result?.qrcode || result?.qr || result?.instance?.qrcode || null
+  let qr = extractQrCandidate(result)
+  if (!qr && result?.rawText) {
+    qr = extractQrFromText(result.rawText)
+  }
+  qr = normalizeQrValue(qr)
   const state = normalizeState(result?.instance?.status || result?.instance?.state || result?.state)
-  const status = mapStateToStatus(state)
+  let status = mapStateToStatus(state)
+  if (qr && status === 'error') status = 'qr_pending'
+  debugQr('getChannelQR:resolved', {
+    channel,
+    instanceName: name,
+    status,
+    hasQr: !!qr,
+    qrType: qr ? (String(qr).startsWith('data:image') ? 'image-data-url' : 'raw-text') : null,
+    qrLength: typeof qr === 'string' ? qr.length : 0,
+    qrPrefix: typeof qr === 'string' ? qr.slice(0, 24) : null
+  })
   return { qr, status, channel, port: 3001 }
 }
 
@@ -183,9 +263,23 @@ async function startChannel(channel, nameOverride) {
   const instanceName = channelName(channel, instancePrefix)
   await ensureInstance(channel, instanceName)
   const connect = await connectInstance(instanceName)
-  const qr = connect?.qrcode || connect?.qr || connect?.instance?.qrcode || null
+  let qr = extractQrCandidate(connect)
+  if (!qr && connect?.rawText) {
+    qr = extractQrFromText(connect.rawText)
+  }
+  qr = normalizeQrValue(qr)
   const state = normalizeState(connect?.instance?.status || connect?.instance?.state || connect?.state)
-  const status = mapStateToStatus(state)
+  let status = mapStateToStatus(state)
+  if (qr && status === 'error') status = 'qr_pending'
+  debugQr('startChannel:resolved', {
+    channel,
+    instanceName,
+    status,
+    hasQr: !!qr,
+    qrType: qr ? (String(qr).startsWith('data:image') ? 'image-data-url' : 'raw-text') : null,
+    qrLength: typeof qr === 'string' ? qr.length : 0,
+    qrPrefix: typeof qr === 'string' ? qr.slice(0, 24) : null
+  })
   return {
     success: true,
     instance: {
