@@ -563,6 +563,18 @@ app.use('/api/instagram-module', createProxyMiddleware({
 }))
 
 // -------------------------------------------------------------
+// Meta Ads proxy (same-origin for CRM UI)
+// -------------------------------------------------------------
+const META_ADS_API_TARGET = process.env.META_ADS_API_TARGET || 'http://localhost:4000'
+app.use('/api/meta-ads', createProxyMiddleware({
+    target: META_ADS_API_TARGET,
+    changeOrigin: true,
+    ws: false,
+    logLevel: 'silent',
+    pathRewrite: { '^/api/meta-ads': '' }
+}))
+
+// -------------------------------------------------------------
 // Insumos API proxy (same-origin for CRM UI)
 // -------------------------------------------------------------
 // Cloudflare target (default production). Override for local testing.
@@ -939,6 +951,7 @@ app.use((req, res, next) => {
 // Supports EventSource via query param ?auth=BASE64(user:pass)
 // -------------------------------------------------------------
 const BASIC_AUTH = process.env.CRM_BASIC_AUTH || ''
+const LOCAL_NO_AUTH = String(process.env.CRM_LOCAL_NO_AUTH || '').trim().toLowerCase()
 let basicAuthUser = null, basicAuthPass = null
 if (BASIC_AUTH && BASIC_AUTH.includes(':')) {
     const [u, p] = BASIC_AUTH.split(':'); basicAuthUser = u; basicAuthPass = p
@@ -960,6 +973,11 @@ function authOk(req) {
 app.use((req, res, next) => {
     // Skip auth entirely if not configured
     if (!basicAuthUser) return next()
+
+    // Allow local dev without auth (default enabled)
+    const host = String(req.hostname || '').toLowerCase()
+    const isLocalHost = host === 'localhost' || host === '127.0.0.1'
+    if (isLocalHost && LOCAL_NO_AUTH !== 'false') return next()
 
     // Always allow preflight OPTIONS and health checks
     if (req.method === 'OPTIONS' || req.path.startsWith('/health')) {
