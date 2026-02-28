@@ -877,6 +877,18 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   )
 
   const pollChannelQR = useCallback(async (channel: number) => {
+    const resolveQrDataUrl = async (qrValue: unknown) => {
+      if (typeof qrValue !== 'string') return null
+      const normalized = qrValue.trim().replace(/\\\//g, '/')
+      if (!normalized) return null
+      if (normalized.startsWith('data:image')) return normalized
+      if (/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) && normalized.length > 120) {
+        const mime = normalized.startsWith('/9j/') ? 'jpeg' : 'png'
+        return `data:image/${mime};base64,${normalized}`
+      }
+      return QRCode.toDataURL(normalized, { width: 300, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } })
+    }
+
     try {
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/qr`, {
         headers: buildCrmBasicAuthHeaders()
@@ -898,15 +910,19 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
       if (result.dataUrl) {
         qrDataUrl = result.dataUrl
       } else if (result.qr) {
-        qrDataUrl = result.qr.startsWith('data:')
-          ? result.qr
-          : await QRCode.toDataURL(result.qr, { width: 300, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } })
+        qrDataUrl = (await resolveQrDataUrl(result.qr)) ?? undefined
       }
 
       if (qrDataUrl) {
+        console.info('[WA_QR_DEBUG] pollChannelQR:resolved', {
+          channel,
+          qrType: String(result.qr || '').startsWith('data:image') ? 'image-data-url' : 'raw-text',
+          qrLength: typeof result.qr === 'string' ? result.qr.length : 0
+        })
         setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
       }
     } catch (err: any) {
+      console.error('[WA_QR_DEBUG] pollChannelQR:error', { channel, error: err?.message || String(err) })
       toast.error(`Falha ao carregar QR: ${err.message || 'erro inesperado'}`)
     }
   }, [])
@@ -920,10 +936,25 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
       })
       const result = await response.json().catch(() => ({}))
       if (!result?.success) throw new Error(result?.error || 'Falha ao iniciar canal')
+      if (result?.qr) {
+        const normalizedQr = String(result.qr).trim().replace(/\\\//g, '/')
+        const qrDataUrl = normalizedQr.startsWith('data:image')
+          ? normalizedQr
+          : (/^[A-Za-z0-9+/]+={0,2}$/.test(normalizedQr) && normalizedQr.length > 120)
+            ? `data:image/${normalizedQr.startsWith('/9j/') ? 'jpeg' : 'png'};base64,${normalizedQr}`
+            : await QRCode.toDataURL(normalizedQr, { width: 300, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } })
+        console.info('[WA_QR_DEBUG] startChannel:resolved', {
+          channel,
+          qrType: normalizedQr.startsWith('data:image') ? 'image-data-url' : 'raw-text',
+          qrLength: normalizedQr.length
+        })
+        setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
+      }
       toast.success(`Canal ${channel} iniciado`)
       pollChannelQR(channel)
     } catch (err: any) {
       const message = err?.message || 'Falha ao iniciar canal'
+      console.error('[WA_QR_DEBUG] startChannel:error', { channel, error: message })
       toast.error(message)
     }
   }, [pollChannelQR])

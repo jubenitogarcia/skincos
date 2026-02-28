@@ -3230,6 +3230,7 @@ function channelForPort(port) {
 
 const WA_ORCHESTRATOR_PROVIDER = String(process.env.WA_ORCHESTRATOR_PROVIDER || '').toLowerCase()
 const USE_EVOLUTION_ORCHESTRATOR = WA_ORCHESTRATOR_PROVIDER === 'evolution'
+const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
 
 // Legacy compatibility - remove port 3002 reservation
 function portFor(inst) {
@@ -4744,7 +4745,7 @@ app.get('/api/wa-orchestrator/channels', async (req, res) => {
 app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
     try {
         const channel = parseInt(req.params.channel)
-        const { name } = req.body
+        const { name } = req.body || {}
 
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
@@ -4756,6 +4757,16 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const result = await evolutionOrchestrator.startChannel(channel, name)
+            if (DEBUG_QR) {
+                const qrValue = typeof result?.qr === 'string' ? result.qr : ''
+                console.log('[WA_QR_DEBUG] route:start_result', {
+                    channel,
+                    status: result?.instance?.status || null,
+                    hasQr: !!qrValue,
+                    qrType: qrValue.startsWith('data:image') ? 'image-data-url' : (qrValue ? 'raw-text' : null),
+                    qrLength: qrValue.length
+                })
+            }
             let webhookWarning = null
             try {
                 const webhookUrl = `${resolveCrmPublicUrl(req)}/api/wa-orchestrator/webhook`
@@ -4771,6 +4782,7 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
             return res.json({
                 success: true,
                 instance: result.instance,
+                qr: result.qr || null,
                 channel: result.instance?.channel || channel,
                 port: result.instance?.port || 3001,
                 suggestions: null,
@@ -4885,6 +4897,13 @@ app.get('/api/wa-orchestrator/channels/:channel/qr', async (req, res) => {
                     cached: false,
                     generated: true,
                     message: null
+                })
+            }
+            if (DEBUG_QR) {
+                console.warn('[WA_QR_DEBUG] route:qr_not_available', {
+                    channel,
+                    status: result?.status || null,
+                    hasQr: !!result?.qr
                 })
             }
             return res.status(404).json({
