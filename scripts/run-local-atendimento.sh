@@ -16,6 +16,14 @@ free_port() {
   fi
 }
 
+stop_launchd_crm_api() {
+  if /bin/launchctl list | /usr/bin/grep -q "com.skincos.crm-api"; then
+    echo "[local-atendimento] Stopping launchd CRM API (com.skincos.crm-api)"
+    /bin/launchctl stop com.skincos.crm-api 2>/dev/null || true
+    /bin/launchctl bootout "gui/$(/usr/bin/id -u)/com.skincos.crm-api" 2>/dev/null || true
+  fi
+}
+
 if [[ ! -f "$EVOLUTION_ENV" ]]; then
   echo "[local-atendimento] Missing Evolution env at $EVOLUTION_ENV" >&2
   exit 1
@@ -35,6 +43,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "[local-atendimento] Starting CRM API on :$CRM_API_PORT (Evolution provider)"
+stop_launchd_crm_api
 free_port "$CRM_API_PORT"
 free_port "$FRONTEND_PORT"
 (
@@ -46,6 +55,9 @@ free_port "$FRONTEND_PORT"
   export CRM_API_PORT
   export PORT="$CRM_API_PORT"
   export NO_AUTH="true"
+  export CRM_BASIC_AUTH=""
+  export CRM_LOCAL_NO_AUTH="true"
+  export WA_DEBUG_QR="true"
   export NODE_ENV="development"
   node backend/apps/crm-api/server.js
 ) &
