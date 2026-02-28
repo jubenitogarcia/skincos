@@ -50,5 +50,9 @@ fi
 echo "[doctor] repo health..."
 bash "$ROOT_DIR/backend/scripts/test.sh" repo-health
 
-echo "[doctor] OK"
+echo "[doctor] meta-ads health (best-effort)..."
+if [[ -x "$ROOT_DIR/backend/config/templates/modules/meta-ads/healthcheck.sh" ]]; then
+  "$ROOT_DIR/backend/config/templates/modules/meta-ads/healthcheck.sh" >/dev/null 2>&1 || true
+fi
 
+echo "[doctor] OK"

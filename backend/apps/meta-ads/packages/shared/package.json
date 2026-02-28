@@ -1,0 +1,19 @@
+{
+  "name": "@meta/shared",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "build": "tsc -p tsconfig.json",
+    "dev": "echo 'shared has no dev server'",
+    "test": "echo 'no tests'"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "eslint": "^9.19.0",
+    "typescript": "^5.6.3"
+  }
+}

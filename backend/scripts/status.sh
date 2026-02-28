@@ -38,6 +38,7 @@ check_port "${ACTUAL_PORT:-5006}"
 check_port "${SALES_CHART_MESSENGER_PORT:-3200}"
 check_port "${AGENT_ZERO_PORT:-${WEB_UI_PORT:-50001}}"
 check_port "${INSTAGRAM_PORT:-3103}"
+check_port "${META_ADS_API_PORT:-4000}"
 
 echo ""
 echo "[status] Health (best-effort)"
@@ -51,6 +52,15 @@ done
 check_http "http://localhost:${ACTUAL_PORT:-5006}" "ACTUAL"
 check_http "http://localhost:${AGENT_ZERO_PORT:-${WEB_UI_PORT:-50001}}/agent-zero/debug/ping" "AGENT-ZERO"
 check_http "http://localhost:${INSTAGRAM_PORT:-3103}/health" "INSTAGRAM"
+if [[ -x "$ROOT_DIR/backend/config/templates/modules/meta-ads/healthcheck.sh" ]]; then
+  if "$ROOT_DIR/backend/config/templates/modules/meta-ads/healthcheck.sh" >/dev/null 2>&1; then
+    echo "OK     META-ADS (healthcheck.sh)"
+  else
+    echo "FAIL   META-ADS (healthcheck.sh)"
+  fi
+else
+  check_http "http://localhost:${META_ADS_API_PORT:-4000}/api/health" "META-ADS"
+fi
 
 echo ""
 echo "[status] Tips"

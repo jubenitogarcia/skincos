@@ -1,0 +1,268 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+enum EntityType {
+  CAMPAIGN
+  ADSET
+  AD
+}
+
+enum BulkActionType {
+  PAUSE
+  RESUME
+  BUDGET
+  RENAME
+  DUPLICATE
+}
+
+enum BulkStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ItemStatus {
+  PENDING
+  SUCCESS
+  ERROR
+}
+
+enum AlertType {
+  PACING_FAST
+  NO_SPEND
+}
+
+enum AlertStatus {
+  OPEN
+  RESOLVED
+}
+
+enum InsightLevel {
+  CAMPAIGN
+  ADSET
+  AD
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+  metaConnections MetaConnection[]
+  auditLogs    AuditLog[]
+}
+
+model Org {
+  id           String       @id @default(uuid())
+  name         String
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+  metaConnections MetaConnection[]
+  adAccounts   AdAccount[]
+  campaigns    Campaign[]
+  adSets       AdSet[]
+  ads          Ad[]
+  insights     InsightsDaily[]
+  bulkOperations BulkOperation[]
+  alertRules   AlertRule[]
+  alerts       Alert[]
+  auditLogs    AuditLog[]
+  defaultAdAccountId String?
+}
+
+model Membership {
+  id     String @id @default(uuid())
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+  org    Org    @relation(fields: [orgId], references: [id])
+  orgId  String
+  role   Role   @default(MEMBER)
+}
+
+model MetaConnection {
+  id           String   @id @default(uuid())
+  org          Org      @relation(fields: [orgId], references: [id])
+  orgId        String
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  metaUserId   String?
+  accessTokenEncrypted String
+  scopes       String[]
+  tokenType    String?
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+}
+
+model AdAccount {
+  id            String   @id @default(uuid())
+  org           Org      @relation(fields: [orgId], references: [id])
+  orgId         String
+  metaAccountId String
+  name          String
+  currency      String?
+  timezone      String?
+  status        String?
+  permissions   String[]
+  isSelected    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  campaigns     Campaign[]
+  adSets        AdSet[]
+  ads           Ad[]
+  insights      InsightsDaily[]
+
+  @@unique([orgId, metaAccountId])
+}
+
+model Campaign {
+  id            String   @id @default(uuid())
+  org           Org      @relation(fields: [orgId], references: [id])
+  orgId         String
+  adAccount     AdAccount @relation(fields: [adAccountId], references: [id])
+  adAccountId   String
+  metaId        String
+  name          String
+  status        String
+  objective     String?
+  dailyBudget   Int?
+  lifetimeBudget Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([orgId, metaId])
+}
+
+model AdSet {
+  id            String   @id @default(uuid())
+  org           Org      @relation(fields: [orgId], references: [id])
+  orgId         String
+  adAccount     AdAccount @relation(fields: [adAccountId], references: [id])
+  adAccountId   String
+  metaId        String
+  name          String
+  status        String
+  dailyBudget   Int?
+  lifetimeBudget Int?
+  bidStrategy   String?
+  startTime     DateTime?
+  endTime       DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([orgId, metaId])
+}
+
+model Ad {
+  id            String   @id @default(uuid())
+  org           Org      @relation(fields: [orgId], references: [id])
+  orgId         String
+  adAccount     AdAccount @relation(fields: [adAccountId], references: [id])
+  adAccountId   String
+  metaId        String
+  name          String
+  status        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([orgId, metaId])
+}
+
+model InsightsDaily {
+  id            String   @id @default(uuid())
+  org           Org      @relation(fields: [orgId], references: [id])
+  orgId         String
+  adAccount     AdAccount @relation(fields: [adAccountId], references: [id])
+  adAccountId   String
+  level         InsightLevel
+  entityId      String
+  date          DateTime
+  spend         Float?
+  impressions   Int?
+  clicks        Int?
+  actions       Json?
+  cpa           Float?
+  roas          Float?
+  results       Int?
+
+  @@unique([orgId, level, entityId, date])
+}
+
+model BulkOperation {
+  id            String   @id @default(uuid())
+  org           Org      @relation(fields: [orgId], references: [id])
+  orgId         String
+  user          User     @relation(fields: [userId], references: [id])
+  userId        String
+  entityType    EntityType
+  actionType    BulkActionType
+  status        BulkStatus @default(PENDING)
+  totalItems    Int
+  processedItems Int @default(0)
+  payload       Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  items         BulkOperationItem[]
+}
+
+model BulkOperationItem {
+  id              String   @id @default(uuid())
+  bulkOperation   BulkOperation @relation(fields: [bulkOperationId], references: [id])
+  bulkOperationId String
+  metaId          String
+  status          ItemStatus @default(PENDING)
+  before          Json?
+  after           Json?
+  error           String?
+  createdAt       DateTime @default(now())
+}
+
+model AlertRule {
+  id        String   @id @default(uuid())
+  org       Org      @relation(fields: [orgId], references: [id])
+  orgId     String
+  type      AlertType
+  isActive  Boolean  @default(true)
+  config    Json
+  createdAt DateTime @default(now())
+}
+
+model Alert {
+  id         String   @id @default(uuid())
+  org        Org      @relation(fields: [orgId], references: [id])
+  orgId      String
+  adAccount  AdAccount? @relation(fields: [adAccountId], references: [id])
+  adAccountId String?
+  type       AlertType
+  status     AlertStatus @default(OPEN)
+  message    String
+  data       Json?
+  createdAt  DateTime @default(now())
+  resolvedAt DateTime?
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  org       Org      @relation(fields: [orgId], references: [id])
+  orgId     String
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  action    String
+  entityType String?
+  entityId   String?
+  data      Json?
+  createdAt DateTime @default(now())
+}
