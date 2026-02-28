@@ -9,7 +9,9 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const SKINCOS_ROOT = path.resolve(__dirname, '..', '..', '..')
+// services/whatsappOrchestrator.js lives in: <repo>/backend/apps/crm-api/services
+// so repo root is 4 levels up from __dirname
+const SKINCOS_ROOT = path.resolve(__dirname, '..', '..', '..', '..')
 const BACKEND_ROOT = path.join(SKINCOS_ROOT, 'backend')
 const DEFAULT_INSTANCES_FILE = process.env.VAR_DIR
   ? path.join(process.env.VAR_DIR, 'core', 'whatsapp_instances.json')
@@ -148,6 +150,17 @@ class WhatsAppOrchestrator {
         })
       }
     } catch (error) {
+      const code = error?.code || error?.errno
+      if (code === 'ENOENT') {
+        try {
+          await fs.mkdir(path.dirname(INSTANCES_FILE), { recursive: true })
+          await fs.writeFile(INSTANCES_FILE, JSON.stringify({ instances: [], lastUpdate: new Date().toISOString() }, null, 2))
+          return
+        } catch (err) {
+          console.warn('[WhatsApp Orchestrator] Could not initialize instances file:', err)
+          return
+        }
+      }
       console.warn('[WhatsApp Orchestrator] Could not load instances file:', error)
     }
   }
