@@ -289,6 +289,8 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   const [waStatusOpen, setWaStatusOpen] = useState(false)
   const [igStatusOpen, setIgStatusOpen] = useState(false)
   const [igDialogOpen, setIgDialogOpen] = useState(false)
+  const [igOauthStatus, setIgOauthStatus] = useState<{ configured: boolean; missing?: string[] } | null>(null)
+  const [igOauthLoading, setIgOauthLoading] = useState(false)
   const [fbStatusOpen, setFbStatusOpen] = useState(false)
   const [fbDialogOpen, setFbDialogOpen] = useState(false)
   const [igAccessToken, setIgAccessToken] = useState('')
@@ -507,6 +509,51 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     }
   }, [igAccessToken, instagram?.businessAccountId, instagram?.connected])
 
+  const loadInstagramOauthStatus = useCallback(async () => {
+    setIgOauthLoading(true)
+    try {
+      const res = await fetch('/api/instagram/oauth/status', { credentials: 'include', headers: { accept: 'application/json' } })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.ok) {
+        setIgOauthStatus({ configured: Boolean(data?.configured), missing: data?.missing || [] })
+      } else {
+        setIgOauthStatus({ configured: false, missing: ['oauth_status_failed'] })
+      }
+    } catch {
+      setIgOauthStatus({ configured: false, missing: ['oauth_status_failed'] })
+    } finally {
+      setIgOauthLoading(false)
+    }
+  }, [])
+
+  const startInstagramOAuth = useCallback(() => {
+    const w = 520
+    const h = 720
+    const left = Math.max(0, Math.floor((window.screen.width - w) / 2))
+    const top = Math.max(0, Math.floor((window.screen.height - h) / 2))
+    const popup = window.open('/api/instagram/oauth/start', 'instagram_oauth', `width=${w},height=${h},left=${left},top=${top}`)
+    if (!popup) {
+      toast.error('Pop-up bloqueado. Permita pop-ups e tente novamente.')
+      return
+    }
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return
+      if (ev.data?.type === 'instagram:connected' && ev.data?.ok) {
+        toast.success('Instagram conectado')
+        void refreshInstagram()
+        setIgDialogOpen(false)
+        window.removeEventListener('message', onMsg)
+      }
+    }
+    window.addEventListener('message', onMsg)
+    const timer = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(timer)
+        window.removeEventListener('message', onMsg)
+      }
+    }, 500)
+  }, [refreshInstagram])
+
   const handleConnectInstagram = useCallback(async () => {
     if (!igAccessToken.trim() || !igBusinessId.trim()) {
       toast.error('Informe Access Token e Business Account ID.')
@@ -629,6 +676,12 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
       setIgBusinessId(instagram.businessAccountId)
     }
   }, [instagram?.businessAccountId])
+
+  useEffect(() => {
+    if (igDialogOpen) {
+      void loadInstagramOauthStatus()
+    }
+  }, [igDialogOpen, loadInstagramOauthStatus])
 
   useEffect(() => {
     const nextPageId = String(facebookConfig?.pageId || '')
@@ -1897,27 +1950,49 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
             <DialogHeader>
               <DialogTitle>Conectar Instagram</DialogTitle>
               <DialogDescription>
-                Informe o Access Token e o Business Account ID para habilitar o DM.
+                Conecte sua conta via Meta (recomendado) ou use token manual.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label>Access Token</Label>
-                <Input
-                  value={igAccessToken}
-                  onChange={(e) => setIgAccessToken(e.target.value)}
-                  placeholder="token do Graph API"
-                  className="bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
-                />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={startInstagramOAuth}
+                  disabled={igOauthLoading || Boolean(igOauthStatus && !igOauthStatus.configured)}
+                >
+                  {igOauthLoading ? 'Verificando...' : 'Conectar com Meta (OAuth)'}
+                </Button>
+                {igOauthStatus && !igOauthStatus.configured ? (
+                  <div className="text-xs text-red-200/80">
+                    OAuth não configurado: {(igOauthStatus.missing || []).join(', ')}
+                  </div>
+                ) : (
+                  <div className="text-xs text-blue-100/70">
+                    Recomendado. Conecta via Meta e salva o token no servidor.
+                  </div>
+                )}
               </div>
-              <div className="space-y-1">
-                <Label>Business Account ID</Label>
-                <Input
-                  value={igBusinessId}
-                  onChange={(e) => setIgBusinessId(e.target.value)}
-                  placeholder="id da conta instagram"
-                  className="bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
-                />
+              <div className="border-t border-white/10" />
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>Access Token</Label>
+                  <Input
+                    value={igAccessToken}
+                    onChange={(e) => setIgAccessToken(e.target.value)}
+                    placeholder="token do Graph API"
+                    className="bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Business Account ID</Label>
+                  <Input
+                    value={igBusinessId}
+                    onChange={(e) => setIgBusinessId(e.target.value)}
+                    placeholder="id da conta instagram"
+                    className="bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+                  />
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-2">

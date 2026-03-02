@@ -62,6 +62,12 @@ export default defineConfig({
             res.end('{"ok":true,"connected":false}')
             return
           }
+          if (req.url.startsWith('/api/instagram/oauth/status')) {
+            res.statusCode = 200
+            res.setHeader('content-type', 'application/json')
+            res.end('{"ok":true,"configured":false,"missing":["META_APP_ID","META_APP_SECRET","META_OAUTH_STATE_SECRET"]}')
+            return
+          }
           next()
         })
       },
@@ -83,6 +89,12 @@ export default defineConfig({
             res.statusCode = 200
             res.setHeader('content-type', 'application/json')
             res.end('{"ok":true,"connected":false}')
+            return
+          }
+          if (req.url.startsWith('/api/instagram/oauth/status')) {
+            res.statusCode = 200
+            res.setHeader('content-type', 'application/json')
+            res.end('{"ok":true,"configured":false,"missing":["META_APP_ID","META_APP_SECRET","META_OAUTH_STATE_SECRET"]}')
             return
           }
           next()
