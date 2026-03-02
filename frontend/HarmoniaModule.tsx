@@ -23,6 +23,7 @@ type HarmoniaHealth = {
     dbConfigured?: boolean
     googleConfigured?: boolean
     openAiConfigured?: boolean
+    execTokenConfigured?: boolean
     autoMigrate?: boolean
     storeRaw?: boolean
   }
