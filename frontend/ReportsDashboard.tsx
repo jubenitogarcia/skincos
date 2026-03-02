@@ -123,8 +123,7 @@ export function ReportsDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads'
       .finally(() => setMetaLoading(false))
   }, [mode])
 
-  if (mode === 'meta-ads') {
-    return (
+  const metaAdsView = (
       <div className="space-y-6">
         <Card>
           <CardHeader>
@@ -181,8 +180,7 @@ export function ReportsDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads'
           </Card>
         )}
       </div>
-    )
-  }
+  )
 
   // Report Templates
   const reportTemplates: ReportTemplate[] = [
@@ -340,6 +338,10 @@ export function ReportsDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads'
       setReports(sampleReports)
     }
   }, [reports.length, setReports])
+
+  if (mode === 'meta-ads') {
+    return metaAdsView
+  }
 
   const handleCreateReport = (templateId?: string) => {
     const template = templateId ? reportTemplates.find(t => t.id === templateId) : null

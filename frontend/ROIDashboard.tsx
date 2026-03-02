@@ -101,11 +101,10 @@ export function ROIDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads' }) 
       .finally(() => setMetaLoading(false))
   }, [mode])
 
-  if (mode === 'meta-ads') {
-    const spend = metaMetrics?.summary.spend ?? 0
-    const revenue = metaMetrics?.summary.revenue ?? 0
-    const roiPct = spend > 0 ? ((revenue - spend) / spend) * 100 : 0
-    return (
+  const spend = metaMetrics?.summary.spend ?? 0
+  const revenue = metaMetrics?.summary.revenue ?? 0
+  const roiPct = spend > 0 ? ((revenue - spend) / spend) * 100 : 0
+  const metaAdsView = (
       <div className="space-y-6">
         <Card>
           <CardHeader>
@@ -136,8 +135,7 @@ export function ROIDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads' }) 
           <div className="text-sm text-muted-foreground">Carregando...</div>
         ) : null}
       </div>
-    )
-  }
+  )
 
   // Initialize ROI data
   const [roiMetrics, setROIMetrics] = useKV<ROIMetric[]>("roi-metrics", [])
@@ -304,6 +302,10 @@ export function ROIDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads' }) 
       case 'trend': return <TrendUp className="h-4 w-4" />
       default: return <Sparkle className="h-4 w-4" />
     }
+  }
+
+  if (mode === 'meta-ads') {
+    return metaAdsView
   }
 
   return (
