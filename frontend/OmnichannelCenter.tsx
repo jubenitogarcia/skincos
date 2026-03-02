@@ -1012,17 +1012,49 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     }
   }, [pollChannelQR])
 
+  const resolveNextWhatsAppChannel = useCallback(() => {
+    const instances = orchestratorStatus?.instances ?? []
+    const sorted = [...instances].sort((a, b) => a.channel - b.channel)
+
+    const pending = sorted.find((instance) => instance.status === 'qr_pending' || instance.status === 'starting')
+    if (pending) {
+      return { channel: pending.channel, action: 'poll' as const }
+    }
+
+    const free = sorted.find((instance) => instance.status === 'free')
+    if (free) {
+      return { channel: free.channel, action: 'start' as const }
+    }
+
+    const freeFromList = [...(orchestratorStatus?.freeChannelsList ?? [])].sort((a, b) => a - b)[0]
+    if (freeFromList) {
+      return { channel: freeFromList, action: 'start' as const }
+    }
+
+    const availableFromList = [...(orchestratorStatus?.availableChannelsList ?? [])].sort((a, b) => a - b)[0]
+    if (availableFromList) {
+      return { channel: availableFromList, action: 'start' as const }
+    }
+
+    return null
+  }, [orchestratorStatus])
+
   const connectWhatsApp = useCallback(async () => {
-    const freeChannel =
-      orchestratorStatus?.freeChannelsList?.[0] ??
-      orchestratorStatus?.instances?.find((instance) => instance.status === 'free')?.channel
-    if (!freeChannel) {
+    const next = resolveNextWhatsAppChannel()
+    if (!next?.channel) {
       toast.error('Nenhum canal livre disponível.')
       return
     }
-    await startChannel(freeChannel)
-    setQrDialogChannel(freeChannel)
-  }, [orchestratorStatus, startChannel])
+
+    setQrDialogChannel(next.channel)
+
+    if (next.action === 'poll') {
+      pollChannelQR(next.channel)
+      return
+    }
+
+    await startChannel(next.channel)
+  }, [pollChannelQR, resolveNextWhatsAppChannel, startChannel])
 
   const createTicket = () => {
     if (newTicket.subject && newTicket.customer && newTicket.customerEmail) {
