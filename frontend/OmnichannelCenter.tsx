@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Badge } from "@/badge"
 import { Button } from "@/button"
@@ -202,6 +203,45 @@ function namesMatch(a?: string | null, b?: string | null) {
   return tokensA.some((t) => tokensB.includes(t))
 }
 
+function isLikelyWhatsAppJid(value?: string | null) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return false
+  if (raw.includes('@s.whatsapp.net') || raw.includes('@g.us')) return true
+  const digits = normalizePhone(raw)
+  if (digits.length >= 10 && digits === raw.replace(/\D+/g, '')) return true
+  return false
+}
+
+function formatPhone(value?: string | null) {
+  const digits = normalizePhone(value)
+  if (!digits) return ''
+  if (digits.startsWith('55') && digits.length >= 12) {
+    const area = digits.slice(2, 4)
+    const rest = digits.slice(4)
+    if (rest.length === 9) return `+55 (${area}) ${rest.slice(0, 5)}-${rest.slice(5)}`
+    if (rest.length === 8) return `+55 (${area}) ${rest.slice(0, 4)}-${rest.slice(4)}`
+    return `+55 (${area}) ${rest}`
+  }
+  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+  if (digits.length === 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`
+  return digits
+}
+
+function resolveConversationDisplayName(conv: any) {
+  const rawName = conv?.leadName || conv?.name || conv?.contact_display_name || ''
+  if (rawName && !isLikelyWhatsAppJid(rawName)) return rawName
+  const phoneCandidate =
+    conv?.phone ||
+    conv?.leadPhone ||
+    conv?.contactPhone ||
+    conv?.contact_phone ||
+    conv?.contact_phone_raw ||
+    conv?.conversationId
+  const formatted = formatPhone(phoneCandidate)
+  if (formatted) return formatted
+  return rawName || conv?.conversationId || 'Contato'
+}
+
 function fmtDateTime(iso?: string | null) {
   if (!iso) return '—'
   try {
@@ -229,6 +269,115 @@ function resolveMessageCaption(message: HarmoniaMessage) {
   if (text) return text
   const caption = String(message?.caption || '').trim()
   return caption || ''
+}
+
+function resolveReplyPreview(raw?: string | null, fallback?: string | null) {
+  const text = String(raw || fallback || '').trim()
+  if (!text) return 'Mensagem'
+  if (text.length <= 140) return text
+  return `${text.slice(0, 137)}…`
+}
+
+function formatReplyPrefix(text: string) {
+  const preview = resolveReplyPreview(text, '')
+  return `↪ ${preview}`
+}
+
+function resolveAvatarUrl(conv: any) {
+  return (
+    conv?.profilePic ||
+    conv?.profilePicUrl ||
+    conv?.profile_picture_url ||
+    conv?.avatarUrl ||
+    conv?.photoUrl ||
+    conv?.photo ||
+    ''
+  )
+}
+
+function getInitials(value?: string | null) {
+  const text = String(value || '').trim()
+  if (!text) return 'U'
+  const parts = text.split(/\s+/).filter(Boolean)
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+}
+
+function renderAvatar(conv: any, size = 36) {
+  const name = resolveConversationDisplayName(conv)
+  const src = resolveAvatarUrl(conv)
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        className="rounded-full object-cover"
+        style={{ width: size, height: size }}
+      />
+    )
+  }
+  return (
+    <div
+      className="rounded-full bg-white/10 text-xs font-semibold text-blue-100 flex items-center justify-center"
+      style={{ width: size, height: size }}
+    >
+      {getInitials(name)}
+    </div>
+  )
+}
+
+function renderFormattedText(input?: string | null): ReactNode {
+  const text = String(input || '')
+  if (!text) return null
+
+  const tokens: ReactNode[] = []
+  const pattern = /```([\s\S]*?)```|`([^`]+)`|\*([^*]+)\*|_([^_]+)_|~([^~]+)~/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  const pushPlain = (value: string) => {
+    if (!value) return
+    const parts = value.split('\n')
+    parts.forEach((part, idx) => {
+      if (idx > 0) tokens.push(<br key={`br-${tokens.length}`} />)
+      if (part) tokens.push(part)
+    })
+  }
+
+  while ((match = pattern.exec(text)) !== null) {
+    const [full, blockCode, inlineCode, bold, italic, strike] = match
+    if (match.index > lastIndex) {
+      pushPlain(text.slice(lastIndex, match.index))
+    }
+    if (blockCode) {
+      tokens.push(
+        <pre key={`codeblock-${tokens.length}`} className="whitespace-pre-wrap rounded-lg bg-black/40 p-2 text-xs text-blue-100">
+          <code>{blockCode}</code>
+        </pre>
+      )
+    } else if (inlineCode) {
+      tokens.push(
+        <code key={`incode-${tokens.length}`} className="rounded bg-black/30 px-1 py-0.5 text-[11px] text-blue-100">
+          {inlineCode}
+        </code>
+      )
+    } else if (bold) {
+      tokens.push(<strong key={`bold-${tokens.length}`}>{bold}</strong>)
+    } else if (italic) {
+      tokens.push(<em key={`italic-${tokens.length}`}>{italic}</em>)
+    } else if (strike) {
+      tokens.push(<del key={`strike-${tokens.length}`}>{strike}</del>)
+    } else {
+      pushPlain(full)
+    }
+    lastIndex = match.index + full.length
+  }
+
+  if (lastIndex < text.length) {
+    pushPlain(text.slice(lastIndex))
+  }
+
+  return <>{tokens}</>
 }
 
 export function OmnichannelCenter({ activities, onStartConversation }: OmnichannelCenterProps) {
@@ -274,12 +423,20 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   const [selectedConversation, setSelectedConversation] = useState<any | null>(null)
   const [messages, setMessages] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [conversationFilter, setConversationFilter] = useState<'all' | 'unread' | 'labels' | 'favorites' | 'communities' | 'groups' | 'archived'>('all')
   const [loadingConversations, setLoadingConversations] = useState(false)
   const [conversationsFailureCount, setConversationsFailureCount] = useState(0)
   const [conversationsPausedUntil, setConversationsPausedUntil] = useState<number | null>(null)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sendingMessage, setSendingMessage] = useState(false)
   const [messageInput, setMessageInput] = useState('')
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const [replyTarget, setReplyTarget] = useState<{
+    id: string
+    text: string
+    direction?: string
+    platform?: string
+  } | null>(null)
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
   const [statusFailureCount, setStatusFailureCount] = useState(0)
   const [statusPausedUntil, setStatusPausedUntil] = useState<number | null>(null)
@@ -590,14 +747,19 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   }, [fbAccessToken, fbPageId, setSystemConfig])
 
   const sendMessage = useCallback(async () => {
-    if (!selectedConversation || !messageInput.trim()) return
+    if (!selectedConversation) return
+    const trimmed = messageInput.trim()
+    if (!trimmed) return
     const isLeadOnly = selectedConversation?.platform === 'lead'
     setSendingMessage(true)
     try {
+      const outboundText = replyTarget
+        ? `${formatReplyPrefix(replyTarget.text)}\n${trimmed}`
+        : trimmed
       if (selectedConversation?.platform === 'instagram') {
         const sent = await sendDirectMessage(
           selectedConversation.conversationId,
-          messageInput.trim(),
+          outboundText,
           instagram.businessAccountId,
           igAccessToken || undefined
         )
@@ -629,14 +791,14 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
           {
             method: 'POST',
             headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ text: messageInput })
+            body: JSON.stringify({ text: outboundText })
           }
         )
         await res.json().catch(() => ({}))
         if (isLeadOnly) {
           setHarmoniaMessages((prev) => [
             ...prev,
-            { id: `out-${Date.now()}`, direction: 'outbound', text: messageInput, created_at: new Date().toISOString() }
+            { id: `out-${Date.now()}`, direction: 'outbound', text: outboundText, created_at: new Date().toISOString() }
           ])
         }
       } else if (isLeadOnly) {
@@ -646,18 +808,19 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         const res = await fetch(`/api/conversations/${encodeURIComponent(selectedConversation.conversationId)}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ direction: 'outbound', type: 'text', text: messageInput })
+          body: JSON.stringify({ direction: 'outbound', type: 'text', text: outboundText })
         })
         await res.json().catch(() => ({}))
       }
       setMessageInput('')
+      setReplyTarget(null)
       if (selectedConversation?.platform !== 'instagram' && !isLeadOnly) {
         loadMessages(selectedConversation)
       }
     } finally {
       setSendingMessage(false)
     }
-  }, [igAccessToken, instagram.businessAccountId, loadMessages, messageInput, provider, selectedConversation, orchestratorStatus])
+  }, [igAccessToken, instagram.businessAccountId, loadMessages, messageInput, provider, selectedConversation, orchestratorStatus, replyTarget])
 
   useEffect(() => {
     loadStatus()
@@ -707,11 +870,30 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   }, [loadStatus])
 
   useEffect(() => {
+    if (!qrDialogChannel || !orchestratorStatus?.instances?.length) return
+    const instance = orchestratorStatus.instances.find((item) => item.channel === qrDialogChannel)
+    if (instance?.status === 'connected') {
+      const timer = qrPollingRef.current.get(qrDialogChannel)
+      if (timer) {
+        window.clearTimeout(timer)
+        qrPollingRef.current.delete(qrDialogChannel)
+      }
+      toast.success(`WhatsApp conectado no canal ${qrDialogChannel}`)
+      setQrDialogChannel(null)
+      setWaStatusOpen(false)
+    }
+  }, [orchestratorStatus, qrDialogChannel])
+
+  useEffect(() => {
     if (selectedConversation?.platform === 'instagram') {
       const convo = igDMs[selectedConversation.conversationId] || []
       setMessages(convo)
     }
   }, [igDMs, selectedConversation])
+
+  useEffect(() => {
+    setReplyTarget(null)
+  }, [selectedConversation?.conversationId, selectedConversation?.channel])
 
   useEffect(() => {
     return () => {
@@ -1166,6 +1348,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     const whatsappItems = (conversations || []).map((conv) => ({
       ...conv,
       platform: conv.platform || (provider === 'evolution' ? 'whatsapp' : provider),
+      name: conv.name && !isLikelyWhatsAppJid(conv.name) ? conv.name : undefined,
       phone: conv.phone || conv.contactPhone || conv.contact_phone || conv.contact_phone_raw,
     }))
 
@@ -1176,6 +1359,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
       return {
         conversationId: userId,
         name,
+        profilePic: profile?.profilePic,
         platform: 'instagram',
         lastMessage: last?.text || 'Sem mensagens',
         updatedAt: last?.timestamp || new Date().toISOString(),
@@ -1273,8 +1457,38 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
 
   const filteredConversations = useMemo(() => {
     const term = searchQuery.trim().toLowerCase()
-    if (!term) return combinedConversations
-    return combinedConversations.filter((conv) => {
+    const matchesFilter = (conv: any) => {
+      if (conversationFilter === 'all') return true
+      const unreadCount = Number(conv?.unreadCount ?? conv?.unreadMessages ?? conv?.unread_messages ?? 0)
+      const labels = conv?.labels || conv?.tags || conv?.etiquetas || []
+      const hasLabels = Array.isArray(labels) ? labels.length > 0 : Boolean(labels)
+      const isFavorite = Boolean(conv?.isFavorite || conv?.favorite || conv?.starred)
+      const isArchived = Boolean(conv?.archived || conv?.isArchived)
+      const jid = String(conv?.conversationId || '')
+      const isGroup = Boolean(conv?.isGroup || conv?.group || conv?.type === 'group' || jid.includes('@g.us'))
+      const isCommunity = Boolean(conv?.isCommunity || conv?.community || conv?.type === 'community')
+
+      switch (conversationFilter) {
+        case 'unread':
+          return unreadCount > 0
+        case 'labels':
+          return hasLabels
+        case 'favorites':
+          return isFavorite
+        case 'communities':
+          return isCommunity
+        case 'groups':
+          return isGroup
+        case 'archived':
+          return isArchived
+        default:
+          return true
+      }
+    }
+
+    const scoped = combinedConversations.filter(matchesFilter)
+    if (!term) return scoped
+    return scoped.filter((conv) => {
       const searchable = [
         conv.name,
         conv.phone,
@@ -1290,7 +1504,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         .toLowerCase()
       return searchable.includes(term)
     })
-  }, [combinedConversations, searchQuery])
+  }, [combinedConversations, conversationFilter, searchQuery])
 
   const whatsappPalette = [
     'text-emerald-300',
@@ -1454,6 +1668,27 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                   <CardTitle className="text-lg text-white">Conversas</CardTitle>
                 </CardHeader>
                 <CardContent>
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    {[
+                      { id: 'all', label: 'Todas' },
+                      { id: 'unread', label: 'Não lidas' },
+                      { id: 'labels', label: 'Etiquetas' },
+                      { id: 'favorites', label: 'Favoritos' },
+                      { id: 'communities', label: 'Comunidades' },
+                      { id: 'groups', label: 'Grupos' },
+                      { id: 'archived', label: 'Arquivadas' }
+                    ].map((item) => (
+                      <Button
+                        key={item.id}
+                        size="sm"
+                        variant={conversationFilter === item.id ? 'default' : 'outline'}
+                        className="h-7 rounded-full px-3 text-xs"
+                        onClick={() => setConversationFilter(item.id as any)}
+                      >
+                        {item.label}
+                      </Button>
+                    ))}
+                  </div>
                   <div className="mb-3">
                     <Input
                       placeholder="Buscar por nome, telefone, perfil ou plataforma"
@@ -1508,7 +1743,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                             <div className="mt-1">{getPlatformIcon(conv.platform || conv.channel || conv.type, conv.channel)}</div>
                             <div className="min-w-0 flex-1">
                               <div className="text-sm font-medium text-white truncate">
-                                {conv.name || conv.conversationId}
+                                {resolveConversationDisplayName(conv)}
                               </div>
                               {conv.leadId ? (
                                 <div className="mt-1 inline-flex items-center gap-2 text-[11px] text-emerald-200">
@@ -1521,6 +1756,9 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                               <div className="text-xs text-blue-100/70 truncate mt-1">
                                 {conv.lastMessage || 'Sem mensagens'}
                               </div>
+                            </div>
+                            <div className="ml-2 shrink-0">
+                              {renderAvatar(conv, 34)}
                             </div>
                           </div>
                         </div>
@@ -1544,9 +1782,16 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
 
               <Card className="glass-card xl:col-span-8">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg text-white">
-                    {selectedConversation ? selectedConversation.name || selectedConversation.conversationId : 'Selecione uma conversa'}
-                  </CardTitle>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="text-lg text-white">
+                      {selectedConversation ? resolveConversationDisplayName(selectedConversation) : 'Selecione uma conversa'}
+                    </CardTitle>
+                    {selectedConversation ? (
+                      <div className="shrink-0">
+                        {renderAvatar(selectedConversation, 40)}
+                      </div>
+                    ) : null}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {selectedConversation ? (
@@ -1626,10 +1871,20 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                                 const isInbound = dir === 'inbound'
                                 const mediaLabel = resolveMediaLabel(m)
                                 const caption = resolveMessageCaption(m)
+                                const replyPreview = resolveReplyPreview(caption, mediaLabel || 'Mensagem')
                                 return (
                                   <div
                                     key={String(m.id || m.provider_message_id || Math.random())}
                                     className={`rounded-xl border ${isInbound ? 'border-sky-500/20 bg-sky-500/10' : 'border-emerald-500/20 bg-emerald-500/10'} p-3`}
+                                    onDoubleClick={() => {
+                                      setReplyTarget({
+                                        id: String(m.id || m.provider_message_id || ''),
+                                        text: replyPreview,
+                                        direction: dir,
+                                        platform: 'lead'
+                                      })
+                                      messageInputRef.current?.focus()
+                                    }}
                                   >
                                     <div className="flex items-center justify-between gap-3 text-xs">
                                       <div className="text-white/90 font-semibold">
@@ -1644,7 +1899,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                                         </Badge>
                                       ) : null}
                                       <div className="text-sm text-white whitespace-pre-wrap break-words">
-                                        {caption ? caption : <span className="text-white/60">—</span>}
+                                        {caption ? renderFormattedText(caption) : <span className="text-white/60">—</span>}
                                       </div>
                                     </div>
                                   </div>
@@ -1659,11 +1914,23 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                               {messages.map((msg) => {
                                 const outbound = msg.direction === 'outbound' || msg.direction === 'human'
                                 const ts = msg.createdAt || msg.timestamp
+                                const replyPreview = resolveReplyPreview(msg.text, msg.caption || msg.type)
                                 return (
                                   <div key={msg.id} className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[70%] p-3 rounded-lg ${outbound ? 'bg-blue-500/40 text-white' : 'bg-white/10 text-blue-100'}`}>
+                                    <div
+                                      className={`max-w-[70%] p-3 rounded-lg ${outbound ? 'bg-blue-500/40 text-white' : 'bg-white/10 text-blue-100'}`}
+                                      onDoubleClick={() => {
+                                        setReplyTarget({
+                                          id: String(msg.id || ''),
+                                          text: replyPreview,
+                                          direction: msg.direction,
+                                          platform: msg.platform
+                                        })
+                                        messageInputRef.current?.focus()
+                                      }}
+                                    >
                                       <div className="text-sm">
-                                        {msg.text || msg.caption || `[${msg.type}]`}
+                                        {renderFormattedText(msg.text || msg.caption || `[${msg.type}]`)}
                                       </div>
                                       <div className={`text-xs mt-1 ${outbound ? 'text-blue-100/80' : 'text-blue-100/60'}`}>
                                         {ts ? new Date(ts).toLocaleTimeString() : ''}
@@ -1677,11 +1944,29 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                         </div>
                       </ScrollArea>
 
+                      {replyTarget && (
+                        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-blue-100/70">
+                          <div className="truncate">
+                            Respondendo: <span className="text-white/90">{replyTarget.text}</span>
+                          </div>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6"
+                            onClick={() => setReplyTarget(null)}
+                            aria-label="Cancelar resposta"
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      )}
+
                       <div className="flex gap-2">
                         <Textarea
                           placeholder="Digite sua mensagem..."
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
+                          ref={messageInputRef}
                           className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
                           rows={2}
                           onKeyDown={(e) => {
