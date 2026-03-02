@@ -772,6 +772,7 @@ app.use('/api/meta-ads', createProxyMiddleware({
 // Cloudflare target (default production). Override for local testing.
 const isLocalEnv = String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
 const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || (isLocalEnv ? 'http://127.0.0.1:8787' : 'https://api.skincos.com.br')
+const LOCAL_INSUMOS_AUTH_STUB = isLocalEnv && String(process.env.NO_AUTH || '').toLowerCase() === 'true'
 
 function isLocalSafeMode() {
     // In local/dev, default to read-only for upstream production APIs unless explicitly allowed.
@@ -817,6 +818,21 @@ app.get('/api/insumos/_proxy-status', (_req, res) => {
         mutationsBlocked: safe && prod
     })
 })
+
+if (LOCAL_INSUMOS_AUTH_STUB) {
+    app.get('/api/insumos/auth/me', async (req, res) => {
+        const user = await resolveCrmUser(req).catch(() => null)
+        return res.status(200).set('cache-control', 'no-store').json({
+            success: true,
+            user: {
+                username: user?.username || user?.email || 'local-admin',
+                role: user?.role || 'ADMIN',
+                allowedUnits: Array.isArray(user?.allowedUnits) ? user.allowedUnits : ['novo-hamburgo']
+            },
+            csrfToken: 'local-dev'
+        })
+    })
+}
 
 app.use('/api/insumos', blockUpstreamMutationsIfNeeded(INSUMOS_API_TARGET))
 app.use('/api/insumos', createProxyMiddleware({

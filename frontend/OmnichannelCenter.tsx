@@ -2178,7 +2178,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         className={`h-7 rounded-full border px-2.5 text-[11px] font-semibold leading-none ${
                           conversationFilter === item.id
                             ? 'border-blue-300/60 bg-blue-500/35 text-white'
-                            : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/15 hover:text-white'
+                            : 'border-white/25 bg-white/15 text-white hover:bg-white/20 hover:text-white'
                         }`}
                         onClick={() => setConversationFilter(item.id as any)}
                       >
@@ -2192,8 +2192,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="h-9 bg-white/10 border-white/15 text-white placeholder:text-blue-100/55"
                   />
-                      <div className="flex-1 min-h-0 overflow-y-auto pr-2">
-                        <div className="space-y-1.5 pb-1">
+                      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-0">
+                        <div className="space-y-1.5 pb-1 pr-2">
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                       )}
@@ -2214,7 +2214,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         <div
                           key={`${conv.conversationId}-${conv.channel ?? conv.platform ?? ''}`}
                           data-testid="conversation-item"
-                          className={`w-full min-w-0 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white/10 ${
+                          className={`mx-0.5 box-border w-[calc(100%-4px)] min-w-0 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white/10 ${
                             selectedConversation?.conversationId === conv.conversationId &&
                             selectedConversation?.channel === conv.channel
                               ? 'border-blue-500/70 bg-blue-500/15'
