@@ -287,6 +287,10 @@ export function SystemConfiguration() {
         harmonia: {
           debugToken: '',
           execToken: ''
+        },
+        facebook: {
+          pageId: '',
+          accessToken: ''
         }
       },
       advanced: {

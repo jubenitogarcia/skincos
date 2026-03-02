@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useKV } from '@/spark-mock'
+import { metaAdsApi } from '@/metaAdsApi'
+import { MetaMetricsSchema, type MetaMetrics } from '@/metaMetrics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Button } from "@/button"
 import { Badge } from "@/badge"
@@ -64,69 +66,142 @@ interface PredictiveInsight {
   timeframe: string
 }
 
-export function ROIDashboard() {
+export function ROIDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads' }) {
   const [selectedPeriod, setSelectedPeriod] = useState("month")
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [activeView, setActiveView] = useState("overview")
+  const [metaMetrics, setMetaMetrics] = useState<MetaMetrics | null>(null)
+  const [metaError, setMetaError] = useState<string | null>(null)
+  const [metaLoading, setMetaLoading] = useState(false)
+
+  useEffect(() => {
+    if (mode !== 'meta-ads') return
+    const { since, until } = (() => {
+      const end = new Date()
+      const start = new Date(end)
+      start.setDate(end.getDate() - 6)
+      const toYmd = (d: Date) => d.toISOString().slice(0, 10)
+      return { since: toYmd(start), until: toYmd(end) }
+    })()
+    setMetaLoading(true)
+    setMetaError(null)
+    metaAdsApi.summary({ since, until })
+      .then((sum: any) => {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        const revenue = Number(sum?.spend || 0) * Number(sum?.roas || 0)
+        const parsed = MetaMetricsSchema.parse({
+          platform: 'meta-ads',
+          currency: 'USD',
+          period: { since, until, timezone: tz },
+          summary: { ...sum, revenue },
+        })
+        setMetaMetrics(parsed)
+      })
+      .catch((e) => setMetaError(e?.message || 'Falha ao carregar ROI Meta Ads'))
+      .finally(() => setMetaLoading(false))
+  }, [mode])
+
+  if (mode === 'meta-ads') {
+    const spend = metaMetrics?.summary.spend ?? 0
+    const revenue = metaMetrics?.summary.revenue ?? 0
+    const roiPct = spend > 0 ? ((revenue - spend) / spend) * 100 : 0
+    return (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>ROI Meta Ads</CardTitle>
+            <CardDescription>Estimado a partir de spend e ROAS.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-3">
+            <div>
+              <div className="text-xs text-muted-foreground">Investimento</div>
+              <div className="text-2xl font-semibold">{spend}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Receita estimada</div>
+              <div className="text-2xl font-semibold">{revenue}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">ROI</div>
+              <div className="text-2xl font-semibold">{roiPct.toFixed(1)}%</div>
+            </div>
+          </CardContent>
+        </Card>
+        {metaError ? (
+          <Card className="border-red-500/30 bg-red-500/10">
+            <CardContent className="pt-4 text-sm text-red-200">{metaError}</CardContent>
+          </Card>
+        ) : null}
+        {metaLoading ? (
+          <div className="text-sm text-muted-foreground">Carregando...</div>
+        ) : null}
+      </div>
+    )
+  }
 
   // Initialize ROI data
-  const [roiMetrics, setROIMetrics] = useKV<ROIMetric[]>("roi-metrics", [
-    {
-      id: "1",
-      category: "Marketing Digital",
-      investment: 25000,
-      revenue: 95000,
-      roi: 280,
-      period: "Q1 2024",
-      status: "positive",
-      trend: "up",
-      details: "Campanhas de Google Ads e Facebook"
-    },
-    {
-      id: "2",
-      category: "CRM Software",
-      investment: 15000,
-      revenue: 85000,
-      roi: 467,
-      period: "Q1 2024",
-      status: "positive",
-      trend: "up",
-      details: "Licenças e implementação"
-    },
-    {
-      id: "3",
-      category: "Treinamento Equipe",
-      investment: 8000,
-      revenue: 45000,
-      roi: 463,
-      period: "Q1 2024",
-      status: "positive",
-      trend: "stable",
-      details: "Capacitação em vendas consultivas"
-    },
-    {
-      id: "4",
-      category: "Automação Marketing",
-      investment: 12000,
-      revenue: 68000,
-      roi: 467,
-      period: "Q1 2024",
-      status: "positive",
-      trend: "up",
-      details: "Ferramentas de email marketing e lead nurturing"
-    },
-    {
-      id: "5",
-      category: "IA e Analytics",
-      investment: 18000,
-      revenue: 125000,
-      roi: 594,
-      period: "Q1 2024",
-      status: "positive",
-      trend: "up",
-      details: "Implementação de chatbots e análise preditiva"
-    }
-  ])
+  const [roiMetrics, setROIMetrics] = useKV<ROIMetric[]>("roi-metrics", [])
+
+  useEffect(() => {
+    if (roiMetrics.length) return
+    setROIMetrics([
+      {
+        id: "1",
+        category: "Marketing Digital",
+        investment: 25000,
+        revenue: 95000,
+        roi: 280,
+        period: "Q1 2024",
+        status: "positive",
+        trend: "up",
+        details: "Campanhas de Google Ads e Facebook"
+      },
+      {
+        id: "2",
+        category: "CRM Software",
+        investment: 15000,
+        revenue: 85000,
+        roi: 467,
+        period: "Q1 2024",
+        status: "positive",
+        trend: "up",
+        details: "Licenças e implementação"
+      },
+      {
+        id: "3",
+        category: "Treinamento Equipe",
+        investment: 8000,
+        revenue: 45000,
+        roi: 463,
+        period: "Q1 2024",
+        status: "positive",
+        trend: "stable",
+        details: "Capacitação em vendas consultivas"
+      },
+      {
+        id: "4",
+        category: "Automação Marketing",
+        investment: 12000,
+        revenue: 68000,
+        roi: 467,
+        period: "Q1 2024",
+        status: "positive",
+        trend: "up",
+        details: "Ferramentas de email marketing e lead nurturing"
+      },
+      {
+        id: "5",
+        category: "IA e Analytics",
+        investment: 18000,
+        revenue: 125000,
+        roi: 594,
+        period: "Q1 2024",
+        status: "positive",
+        trend: "up",
+        details: "Implementação de chatbots e análise preditiva"
+      }
+    ])
+  }, [roiMetrics.length, setROIMetrics])
 
   // Calculate financial analysis
   const financialAnalysis: FinancialAnalysis = {
