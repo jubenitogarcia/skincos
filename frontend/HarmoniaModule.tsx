@@ -229,10 +229,15 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
     setLoading(true)
     setError(null)
     try {
-      const [h, u, s] = await Promise.all([
-        apiJson<HarmoniaHealth>('/api/harmonia/health'),
-        apiJson<{ ok: boolean; data?: HarmoniaUnit[] }>('/api/harmonia/units').catch((e) => ({ ok: false, data: [], __err: e } as any)),
-        apiJson<{ ok: boolean; data?: HarmoniaTaskStats }>('/api/harmonia/tasks/stats').catch((e) => ({ ok: false, data: null, __err: e } as any)),
+      const h = await apiJson<HarmoniaHealth>('/api/harmonia/health')
+      const dbConfigured = Boolean(h?.harmonia?.dbConfigured)
+      const [u, s] = await Promise.all([
+        dbConfigured
+          ? apiJson<{ ok: boolean; data?: HarmoniaUnit[] }>('/api/harmonia/units').catch((e) => ({ ok: false, data: [], __err: e } as any))
+          : Promise.resolve({ ok: true, data: [] } as { ok: boolean; data?: HarmoniaUnit[] }),
+        dbConfigured
+          ? apiJson<{ ok: boolean; data?: HarmoniaTaskStats }>('/api/harmonia/tasks/stats').catch((e) => ({ ok: false, data: null, __err: e } as any))
+          : Promise.resolve({ ok: true, data: null } as { ok: boolean; data?: HarmoniaTaskStats | null }),
       ])
       setHealth(h || null)
       setUnits(Array.isArray((u as any)?.data) ? (u as any).data : [])
