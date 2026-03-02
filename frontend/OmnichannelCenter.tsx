@@ -4,7 +4,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/car
 import { Badge } from "@/badge"
 import { Button } from "@/button"
 import { Input } from "@/input"
-import { ScrollArea } from "@/scroll-area"
 import { Textarea } from "@/textarea"
 import { Label } from "@/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/select"
@@ -819,8 +818,15 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     if (statusPausedUntil && Date.now() < statusPausedUntil) return
     try {
       const res = await fetch('/api/wa-orchestrator/status', { headers: buildCrmBasicAuthHeaders() })
+      if (res.status === 304) {
+        setStatusFailureCount(0)
+        setStatusPausedUntil(null)
+        return
+      }
       const data = await res.json().catch(() => null)
-      if (!res.ok || data?.success === false) return
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.error || `HTTP ${res.status}`)
+      }
       setProvider(data?.provider || null)
       const normalized = normalizeOrchestratorStatus(data)
       setOrchestratorStatus(normalized)
@@ -1486,10 +1492,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
 
   const refreshHarmonia = useCallback(async () => {
     try {
-      const [h, u] = await Promise.all([
-        harmoniaApiJson<HarmoniaHealth>('/api/harmonia/health'),
-        harmoniaApiJson<{ ok: boolean; data?: HarmoniaUnit[] }>('/api/harmonia/units').catch(() => ({ ok: false, data: [] })),
-      ])
+      const h = await harmoniaApiJson<HarmoniaHealth>('/api/harmonia/health')
+      let u: { ok: boolean; data?: HarmoniaUnit[] } = { ok: false, data: [] }
+      if (h?.harmonia?.dbConfigured) {
+        u = await harmoniaApiJson<{ ok: boolean; data?: HarmoniaUnit[] }>('/api/harmonia/units').catch(() => ({ ok: false, data: [] }))
+      }
       setHarmoniaHealth(h || null)
       setHarmoniaUnits(Array.isArray((u as any)?.data) ? (u as any).data : [])
     } catch {
@@ -1670,11 +1677,6 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       }
 
       if (qrDataUrl) {
-        console.info('[WA_QR_DEBUG] pollChannelQR:resolved', {
-          channel,
-          qrType: String(result.qr || '').startsWith('data:image') ? 'image-data-url' : 'raw-text',
-          qrLength: typeof result.qr === 'string' ? result.qr.length : 0
-        })
         setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
       }
     } catch (err: any) {
@@ -1699,11 +1701,6 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           : (/^[A-Za-z0-9+/]+={0,2}$/.test(normalizedQr) && normalizedQr.length > 120)
             ? `data:image/${normalizedQr.startsWith('/9j/') ? 'jpeg' : 'png'};base64,${normalizedQr}`
             : await QRCode.toDataURL(normalizedQr, { width: 300, margin: 2, color: { dark: QR_DARK, light: QR_LIGHT } })
-        console.info('[WA_QR_DEBUG] startChannel:resolved', {
-          channel,
-          qrType: normalizedQr.startsWith('data:image') ? 'image-data-url' : 'raw-text',
-          qrLength: normalizedQr.length
-        })
         setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
       }
       toast.success(`Canal ${channel} iniciado`)
@@ -1894,6 +1891,42 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }),
     [openTicketsModal]
   )
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const action = String((event as CustomEvent<{ action?: string }>)?.detail?.action || '').trim()
+      if (!action) return
+      if (action === 'wa') {
+        setWaStatusOpen(true)
+        return
+      }
+      if (action === 'ig') {
+        setIgStatusOpen(true)
+        return
+      }
+      if (action === 'fb') {
+        setFbStatusOpen(true)
+        return
+      }
+      if (action === 'tickets-total') {
+        openTicketsModal('total')
+        return
+      }
+      if (action === 'tickets-open') {
+        openTicketsModal('open')
+        return
+      }
+      if (action === 'tickets-overdue') {
+        openTicketsModal('overdue')
+        return
+      }
+      if (action === 'tickets-resolved') {
+        openTicketsModal('resolved')
+      }
+    }
+    window.addEventListener('skincos:atendimento:header-action', handler as EventListener)
+    return () => window.removeEventListener('skincos:atendimento:header-action', handler as EventListener)
+  }, [openTicketsModal])
 
   const filteredTickets = useMemo(() => {
     const isOpen = (t: SupportTicket) => ['open', 'in-progress', 'waiting-customer'].includes(t.status)
@@ -2126,9 +2159,9 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           </div>
         ) : null}
         <div className="grid flex-1 min-h-0 grid-cols-1 gap-4 xl:grid-cols-12">
-          <Card className="glass-card xl:col-span-4 flex min-h-0 flex-col">
+          <Card className="glass-card xl:col-span-4 flex min-h-0 flex-col overflow-hidden">
                 <CardContent className="flex min-h-0 flex-col gap-2 pt-4">
-                  <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 p-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 p-1.5">
                     {[
                       { id: 'all', label: 'Todas' },
                       { id: 'unread', label: 'Não lidas' },
@@ -2142,10 +2175,10 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         key={item.id}
                         size="sm"
                         variant="ghost"
-                        className={`h-7 rounded-full border px-2.5 text-[11px] font-medium leading-none ${
+                        className={`h-7 rounded-full border px-2.5 text-[11px] font-semibold leading-none ${
                           conversationFilter === item.id
-                            ? 'border-white/30 bg-white/15 text-white'
-                            : 'border-white/10 bg-white/5 text-blue-100/80 hover:bg-white/10 hover:text-white'
+                            ? 'border-blue-300/60 bg-blue-500/35 text-white'
+                            : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/15 hover:text-white'
                         }`}
                         onClick={() => setConversationFilter(item.id as any)}
                       >
@@ -2157,10 +2190,10 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     placeholder="Buscar por nome, telefone, perfil ou plataforma"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-8 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+                    className="h-9 bg-white/10 border-white/15 text-white placeholder:text-blue-100/55"
                   />
-                      <ScrollArea className="flex-1 min-h-0">
-                        <div className="space-y-1.5 pr-1">
+                      <div className="flex-1 min-h-0 overflow-y-auto pr-2">
+                        <div className="space-y-1.5 pb-1">
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                       )}
@@ -2181,7 +2214,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         <div
                           key={`${conv.conversationId}-${conv.channel ?? conv.platform ?? ''}`}
                           data-testid="conversation-item"
-                          className={`w-full p-3 rounded-lg border cursor-pointer transition-colors hover:bg-white/5 box-border ${
+                          className={`w-full min-w-0 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white/10 ${
                             selectedConversation?.conversationId === conv.conversationId &&
                             selectedConversation?.channel === conv.channel
                               ? 'border-blue-500/70 bg-blue-500/15'
@@ -2233,7 +2266,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         </div>
                       ))}
                         </div>
-                      </ScrollArea>
+                      </div>
                       {harmoniaInboxCursor?.cursorTs && (
                         <div className="pt-3">
                           <Button
@@ -2249,7 +2282,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     </CardContent>
                   </Card>
 
-          <Card className="glass-card xl:col-span-8 flex min-h-0 flex-col">
+          <Card className="glass-card xl:col-span-8 flex min-h-0 flex-col overflow-hidden">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-lg text-white">
@@ -2330,7 +2363,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                       ) : null}
 
                       <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-white/10 bg-white/5 p-4">
-                        <ScrollArea className="flex-1 min-h-0 pr-2" viewportRef={messagesViewportRef}>
+                        <div ref={messagesViewportRef} className="flex-1 min-h-0 overflow-y-auto pr-2">
                           <div className="space-y-3">
                             {selectedConversation.platform === 'lead' ? (
                               harmoniaMessagesLoading ? (
@@ -2517,7 +2550,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                               </>
                             )}
                           </div>
-                        </ScrollArea>
+                        </div>
 
                         {replyTarget && (
                           <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-blue-100/70">

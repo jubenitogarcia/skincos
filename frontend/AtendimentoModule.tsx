@@ -1,10 +1,25 @@
-import React, { Suspense, lazy, useCallback, useState } from 'react'
-import { Badge } from '@/badge'
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { ErrorBoundary } from '@/ErrorBoundary'
 import { useAuth } from '@/contexts'
 import { LoadingPercentText } from '@/LoadingPattern'
 const OmnichannelCenter = lazy(() => import('@/OmnichannelCenter').then(m => ({ default: m.OmnichannelCenter })))
+
+type AtendimentoHeaderState = {
+  whatsappConnected: boolean
+  connectedWhatsapps: number
+  instagramConnected: boolean
+  facebookConfigured: boolean
+  supportStats: {
+    totalTickets: number
+    openWithin24: number
+    overdueTickets: number
+    resolvedTickets: number
+    avgSatisfaction: number
+  }
+  ticketFilter: 'total' | 'open' | 'overdue' | 'resolved'
+  paused: boolean
+}
 
 function TabShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -60,6 +75,24 @@ export function AtendimentoModule() {
 
   const [omniKey, setOmniKey] = useState(0)
 
+  const publishHeaderState = useCallback((state: AtendimentoHeaderState) => {
+    try {
+      window.dispatchEvent(new CustomEvent('skincos:atendimento:header', { detail: state }))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      try {
+        window.dispatchEvent(new CustomEvent('skincos:atendimento:header', { detail: null }))
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [])
+
   if (!canOmnichannel) {
     return (
       <Card className="glass-card">
@@ -78,6 +111,7 @@ export function AtendimentoModule() {
       <OmnichannelCenter
         key={`omni-${omniKey}`}
         activities={[] as any}
+        onHeaderStateChange={publishHeaderState}
         onStartConversation={(channel) => {
           const c = String(channel || '').toLowerCase()
           if (c === 'whatsapp') {
@@ -89,13 +123,8 @@ export function AtendimentoModule() {
   )
 
   return (
-    <div className="space-y-6 atendimento-surface">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-2xl font-semibold text-white">Atendimento</h2>
-        <Badge variant="secondary">Central</Badge>
-      </div>
-
-      <div className="space-y-4">
+    <div className="h-full min-h-0 atendimento-surface">
+      <div className="h-full min-h-0">
         {renderActivePanel()}
       </div>
     </div>

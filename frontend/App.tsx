@@ -47,6 +47,22 @@ type InsumosMeResponse = {
     csrfToken?: string
 }
 
+type AtendimentoHeaderState = {
+    whatsappConnected: boolean
+    connectedWhatsapps: number
+    instagramConnected: boolean
+    facebookConfigured: boolean
+    supportStats: {
+        totalTickets: number
+        openWithin24: number
+        overdueTickets: number
+        resolvedTickets: number
+        avgSatisfaction: number
+    }
+    ticketFilter: 'total' | 'open' | 'overdue' | 'resolved'
+    paused: boolean
+}
+
 async function insumosApiJson<T>(
     path: string,
     opts: {
@@ -315,7 +331,7 @@ export default function AppFunctionalNeatlab() {
     const sidebarExpanded = sidebarPinned || !sidebarCanHover || sidebarHover
 
 	    // Persist active module to survive remounts/reloads and avoid accidental resets
-		    const [active, setActive] = useState<string>(() => {
+	    const [active, setActive] = useState<string>(() => {
 		        try {
 		            const saved = localStorage.getItem('app.activeModule')
 		            const candidate = saved || DEFAULT_MODULE_KEY
@@ -338,6 +354,7 @@ export default function AppFunctionalNeatlab() {
 	        setActive(DEFAULT_MODULE_KEY)
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
 	    const [search, setSearch] = useState('')
+        const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
 			        online: boolean | null
 			        authed: boolean | null
@@ -497,6 +514,25 @@ export default function AppFunctionalNeatlab() {
                     }
                     window.addEventListener('skincos:insumos:estoque', handler)
                     return () => window.removeEventListener('skincos:insumos:estoque', handler)
+                }, [])
+
+                React.useEffect(() => {
+                    const handler = (event: Event) => {
+                        const detail = (event as CustomEvent<AtendimentoHeaderState | null>)?.detail || null
+                        if (!detail || typeof detail !== 'object') {
+                            setAtendimentoHeaderState(null)
+                            return
+                        }
+                        setAtendimentoHeaderState(detail)
+                    }
+                    window.addEventListener('skincos:atendimento:header', handler as EventListener)
+                    return () => window.removeEventListener('skincos:atendimento:header', handler as EventListener)
+                }, [])
+
+                const dispatchAtendimentoHeaderAction = React.useCallback((action: string) => {
+                    try {
+                        window.dispatchEvent(new CustomEvent('skincos:atendimento:header-action', { detail: { action } }))
+                    } catch { /* ignore */ }
                 }, [])
 
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
@@ -1212,6 +1248,69 @@ export default function AppFunctionalNeatlab() {
 	                                </div>
 
 		                                <div className="flex items-center gap-4">
+                                    {active === 'atendimento' ? (
+                                        <div className="hidden 2xl:flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className={`h-7 rounded-full border px-2.5 text-xs ${atendimentoHeaderState?.whatsappConnected ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100' : 'border-white/15 bg-white/5 text-blue-100/80'}`}
+                                                onClick={() => dispatchAtendimentoHeaderAction('wa')}
+                                            >
+                                                WhatsApp {atendimentoHeaderState?.connectedWhatsapps ?? 0}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className={`h-7 rounded-full border px-2.5 text-xs ${atendimentoHeaderState?.instagramConnected ? 'border-pink-400/40 bg-pink-500/15 text-pink-100' : 'border-white/15 bg-white/5 text-blue-100/80'}`}
+                                                onClick={() => dispatchAtendimentoHeaderAction('ig')}
+                                            >
+                                                Instagram
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className={`h-7 rounded-full border px-2.5 text-xs ${atendimentoHeaderState?.facebookConfigured ? 'border-blue-400/40 bg-blue-500/15 text-blue-100' : 'border-white/15 bg-white/5 text-blue-100/80'}`}
+                                                onClick={() => dispatchAtendimentoHeaderAction('fb')}
+                                            >
+                                                Facebook
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 rounded-full border border-sky-400/40 bg-sky-500/15 px-2.5 text-xs text-sky-100"
+                                                onClick={() => dispatchAtendimentoHeaderAction('tickets-total')}
+                                            >
+                                                Total {atendimentoHeaderState?.supportStats?.totalTickets ?? 0}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 text-xs text-amber-100"
+                                                onClick={() => dispatchAtendimentoHeaderAction('tickets-open')}
+                                            >
+                                                Abertos {atendimentoHeaderState?.supportStats?.openWithin24 ?? 0}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 rounded-full border border-rose-400/40 bg-rose-500/15 px-2.5 text-xs text-rose-100"
+                                                onClick={() => dispatchAtendimentoHeaderAction('tickets-overdue')}
+                                            >
+                                                Atrasados {atendimentoHeaderState?.supportStats?.overdueTickets ?? 0}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 text-xs text-emerald-100"
+                                                onClick={() => dispatchAtendimentoHeaderAction('tickets-resolved')}
+                                            >
+                                                Resolvidos {atendimentoHeaderState?.supportStats?.resolvedTickets ?? 0}
+                                            </Button>
+                                            <span className="inline-flex h-7 items-center rounded-full border border-violet-400/40 bg-violet-500/15 px-2.5 text-xs text-violet-100">
+                                                Satisfação {Number(atendimentoHeaderState?.supportStats?.avgSatisfaction || 0).toFixed(1)}
+                                            </span>
+                                        </div>
+                                    ) : null}
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-start gap-2 min-w-[220px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
 		                                            <button
@@ -1455,7 +1554,7 @@ export default function AppFunctionalNeatlab() {
                         </header>
 
                         {/* Premium Main Content */}
-                        <main className="flex-1 overflow-auto p-8 relative">
+                        <main className={`flex-1 p-8 relative ${active === 'atendimento' ? 'overflow-hidden' : 'overflow-auto'}`}>
                             {/* Content Background */}
                             <div className="absolute inset-0 bg-white/[0.02] backdrop-blur-sm"></div>
 
