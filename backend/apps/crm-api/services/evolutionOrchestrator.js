@@ -354,19 +354,32 @@ async function fetchMessages(channel, remoteJid, { limit = 50, page = 1 } = {}) 
   return res.json
 }
 
-async function sendText(channel, remoteJid, text) {
+async function sendText(channel, remoteJid, text, options = {}) {
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
   const number = normalizeNumber(remoteJid)
   if (!number) {
     throw new Error('Número inválido para envio.')
   }
+  const replyToMessageId = String(options?.replyToMessageId || '').trim()
+  const replyToPreview = String(options?.replyToPreview || '').trim()
+  const payload = {
+    number,
+    text
+  }
+  if (replyToMessageId) {
+    payload.quoted = {
+      key: {
+        id: replyToMessageId,
+        remoteJid: normalizeRemoteJid(remoteJid),
+        fromMe: false
+      },
+      message: replyToPreview ? { conversation: replyToPreview } : undefined
+    }
+  }
   const res = await evolutionFetch(`/message/sendText/${encodeURIComponent(name)}`, {
     method: 'POST',
-    body: {
-      number,
-      text
-    }
+    body: payload
   })
   if (!res.ok) {
     const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`

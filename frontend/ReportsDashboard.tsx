@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useIntegrations } from '@/contexts'
 import { useKV } from '@/spark-mock'
+import { metaAdsApi } from '@/metaAdsApi'
+import { MetaMetricsSchema, type MetaMetrics } from '@/metaMetrics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Button } from "@/button"
 import { Badge } from "@/badge"
@@ -84,12 +86,101 @@ interface ReportTemplate {
   popularity: number
 }
 
-export function ReportsDashboard() {
+export function ReportsDashboard({ mode = 'full' }: { mode?: 'full' | 'meta-ads' }) {
   const { instagram, syncInstagram } = useIntegrations()
   const [reports, setReports] = useKV<Report[]>('reports', [])
   const [selectedReport, setSelectedReport] = useState<string | null>(null)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [activeTab, setActiveTab] = useState('my-reports')
+  const [metaMetrics, setMetaMetrics] = useState<MetaMetrics | null>(null)
+  const [metaError, setMetaError] = useState<string | null>(null)
+  const [metaLoading, setMetaLoading] = useState(false)
+
+  useEffect(() => {
+    if (mode !== 'meta-ads') return
+    const { since, until } = (() => {
+      const end = new Date()
+      const start = new Date(end)
+      start.setDate(end.getDate() - 6)
+      const toYmd = (d: Date) => d.toISOString().slice(0, 10)
+      return { since: toYmd(start), until: toYmd(end) }
+    })()
+    setMetaLoading(true)
+    setMetaError(null)
+    Promise.all([metaAdsApi.summary({ since, until }), metaAdsApi.trend({ since, until })])
+      .then(([sum, tr]: any[]) => {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        const parsed = MetaMetricsSchema.parse({
+          platform: 'meta-ads',
+          currency: 'USD',
+          period: { since, until, timezone: tz },
+          summary: sum,
+          trend: tr,
+        })
+        setMetaMetrics(parsed)
+      })
+      .catch((e) => setMetaError(e?.message || 'Falha ao carregar métricas Meta Ads'))
+      .finally(() => setMetaLoading(false))
+  }, [mode])
+
+  const metaAdsView = (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Performance Meta Ads</CardTitle>
+            <CardDescription>Métricas consolidadas do período selecionado.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-4">
+            <div>
+              <div className="text-xs text-muted-foreground">Spend</div>
+              <div className="text-2xl font-semibold">{metaMetrics?.summary.spend ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Impressões</div>
+              <div className="text-2xl font-semibold">{metaMetrics?.summary.impressions ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Clicks</div>
+              <div className="text-2xl font-semibold">{metaMetrics?.summary.clicks ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">ROAS</div>
+              <div className="text-2xl font-semibold">{metaMetrics?.summary.roas ?? 0}</div>
+            </div>
+          </CardContent>
+        </Card>
+        {metaError ? (
+          <Card className="border-red-500/30 bg-red-500/10">
+            <CardContent className="pt-4 text-sm text-red-200">{metaError}</CardContent>
+          </Card>
+        ) : null}
+        {!metaError && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Tendência (7 dias)</CardTitle>
+              <CardDescription>Spend diário.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {metaLoading ? (
+                <div className="text-sm text-muted-foreground">Carregando...</div>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  {(metaMetrics?.trend || []).map((row) => (
+                    <div key={row.day} className="flex items-center justify-between">
+                      <span>{row.day}</span>
+                      <span>{row.spend}</span>
+                    </div>
+                  ))}
+                  {!metaMetrics?.trend?.length && (
+                    <div className="text-xs text-muted-foreground">Sem dados no período.</div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+  )
 
   // Report Templates
   const reportTemplates: ReportTemplate[] = [
@@ -247,6 +338,10 @@ export function ReportsDashboard() {
       setReports(sampleReports)
     }
   }, [reports.length, setReports])
+
+  if (mode === 'meta-ads') {
+    return metaAdsView
+  }
 
   const handleCreateReport = (templateId?: string) => {
     const template = templateId ? reportTemplates.find(t => t.id === templateId) : null

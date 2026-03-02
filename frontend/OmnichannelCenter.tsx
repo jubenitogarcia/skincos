@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Badge } from "@/badge"
@@ -13,8 +13,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { toast } from "sonner"
 import * as QRCode from "qrcode"
 import { getRelativeTime } from "@/utils"
-import { buildCrmBasicAuthHeaders } from "@/waOrchestratorAuth"
+import { buildCrmBasicAuthHeaders, getCrmBasicAuthToken } from "@/waOrchestratorAuth"
 import { useIntegrations } from "@/contexts"
+import { getCssVarValue } from "@/visualTheme"
 import {
   fetchRecentCommentLeads,
   fetchRecentDMConversations,
@@ -37,7 +38,12 @@ import {
   Warning,
   Sparkle,
   Ticket,
-  Star
+  Star,
+  Smiley,
+  ArrowBendUpLeft,
+  DownloadSimple,
+  FilePdf,
+  ImageSquare
 } from "@phosphor-icons/react"
 import type { Activity } from "@/types"
 
@@ -129,9 +135,33 @@ type HarmoniaInboxItem = {
   last_activity_at?: string | null
 }
 
+export interface OmnichannelHeaderState {
+  whatsappConnected: boolean
+  connectedWhatsapps: number
+  instagramConnected: boolean
+  facebookConfigured: boolean
+  supportStats: {
+    totalTickets: number
+    openWithin24: number
+    overdueTickets: number
+    resolvedTickets: number
+    avgSatisfaction: number
+  }
+  ticketFilter: 'total' | 'open' | 'overdue' | 'resolved'
+  paused: boolean
+}
+
+export interface OmnichannelCenterHandle {
+  openWhatsAppStatus: () => void
+  openInstagramStatus: () => void
+  openFacebookStatus: () => void
+  openTicketsModal: (filter: 'total' | 'open' | 'overdue' | 'resolved') => void
+}
+
 interface OmnichannelCenterProps {
   activities: Activity[]
   onStartConversation?: (channel: string, customerId: string) => void
+  onHeaderStateChange?: (state: OmnichannelHeaderState) => void
 }
 
 type ChannelStatus = 'free' | 'available' | 'starting' | 'qr_pending' | 'connected' | 'error' | 'stopping'
@@ -174,6 +204,7 @@ interface QRData {
 const HARMONIA_DEBUG_TOKEN_KEY = 'harmonia.debugToken'
 const HARMONIA_EXEC_TOKEN_KEY = 'harmonia.execToken'
 const HARMONIA_UNIT_KEY = 'harmonia.ui.unitSlug'
+const WA_CONVERSATIONS_CACHE_KEY = 'wa.orchestrator.conversations.cache'
 const MIN_PHONE_LEN = 8
 
 function normalizePhone(value?: string | null) {
@@ -210,6 +241,15 @@ function isLikelyWhatsAppJid(value?: string | null) {
   const digits = normalizePhone(raw)
   if (digits.length >= 10 && digits === raw.replace(/\D+/g, '')) return true
   return false
+}
+
+function normalizeWhatsAppJid(value?: string | null) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  if (raw.includes('@')) return raw
+  const digits = normalizePhone(raw)
+  if (!digits) return raw
+  return `${digits}@s.whatsapp.net`
 }
 
 function formatPhone(value?: string | null) {
@@ -303,29 +343,6 @@ function getInitials(value?: string | null) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
 }
 
-function renderAvatar(conv: any, size = 36) {
-  const name = resolveConversationDisplayName(conv)
-  const src = resolveAvatarUrl(conv)
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt={name}
-        className="rounded-full object-cover"
-        style={{ width: size, height: size }}
-      />
-    )
-  }
-  return (
-    <div
-      className="rounded-full bg-white/10 text-xs font-semibold text-blue-100 flex items-center justify-center"
-      style={{ width: size, height: size }}
-    >
-      {getInitials(name)}
-    </div>
-  )
-}
-
 function renderFormattedText(input?: string | null): ReactNode {
   const text = String(input || '')
   if (!text) return null
@@ -380,8 +397,250 @@ function renderFormattedText(input?: string | null): ReactNode {
   return <>{tokens}</>
 }
 
-export function OmnichannelCenter({ activities, onStartConversation }: OmnichannelCenterProps) {
+function ConversationAvatar({ conv, size = 36 }: { conv: any; size?: number }) {
+  const [failed, setFailed] = useState(false)
+  const name = resolveConversationDisplayName(conv)
+  const src = resolveAvatarUrl(conv)
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        className="rounded-full object-cover border border-white/10 bg-white/5"
+        style={{ width: size, height: size }}
+        onError={() => setFailed(true)}
+        loading="lazy"
+      />
+    )
+  }
+  return (
+    <div
+      className="rounded-full bg-white/10 border border-white/10 text-xs font-semibold text-blue-100 flex items-center justify-center"
+      style={{ width: size, height: size }}
+      aria-label={name}
+    >
+      {getInitials(name)}
+    </div>
+  )
+}
+
+function AudioInlinePlayer({ src, mimeType, onError }: { src: string; mimeType?: string; onError?: () => void }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const [duration, setDuration] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+
+  const fmt = useCallback((seconds: number) => {
+    const safe = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0
+    const m = Math.floor(safe / 60)
+    const s = safe % 60
+    return `${m}:${String(s).padStart(2, '0')}`
+  }, [])
+
+  return (
+    <div className="mt-2 rounded-lg border border-white/15 bg-black/20 p-2">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+        onEnded={() => setPlaying(false)}
+        onError={onError}
+      >
+        {mimeType ? <source src={src} type={mimeType} /> : null}
+      </audio>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7 rounded-full border border-white/20 bg-white/10 text-white hover:bg-white/20"
+          onClick={() => {
+            const node = audioRef.current
+            if (!node) return
+            if (playing) {
+              node.pause()
+              setPlaying(false)
+            } else {
+              void node.play()
+              setPlaying(true)
+            }
+          }}
+          aria-label={playing ? 'Pausar áudio' : 'Reproduzir áudio'}
+        >
+          {playing ? '❚❚' : '▶'}
+        </Button>
+        <input
+          type="range"
+          min={0}
+          max={duration || 0}
+          step={0.1}
+          value={Math.min(currentTime, duration || 0)}
+          className="flex-1 accent-emerald-400"
+          onChange={(event) => {
+            const next = Number(event.target.value)
+            if (!audioRef.current || Number.isNaN(next)) return
+            audioRef.current.currentTime = next
+            setCurrentTime(next)
+          }}
+        />
+        <span className="text-[10px] text-blue-100/70 min-w-[64px] text-right">
+          {fmt(currentTime)} / {fmt(duration)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function MessageMedia({
+  media,
+  mediaProxyUrl,
+  fallbackText,
+  onImagePreview
+}: {
+  media?: { type?: string; url?: string; mimeType?: string; fileName?: string; durationSec?: number }
+  mediaProxyUrl?: string
+  fallbackText?: string
+  onImagePreview: (payload: { src: string; alt?: string }) => void
+}) {
+  const [loadFailed, setLoadFailed] = useState(false)
+  const type = String(media?.type || '').toLowerCase()
+  let src = String(mediaProxyUrl || media?.url || '').trim()
+  const authToken = getCrmBasicAuthToken()
+  if (src && mediaProxyUrl && authToken && !src.includes('auth=')) {
+    try {
+      const url = new URL(src, window.location.origin)
+      url.searchParams.set('auth', authToken)
+      src = url.toString()
+    } catch {
+      const sep = src.includes('?') ? '&' : '?'
+      src = `${src}${sep}auth=${encodeURIComponent(authToken)}`
+    }
+  }
+  const mimeType = String(media?.mimeType || '').trim()
+  const isImage = type.includes('image')
+  const isAudio = type.includes('audio') || type.includes('ptt') || type.includes('voice')
+  const isPdf = type.includes('document') && (mimeType.includes('pdf') || String(media?.fileName || '').toLowerCase().endsWith('.pdf'))
+  const isDocument = type.includes('document') && !isPdf
+  const isVideo = type.includes('video') || type.includes('ptv')
+
+  if (!src || loadFailed) {
+    return (
+      <div className="mt-2 rounded-lg border border-dashed border-white/20 bg-white/5 p-2 text-xs text-blue-100/70">
+        <div className="inline-flex items-center gap-2">
+          <Warning className="h-4 w-4 text-amber-300" />
+          {fallbackText || 'Arquivo indisponível no momento.'}
+        </div>
+      </div>
+    )
+  }
+
+  if (isImage) {
+    return (
+      <button
+        type="button"
+        className="mt-2 block overflow-hidden rounded-lg border border-white/15 bg-black/20"
+        onClick={() => onImagePreview({ src, alt: media?.fileName || 'Imagem da mensagem' })}
+      >
+        <img
+          src={src}
+          alt={media?.fileName || 'Imagem'}
+          className="max-h-64 w-full object-cover"
+          loading="lazy"
+          onError={() => setLoadFailed(true)}
+        />
+      </button>
+    )
+  }
+
+  if (isAudio) {
+    return <AudioInlinePlayer src={src} mimeType={mimeType} onError={() => setLoadFailed(true)} />
+  }
+
+  if (isPdf) {
+    return (
+      <div className="mt-2 space-y-2 rounded-lg border border-white/15 bg-black/20 p-2">
+        <div className="overflow-hidden rounded-md border border-white/10 bg-black/30">
+          <iframe
+            title={media?.fileName || 'Documento PDF'}
+            src={src}
+            className="h-56 w-full"
+            loading="lazy"
+            onError={() => setLoadFailed(true)}
+          />
+        </div>
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-2 py-1 text-xs text-blue-100 hover:bg-white/20"
+        >
+          <DownloadSimple className="h-3.5 w-3.5" />
+          Download PDF
+        </a>
+      </div>
+    )
+  }
+
+  if (isDocument) {
+    return (
+      <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-black/20 px-2 py-1.5 text-xs text-blue-100">
+        <FilePdf className="h-4 w-4" />
+        <a href={src} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+          {media?.fileName || 'Abrir documento'}
+        </a>
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] hover:bg-white/10"
+        >
+          Download
+        </a>
+      </div>
+    )
+  }
+
+  if (isVideo) {
+    return (
+      <video
+        src={src}
+        controls
+        className="mt-2 max-h-64 w-full rounded-lg border border-white/15 bg-black/20"
+        onError={() => setLoadFailed(true)}
+      >
+        {mimeType ? <source src={src} type={mimeType} /> : null}
+      </video>
+    )
+  }
+
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-black/20 px-2 py-1.5 text-xs text-blue-100 hover:bg-white/10"
+    >
+      <ImageSquare className="h-4 w-4" />
+      Abrir anexo
+    </a>
+  )
+}
+
+export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, OmnichannelCenterProps>(function OmnichannelCenter(
+  { activities, onStartConversation, onHeaderStateChange },
+  ref
+) {
   const { instagram, connectInstagram, refreshInstagram } = useIntegrations()
+  const normalizeQrColor = (value: string, fallback: string) => {
+    const v = String(value || "").trim()
+    if (!v) return fallback
+    if (v.startsWith("oklch") || v.startsWith("color(")) return fallback
+    return v
+  }
+  const QR_DARK = normalizeQrColor(getCssVarValue("--foreground", "#000000"), "#000000")
+  const QR_LIGHT = normalizeQrColor(getCssVarValue("--background", "#FFFFFF"), "#FFFFFF")
   const [systemConfig, setSystemConfig] = useKV<SystemConfig>("system-config", {
     integrations: { harmonia: { debugToken: '', execToken: '' }, facebook: { pageId: '', accessToken: '' } }
   })
@@ -431,18 +690,25 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   const [sendingMessage, setSendingMessage] = useState(false)
   const [messageInput, setMessageInput] = useState('')
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const messagesViewportRef = useRef<HTMLDivElement | null>(null)
+  const autoScrollRef = useRef(false)
+  const lastMessageKeyRef = useRef<string>('')
   const [replyTarget, setReplyTarget] = useState<{
     id: string
     text: string
     direction?: string
     platform?: string
   } | null>(null)
+  const [imagePreview, setImagePreview] = useState<{ src: string; alt?: string } | null>(null)
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null)
+  const [reactionBusyKey, setReactionBusyKey] = useState<string | null>(null)
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
   const [statusFailureCount, setStatusFailureCount] = useState(0)
   const [statusPausedUntil, setStatusPausedUntil] = useState<number | null>(null)
   const [channelQR, setChannelQR] = useState<Map<number, QRData>>(new Map())
   const [qrDialogChannel, setQrDialogChannel] = useState<number | null>(null)
   const qrPollingRef = useRef<Map<number, NodeJS.Timeout>>(new Map())
+  const waEventsRefreshTimerRef = useRef<number | null>(null)
   const [waStatusOpen, setWaStatusOpen] = useState(false)
   const [igStatusOpen, setIgStatusOpen] = useState(false)
   const [igDialogOpen, setIgDialogOpen] = useState(false)
@@ -455,6 +721,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   const [fbAccessToken, setFbAccessToken] = useState('')
   const [fbPageId, setFbPageId] = useState('')
   const [igLoading, setIgLoading] = useState(false)
+  const reactionOptions = useMemo(() => ['👍', '❤️', '😂', '😮', '😢', '🙏'], [])
   const [igProfiles, setIgProfiles] = useState<Record<string, InstagramUserProfile>>({})
   const [igDMs, setIgDMs] = useState<Record<string, InstagramDMMessage[]>>({})
   const facebookConfig = systemConfig?.integrations?.facebook || { pageId: '', accessToken: '' }
@@ -571,10 +838,42 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     }
   }, [normalizeOrchestratorStatus, statusPausedUntil])
 
+  const CONVERSATION_FETCH_LIMIT = 80
+  const conversationsCount = conversations.length
+  const CONVERSATION_CACHE_TTL = 2 * 60 * 1000
+
+  const readConversationCache = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(WA_CONVERSATIONS_CACHE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (!parsed?.ts || !Array.isArray(parsed?.items)) return null
+      if (Date.now() - parsed.ts > CONVERSATION_CACHE_TTL) return null
+      return parsed.items as any[]
+    } catch {
+      return null
+    }
+  }, [])
+
+  const writeConversationCache = useCallback((items: any[]) => {
+    try {
+      const trimmed = items.slice(0, 200)
+      localStorage.setItem(WA_CONVERSATIONS_CACHE_KEY, JSON.stringify({ ts: Date.now(), items: trimmed }))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   const loadConversations = useCallback(async () => {
     if (!provider) return
     if (conversationsPausedUntil && Date.now() < conversationsPausedUntil) return
-    setLoadingConversations(true)
+    if (provider === 'evolution' && conversationsCount === 0) {
+      const cached = readConversationCache()
+      if (cached?.length) {
+        setConversations(cached)
+      }
+    }
+    setLoadingConversations(conversationsCount === 0)
     try {
       if (provider === 'evolution') {
         const channels =
@@ -588,7 +887,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         const results = await Promise.all(
           channels.map(async (channel) => {
             const res = await fetch(
-              `/api/wa-orchestrator/channels/${channel}/conversations?limit=200`,
+              `/api/wa-orchestrator/channels/${channel}/conversations?limit=${CONVERSATION_FETCH_LIMIT}`,
               { headers: buildCrmBasicAuthHeaders() }
             )
             const data = await res.json().catch(() => ({}))
@@ -596,12 +895,16 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
             return (data.items || []).map((item: any) => ({ ...item, channel, platform: 'whatsapp' }))
           })
         )
-        setConversations(results.flat())
+        const merged = results.flat()
+        setConversations(merged)
+        if (merged.length) writeConversationCache(merged)
       } else {
         const res = await fetch('/api/conversations')
         const data = await res.json()
         if (res.ok) {
-          setConversations(data?.items || data || [])
+          const merged = data?.items || data || []
+          setConversations(merged)
+          if (merged?.length) writeConversationCache(merged)
         }
       }
       setConversationsFailureCount(0)
@@ -618,11 +921,18 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     } finally {
       setLoadingConversations(false)
     }
-  }, [provider, orchestratorStatus, conversationsPausedUntil])
+  }, [
+    provider,
+    orchestratorStatus,
+    conversationsPausedUntil,
+    conversationsCount,
+    readConversationCache,
+    writeConversationCache
+  ])
 
-  const loadMessages = useCallback(async (conv: any) => {
+  const loadMessages = useCallback(async (conv: any, opts?: { silent?: boolean }) => {
     if (!provider || !conv) return
-    setLoadingMessages(true)
+    if (!opts?.silent) setLoadingMessages(true)
     try {
       if (provider === 'evolution') {
         const channel = Number(conv?.channel)
@@ -633,19 +943,89 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         )
         const data = await res.json()
         if (res.ok && data?.success) {
-          setMessages(data.items || [])
+          const items = data.items || []
+          setMessages(items)
+          return items
         }
       } else {
         const res = await fetch(`/api/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`)
         const data = await res.json()
         if (res.ok) {
-          setMessages(data.items || [])
+          const items = data.items || []
+          setMessages(items)
+          return items
         }
       }
     } finally {
-      setLoadingMessages(false)
+      if (!opts?.silent) setLoadingMessages(false)
     }
   }, [provider])
+
+  const patchMessageById = useCallback((messageId: string, updater: (current: any) => any) => {
+    setMessages((prev) => prev.map((item) => {
+      if (String(item?.id || '') !== String(messageId || '')) return item
+      return updater(item)
+    }))
+  }, [])
+
+  const openReplyComposer = useCallback((message: any) => {
+    const replyPreview = resolveReplyPreview(message?.text, message?.caption || message?.type)
+    const id = String(message?.id || '').trim()
+    if (!id) return
+    setReplyTarget({
+      id,
+      text: replyPreview,
+      direction: message?.direction,
+      platform: message?.platform
+    })
+    messageInputRef.current?.focus()
+  }, [])
+
+  const toggleReaction = useCallback(async (message: any, emoji: string) => {
+    if (!selectedConversation || selectedConversation?.platform === 'lead' || selectedConversation?.platform === 'instagram') return
+    const channel =
+      Number(selectedConversation?.channel) ||
+      orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel
+    const remoteJid = normalizeWhatsAppJid(selectedConversation?.conversationId || selectedConversation?.phone || '')
+    const messageId = String(message?.id || '').trim()
+    if (!channel || !remoteJid || !messageId) return
+
+    const requestKey = `${messageId}:${emoji}`
+    if (reactionBusyKey === requestKey) return
+    setReactionBusyKey(requestKey)
+    try {
+      const optimistic = Array.isArray(message?.reactions) ? message.reactions : []
+      const target = optimistic.find((entry: any) => entry.emoji === emoji)
+      const nextOptimistic = target
+        ? optimistic.map((entry: any) =>
+            entry.emoji === emoji
+              ? { ...entry, reactedByMe: !entry.reactedByMe, count: Math.max(0, Number(entry.count || 0) + (entry.reactedByMe ? -1 : 1)) }
+              : entry
+          ).filter((entry: any) => Number(entry.count || 0) > 0)
+        : [...optimistic, { emoji, count: 1, reactedByMe: true }]
+      patchMessageById(messageId, (item) => ({ ...item, reactions: nextOptimistic }))
+
+      const response = await fetch(
+        `/api/wa-orchestrator/channels/${channel}/conversations/${encodeURIComponent(remoteJid)}/messages/${encodeURIComponent(messageId)}/reactions/toggle`,
+        {
+          method: 'POST',
+          headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ emoji })
+        }
+      )
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.success === false) {
+        patchMessageById(messageId, (item) => ({ ...item, reactions: optimistic }))
+        toast.error(payload?.error || 'Falha ao reagir à mensagem.')
+        return
+      }
+      patchMessageById(messageId, (item) => ({ ...item, reactions: payload.reactions || [] }))
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao reagir à mensagem.')
+    } finally {
+      setReactionBusyKey((current) => (current === requestKey ? null : current))
+    }
+  }, [selectedConversation, orchestratorStatus, reactionBusyKey, patchMessageById])
 
   const loadInstagramConversations = useCallback(async () => {
     if (!instagram?.connected) return
@@ -753,13 +1133,12 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     const isLeadOnly = selectedConversation?.platform === 'lead'
     setSendingMessage(true)
     try {
-      const outboundText = replyTarget
-        ? `${formatReplyPrefix(replyTarget.text)}\n${trimmed}`
-        : trimmed
+      const legacyReplyPrefix = replyTarget ? `${formatReplyPrefix(replyTarget.text)}\n` : ''
+      const outboundText = trimmed
       if (selectedConversation?.platform === 'instagram') {
         const sent = await sendDirectMessage(
           selectedConversation.conversationId,
-          outboundText,
+          `${legacyReplyPrefix}${outboundText}`,
           instagram.businessAccountId,
           igAccessToken || undefined
         )
@@ -781,7 +1160,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         const phoneKey = extractPhoneFromId(selectedConversation?.phone || selectedConversation?.leadPhone || '')
         const remoteJid = isLeadOnly
           ? (phoneKey ? `${phoneKey}@s.whatsapp.net` : '')
-          : String(selectedConversation.conversationId || '')
+          : normalizeWhatsAppJid(selectedConversation.conversationId || selectedConversation.phone || '')
         if (!remoteJid) {
           toast.error('Número inválido para envio.')
           return
@@ -791,14 +1170,28 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
           {
             method: 'POST',
             headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ text: outboundText })
+            body: JSON.stringify({
+              text: outboundText,
+              replyToMessageId: replyTarget?.id || undefined,
+              replyToPreview: replyTarget?.text || undefined
+            })
           }
         )
-        await res.json().catch(() => ({}))
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data?.success === false) {
+          toast.error(data?.error || 'Falha ao enviar mensagem.')
+          return
+        }
         if (isLeadOnly) {
           setHarmoniaMessages((prev) => [
             ...prev,
-            { id: `out-${Date.now()}`, direction: 'outbound', text: outboundText, created_at: new Date().toISOString() }
+            {
+              id: `out-${Date.now()}`,
+              direction: 'outbound',
+              text: outboundText,
+              created_at: new Date().toISOString(),
+              replyTo: replyTarget || undefined
+            }
           ])
         }
       } else if (isLeadOnly) {
@@ -808,7 +1201,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         const res = await fetch(`/api/conversations/${encodeURIComponent(selectedConversation.conversationId)}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ direction: 'outbound', type: 'text', text: outboundText })
+          body: JSON.stringify({ direction: 'outbound', type: 'text', text: `${legacyReplyPrefix}${outboundText}` })
         })
         await res.json().catch(() => ({}))
       }
@@ -822,6 +1215,12 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     }
   }, [igAccessToken, instagram.businessAccountId, loadMessages, messageInput, provider, selectedConversation, orchestratorStatus, replyTarget])
 
+  const scrollMessagesToBottom = useCallback(() => {
+    const viewport = messagesViewportRef.current
+    if (!viewport) return
+    viewport.scrollTop = viewport.scrollHeight
+  }, [])
+
   useEffect(() => {
     loadStatus()
   }, [loadStatus])
@@ -829,6 +1228,17 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   useEffect(() => {
     loadConversations()
   }, [loadConversations])
+
+  useEffect(() => {
+    if (!provider) return
+    if (provider !== 'evolution') return
+    if (!orchestratorStatus?.instances?.length) return
+    if (conversationsCount > 0) return
+    const anyConnected = orchestratorStatus.instances.some((instance) => instance.status === 'connected')
+    if (anyConnected) {
+      loadConversations()
+    }
+  }, [provider, orchestratorStatus, conversationsCount, loadConversations])
 
   useEffect(() => {
     void refreshInstagram()
@@ -870,6 +1280,76 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   }, [loadStatus])
 
   useEffect(() => {
+    if (provider !== 'evolution') return
+    const token = getCrmBasicAuthToken()
+    const params = token ? `?auth=${encodeURIComponent(token)}` : ''
+    const source = new EventSource(`/api/wa-orchestrator/events${params}`, { withCredentials: true })
+
+    source.onmessage = (event) => {
+      let payload: any = null
+      try {
+        payload = JSON.parse(event.data || '{}')
+      } catch {
+        return
+      }
+      if (!payload) return
+
+      if (payload.type === 'message_reaction_updated') {
+        const remoteJid = normalizeWhatsAppJid(payload.remoteJid || '')
+        const selectedJid = normalizeWhatsAppJid(selectedConversation?.conversationId || selectedConversation?.phone || '')
+        if (
+          payload.messageId &&
+          selectedConversation &&
+          remoteJid &&
+          selectedJid === remoteJid &&
+          Number(payload.channel) === Number(selectedConversation?.channel || payload.channel)
+        ) {
+          patchMessageById(String(payload.messageId), (item) => ({ ...item, reactions: payload.reactions || [] }))
+        }
+        return
+      }
+
+      if (payload.type === 'message_metadata_updated') {
+        const remoteJid = normalizeWhatsAppJid(payload.remoteJid || '')
+        const selectedJid = normalizeWhatsAppJid(selectedConversation?.conversationId || selectedConversation?.phone || '')
+        if (
+          payload.messageId &&
+          selectedConversation &&
+          remoteJid &&
+          selectedJid === remoteJid &&
+          Number(payload.channel) === Number(selectedConversation?.channel || payload.channel)
+        ) {
+          patchMessageById(String(payload.messageId), (item) => ({ ...item, replyTo: payload.replyTo || item.replyTo }))
+        }
+        return
+      }
+
+      const webhookEvent = String(payload.event || '').toLowerCase()
+      if (!selectedConversation) return
+      if (webhookEvent === 'messages.upsert' || webhookEvent === 'messages.update' || webhookEvent === 'chats.update') {
+        if (waEventsRefreshTimerRef.current) {
+          window.clearTimeout(waEventsRefreshTimerRef.current)
+        }
+        waEventsRefreshTimerRef.current = window.setTimeout(() => {
+          void loadMessages(selectedConversation, { silent: true })
+        }, 350)
+      }
+    }
+
+    source.onerror = () => {
+      source.close()
+    }
+
+    return () => {
+      if (waEventsRefreshTimerRef.current) {
+        window.clearTimeout(waEventsRefreshTimerRef.current)
+        waEventsRefreshTimerRef.current = null
+      }
+      source.close()
+    }
+  }, [provider, selectedConversation, loadMessages, patchMessageById])
+
+  useEffect(() => {
     if (!qrDialogChannel || !orchestratorStatus?.instances?.length) return
     const instance = orchestratorStatus.instances.find((item) => item.channel === qrDialogChannel)
     if (instance?.status === 'connected') {
@@ -893,7 +1373,48 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
 
   useEffect(() => {
     setReplyTarget(null)
+    setReactionPickerMessageId(null)
   }, [selectedConversation?.conversationId, selectedConversation?.channel])
+
+  useEffect(() => {
+    if (!selectedConversation) return
+    autoScrollRef.current = true
+  }, [selectedConversation?.conversationId, selectedConversation?.channel])
+
+  useEffect(() => {
+    if (!selectedConversation) return
+    if (selectedConversation.platform === 'lead' || selectedConversation.platform === 'instagram') return
+    if (provider !== 'evolution') return
+
+    const interval = window.setInterval(async () => {
+      const items = await loadMessages(selectedConversation, { silent: true })
+      const last = Array.isArray(items) && items.length ? items[items.length - 1] : null
+      const key = last?.id || last?.timestamp || last?.createdAt || ''
+      if (key && key !== lastMessageKeyRef.current) {
+        lastMessageKeyRef.current = key
+        scrollMessagesToBottom()
+      }
+    }, 5000)
+
+    return () => window.clearInterval(interval)
+  }, [loadMessages, provider, scrollMessagesToBottom, selectedConversation])
+
+  useEffect(() => {
+    const last = messages[messages.length - 1]
+    const key = last?.id || last?.timestamp || last?.createdAt || ''
+    if (key) lastMessageKeyRef.current = key
+  }, [messages])
+
+  useEffect(() => {
+    if (!autoScrollRef.current || !selectedConversation) return
+    if (selectedConversation.platform === 'lead' && harmoniaMessagesLoading) return
+    if (selectedConversation.platform !== 'lead' && loadingMessages) return
+    const raf = requestAnimationFrame(() => {
+      scrollMessagesToBottom()
+      autoScrollRef.current = false
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [selectedConversation, harmoniaMessagesLoading, loadingMessages, messages.length, harmoniaMessages.length, scrollMessagesToBottom])
 
   useEffect(() => {
     return () => {
@@ -1121,7 +1642,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
         const mime = normalized.startsWith('/9j/') ? 'jpeg' : 'png'
         return `data:image/${mime};base64,${normalized}`
       }
-      return QRCode.toDataURL(normalized, { width: 300, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } })
+      return QRCode.toDataURL(normalized, { width: 300, margin: 2, color: { dark: QR_DARK, light: QR_LIGHT } })
     }
 
     try {
@@ -1177,7 +1698,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
           ? normalizedQr
           : (/^[A-Za-z0-9+/]+={0,2}$/.test(normalizedQr) && normalizedQr.length > 120)
             ? `data:image/${normalizedQr.startsWith('/9j/') ? 'jpeg' : 'png'};base64,${normalizedQr}`
-            : await QRCode.toDataURL(normalizedQr, { width: 300, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } })
+            : await QRCode.toDataURL(normalizedQr, { width: 300, margin: 2, color: { dark: QR_DARK, light: QR_LIGHT } })
         console.info('[WA_QR_DEBUG] startChannel:resolved', {
           channel,
           qrType: normalizedQr.startsWith('data:image') ? 'image-data-url' : 'raw-text',
@@ -1316,6 +1837,64 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
     }
   }, [tickets])
 
+  const whatsappConnected = useMemo(
+    () => (orchestratorStatus?.connectedInstances ?? 0) > 0,
+    [orchestratorStatus?.connectedInstances]
+  )
+  const connectedWhatsapps = useMemo(
+    () => orchestratorStatus?.instances?.filter((instance) => instance.status === 'connected') ?? [],
+    [orchestratorStatus?.instances]
+  )
+  const paused = Boolean(
+    (statusPausedUntil && Date.now() < statusPausedUntil) ||
+      (conversationsPausedUntil && Date.now() < conversationsPausedUntil) ||
+      (harmoniaInboxPausedUntil && Date.now() < harmoniaInboxPausedUntil)
+  )
+  const headerState = useMemo<OmnichannelHeaderState>(
+    () => ({
+      whatsappConnected,
+      connectedWhatsapps: connectedWhatsapps.length,
+      instagramConnected: Boolean(instagram?.connected),
+      facebookConfigured,
+      supportStats,
+      ticketFilter,
+      paused
+    }),
+    [
+      whatsappConnected,
+      connectedWhatsapps.length,
+      instagram?.connected,
+      facebookConfigured,
+      supportStats,
+      ticketFilter,
+      paused
+    ]
+  )
+
+  useEffect(() => {
+    onHeaderStateChange?.(headerState)
+  }, [headerState, onHeaderStateChange])
+
+  const openTicketsModal = useCallback(
+    (filter: 'total' | 'open' | 'overdue' | 'resolved') => {
+      setTicketFilter(filter)
+      setShowNewTicket(false)
+      setTicketsModalOpen(true)
+    },
+    []
+  )
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openWhatsAppStatus: () => setWaStatusOpen(true),
+      openInstagramStatus: () => setIgStatusOpen(true),
+      openFacebookStatus: () => setFbStatusOpen(true),
+      openTicketsModal
+    }),
+    [openTicketsModal]
+  )
+
   const filteredTickets = useMemo(() => {
     const isOpen = (t: SupportTicket) => ['open', 'in-progress', 'waiting-customer'].includes(t.status)
     const isResolved = (t: SupportTicket) => ['resolved', 'closed'].includes(t.status)
@@ -1347,6 +1926,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   const combinedConversations = useMemo(() => {
     const whatsappItems = (conversations || []).map((conv) => ({
       ...conv,
+      conversationId: normalizeWhatsAppJid(conv.conversationId || conv.id || conv.remoteJid),
       platform: conv.platform || (provider === 'evolution' ? 'whatsapp' : provider),
       name: conv.name && !isLikelyWhatsAppJid(conv.name) ? conv.name : undefined,
       phone: conv.phone || conv.contactPhone || conv.contact_phone || conv.contact_phone_raw,
@@ -1530,9 +2110,6 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   }
 
   const renderOmnichannelChat = () => {
-    const whatsappConnected = (orchestratorStatus?.connectedInstances ?? 0) > 0
-    const connectedWhatsapps =
-      orchestratorStatus?.instances?.filter((instance) => instance.status === 'connected') ?? []
     const filterLabelMap = {
       total: 'Todos',
       open: 'Abertos (≤ 24h)',
@@ -1540,135 +2117,18 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
       resolved: 'Resolvidos'
     } as const
     return (
-      <div className="space-y-4">
-        <Card className="glass-card">
-          <CardHeader>
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <CardTitle className="text-white">Omnichannel</CardTitle>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setWaStatusOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-blue-100/70 hover:bg-white/10"
-                  >
-                    <span className={`h-2.5 w-2.5 rounded-full ${whatsappConnected ? 'bg-emerald-400' : 'bg-white/20'}`} />
-                    <WhatsappLogo className="h-3.5 w-3.5 text-emerald-300" />
-                    <span>WhatsApp</span>
-                    <span className="text-blue-100/50">{connectedWhatsapps.length}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIgStatusOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-blue-100/70 hover:bg-white/10"
-                  >
-                    <span className={`h-2.5 w-2.5 rounded-full ${instagram?.connected ? 'bg-pink-400' : 'bg-white/20'}`} />
-                    <InstagramLogo className="h-3.5 w-3.5 text-pink-300" />
-                    <span>Instagram</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFbStatusOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-blue-100/70 hover:bg-white/10"
-                  >
-                    <span className={`h-2.5 w-2.5 rounded-full ${facebookConfigured ? 'bg-blue-400' : 'bg-white/20'}`} />
-                    <FacebookLogo className="h-3.5 w-3.5 text-blue-300" />
-                    <span>Facebook</span>
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTicketFilter('total')
-                    setShowNewTicket(false)
-                    setTicketsModalOpen(true)
-                  }}
-                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs ${
-                    ticketFilter === 'total'
-                      ? 'border-blue-400/40 bg-blue-500/20 text-white'
-                      : 'border-white/10 bg-white/5 text-blue-100/70 hover:bg-white/10'
-                  }`}
-                >
-                  <Ticket className="h-3.5 w-3.5 text-blue-400" />
-                  <span>Total tickets</span>
-                  <span className="text-[11px] text-blue-100/60">{supportStats.totalTickets}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTicketFilter('open')
-                    setShowNewTicket(false)
-                    setTicketsModalOpen(true)
-                  }}
-                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs ${
-                    ticketFilter === 'open'
-                      ? 'border-orange-400/40 bg-orange-500/20 text-white'
-                      : 'border-white/10 bg-white/5 text-blue-100/70 hover:bg-white/10'
-                  }`}
-                >
-                  <Warning className="h-3.5 w-3.5 text-orange-400" />
-                  <span>Abertos</span>
-                  <span className="text-[11px] text-blue-100/60">{supportStats.openWithin24}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTicketFilter('overdue')
-                    setShowNewTicket(false)
-                    setTicketsModalOpen(true)
-                  }}
-                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs ${
-                    ticketFilter === 'overdue'
-                      ? 'border-red-400/40 bg-red-500/20 text-white'
-                      : 'border-white/10 bg-white/5 text-blue-100/70 hover:bg-white/10'
-                  }`}
-                >
-                  <Clock className="h-3.5 w-3.5 text-red-400" />
-                  <span>Atrasados</span>
-                  <span className="text-[11px] text-blue-100/60">{supportStats.overdueTickets}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTicketFilter('resolved')
-                    setShowNewTicket(false)
-                    setTicketsModalOpen(true)
-                  }}
-                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs ${
-                    ticketFilter === 'resolved'
-                      ? 'border-emerald-400/40 bg-emerald-500/20 text-white'
-                      : 'border-white/10 bg-white/5 text-blue-100/70 hover:bg-white/10'
-                  }`}
-                >
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>Resolvidos</span>
-                  <span className="text-[11px] text-blue-100/60">{supportStats.resolvedTickets}</span>
-                </button>
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-blue-100/70">
-                  <Star className="h-3.5 w-3.5 text-purple-400" />
-                  <span>Satisfação média</span>
-                  <span className="text-[11px] text-blue-100/60">{supportStats.avgSatisfaction.toFixed(1)}</span>
-                </div>
-                {((statusPausedUntil && Date.now() < statusPausedUntil) ||
-                  (conversationsPausedUntil && Date.now() < conversationsPausedUntil) ||
-                  (harmoniaInboxPausedUntil && Date.now() < harmoniaInboxPausedUntil)) ? (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/15 px-2.5 py-1 text-xs text-amber-100">
-                    Atualização pausada
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 h-[640px]">
-              <Card className="glass-card xl:col-span-4">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg text-white">Conversas</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        {paused ? (
+          <div className="flex justify-end">
+            <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/15 px-2.5 py-1 text-xs text-amber-100">
+              Atualização pausada
+            </span>
+          </div>
+        ) : null}
+        <div className="grid flex-1 min-h-0 grid-cols-1 gap-4 xl:grid-cols-12">
+          <Card className="glass-card xl:col-span-4 flex min-h-0 flex-col">
+                <CardContent className="flex min-h-0 flex-col gap-2 pt-4">
+                  <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 p-1.5">
                     {[
                       { id: 'all', label: 'Todas' },
                       { id: 'unread', label: 'Não lidas' },
@@ -1681,24 +2141,26 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                       <Button
                         key={item.id}
                         size="sm"
-                        variant={conversationFilter === item.id ? 'default' : 'outline'}
-                        className="h-7 rounded-full px-3 text-xs"
+                        variant="ghost"
+                        className={`h-7 rounded-full border px-2.5 text-[11px] font-medium leading-none ${
+                          conversationFilter === item.id
+                            ? 'border-white/30 bg-white/15 text-white'
+                            : 'border-white/10 bg-white/5 text-blue-100/80 hover:bg-white/10 hover:text-white'
+                        }`}
                         onClick={() => setConversationFilter(item.id as any)}
                       >
                         {item.label}
                       </Button>
                     ))}
                   </div>
-                  <div className="mb-3">
-                    <Input
-                      placeholder="Buscar por nome, telefone, perfil ou plataforma"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
-                    />
-                  </div>
-                      <ScrollArea className="h-[520px]">
-                        <div className="space-y-2">
+                  <Input
+                    placeholder="Buscar por nome, telefone, perfil ou plataforma"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="h-8 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+                  />
+                      <ScrollArea className="flex-1 min-h-0">
+                        <div className="space-y-1.5 pr-1">
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                       )}
@@ -1719,7 +2181,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                         <div
                           key={`${conv.conversationId}-${conv.channel ?? conv.platform ?? ''}`}
                           data-testid="conversation-item"
-                          className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-white/5 ${
+                          className={`w-full p-3 rounded-lg border cursor-pointer transition-colors hover:bg-white/5 box-border ${
                             selectedConversation?.conversationId === conv.conversationId &&
                             selectedConversation?.channel === conv.channel
                               ? 'border-blue-500/70 bg-blue-500/15'
@@ -1740,7 +2202,14 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                           }}
                         >
                           <div className="flex items-start gap-2">
-                            <div className="mt-1">{getPlatformIcon(conv.platform || conv.channel || conv.type, conv.channel)}</div>
+                            <div className="mt-1 relative">
+                              {getPlatformIcon(conv.platform || conv.channel || conv.type, conv.channel)}
+                              {Number(conv.unreadCount || 0) > 0 ? (
+                                <span className="absolute -top-2 -right-2 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold text-white">
+                                  {conv.unreadCount}
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="min-w-0 flex-1">
                               <div className="text-sm font-medium text-white truncate">
                                 {resolveConversationDisplayName(conv)}
@@ -1758,7 +2227,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                               </div>
                             </div>
                             <div className="ml-2 shrink-0">
-                              {renderAvatar(conv, 34)}
+                              <ConversationAvatar conv={conv} size={34} />
                             </div>
                           </div>
                         </div>
@@ -1780,7 +2249,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                     </CardContent>
                   </Card>
 
-              <Card className="glass-card xl:col-span-8">
+          <Card className="glass-card xl:col-span-8 flex min-h-0 flex-col">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-lg text-white">
@@ -1788,14 +2257,14 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                     </CardTitle>
                     {selectedConversation ? (
                       <div className="shrink-0">
-                        {renderAvatar(selectedConversation, 40)}
+                        <ConversationAvatar conv={selectedConversation} size={40} />
                       </div>
                     ) : null}
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="flex min-h-0 flex-col gap-4">
                   {selectedConversation ? (
-                    <div className="space-y-4">
+                    <div className="flex min-h-0 flex-1 flex-col gap-4">
                       {selectedConversation.leadId ? (
                         <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-blue-100/70 space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
@@ -1860,129 +2329,236 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                         </div>
                       ) : null}
 
-                      <ScrollArea className="h-[500px] border border-white/10 rounded-lg p-4">
-                        <div className="space-y-3">
-                          {selectedConversation.platform === 'lead' ? (
-                            harmoniaMessagesLoading ? (
-                              <div className="text-sm text-blue-100/60 text-center py-4">Carregando mensagens...</div>
-                            ) : (
-                              harmoniaMessages.map((m) => {
-                                const dir = String(m.direction || '')
-                                const isInbound = dir === 'inbound'
-                                const mediaLabel = resolveMediaLabel(m)
-                                const caption = resolveMessageCaption(m)
-                                const replyPreview = resolveReplyPreview(caption, mediaLabel || 'Mensagem')
-                                return (
-                                  <div
-                                    key={String(m.id || m.provider_message_id || Math.random())}
-                                    className={`rounded-xl border ${isInbound ? 'border-sky-500/20 bg-sky-500/10' : 'border-emerald-500/20 bg-emerald-500/10'} p-3`}
-                                    onDoubleClick={() => {
-                                      setReplyTarget({
-                                        id: String(m.id || m.provider_message_id || ''),
-                                        text: replyPreview,
-                                        direction: dir,
-                                        platform: 'lead'
-                                      })
-                                      messageInputRef.current?.focus()
-                                    }}
-                                  >
-                                    <div className="flex items-center justify-between gap-3 text-xs">
-                                      <div className="text-white/90 font-semibold">
-                                        {isInbound ? 'IN' : 'OUT'}
-                                      </div>
-                                      <div className="text-white/70">{fmtDateTime(m.created_at || null)}</div>
-                                    </div>
-                                    <div className="mt-2 space-y-1">
-                                      {mediaLabel ? (
-                                        <Badge className="bg-white/10 text-white border border-white/10 text-[11px] px-2 py-0.5 w-fit">
-                                          {mediaLabel}
-                                        </Badge>
-                                      ) : null}
-                                      <div className="text-sm text-white whitespace-pre-wrap break-words">
-                                        {caption ? renderFormattedText(caption) : <span className="text-white/60">—</span>}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )
-                              })
-                            )
-                          ) : (
-                            <>
-                              {loadingMessages && (
+                      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-white/10 bg-white/5 p-4">
+                        <ScrollArea className="flex-1 min-h-0 pr-2" viewportRef={messagesViewportRef}>
+                          <div className="space-y-3">
+                            {selectedConversation.platform === 'lead' ? (
+                              harmoniaMessagesLoading ? (
                                 <div className="text-sm text-blue-100/60 text-center py-4">Carregando mensagens...</div>
-                              )}
+                              ) : (
+                                harmoniaMessages.map((m) => {
+                                  const dir = String(m.direction || '')
+                                  const isInbound = dir === 'inbound'
+                                  const mediaLabel = resolveMediaLabel(m)
+                                  const caption = resolveMessageCaption(m)
+                                  const replyPreview = resolveReplyPreview(caption, mediaLabel || 'Mensagem')
+                                  return (
+                                    <div
+                                      key={String(m.id || m.provider_message_id || Math.random())}
+                                      className={`rounded-xl border ${isInbound ? 'border-sky-500/20 bg-sky-500/10' : 'border-emerald-500/20 bg-emerald-500/10'} p-3`}
+                                      onDoubleClick={() => {
+                                        openReplyComposer({
+                                          id: String(m.id || m.provider_message_id || ''),
+                                          text: replyPreview,
+                                          direction: dir,
+                                          platform: 'lead'
+                                        })
+                                      }}
+                                    >
+                                      <div className="flex items-center justify-between gap-3 text-xs">
+                                        <div className="text-white/90 font-semibold">
+                                          {isInbound ? 'IN' : 'OUT'}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <Button
+                                            type="button"
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-6 w-6 rounded-full border border-white/15 bg-white/10 text-blue-100 hover:bg-white/20"
+                                            onClick={() => openReplyComposer({
+                                              id: String(m.id || m.provider_message_id || ''),
+                                              text: caption || mediaLabel || 'Mensagem',
+                                              direction: dir,
+                                              platform: 'lead'
+                                            })}
+                                            aria-label="Responder mensagem"
+                                          >
+                                            <ArrowBendUpLeft className="h-3.5 w-3.5" />
+                                          </Button>
+                                          <div className="text-white/70">{fmtDateTime(m.created_at || null)}</div>
+                                        </div>
+                                      </div>
+                                      <div className="mt-2 space-y-1">
+                                        {mediaLabel ? (
+                                          <Badge className="bg-white/10 text-white border border-white/10 text-[11px] px-2 py-0.5 w-fit">
+                                            {mediaLabel}
+                                          </Badge>
+                                        ) : null}
+                                        <div className="text-sm text-white whitespace-pre-wrap break-words">
+                                          {caption ? renderFormattedText(caption) : <span className="text-white/60">—</span>}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })
+                              )
+                            ) : (
+                              <>
+                                {loadingMessages && (
+                                  <div className="text-sm text-blue-100/60 text-center py-4">Carregando mensagens...</div>
+                                )}
                               {messages.map((msg) => {
                                 const outbound = msg.direction === 'outbound' || msg.direction === 'human'
                                 const ts = msg.createdAt || msg.timestamp
-                                const replyPreview = resolveReplyPreview(msg.text, msg.caption || msg.type)
+                                const messageId = String(msg?.id || '')
+                                const media =
+                                  msg?.media ||
+                                  (msg?.mediaUrl
+                                    ? {
+                                        type: msg.mediaType || msg.type,
+                                        url: msg.mediaUrl || msg.url,
+                                        mimeType: msg.mimeType,
+                                        fileName: msg.fileName,
+                                        durationSec: msg.durationSec
+                                      }
+                                    : undefined)
+                                const showReactionActions = selectedConversation?.platform !== 'lead' && selectedConversation?.platform !== 'instagram'
                                 return (
                                   <div key={msg.id} className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
                                     <div
-                                      className={`max-w-[70%] p-3 rounded-lg ${outbound ? 'bg-blue-500/40 text-white' : 'bg-white/10 text-blue-100'}`}
+                                      className={`group max-w-[88%] md:max-w-[75%] p-3 rounded-lg border ${outbound ? 'border-blue-300/20 bg-blue-500/35 text-white' : 'border-white/10 bg-white/10 text-blue-100'}`}
                                       onDoubleClick={() => {
-                                        setReplyTarget({
-                                          id: String(msg.id || ''),
-                                          text: replyPreview,
-                                          direction: msg.direction,
-                                          platform: msg.platform
-                                        })
-                                        messageInputRef.current?.focus()
+                                        openReplyComposer(msg)
                                       }}
                                     >
+                                      {msg?.replyTo ? (
+                                        <button
+                                          type="button"
+                                          className="mb-2 w-full rounded-md border border-white/15 bg-black/20 px-2 py-1 text-left text-xs text-blue-100/80"
+                                        >
+                                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-blue-100/60">
+                                            <ArrowBendUpLeft className="h-3 w-3" />
+                                            Resposta
+                                          </span>
+                                          <div className="truncate text-blue-100/90">{msg.replyTo.textPreview}</div>
+                                        </button>
+                                      ) : null}
                                       <div className="text-sm">
                                         {renderFormattedText(msg.text || msg.caption || `[${msg.type}]`)}
                                       </div>
+                                      {media ? (
+                                        <MessageMedia
+                                          media={media}
+                                          mediaProxyUrl={msg.mediaProxyUrl}
+                                          fallbackText="Mídia indisponível no momento."
+                                          onImagePreview={(payload) => setImagePreview(payload)}
+                                        />
+                                      ) : null}
+                                      {Array.isArray(msg?.reactions) && msg.reactions.length > 0 ? (
+                                        <div className="mt-2 flex flex-wrap gap-1">
+                                          {msg.reactions.map((reaction: any) => (
+                                            <button
+                                              key={`${messageId}-${reaction.emoji}`}
+                                              type="button"
+                                              className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] ${
+                                                reaction.reactedByMe
+                                                  ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-100'
+                                                  : 'border-white/15 bg-white/10 text-blue-100/80'
+                                              }`}
+                                              onClick={() => toggleReaction(msg, reaction.emoji)}
+                                            >
+                                              <span>{reaction.emoji}</span>
+                                              <span>{reaction.count}</span>
+                                            </button>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      {showReactionActions ? (
+                                        <div className="mt-2 flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            className="h-6 rounded-full border border-white/15 bg-white/10 px-2 text-[10px] text-blue-100 hover:bg-white/20"
+                                            onClick={() => openReplyComposer(msg)}
+                                            aria-label="Responder mensagem"
+                                          >
+                                            <ArrowBendUpLeft className="h-3.5 w-3.5" />
+                                            Reply
+                                          </Button>
+                                          <div className="relative">
+                                            <Button
+                                              type="button"
+                                              size="icon"
+                                              variant="ghost"
+                                              className="h-6 w-6 rounded-full border border-white/15 bg-white/10 text-blue-100 hover:bg-white/20"
+                                              onClick={() => setReactionPickerMessageId((current) => current === messageId ? null : messageId)}
+                                              aria-label="Reagir mensagem"
+                                            >
+                                              <Smiley className="h-3.5 w-3.5" />
+                                            </Button>
+                                            {reactionPickerMessageId === messageId ? (
+                                              <div className="absolute right-0 top-7 z-20 flex items-center gap-1 rounded-full border border-white/10 bg-slate-950/95 p-1 shadow-lg">
+                                                {reactionOptions.map((emoji) => (
+                                                  <button
+                                                    key={`${messageId}-${emoji}`}
+                                                    type="button"
+                                                    className="h-7 w-7 rounded-full hover:bg-white/10"
+                                                    onClick={() => {
+                                                      void toggleReaction(msg, emoji)
+                                                      setReactionPickerMessageId(null)
+                                                    }}
+                                                    disabled={reactionBusyKey === `${messageId}:${emoji}`}
+                                                  >
+                                                    {emoji}
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      ) : null}
                                       <div className={`text-xs mt-1 ${outbound ? 'text-blue-100/80' : 'text-blue-100/60'}`}>
                                         {ts ? new Date(ts).toLocaleTimeString() : ''}
                                       </div>
                                     </div>
                                   </div>
-                                )
-                              })}
-                            </>
-                          )}
-                        </div>
-                      </ScrollArea>
-
-                      {replyTarget && (
-                        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-blue-100/70">
-                          <div className="truncate">
-                            Respondendo: <span className="text-white/90">{replyTarget.text}</span>
+                                  )
+                                })}
+                              </>
+                            )}
                           </div>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-6 w-6"
-                            onClick={() => setReplyTarget(null)}
-                            aria-label="Cancelar resposta"
-                          >
-                            ✕
+                        </ScrollArea>
+
+                        {replyTarget && (
+                          <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-blue-100/70">
+                            <div className="truncate">
+                              Respondendo: <span className="text-white/90">{replyTarget.text}</span>
+                            </div>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              onClick={() => setReplyTarget(null)}
+                              aria-label="Cancelar resposta"
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                        )}
+
+                        <div className="mt-3 flex gap-2">
+                          <Textarea
+                            placeholder="Digite sua mensagem..."
+                            value={messageInput}
+                            onChange={(e) => setMessageInput(e.target.value)}
+                            ref={messageInputRef}
+                            className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
+                            rows={2}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault()
+                                sendMessage()
+                              }
+                            }}
+                          />
+                          <Button onClick={sendMessage} disabled={!messageInput.trim() || sendingMessage}>
+                            {sendingMessage ? '...' : 'Enviar'}
                           </Button>
                         </div>
-                      )}
-
-                      <div className="flex gap-2">
-                        <Textarea
-                          placeholder="Digite sua mensagem..."
-                          value={messageInput}
-                          onChange={(e) => setMessageInput(e.target.value)}
-                          ref={messageInputRef}
-                          className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-blue-100/50"
-                          rows={2}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault()
-                              sendMessage()
-                            }
-                          }}
-                        />
-                        <Button onClick={sendMessage} disabled={!messageInput.trim() || sendingMessage}>
-                          {sendingMessage ? '...' : 'Enviar'}
-                        </Button>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-center h-[520px]">
+                    <div className="flex flex-1 items-center justify-center">
                       <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-6 py-6 text-center max-w-sm">
                         <div className="text-sm text-blue-100/70">Nenhuma conversa selecionada</div>
                         <div className="text-xs text-blue-100/50 mt-2">
@@ -1991,11 +2567,23 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
                       </div>
                     </div>
                   )}
-                </CardContent>
-              </Card>
-            </div>
-          </CardContent>
-        </Card>
+                  </CardContent>
+                </Card>
+        </div>
+
+        <Dialog open={Boolean(imagePreview)} onOpenChange={(open) => { if (!open) setImagePreview(null) }}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Visualizar imagem</DialogTitle>
+              <DialogDescription>Clique fora da janela para fechar.</DialogDescription>
+            </DialogHeader>
+            {imagePreview?.src ? (
+              <div className="max-h-[75vh] overflow-auto rounded-lg border border-white/10 bg-black/40 p-2">
+                <img src={imagePreview.src} alt={imagePreview.alt || 'Imagem'} className="mx-auto max-h-[70vh] w-auto object-contain" />
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={waStatusOpen} onOpenChange={setWaStatusOpen}>
           <DialogContent className="max-w-sm">
@@ -2367,7 +2955,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
 
   if (!activities || activities.length === 0) {
     return (
-      <div className="space-y-6">
+      <div className="flex h-full min-h-0 flex-col">
         {renderOmnichannelChat()}
       </div>
     )
@@ -2419,7 +3007,7 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       {/* Channel Statistics */}
       <Card className="glass-card">
         <CardHeader>
@@ -2627,4 +3215,4 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
       </Card>
     </div>
   )
-}
+})

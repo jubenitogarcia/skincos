@@ -9,9 +9,13 @@ import { fileURLToPath } from 'url'
 import { spawn, spawnSync } from 'child_process'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 
+let devAuthSessionResolver = null
+let devAuthEnabled = false
+
 // WhatsApp Orchestrator (backend-only)
 import { whatsappOrchestrator } from './services/whatsappOrchestrator.js'
 import { evolutionOrchestrator } from './services/evolutionOrchestrator.js'
+import { waMessageMetaStore } from './services/waMessageMetaStore.js'
 
 // Ponto (reconhecimento facial + batidas)
 import { registerPontoRoutes } from './server/pontoRoutes.js'
@@ -67,6 +71,14 @@ try { await fs.mkdir(CORE_STATE_DIR, { recursive: true }) } catch { /* ignore */
 
 const app = express()
 
+const LOG_LEVEL = String(process.env.CRM_LOG_LEVEL || (process.env.NODE_ENV === 'development' ? 'warn' : 'info')).toLowerCase()
+const LOG_LEVEL_RANK = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 }
+const shouldLog = (level) => {
+    const current = LOG_LEVEL_RANK[String(level || 'info').toLowerCase()] ?? 3
+    const min = LOG_LEVEL_RANK[LOG_LEVEL] ?? 3
+    return current <= min
+}
+
 // -------------------------------------------------------------
 // Gateway hardening (Unit Monitor LAN gateway behind a tunnel)
 // -------------------------------------------------------------
@@ -95,7 +107,9 @@ app.use((req, res, next) => {
             duration_ms: Date.now() - startedAt,
             ip: req.ip,
         }
-        console.log(JSON.stringify(payload))
+        if (shouldLog(level)) {
+            console.log(JSON.stringify(payload))
+        }
     })
     next()
 })
@@ -259,7 +273,7 @@ app.use(cors({
     origin: true, // Allow all origins in development
     credentials: true, // Essential for SSE/EventSource and auth cookies
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept', 'X-CSRF-Token', 'X-Tenant-Key', 'X-User-Role', 'X-CRM-Role', 'X-Role'],
     exposedHeaders: ['Content-Length', 'X-Total-Count'],
     optionsSuccessStatus: 200 // Legacy browser support
 }))
@@ -269,7 +283,7 @@ app.use((req, res, next) => {
     if (req.method === 'OPTIONS') {
         res.header('Access-Control-Allow-Origin', req.headers.origin || '*')
         res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH')
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With, Accept')
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With, Accept, X-CSRF-Token, X-Tenant-Key, X-User-Role, X-CRM-Role, X-Role')
         res.header('Access-Control-Allow-Credentials', 'true')
         return res.sendStatus(200)
     }
@@ -313,6 +327,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 // When running locally with `NO_AUTH=true`, provide a minimal cookie-based session.
 // -------------------------------------------------------------
 const DEV_AUTH_ENABLED = String(process.env.NO_AUTH || '').toLowerCase() === 'true' && String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
+let devAuthRequireAdmin = null
 if (DEV_AUTH_ENABLED) {
     const DEV_AUTH_COOKIE = 'skincos_dev_session'
     const DEV_AUTH_SECRET = String(process.env.DEV_SESSION_SECRET || process.env.SESSION_SECRET || 'dev-only-session-secret')
@@ -413,6 +428,8 @@ if (DEV_AUTH_ENABLED) {
         const current = cookies[DEV_AUTH_COOKIE]
         return decodeSession(current)
     }
+    devAuthSessionResolver = getSessionFromReq
+    devAuthEnabled = true
 
     app.get('/api/auth/me', (req, res) => {
         res.setHeader('Cache-Control', 'no-store')
@@ -474,6 +491,109 @@ if (DEV_AUTH_ENABLED) {
         return res.json({ ok: true, unidades: units, source: 'local-dev' })
     })
 }
+
+// -------------------------------------------------------------
+// Visual Theme (branding/palettes) - file-based persistence
+// -------------------------------------------------------------
+const VISUAL_THEME_FILE = process.env.CRM_VISUAL_THEME_FILE || path.join(CORE_STATE_DIR, 'visual_theme.v1.json')
+let visualThemeState = { themes: {} }
+let saveVisualThemeTimer = null
+
+const ADMIN_ROLES = new Set(['ADMIN', 'GESTOR', 'GERENTE'])
+
+function resolveTenantKey(req) {
+    const header = String(req.headers['x-tenant-key'] || req.headers['x-tenant'] || '').trim()
+    let key = header || String(req.headers['x-forwarded-host'] || req.headers['host'] || '').trim().toLowerCase()
+    if (key.includes(',')) key = key.split(',')[0].trim()
+    key = key.replace(/^https?:\/\//, '')
+    if (key.includes('/')) key = key.split('/')[0].trim()
+    if (key.includes(':')) key = key.split(':')[0].trim()
+    key = key.replace(/[^a-z0-9._-]/g, '-')
+    if (!key) key = 'default'
+    return key
+}
+
+function resolveRoleFromReq(req) {
+    const header = req.headers['x-user-role'] || req.headers['x-crm-role'] || req.headers['x-role']
+    let role = header ? String(header) : ''
+    if (!role && req.user?.role) role = String(req.user.role)
+    return role.trim().toUpperCase()
+}
+
+function requireVisualThemeAdmin(req, res) {
+    if (devAuthRequireAdmin) return devAuthRequireAdmin(req, res)
+    const role = resolveRoleFromReq(req)
+    if (!role) {
+        res.status(401).json({ ok: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        return null
+    }
+    if (!ADMIN_ROLES.has(role)) {
+        res.status(403).json({ ok: false, error: 'FORBIDDEN', code: 'FORBIDDEN' })
+        return null
+    }
+    return { user: { role } }
+}
+
+async function loadVisualThemeState() {
+    try {
+        const raw = await fs.readFile(VISUAL_THEME_FILE, 'utf-8')
+        const json = JSON.parse(raw)
+        if (json && typeof json === 'object') {
+            const themes = json.themes && typeof json.themes === 'object' ? json.themes : {}
+            visualThemeState = { themes }
+        }
+    } catch { /* ignore */ }
+}
+
+async function persistVisualThemeNow() {
+    try {
+        await fs.writeFile(VISUAL_THEME_FILE, JSON.stringify(visualThemeState, null, 2))
+    } catch (e) {
+        console.error('[VISUAL_THEME] Persist failed', e)
+    }
+}
+
+function schedulePersistVisualTheme() {
+    if (saveVisualThemeTimer) clearTimeout(saveVisualThemeTimer)
+    saveVisualThemeTimer = setTimeout(() => { persistVisualThemeNow() }, 500).unref()
+}
+
+await loadVisualThemeState()
+
+app.get('/api/visual-theme', (req, res) => {
+    res.setHeader('cache-control', 'no-store')
+    const tenantKey = resolveTenantKey(req)
+    const entry = visualThemeState.themes && typeof visualThemeState.themes === 'object'
+        ? visualThemeState.themes[tenantKey]
+        : null
+    return res.json({
+        ok: true,
+        tenantKey,
+        data: entry?.config || null,
+        meta: entry ? { updatedAt: entry.updatedAt || null, updatedBy: entry.updatedBy || null } : null
+    })
+})
+
+app.put('/api/visual-theme', async (req, res) => {
+    const session = requireVisualThemeAdmin(req, res)
+    if (!session) return
+    const tenantKey = resolveTenantKey(req)
+    const body = req.body && typeof req.body === 'object' ? req.body : {}
+    const config = body?.config && typeof body.config === 'object' ? body.config : body
+    if (!config || typeof config !== 'object') {
+        return res.status(400).json({ ok: false, error: 'CONFIG_REQUIRED', code: 'CONFIG_REQUIRED' })
+    }
+    if (!visualThemeState.themes || typeof visualThemeState.themes !== 'object') {
+        visualThemeState.themes = {}
+    }
+    visualThemeState.themes[tenantKey] = {
+        config,
+        updatedAt: new Date().toISOString(),
+        updatedBy: session?.user?.username || session?.user?.email || session?.user?.role || 'system'
+    }
+    schedulePersistVisualTheme()
+    return res.json({ ok: true, tenantKey, data: visualThemeState.themes[tenantKey] })
+})
 
 // -------------------------------------------------------------
 // Ponto (registro de ponto com identificação facial)
@@ -566,12 +686,84 @@ app.use('/api/instagram-module', createProxyMiddleware({
 // Meta Ads proxy (same-origin for CRM UI)
 // -------------------------------------------------------------
 const META_ADS_API_TARGET = process.env.META_ADS_API_TARGET || 'http://localhost:4000'
+const CRM_PROXY_SECRET = String(process.env.CRM_PROXY_SECRET || process.env.DEV_SESSION_SECRET || '').trim()
+const CRM_AUTH_TARGET = String(process.env.AUTH_API_TARGET || process.env.INSUMOS_API_TARGET || 'https://api.skincos.com.br').trim()
+const CRM_AUTH_PREFIX = (() => {
+    const raw = String(process.env.AUTH_PATH_PREFIX || '/api/auth').trim()
+    const prefix = raw.startsWith('/') ? raw : `/${raw}`
+    return prefix.replace(/\/$/, '') || '/api/auth'
+})()
+const CRM_AUTH_CANDIDATES = Array.from(new Set([CRM_AUTH_PREFIX, '/auth', '/api/auth']))
+
+function base64urlEncode(value) {
+    return Buffer.from(String(value || '')).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+async function fetchCrmUserFromAuth(req) {
+    try {
+        const cookie = req.headers?.cookie
+        if (!cookie) return null
+        const headers = { accept: 'application/json', cookie }
+        for (const prefix of CRM_AUTH_CANDIDATES) {
+            const url = new URL(CRM_AUTH_TARGET)
+            url.pathname = `${prefix}/me`
+            const res = await fetch(url.toString(), { method: 'GET', headers, redirect: 'manual' }).catch(() => null)
+            if (!res) continue
+            if (res.status === 404 || res.status === 405) continue
+            if (!res.ok) return null
+            const data = await res.json().catch(() => null)
+            const raw = data?.user || data?.usuario || data || null
+            if (!raw) return null
+            return {
+                id: raw.id || raw.username || raw.email,
+                username: raw.username,
+                displayName: raw.displayName || raw.name || raw.username || raw.email,
+                name: raw.name,
+                email: raw.email,
+                role: raw.role,
+                allowedUnits: raw.allowedUnits,
+                allowedModules: raw.allowedModules,
+            }
+        }
+        return null
+    } catch {
+        return null
+    }
+}
+
+async function resolveCrmUser(req) {
+    if (devAuthEnabled && typeof devAuthSessionResolver === 'function') {
+        const session = devAuthSessionResolver(req)
+        if (session?.user) return session.user
+    }
+    return fetchCrmUserFromAuth(req)
+}
+
+app.use('/api/meta-ads', async (req, res, next) => {
+    req.crmUser = await resolveCrmUser(req)
+    const hasBearer = String(req.headers?.authorization || '').toLowerCase().startsWith('bearer ')
+    if (!req.crmUser && !hasBearer) {
+        return res.status(401).json({ ok: false, error: 'UNAUTHORIZED', hint: 'Faça login no CRM para continuar.' })
+    }
+    return next()
+})
+
 app.use('/api/meta-ads', createProxyMiddleware({
     target: META_ADS_API_TARGET,
     changeOrigin: true,
     ws: false,
     logLevel: 'silent',
-    pathRewrite: { '^/api/meta-ads': '' }
+    pathRewrite: { '^/api/meta-ads': '' },
+    onProxyReq: (proxyReq, req) => {
+        const user = req.crmUser
+        if (!user) return
+        const payload = base64urlEncode(JSON.stringify(user))
+        proxyReq.setHeader('x-crm-user', payload)
+        if (CRM_PROXY_SECRET) {
+            const sig = createHmac('sha256', CRM_PROXY_SECRET).update(payload).digest('hex')
+            proxyReq.setHeader('x-crm-signature', sig)
+        }
+    }
 }))
 
 // -------------------------------------------------------------
@@ -708,6 +900,7 @@ if (DEV_AUTH_ENABLED) {
         }
         return session
     }
+    devAuthRequireAdmin = requireDevAdmin
 
     const loadLocalCrmStore = async () => {
         try {
@@ -1268,6 +1461,7 @@ function schedulePersistMessages() {
     saveMessagesTimer = setTimeout(() => { persistMessagesNow() }, 500).unref()
 }
 await loadMessages()
+await waMessageMetaStore.init()
 function ensureConv(convId) {
     if (!messages[convId]) messages[convId] = []
 }
@@ -4048,6 +4242,28 @@ function resolveWebhookHeaders() {
     return headers
 }
 
+function resolveMessageActor(req) {
+    const session = typeof devAuthSessionResolver === 'function' ? devAuthSessionResolver(req) : null
+    const user = session?.user || {}
+    const email = String(user?.email || req.get('x-user-email') || '').trim().toLowerCase()
+    const username = String(user?.username || req.get('x-user-name') || '').trim().toLowerCase()
+    const role = String(user?.role || req.get('x-user-role') || '').trim().toLowerCase()
+    if (email) return `email:${email}`
+    if (username) return `user:${username}`
+    if (role) return `role:${role}`
+    return `ip:${String(req.ip || 'unknown')}`
+}
+
+function buildWaMediaProxyUrl(req, { channel, remoteJid, messageId }) {
+    const base = resolveCrmPublicUrl(req)
+    const params = new URLSearchParams({
+        channel: String(channel),
+        remoteJid: String(remoteJid || ''),
+        messageId: String(messageId || '')
+    })
+    return `${base}/api/wa-orchestrator/media?${params.toString()}`
+}
+
 function recordWebhookSuccess() {
     waWebhookMetrics.total += 1
     waWebhookMetrics.lastAt = new Date().toISOString()
@@ -4116,30 +4332,174 @@ function extractEvolutionMessageText(message) {
 }
 
 function extractEvolutionMessageMeta(message) {
-    if (!message) return { text: '', caption: undefined, mediaType: undefined }
-    if (typeof message === 'string') return { text: message, caption: undefined, mediaType: undefined }
+    if (!message) {
+        return {
+            text: '',
+            caption: undefined,
+            mediaType: undefined,
+            mediaUrl: undefined,
+            mimeType: undefined,
+            fileName: undefined,
+            durationSec: undefined,
+            sizeBytes: undefined
+        }
+    }
+    if (typeof message === 'string') {
+        return {
+            text: message,
+            caption: undefined,
+            mediaType: undefined,
+            mediaUrl: undefined,
+            mimeType: undefined,
+            fileName: undefined,
+            durationSec: undefined,
+            sizeBytes: undefined
+        }
+    }
+    const resolveMediaUrl = (msg) => {
+        const candidate = (
+            msg?.mediaUrl ||
+            msg?.url ||
+            msg?.imageMessage?.url ||
+            msg?.videoMessage?.url ||
+            msg?.documentMessage?.url ||
+            msg?.audioMessage?.url ||
+            msg?.ptvMessage?.url ||
+            msg?.stickerMessage?.url
+        )
+        return typeof candidate === 'string' ? candidate : undefined
+    }
+    const resolveMimeType = (msg) => {
+        const candidate = (
+            msg?.mimetype ||
+            msg?.mimeType ||
+            msg?.imageMessage?.mimetype ||
+            msg?.videoMessage?.mimetype ||
+            msg?.documentMessage?.mimetype ||
+            msg?.audioMessage?.mimetype ||
+            msg?.ptvMessage?.mimetype ||
+            msg?.stickerMessage?.mimetype
+        )
+        return typeof candidate === 'string' ? candidate : undefined
+    }
+    const resolveFileName = (msg) => {
+        const candidate = (
+            msg?.fileName ||
+            msg?.documentMessage?.fileName ||
+            msg?.documentWithCaptionMessage?.fileName ||
+            msg?.imageMessage?.fileName ||
+            msg?.videoMessage?.fileName
+        )
+        return typeof candidate === 'string' ? candidate : undefined
+    }
+    const resolveDuration = (msg) => {
+        const candidate = (
+            msg?.duration ||
+            msg?.durationSec ||
+            msg?.audioMessage?.seconds ||
+            msg?.audioMessage?.duration ||
+            msg?.videoMessage?.seconds ||
+            msg?.ptvMessage?.seconds
+        )
+        const num = Number(candidate)
+        return Number.isFinite(num) && num > 0 ? num : undefined
+    }
+    const resolveSizeBytes = (msg) => {
+        const candidate = (
+            msg?.fileLength ||
+            msg?.sizeBytes ||
+            msg?.documentMessage?.fileLength ||
+            msg?.audioMessage?.fileLength ||
+            msg?.videoMessage?.fileLength ||
+            msg?.imageMessage?.fileLength
+        )
+        const num = Number(candidate)
+        return Number.isFinite(num) && num > 0 ? num : undefined
+    }
+    const fileName = resolveFileName(message)
+    const durationSec = resolveDuration(message)
+    const sizeBytes = resolveSizeBytes(message)
+    const mediaUrl = resolveMediaUrl(message)
+    const mimeType = resolveMimeType(message)
     if (message.conversation || message.text || message.extendedTextMessage?.text) {
-        return { text: extractEvolutionMessageText(message), caption: undefined, mediaType: undefined }
+        return {
+            text: extractEvolutionMessageText(message),
+            caption: undefined,
+            mediaType: undefined,
+            mediaUrl,
+            mimeType,
+            fileName,
+            durationSec,
+            sizeBytes
+        }
     }
     if (message.imageMessage) {
-        return { text: '', caption: message.imageMessage.caption, mediaType: 'image' }
+        return { text: '', caption: message.imageMessage.caption, mediaType: 'image', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
     if (message.videoMessage) {
-        return { text: '', caption: message.videoMessage.caption, mediaType: 'video' }
+        return { text: '', caption: message.videoMessage.caption, mediaType: 'video', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
     if (message.documentMessage || message.documentWithCaptionMessage) {
-        return { text: '', caption: message.documentMessage?.caption || message.documentWithCaptionMessage?.caption, mediaType: 'document' }
+        return {
+            text: '',
+            caption: message.documentMessage?.caption || message.documentWithCaptionMessage?.caption,
+            mediaType: 'document',
+            mediaUrl,
+            mimeType,
+            fileName,
+            durationSec,
+            sizeBytes
+        }
     }
     if (message.audioMessage) {
-        return { text: '', caption: undefined, mediaType: 'audio' }
+        return { text: '', caption: undefined, mediaType: 'audio', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
     if (message.stickerMessage) {
-        return { text: '', caption: undefined, mediaType: 'sticker' }
+        return { text: '', caption: undefined, mediaType: 'sticker', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
     if (message.ptvMessage) {
-        return { text: '', caption: undefined, mediaType: 'ptv' }
+        return { text: '', caption: undefined, mediaType: 'ptv', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
-    return { text: extractEvolutionMessageText(message), caption: undefined, mediaType: undefined }
+    return { text: extractEvolutionMessageText(message), caption: undefined, mediaType: undefined, mediaUrl, mimeType, fileName, durationSec, sizeBytes }
+}
+
+function extractEvolutionReplyMeta(record) {
+    const message = record?.message || {}
+    const quoted = (
+        message?.extendedTextMessage?.contextInfo?.quotedMessage ||
+        message?.imageMessage?.contextInfo?.quotedMessage ||
+        message?.videoMessage?.contextInfo?.quotedMessage ||
+        message?.documentMessage?.contextInfo?.quotedMessage ||
+        message?.audioMessage?.contextInfo?.quotedMessage ||
+        message?.conversation?.contextInfo?.quotedMessage ||
+        null
+    )
+    const quotedId = (
+        message?.extendedTextMessage?.contextInfo?.stanzaId ||
+        message?.imageMessage?.contextInfo?.stanzaId ||
+        message?.videoMessage?.contextInfo?.stanzaId ||
+        message?.documentMessage?.contextInfo?.stanzaId ||
+        message?.audioMessage?.contextInfo?.stanzaId ||
+        null
+    )
+    if (!quotedId) return null
+    const preview = extractEvolutionMessageText(quoted)
+    if (!preview) return null
+    return {
+        messageId: String(quotedId),
+        textPreview: preview.length > 240 ? `${preview.slice(0, 239)}…` : preview
+    }
+}
+
+function extractEvolutionMessageIdFromSendResult(result) {
+    return (
+        result?.key?.id ||
+        result?.id ||
+        result?.message?.key?.id ||
+        result?.response?.key?.id ||
+        result?.data?.key?.id ||
+        null
+    )
 }
 
 function normalizePlatform(raw) {
@@ -4156,6 +4516,13 @@ function extractPhoneFromJid(remoteJid) {
     const value = String(remoteJid)
     if (value.includes('@')) return value.split('@')[0]
     return value
+}
+
+function normalizeWhatsAppJid(value) {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    if (raw.includes('@')) return raw
+    return `${raw}@s.whatsapp.net`
 }
 
 function normalizeEvolutionTimestamp(value) {
@@ -4293,14 +4660,19 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
             const data = await evolutionOrchestrator.fetchChats(channel, { limit, offset })
             const chats = Array.isArray(data) ? data : (data?.chats || data?.data || [])
             const items = chats.map((chat) => {
-                const remoteJid = chat.remoteJid || chat.id || chat.chatId || ''
+                const rawRemoteJid = chat.remoteJid || chat.id || chat.chatId || ''
+                const remoteJid = rawRemoteJid && String(rawRemoteJid).includes('@')
+                    ? String(rawRemoteJid)
+                    : (rawRemoteJid ? `${rawRemoteJid}@s.whatsapp.net` : '')
                 const lastMessageText = extractEvolutionMessageText(chat.lastMessage?.message || chat.lastMessage)
                 const updatedAt = normalizeEvolutionTimestamp(chat.updatedAt || chat.lastMessage?.messageTimestamp)
+                const profilePic = chat.profilePicUrl || chat.profilePictureUrl || chat.avatarUrl || chat.avatar || chat.imgUrl || chat.pictureUrl || chat.photoUrl || null
                 return {
                     conversationId: remoteJid,
                     name: chat.pushName || chat.name || chat.subject || remoteJid,
                     phone: extractPhoneFromJid(remoteJid),
                     platform: 'whatsapp',
+                    profilePic,
                     lastMessage: lastMessageText || 'Sem mensagens',
                     updatedAt,
                     unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0
@@ -4335,39 +4707,70 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/message
             return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
         }
         const { remoteJid } = req.params
+        const normalizedRemoteJid = normalizeWhatsAppJid(remoteJid)
         const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 200)
         const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1)
+        const actor = resolveMessageActor(req)
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const data = await evolutionOrchestrator.fetchMessages(channel, remoteJid, { limit, page })
             const records = data?.messages?.records || []
-            const items = records.map((record) => {
-                const fromMe = !!record?.key?.fromMe
-                const jid = record?.key?.remoteJid || remoteJid
-                const meta = extractEvolutionMessageMeta(record?.message)
-                return {
-                    id: record?.id || record?.key?.id || `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                    conversationId: jid,
-                    direction: fromMe ? 'outbound' : 'inbound',
-                    type: meta.mediaType || record?.messageType || record?.type || 'text',
-                    text: meta.text || extractEvolutionMessageText(record?.message),
-                    caption: meta.caption,
-                    mediaType: meta.mediaType,
-                    createdAt: normalizeEvolutionTimestamp(record?.messageTimestamp || record?.timestamp)
+                const items = records.map((record) => {
+                    const fromMe = !!record?.key?.fromMe
+                    const jid = record?.key?.remoteJid || remoteJid
+                    const meta = extractEvolutionMessageMeta(record?.message)
+                    const replyTo = extractEvolutionReplyMeta(record)
+                    return {
+                        id: record?.id || record?.key?.id || `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                        conversationId: jid,
+                        direction: fromMe ? 'outbound' : 'inbound',
+                        type: meta.mediaType || record?.messageType || record?.type || 'text',
+                        text: meta.text || extractEvolutionMessageText(record?.message),
+                        caption: meta.caption,
+                        mediaType: meta.mediaType,
+                        mediaUrl: meta.mediaUrl,
+                        mimeType: meta.mimeType,
+                        fileName: meta.fileName,
+                        durationSec: meta.durationSec,
+                        sizeBytes: meta.sizeBytes,
+                        replyTo,
+                        createdAt: normalizeEvolutionTimestamp(record?.messageTimestamp || record?.timestamp)
+                    }
+                })
+            const sortedItems = items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+            sortedItems.forEach((item) => {
+                if (item?.replyTo?.messageId && item?.id) {
+                    waMessageMetaStore.setReply(channel, normalizedRemoteJid, item.id, item.replyTo)
                 }
             })
-            const sortedItems = items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+            const decorated = waMessageMetaStore.decorateMessages(
+                channel,
+                normalizedRemoteJid,
+                sortedItems,
+                actor,
+                ({ channel: ch, remoteJid: jid, messageId }) =>
+                    buildWaMediaProxyUrl(req, { channel: ch, remoteJid: jid, messageId })
+            )
             const meta = {
                 total: data?.messages?.total,
                 pages: data?.messages?.pages,
                 page: data?.messages?.currentPage || page,
                 limit
             }
-            return res.json({ success: true, items: sortedItems, meta })
+            return res.json({ success: true, items: decorated, meta })
         }
 
         ensureConv(remoteJid)
-        return res.json({ success: true, items: messages[remoteJid] || [], meta: { page: 1, limit, total: (messages[remoteJid] || []).length } })
+        const baseItems = messages[remoteJid] || []
+        const decorated = waMessageMetaStore.decorateMessages(
+            channel,
+            normalizedRemoteJid,
+            baseItems,
+            actor,
+            ({ channel: ch, remoteJid: jid, messageId }) =>
+                buildWaMediaProxyUrl(req, { channel: ch, remoteJid: jid, messageId })
+        )
+        return res.json({ success: true, items: decorated, meta: { page: 1, limit, total: baseItems.length } })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
     }
@@ -4381,21 +4784,174 @@ app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/send',
             return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
         }
         const { remoteJid } = req.params
-        const { text } = req.body || {}
+        const { text, replyToMessageId, replyToPreview } = req.body || {}
         if (!text || !String(text).trim()) {
             return res.status(400).json({ success: false, error: 'text is required' })
         }
+        const normalizedRemoteJid = normalizeWhatsAppJid(remoteJid)
+        const actor = resolveMessageActor(req)
+        const replyMeta = replyToMessageId && replyToPreview
+            ? {
+                messageId: String(replyToMessageId),
+                textPreview: String(replyToPreview).slice(0, 240),
+                direction: 'inbound'
+            }
+            : null
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
-            const result = await evolutionOrchestrator.sendText(channel, remoteJid, text)
-            return res.json({ success: true, result })
+            const result = await evolutionOrchestrator.sendText(channel, remoteJid, text, {
+                replyToMessageId: replyMeta?.messageId,
+                replyToPreview: replyMeta?.textPreview
+            })
+            const sentMessageId = extractEvolutionMessageIdFromSendResult(result)
+            if (sentMessageId && replyMeta) {
+                waMessageMetaStore.setReply(channel, normalizedRemoteJid, sentMessageId, replyMeta)
+            }
+            const responsePayload = {
+                success: true,
+                result,
+                ack: sentMessageId ? {
+                    id: sentMessageId,
+                    replyTo: replyMeta || undefined,
+                    reactions: waMessageMetaStore.listReactions(channel, normalizedRemoteJid, sentMessageId, actor)
+                } : undefined
+            }
+            if (sentMessageId && replyMeta) {
+                broadcastWaEvent({
+                    type: 'message_metadata_updated',
+                    channel,
+                    remoteJid: normalizedRemoteJid,
+                    messageId: sentMessageId,
+                    replyTo: replyMeta
+                })
+            }
+            return res.json(responsePayload)
         }
 
         const record = addMessage(remoteJid, { direction: 'human', type: 'text', text })
+        if (replyMeta) {
+            waMessageMetaStore.setReply(channel, normalizedRemoteJid, record.id, replyMeta)
+        }
         broadcastNewMessage(record)
-        return res.json({ success: true, message: record })
+        return res.json({
+            success: true,
+            message: {
+                ...record,
+                replyTo: replyMeta || undefined,
+                reactions: waMessageMetaStore.listReactions(channel, normalizedRemoteJid, record.id, actor)
+            }
+        })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/messages/:messageId/reactions/toggle', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel, 10)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        const remoteJid = normalizeWhatsAppJid(req.params.remoteJid)
+        const messageId = String(req.params.messageId || '').trim()
+        const emoji = String(req.body?.emoji || '').trim()
+        if (!remoteJid || !messageId || !emoji) {
+            return res.status(400).json({ success: false, error: 'channel, remoteJid, messageId and emoji are required' })
+        }
+        const actor = resolveMessageActor(req)
+        const reactions = waMessageMetaStore.toggleReaction(channel, remoteJid, messageId, emoji, actor)
+        const payload = {
+            type: 'message_reaction_updated',
+            channel,
+            remoteJid,
+            messageId,
+            reactions
+        }
+        broadcastWaEvent(payload)
+        return res.json({ success: true, reactions })
+    } catch (error) {
+        const message = error?.message || 'REACTION_TOGGLE_FAILED'
+        const status = message === 'EMOJI_INVALID' || message === 'ACTOR_REQUIRED' ? 400 : 500
+        return res.status(status).json({ success: false, error: message })
+    }
+})
+
+app.get('/api/wa-orchestrator/media', async (req, res) => {
+    try {
+        const channel = parseInt(String(req.query.channel || ''), 10)
+        const remoteJid = normalizeWhatsAppJid(String(req.query.remoteJid || ''))
+        const messageId = String(req.query.messageId || '').trim()
+        if (isNaN(channel) || channel < 1 || channel > 9 || !remoteJid || !messageId) {
+            return res.status(400).json({ success: false, error: 'channel, remoteJid and messageId are required' })
+        }
+
+        let media = waMessageMetaStore.findMedia(channel, remoteJid, messageId)
+        if (!media && USE_EVOLUTION_ORCHESTRATOR) {
+            try {
+                const data = await evolutionOrchestrator.fetchMessages(channel, remoteJid, { limit: 200, page: 1 })
+                const records = Array.isArray(data?.messages?.records) ? data.messages.records : []
+                const record = records.find((entry) => {
+                    const candidate = entry?.id || entry?.key?.id
+                    return String(candidate || '') === messageId
+                })
+                if (record) {
+                    const extracted = extractEvolutionMessageMeta(record?.message)
+                    if (extracted?.mediaUrl) {
+                        media = waMessageMetaStore.setMedia(channel, remoteJid, messageId, {
+                            type: extracted.mediaType || 'unknown',
+                            url: extracted.mediaUrl,
+                            mimeType: extracted.mimeType,
+                            fileName: extracted.fileName,
+                            durationSec: extracted.durationSec,
+                            sizeBytes: extracted.sizeBytes
+                        })
+                    }
+                }
+            } catch (error) {
+                if (shouldLog('warn')) {
+                    console.warn('[WA_MEDIA] Failed to refresh message metadata', {
+                        channel,
+                        remoteJid,
+                        messageId,
+                        error: error?.message || String(error)
+                    })
+                }
+            }
+        }
+
+        if (!media?.url) {
+            return res.status(404).json({ success: false, error: 'MEDIA_NOT_FOUND' })
+        }
+
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 12000)
+        let upstream
+        try {
+            upstream = await fetch(media.url, { signal: controller.signal })
+        } finally {
+            clearTimeout(timeoutId)
+        }
+        if (!upstream?.ok) {
+            return res.status(502).json({ success: false, error: 'MEDIA_UPSTREAM_FAILED', status: upstream?.status || 0 })
+        }
+
+        const mimeType = media.mimeType || upstream.headers.get('content-type') || 'application/octet-stream'
+        const fileName = String(media.fileName || `media-${messageId}`).replace(/[^\w.\-]/g, '_')
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        res.setHeader('Content-Type', mimeType)
+        res.setHeader('Cache-Control', 'private, max-age=60')
+        res.setHeader('Content-Disposition', `inline; filename="${fileName}"`)
+        return res.status(200).send(buffer)
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            return res.status(504).json({ success: false, error: 'MEDIA_TIMEOUT' })
+        }
+        if (shouldLog('error')) {
+            console.error('[WA_MEDIA] Proxy failed', {
+                error: error?.message || String(error)
+            })
+        }
+        return res.status(500).json({ success: false, error: 'MEDIA_PROXY_FAILED' })
     }
 })
 
