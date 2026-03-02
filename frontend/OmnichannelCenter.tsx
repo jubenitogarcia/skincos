@@ -707,6 +707,21 @@ export function OmnichannelCenter({ activities, onStartConversation }: Omnichann
   }, [loadStatus])
 
   useEffect(() => {
+    if (!qrDialogChannel || !orchestratorStatus?.instances?.length) return
+    const instance = orchestratorStatus.instances.find((item) => item.channel === qrDialogChannel)
+    if (instance?.status === 'connected') {
+      const timer = qrPollingRef.current.get(qrDialogChannel)
+      if (timer) {
+        window.clearTimeout(timer)
+        qrPollingRef.current.delete(qrDialogChannel)
+      }
+      toast.success(`WhatsApp conectado no canal ${qrDialogChannel}`)
+      setQrDialogChannel(null)
+      setWaStatusOpen(false)
+    }
+  }, [orchestratorStatus, qrDialogChannel])
+
+  useEffect(() => {
     if (selectedConversation?.platform === 'instagram') {
       const convo = igDMs[selectedConversation.conversationId] || []
       setMessages(convo)
