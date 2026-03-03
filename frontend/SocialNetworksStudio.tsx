@@ -323,7 +323,7 @@ export function SocialNetworksStudio() {
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) {
         if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') {
-          throw new Error(data?.hint || 'Permissão insuficiente: este módulo exige ADMIN/GESTOR/GERENTE.')
+          throw new Error(data?.hint || 'Permissão insuficiente: este módulo exige GESTOR/GERENTE.')
         }
         if (res.status === 403 && data?.code === 'CSRF_INVALID') {
           throw new Error('Sessão inválida: recarregue a página e faça login novamente.')
@@ -397,7 +397,7 @@ export function SocialNetworksStudio() {
     if (setupAuthed !== true) return false
     if (setup?.admin?.isAdmin === true) return true
     const role = String(setup?.admin?.role || setup?.user?.role || '').trim().toUpperCase()
-    return role === 'ADMIN'
+    return role === 'GESTOR' || role === 'GERENTE'
   }, [setup?.admin?.isAdmin, setup?.admin?.role, setup?.user?.role, setupAuthed])
 
   useEffect(() => {
@@ -477,7 +477,7 @@ export function SocialNetworksStudio() {
       })
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) {
-        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: ADMIN/GESTOR/GERENTE.')
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: GESTOR/GERENTE.')
         if (res.status === 403 && data?.code === 'CSRF_INVALID') throw new Error('Sessão inválida: recarregue e faça login novamente.')
         if (res.status === 403 && data?.code === 'ORIGIN_INVALID') throw new Error('Requisição bloqueada (ORIGIN). Recarregue e tente novamente.')
         throw new Error(data?.hint || data?.error || `HTTP ${res.status}`)
@@ -502,7 +502,7 @@ export function SocialNetworksStudio() {
       })
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) {
-        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: ADMIN/GESTOR/GERENTE.')
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: GESTOR/GERENTE.')
         if (res.status === 403 && data?.code === 'CSRF_INVALID') throw new Error('Sessão inválida: recarregue e faça login novamente.')
         if (res.status === 403 && data?.code === 'ORIGIN_INVALID') throw new Error('Requisição bloqueada (ORIGIN). Recarregue e tente novamente.')
         throw new Error(data?.hint || data?.error || `HTTP ${res.status}`)
@@ -534,7 +534,7 @@ export function SocialNetworksStudio() {
       })
       const data = (await res.json().catch(() => null)) as any
       if (!res.ok) {
-        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: ADMIN/GESTOR/GERENTE.')
+        if (res.status === 403 && data?.code === 'ADMIN_REQUIRED') throw new Error(data?.hint || 'Permissão insuficiente: GESTOR/GERENTE.')
         if (res.status === 403 && data?.code === 'CSRF_INVALID') throw new Error('Sessão inválida: recarregue e faça login novamente.')
         if (res.status === 403 && data?.code === 'ORIGIN_INVALID') throw new Error('Requisição bloqueada (ORIGIN). Recarregue e tente novamente.')
         throw new Error(data?.hint || data?.error || `HTTP ${res.status}`)
@@ -851,8 +851,8 @@ export function SocialNetworksStudio() {
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm text-white font-medium">2) Permissão de Admin</div>
-                    <div className="text-xs text-blue-200/70">Somente ADMIN/GESTOR/GERENTE podem configurar contas e publicar.</div>
+                    <div className="text-sm text-white font-medium">2) Permissão de Gestor</div>
+                    <div className="text-xs text-blue-200/70">Somente GESTOR/GERENTE podem configurar contas e publicar.</div>
                   </div>
                   {adminReady ? (
                     <Badge variant="outline" className="border-white/20 text-white">
@@ -872,7 +872,7 @@ export function SocialNetworksStudio() {
                   </div>
                 ) : (
                   <div className="text-sm text-red-200">
-                    Somente ADMIN/GESTOR/GERENTE podem configurar/publicar neste módulo{detectedRole ? ` (seu role: ${detectedRole})` : ''}.
+                    Somente GESTOR/GERENTE podem configurar/publicar neste módulo{detectedRole ? ` (seu role: ${detectedRole})` : ''}.
                   </div>
                 )}
               </div>

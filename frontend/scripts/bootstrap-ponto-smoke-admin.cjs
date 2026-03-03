@@ -4,7 +4,7 @@
  *
  * What it does (idempotent):
  * 1) Uses an existing authenticated CRM session (storageState) to call `/api/admin/*`
- * 2) Ensures a dedicated admin user exists (`SMOKE_USERNAME`) with role ADMIN
+ * 2) Ensures a dedicated admin user exists (`SMOKE_USERNAME`) with role GESTOR
  * 3) Rotates its password to a fresh random value
  * 4) Updates GitHub repo secrets:
  *    - PONTO_SMOKE_EMAIL
@@ -115,7 +115,7 @@ async function main() {
     if (!auth.ok) {
       die(`Not authenticated (or session expired): /api/auth/me HTTP ${auth.status}`)
     }
-    if (!(auth.role === 'ADMIN' || auth.role === 'GESTOR' || auth.role === 'GERENTE')) {
+    if (!(auth.role === 'GESTOR' || auth.role === 'GERENTE')) {
       die(`Current session is not admin enough (role=${auth.role || 'unknown'}).`)
     }
     if (!auth.csrfToken) die('Missing csrfToken from /api/auth/me; cannot perform admin mutations.')
@@ -129,7 +129,7 @@ async function main() {
         username: SMOKE_USERNAME,
         email: SMOKE_EMAIL,
         displayName: SMOKE_DISPLAY_NAME,
-        role: 'ADMIN',
+        role: 'GESTOR',
         allowedUnits: [],
         allowedModules: [],
         ativo: true,
@@ -152,7 +152,7 @@ async function main() {
         data: {
           email: SMOKE_EMAIL,
           displayName: SMOKE_DISPLAY_NAME,
-          role: 'ADMIN',
+          role: 'GESTOR',
           allowedUnits: [],
           allowedModules: [],
           ativo: true,

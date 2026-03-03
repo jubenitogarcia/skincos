@@ -6,13 +6,21 @@ const json = (status: number, body: any) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   })
 
-const ADMIN_ROLES = new Set(['ADMIN', 'GESTOR', 'GERENTE'])
+const ADMIN_ROLES = new Set(['GESTOR', 'GERENTE'])
+
+const normalizeRole = (value: unknown) => {
+  const raw = String(value || '').trim().toUpperCase()
+  if (!raw) return ''
+  if (raw === 'ADMIN') return 'GESTOR'
+  if (raw === 'OPERADOR') return 'INJETOR'
+  return raw
+}
 
 export async function requireSocialAdmin(context: any) {
   const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
 
-  const role = String((userOrRes as any).role || '').trim().toUpperCase()
+  const role = normalizeRole((userOrRes as any).role)
   if (ADMIN_ROLES.has(role)) return userOrRes
 
   return json(403, {
@@ -20,6 +28,6 @@ export async function requireSocialAdmin(context: any) {
     error: 'FORBIDDEN',
     code: 'ADMIN_REQUIRED',
     role,
-    hint: `Seu role atual é ${role || '(vazio)'}. Este módulo exige ADMIN/GESTOR/GERENTE.`,
+    hint: `Seu role atual é ${role || '(vazio)'}. Este módulo exige GESTOR/GERENTE.`,
   })
 }

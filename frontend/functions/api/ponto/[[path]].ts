@@ -171,11 +171,12 @@ export async function onRequest(context: any): Promise<Response> {
     }
     if (isAdminRoute) {
       const role = String(user.role || '').toUpperCase()
-      isAdminUser = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
+      const effectiveRole = role === 'ADMIN' ? 'GESTOR' : role === 'OPERADOR' ? 'INJETOR' : role
+      isAdminUser = effectiveRole === 'GESTOR' || effectiveRole === 'GERENTE'
       if (!isAdminUser) {
         return json(
           403,
-          { ok: false, error: 'FORBIDDEN', hint: 'Acesso restrito a administradores.' },
+          { ok: false, error: 'FORBIDDEN', hint: 'Acesso restrito a gestores.' },
           { 'x-request-id': requestId },
         )
       }

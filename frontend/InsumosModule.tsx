@@ -1443,7 +1443,7 @@ export function InsumosModule() {
   const autoSyncSuspended = autoSyncSuspendedUntil > Date.now()
   const autoSyncRemainingSeconds = autoSyncSuspended ? Math.max(1, Math.ceil((autoSyncSuspendedUntil - Date.now()) / 1000)) : 0
 
-  const isManagerRole = ['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
+  const isManagerRole = ['GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
 
   const markAutoSyncFailure = React.useCallback(
     (error: unknown) => {
