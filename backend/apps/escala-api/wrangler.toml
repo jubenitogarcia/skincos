@@ -1,0 +1,26 @@
+name = "skincos-escala-api"
+main = "worker.js"
+compatibility_date = "2026-03-02"
+routes = ["escala-api.skincos.com.br/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-escala"
+database_id = "594fef1b-5597-476e-86f9-59920f284215"
+migrations_dir = "migrations-d1"
+
+[vars]
+APP_ORIGIN = "https://crm.skincos.com.br"
+
+[env.staging]
+name = "skincos-escala-api-staging"
+routes = ["escala-api-staging.skincos.com.br/*"]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "skincos-escala-staging"
+database_id = "3f59f0a3-2c27-4f15-9f84-a9234f86c2e5"
+migrations_dir = "migrations-d1"
+
+[env.staging.vars]
+APP_ORIGIN = "https://crm-staging.skincos.com.br"
