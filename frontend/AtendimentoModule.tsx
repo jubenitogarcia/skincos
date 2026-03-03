@@ -56,7 +56,7 @@ export function AtendimentoModule() {
     (moduleKey: string) => {
       const key = String(moduleKey || '').trim()
       if (!key) return false
-      if (roleKey === 'ADMIN') return true
+      if (roleKey === 'GESTOR') return true
       const allowed = Array.isArray(user?.allowedModules)
         ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
         : []

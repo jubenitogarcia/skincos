@@ -659,7 +659,7 @@ export function PontoModule() {
 
   const isDev = import.meta.env.DEV
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
-  const canAdmin = crmRole === 'ADMIN' || crmRole === 'GESTOR' || crmRole === 'GERENTE'
+  const canAdmin = crmRole === 'GESTOR' || crmRole === 'GERENTE'
   const canAdminActions = canAdmin
   const canSeeSensitive = canAdmin || (me && 'linked' in me && me.linked)
   const maskSensitive = (value?: string | null, mask: string = '•••') => {
@@ -1210,7 +1210,7 @@ export function PontoModule() {
   }, [mePunchOpen, meStep, meFaceAutoRunning, faceDetectorMode, me, allowedUnits, resolvedMeUnit])
 
   async function adminRefreshAll() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     setLoading(true)
     try {
       const [emps, devs] = await Promise.all([
@@ -1257,7 +1257,7 @@ export function PontoModule() {
   }
 
   async function adminCreateEmployee(opts: { enrollAfter?: boolean } = {}) {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     const name = newEmployeeName.trim()
     if (!name) return toast.error('Nome é obrigatório')
     const loginEmail = newEmployeeLoginEmail.trim()
@@ -1406,7 +1406,7 @@ export function PontoModule() {
   }
 
   async function adminSaveEmployeeEdit() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const name = editName.trim()
     if (!name) return toast.error('Nome é obrigatório')
@@ -1456,7 +1456,7 @@ export function PontoModule() {
   }
 
   async function adminDeleteEmployee() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const name = selectedEmployee?.name || 'este funcionário'
     const confirmed = window.confirm(`Tem certeza que deseja remover ${name}?`)
@@ -1503,7 +1503,7 @@ export function PontoModule() {
       const action = String(detail.action || '').trim()
       if (!action) return
       if (!canAdminActions) {
-        toast.error('Acesso restrito a administradores')
+        toast.error('Acesso restrito a gestores')
         return
       }
       if (action === 'create') {
@@ -1528,7 +1528,7 @@ export function PontoModule() {
   }, [canAdminActions, adminDevices.length, adminRefreshAll, openSelectEmployee])
 
   async function adminLoadSelectedRecords() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     setSelectedRecordsLoading(true)
     setSelectedRecordsError(null)
@@ -1552,7 +1552,7 @@ export function PontoModule() {
   }
 
   async function adminLoadEmailConflicts() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     setConflictsLoading(true)
     setConflictsError(null)
     try {
@@ -1572,7 +1572,7 @@ export function PontoModule() {
   }
 
   async function adminResolveEmailConflict(email: string, keepEmployeeId: string) {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     setConflictsLoading(true)
     setConflictsError(null)
     try {
@@ -1594,7 +1594,7 @@ export function PontoModule() {
   }
 
   async function adminCreateDevice() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     if (!newDeviceUnit.trim()) return toast.error('Unidade é obrigatória')
     setLoading(true)
     try {
@@ -1615,7 +1615,7 @@ export function PontoModule() {
   }
 
   async function adminRevokeDevice(deviceId: string) {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/devices/' + deviceId + '/revoke', { method: 'POST' })
@@ -1630,7 +1630,7 @@ export function PontoModule() {
   }
 
   async function adminLoadRecords() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     setLoading(true)
     try {
       const qs = new URLSearchParams()
@@ -1653,7 +1653,7 @@ export function PontoModule() {
   }
 
   async function adminExportCsv() {
-    if (!canAdminActions) return toast.error('Acesso restrito a administradores')
+    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
     setLoading(true)
     try {
       const qs = new URLSearchParams()
@@ -1851,7 +1851,7 @@ export function PontoModule() {
                 ) : (
                   <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
                     <div className="font-medium">Unidade não configurada</div>
-                    <div className="opacity-80">Seu usuário não possui unidade permitida. Contate o administrador.</div>
+                    <div className="opacity-80">Seu usuário não possui unidade permitida. Contate o gestor.</div>
                   </div>
                 )
               ) : null}

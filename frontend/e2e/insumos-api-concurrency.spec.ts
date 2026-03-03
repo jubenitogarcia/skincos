@@ -49,7 +49,7 @@ test.describe('insumos', () => {
           if (path.startsWith('/api/insumos/movimentacoes')) return { success: true, data: [] }
           if (path.startsWith('/api/insumos/alertas/estoque')) return { success: true, data: [] }
           if (path.startsWith('/api/insumos/health')) return { ok: true, service: 'insumos', runtime: 'e2e', storage: 'd1', dbConfigured: true, unidades: ['novo-hamburgo', 'barra-shopping-sul'] }
-          if (path.startsWith('/api/insumos/auth/me')) return { success: true, user: { username: 'e2e', role: 'ADMIN', allowedUnits: [] }, csrfToken: 'e2e' }
+          if (path.startsWith('/api/insumos/auth/me')) return { success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' }
           return { success: true }
         })()
 
@@ -63,7 +63,7 @@ test.describe('insumos', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'ADMIN', allowedUnits: [] } })
+        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
       })
     })
 

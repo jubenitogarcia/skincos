@@ -499,7 +499,25 @@ const VISUAL_THEME_FILE = process.env.CRM_VISUAL_THEME_FILE || path.join(CORE_ST
 let visualThemeState = { themes: {} }
 let saveVisualThemeTimer = null
 
-const ADMIN_ROLES = new Set(['ADMIN', 'GESTOR', 'GERENTE'])
+const ROLE_ALIASES = new Map([
+    ['ADMIN', 'GESTOR'],
+    ['OPERADOR', 'INJETOR'],
+])
+
+const normalizeRole = (value) => {
+    const raw = String(value || '').trim().toUpperCase()
+    if (!raw) return ''
+    return ROLE_ALIASES.get(raw) || raw
+}
+
+const normalizeCrmUser = (user) => {
+    if (!user || typeof user !== 'object') return user
+    const role = normalizeRole(user.role)
+    if (!role || role === user.role) return user
+    return { ...user, role }
+}
+
+const ADMIN_ROLES = new Set(['GESTOR', 'GERENTE'])
 
 function resolveTenantKey(req) {
     const header = String(req.headers['x-tenant-key'] || req.headers['x-tenant'] || '').trim()
@@ -517,7 +535,7 @@ function resolveRoleFromReq(req) {
     const header = req.headers['x-user-role'] || req.headers['x-crm-role'] || req.headers['x-role']
     let role = header ? String(header) : ''
     if (!role && req.user?.role) role = String(req.user.role)
-    return role.trim().toUpperCase()
+    return normalizeRole(role)
 }
 
 function requireVisualThemeAdmin(req, res) {
@@ -720,7 +738,7 @@ async function fetchCrmUserFromAuth(req) {
                 displayName: raw.displayName || raw.name || raw.username || raw.email,
                 name: raw.name,
                 email: raw.email,
-                role: raw.role,
+                role: normalizeRole(raw.role),
                 allowedUnits: raw.allowedUnits,
                 allowedModules: raw.allowedModules,
             }
@@ -734,9 +752,10 @@ async function fetchCrmUserFromAuth(req) {
 async function resolveCrmUser(req) {
     if (devAuthEnabled && typeof devAuthSessionResolver === 'function') {
         const session = devAuthSessionResolver(req)
-        if (session?.user) return session.user
+        if (session?.user) return normalizeCrmUser(session.user)
     }
-    return fetchCrmUserFromAuth(req)
+    const user = await fetchCrmUserFromAuth(req)
+    return normalizeCrmUser(user)
 }
 
 app.use('/api/meta-ads', async (req, res, next) => {
@@ -826,7 +845,7 @@ if (LOCAL_INSUMOS_AUTH_STUB) {
             success: true,
             user: {
                 username: user?.username || user?.email || 'local-admin',
-                role: user?.role || 'ADMIN',
+                role: normalizeRole(user?.role || 'GESTOR'),
                 allowedUnits: Array.isArray(user?.allowedUnits) ? user.allowedUnits : ['novo-hamburgo']
             },
             csrfToken: 'local-dev'
@@ -903,8 +922,8 @@ if (DEV_AUTH_ENABLED) {
 
     const requireDevAdmin = (req, res) => {
         const session = getDevSession(req)
-        const role = String(session?.user?.role || '').trim().toUpperCase()
-        const ok = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
+        const role = normalizeRole(session?.user?.role)
+        const ok = role === 'GESTOR' || role === 'GERENTE'
         if (!ok) {
             res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
             return null
@@ -918,14 +937,37 @@ if (DEV_AUTH_ENABLED) {
     }
     devAuthRequireAdmin = requireDevAdmin
 
+    const normalizeCrmStore = (store) => {
+        const usersIn = Array.isArray(store?.users) ? store.users : []
+        const invitesIn = Array.isArray(store?.invites) ? store.invites : []
+        let changed = false
+        const users = usersIn.map((user) => {
+            if (!user || typeof user !== 'object') return user
+            const role = normalizeRole(user.role)
+            if (role && role !== user.role) changed = true
+            return { ...user, role: role || user.role }
+        })
+        const invites = invitesIn.map((invite) => {
+            if (!invite || typeof invite !== 'object') return invite
+            const role = normalizeRole(invite.role)
+            if (role && role !== invite.role) changed = true
+            return { ...invite, role: role || invite.role }
+        })
+        return { store: { users, invites }, changed }
+    }
+
     const loadLocalCrmStore = async () => {
         try {
             const raw = await fs.readFile(LOCAL_CRM_STORE_FILE, 'utf8')
             const json = raw ? JSON.parse(raw) : {}
-            return {
+            const normalized = normalizeCrmStore({
                 users: Array.isArray(json?.users) ? json.users : [],
                 invites: Array.isArray(json?.invites) ? json.invites : [],
+            })
+            if (normalized.changed) {
+                await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(normalized.store, null, 2), 'utf8')
             }
+            return normalized.store
         } catch {
             return { users: [], invites: [] }
         }
@@ -955,7 +997,7 @@ if (DEV_AUTH_ENABLED) {
             username,
             email: String(body.email || '').trim() || null,
             displayName: String(body.displayName || body.name || username).trim(),
-            role: String(body.role || 'OPERADOR').trim().toUpperCase(),
+            role: normalizeRole(body.role || 'INJETOR'),
             allowedUnits: Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : [],
             allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : [],
             ativo: body.ativo !== false,
@@ -981,7 +1023,7 @@ if (DEV_AUTH_ENABLED) {
             ...cur,
             email: body.email !== undefined ? (String(body.email || '').trim() || null) : cur.email,
             displayName: body.displayName !== undefined ? String(body.displayName || '').trim() : cur.displayName,
-            role: body.role !== undefined ? String(body.role || '').trim().toUpperCase() : cur.role,
+            role: body.role !== undefined ? normalizeRole(body.role) : cur.role,
             allowedUnits: body.allowedUnits !== undefined ? (Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : []) : cur.allowedUnits,
             allowedModules: body.allowedModules !== undefined ? (Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : []) : cur.allowedModules,
             ativo: body.ativo !== undefined ? Boolean(body.ativo) : cur.ativo,
@@ -1025,7 +1067,7 @@ if (DEV_AUTH_ENABLED) {
         const invite = {
             id: randomBytes(8).toString('hex'),
             tokenHint,
-            role: String(body.role || 'OPERADOR').trim().toUpperCase(),
+            role: normalizeRole(body.role || 'INJETOR'),
             allowedUnits: Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : [],
             allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : [],
             maxUses,
@@ -3283,12 +3325,12 @@ app.post('/api/actions/:action', (req, res) => {
             conv.humanInControl = true
             conv.status = 'active'
             result = { message: 'human took control' }
-            addMessage(conversationId, { direction: 'system', type: 'event', text: 'Operador assumiu a conversa.' })
+            addMessage(conversationId, { direction: 'system', type: 'event', text: 'Injetor assumiu a conversa.' })
             break
         case 'release-control':
             conv.humanInControl = false
             result = { message: 'human released control' }
-            addMessage(conversationId, { direction: 'system', type: 'event', text: 'Operador liberou a conversa para IA.' })
+            addMessage(conversationId, { direction: 'system', type: 'event', text: 'Injetor liberou a conversa para IA.' })
             break
         case 'correct-ai':
             {

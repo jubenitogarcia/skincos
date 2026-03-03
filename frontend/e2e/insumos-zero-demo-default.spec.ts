@@ -28,7 +28,7 @@ test.describe('insumos', () => {
           contentType: 'application/json',
           body: JSON.stringify({
             success: true,
-            user: { username: 'e2e', role: 'ADMIN', allowedUnits: [] },
+            user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] },
             csrfToken: 'e2e'
           })
         })
@@ -42,7 +42,7 @@ test.describe('insumos', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'ADMIN', allowedUnits: [] } })
+        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
       })
     })
 

@@ -81,7 +81,7 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
 export function EscalaProfissionaisModule() {
   const { user } = useAuth()
   const roleKey = String(user?.role || '').trim().toUpperCase()
-  const canAccess = roleKey === 'ADMIN'
+  const canAccess = roleKey === 'GESTOR'
 
   const [units, setUnits] = useState<string[]>([])
   const [months, setMonths] = useState<string[]>([])
@@ -236,7 +236,7 @@ export function EscalaProfissionaisModule() {
           <CardTitle className="text-white">Acesso restrito</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-blue-100/70">
-          O módulo de escala está disponível apenas para usuários administradores.
+          O módulo de escala está disponível apenas para usuários gestores.
         </CardContent>
       </Card>
     )
