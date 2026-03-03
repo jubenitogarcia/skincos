@@ -2161,7 +2161,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         <div className="grid flex-1 min-h-0 grid-cols-1 gap-4 xl:grid-cols-12">
           <Card className="glass-card xl:col-span-4 flex min-h-0 flex-col overflow-hidden">
                 <CardContent className="flex min-h-0 flex-col gap-2 pt-4">
-                  <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 p-1.5">
+                  <div data-testid="conversation-filters" className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 p-1.5">
                     {[
                       { id: 'all', label: 'Todas' },
                       { id: 'unread', label: 'Não lidas' },
@@ -2187,12 +2187,13 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     ))}
                   </div>
                   <Input
+                    data-testid="omnichannel-search"
                     placeholder="Buscar por nome, telefone, perfil ou plataforma"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="h-9 bg-white/10 border-white/15 text-white placeholder:text-blue-100/55"
                   />
-                      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-0">
+                      <div data-testid="conversation-scroll" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-0">
                         <div className="space-y-1.5 pb-1 pr-2">
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
