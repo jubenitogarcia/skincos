@@ -59,6 +59,8 @@ free_port "$FRONTEND_PORT"
   export CRM_LOCAL_NO_AUTH="true"
   export WA_DEBUG_QR="true"
   export NODE_ENV="development"
+  export CRM_LOG_LEVEL="warn"
+  export INSUMOS_API_TARGET="${INSUMOS_API_TARGET:-https://api.skincos.com.br}"
   node backend/apps/crm-api/server.js
 ) &
 CRM_API_PID=$!

@@ -1249,7 +1249,7 @@ export default function AppFunctionalNeatlab() {
 
 		                                <div className="flex items-center gap-4">
                                     {active === 'atendimento' ? (
-                                        <div className="hidden 2xl:flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                             <Button
                                                 size="sm"
                                                 variant="ghost"

@@ -45,22 +45,26 @@ test.describe('atendimento left column layout', () => {
     })
 
     await page.goto('/?module=atendimento')
-    const authInput = page.locator('#auth-email')
-    if (await authInput.isVisible().catch(() => false)) {
+    await page.waitForTimeout(1000)
+    const loginVisible = (await page.getByText(/Acessar Plataforma/i).count()) > 0
+    if (loginVisible) {
       if (!email || !password) test.skip(true, 'Missing E2E_EMAIL or E2E_PASSWORD')
-      await page.fill('#auth-email', email)
-      await page.fill('#auth-password', password)
+      const authInput = page.locator('#auth-email, input[placeholder*="empresa.com"], input[type="email"]').first()
+      await authInput.fill(email)
+      const passwordInput = page.locator('#auth-password, input[type="password"]').first()
+      await passwordInput.fill(password)
       await page.getByRole('button', { name: 'Acessar Plataforma' }).click()
     }
 
-    await expect(page.getByPlaceholder('Buscar por nome, telefone, perfil ou plataforma')).toBeVisible({ timeout: 30000 })
+    const searchInput = page.locator('[data-testid="omnichannel-search"], input[placeholder*="Buscar por nome"]')
+    await expect(searchInput.first()).toBeVisible({ timeout: 30000 })
     await expect(page.getByRole('heading', { name: 'Conversas' })).toHaveCount(0)
 
     const geometry = await page.evaluate(() => {
       const firstItem = document.querySelector('[data-testid="conversation-item"]') as HTMLElement | null
-      const viewport = firstItem?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
-      const filterBar = document.querySelector('[data-slot="scroll-area-viewport"]')?.parentElement?.parentElement?.querySelector('div.flex.flex-wrap.items-center') as HTMLElement | null
-      const search = document.querySelector('input[placeholder*="Buscar por nome"]') as HTMLElement | null
+      const viewport = document.querySelector('[data-testid="conversation-scroll"]') as HTMLElement | null
+      const filterBar = document.querySelector('[data-testid="conversation-filters"]') as HTMLElement | null
+      const search = document.querySelector('[data-testid="omnichannel-search"]') as HTMLElement | null
       if (!firstItem || !viewport || !filterBar || !search) return null
       const itemRect = firstItem.getBoundingClientRect()
       const viewportRect = viewport.getBoundingClientRect()
