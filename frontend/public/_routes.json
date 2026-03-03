@@ -12,6 +12,7 @@
         "/api/wa-orchestrator/*",
         "/api/social/*",
         "/api/ponto/*",
+        "/api/escala/*",
         "/api/unit-monitor/*",
         "/share",
         "/share/*",
