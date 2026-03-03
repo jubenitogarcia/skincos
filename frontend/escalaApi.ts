@@ -8,9 +8,19 @@ type ApiResponse<T> = { ok: boolean; error?: string } & T
 async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
   const url = `${ESCALA_API_BASE}${path}`
   const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
-  const json = await res.json().catch(() => null)
-  if (!res.ok || !json) {
+  const text = await res.text()
+  const json = text ? (() => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return null
+    }
+  })() : null
+  if (!res.ok) {
     return { ok: false, error: json?.error || `HTTP ${res.status}` } as ApiResponse<T>
+  }
+  if (!json) {
+    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
   }
   return json as ApiResponse<T>
 }
@@ -23,9 +33,19 @@ async function apiWrite<T>(path: string, method: string, body?: any): Promise<Ap
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   })
-  const json = await res.json().catch(() => null)
-  if (!res.ok || !json) {
+  const text = await res.text()
+  const json = text ? (() => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return null
+    }
+  })() : null
+  if (!res.ok) {
     return { ok: false, error: json?.error || `HTTP ${res.status}` } as ApiResponse<T>
+  }
+  if (!json) {
+    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
   }
   return json as ApiResponse<T>
 }

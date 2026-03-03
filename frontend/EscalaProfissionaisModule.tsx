@@ -395,7 +395,7 @@ export function EscalaProfissionaisModule() {
         <CardHeader>
           <CardTitle className="text-white">Acesso restrito</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-blue-100/70">
+        <CardContent className="text-sm text-slate-200/80">
           O módulo de escala está disponível apenas para usuários gestores.
         </CardContent>
       </Card>
@@ -403,18 +403,18 @@ export function EscalaProfissionaisModule() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 px-4 pb-6 pt-2">
-      <Card className="glass-card relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.25),_transparent_65%)]" />
+    <div className="escala-surface flex h-full min-h-0 flex-col gap-4 px-4 pb-6 pt-2">
+      <Card className="glass-card escala-hero relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.45),_rgba(14,165,233,0.18),_transparent_70%)]" />
         <CardHeader>
           <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-white">Escala de Profissionais</CardTitle>
-              <div className="text-sm text-blue-100/70">
+              <div className="text-sm text-slate-200/80">
                 Visualize a escala cadastrada no CRM e organize os atendimentos por unidade, mês e profissional.
               </div>
               {loadingOverview && (
-                <div className="mt-2 text-xs text-blue-100/60">
+                <div className="mt-2 text-xs text-slate-300/80">
                   <LoadingPercentText label="Carregando visão geral" showPercent={false} />
                 </div>
               )}
@@ -437,7 +437,7 @@ export function EscalaProfissionaisModule() {
         <CardContent className="flex flex-col gap-4">
           <div className="grid gap-3 md:grid-cols-[1.2fr_1fr_1fr]">
             <div className="space-y-1">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/50">Unidade</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Unidade</div>
               <Select value={selectedUnit} onValueChange={setSelectedUnit}>
                 <SelectTrigger className="bg-white/5">
                   <SelectValue placeholder="Escolha" />
@@ -458,7 +458,7 @@ export function EscalaProfissionaisModule() {
               </Select>
             </div>
             <div className="space-y-1">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/50">Mês</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Mês</div>
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
                 <SelectTrigger className="bg-white/5">
                   <SelectValue placeholder="Selecione" />
@@ -479,7 +479,7 @@ export function EscalaProfissionaisModule() {
               </Select>
             </div>
             <div className="space-y-1">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/50">Profissional</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Profissional</div>
               <Select value={selectedProfessional} onValueChange={setSelectedProfessional}>
                 <SelectTrigger className="bg-white/5">
                   <SelectValue placeholder="Todos" />
@@ -497,19 +497,19 @@ export function EscalaProfissionaisModule() {
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="glass-morphism rounded-xl border border-white/10 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/50">Dias com atendimento</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Dias com atendimento</div>
               <div className="mt-2 text-2xl font-semibold text-white">{totalScheduledDays}</div>
-              <div className="text-xs text-blue-100/60">no mês selecionado</div>
+              <div className="text-xs text-slate-300/80">no mês selecionado</div>
             </div>
             <div className="glass-morphism rounded-xl border border-white/10 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/50">Dias sem atendimento</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Dias sem atendimento</div>
               <div className="mt-2 text-2xl font-semibold text-white">{closedDaysForMonth.length}</div>
-              <div className="text-xs text-blue-100/60">para {selectedUnit || '—'}</div>
+              <div className="text-xs text-slate-300/80">para {selectedUnit || '—'}</div>
             </div>
             <div className="glass-morphism rounded-xl border border-white/10 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/50">Profissionais escalados</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Profissionais escalados</div>
               <div className="mt-2 text-2xl font-semibold text-white">{monthProfessionals.length}</div>
-              <div className="text-xs text-blue-100/60">com pelo menos 1 atendimento</div>
+              <div className="text-xs text-slate-300/80">com pelo menos 1 atendimento</div>
             </div>
           </div>
         </CardContent>
@@ -523,14 +523,14 @@ export function EscalaProfissionaisModule() {
                 Agenda de {selectedMonth ? formatMonthLabel(selectedMonth) : '—'}
               </CardTitle>
               {loadingSchedule && (
-                <div className="text-xs text-blue-100/60">
+                <div className="text-xs text-slate-300/80">
                   <LoadingPercentText label="Atualizando agenda" showPercent={false} />
                 </div>
               )}
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-col gap-3">
-            <div className="grid grid-cols-7 gap-2 text-xs uppercase tracking-[0.2em] text-blue-100/50">
+            <div className="grid grid-cols-7 gap-2 text-xs uppercase tracking-[0.2em] text-slate-300/70">
               {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((label) => (
                 <div key={label} className="text-center">
                   {label}
@@ -554,11 +554,11 @@ export function EscalaProfissionaisModule() {
                   <div
                     key={cell.date}
                     className={cn(
-                      'flex h-full flex-col gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-blue-100/80 transition-all',
+                      'flex h-full flex-col gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-100/90 transition-all',
                       highlight && 'ring-2 ring-emerald-400/40'
                     )}
                   >
-                    <div className="flex items-center justify-between text-[11px] text-blue-100/60">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300/80">
                       <span className="font-semibold text-white/80">{cell.day}</span>
                       {holidayLabels.length ? (
                         <Badge variant="warning" className="px-2 py-0.5 text-[10px]">
@@ -578,7 +578,7 @@ export function EscalaProfissionaisModule() {
                         </div>
                       )}
                       {!visibleEntries.length && !isClosed && (
-                        <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-blue-100/60">
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-300/80">
                           Livre
                         </div>
                       )}
@@ -595,10 +595,10 @@ export function EscalaProfissionaisModule() {
             <CardHeader className="border-b border-white/10">
               <CardTitle className="text-white">Editor da escala</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 text-xs text-blue-100/80">
+            <CardContent className="space-y-4 text-xs text-slate-100/90">
               <div className="grid gap-3">
                 <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Data</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Data</div>
                   <Input
                     type="date"
                     value={editorDate}
@@ -607,7 +607,7 @@ export function EscalaProfissionaisModule() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Profissionais (CSV)</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Profissionais (CSV)</div>
                   <Input
                     value={editorProfessionals}
                     onChange={(event) => setEditorProfessionals(event.target.value)}
@@ -624,7 +624,7 @@ export function EscalaProfissionaisModule() {
                   </Button>
                 </div>
                 <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Profissional único</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Profissional único</div>
                   <Select value={editorSingleProfessional} onValueChange={setEditorSingleProfessional}>
                     <SelectTrigger className="bg-white/5" data-testid="escala-editor-professional">
                       <SelectValue placeholder="Selecione" />
@@ -653,7 +653,7 @@ export function EscalaProfissionaisModule() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Bloqueio do dia</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Bloqueio do dia</div>
                   <Input
                     value={editorReason}
                     onChange={(event) => setEditorReason(event.target.value)}
@@ -670,7 +670,7 @@ export function EscalaProfissionaisModule() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Feriado</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Feriado</div>
                   <Input
                     value={editorHolidayName}
                     onChange={(event) => setEditorHolidayName(event.target.value)}
@@ -695,7 +695,7 @@ export function EscalaProfissionaisModule() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-white">Profissionais</CardTitle>
                 {loadingProfessionals && (
-                  <div className="text-xs text-blue-100/60">
+                  <div className="text-xs text-slate-300/80">
                     <LoadingPercentText label="Sincronizando" showPercent={false} />
                   </div>
                 )}
@@ -723,9 +723,9 @@ export function EscalaProfissionaisModule() {
                       <span className="text-sm font-semibold text-white/90">{prof.name}</span>
                       <Badge className={cn('text-[10px]', getStatusColor(prof.status))}>{prof.status || '—'}</Badge>
                     </div>
-                    <div className="text-[11px] text-blue-100/70">{prof.role || 'Profissional'}</div>
+                    <div className="text-[11px] text-slate-200/80">{prof.role || 'Profissional'}</div>
                     {prof.units.length ? (
-                      <div className="flex flex-wrap gap-1 text-[10px] text-blue-100/60">
+                      <div className="flex flex-wrap gap-1 text-[10px] text-slate-300/80">
                         {prof.units.map((unit) => (
                           <span key={unit} className="rounded-md bg-white/10 px-2 py-0.5">
                             {unit}
@@ -745,18 +745,18 @@ export function EscalaProfissionaisModule() {
             </CardHeader>
             <CardContent className="space-y-2 text-xs">
               {selectedProfessional === 'Todos' && (
-                <div className="text-blue-100/70">
+                <div className="text-slate-200/80">
                   Selecione um profissional para ver as próximas datas confirmadas.
                 </div>
               )}
               {selectedProfessional !== 'Todos' && !upcomingForProfessional.length && (
-                <div className="text-blue-100/70">Nenhum atendimento encontrado no mês selecionado.</div>
+                <div className="text-slate-200/80">Nenhum atendimento encontrado no mês selecionado.</div>
               )}
               {upcomingForProfessional.map((entry) => (
                 <div key={`${entry.date}-${entry.professional}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">{entry.date}</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">{entry.date}</div>
                   <div className="text-sm font-semibold text-white">{entry.professional}</div>
-                  <div className="text-[11px] text-blue-100/70">{selectedUnit || '—'}</div>
+                  <div className="text-[11px] text-slate-200/80">{selectedUnit || '—'}</div>
                 </div>
               ))}
             </CardContent>
@@ -768,26 +768,26 @@ export function EscalaProfissionaisModule() {
             </CardHeader>
             <CardContent className="space-y-3 text-xs">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Feriados</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Feriados</div>
                 <div className="mt-2 space-y-2">
                   {!holidaysForMonth.length && (
-                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-blue-100/70">
+                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
                       Nenhum feriado cadastrado no mês.
                     </div>
                   )}
                   {holidaysForMonth.slice(0, 6).map((holiday) => (
                     <div key={`${holiday.date}-${holiday.name}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-                      <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">{holiday.date}</div>
+                      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">{holiday.date}</div>
                       <div className="text-sm font-semibold text-white">{holiday.name}</div>
                     </div>
                   ))}
                 </div>
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Dias sem atendimento</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Dias sem atendimento</div>
                 <div className="mt-2 space-y-2">
                   {!closedDaysForMonth.length && (
-                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-blue-100/70">
+                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
                       Nenhum bloqueio registrado.
                     </div>
                   )}
