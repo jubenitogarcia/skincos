@@ -364,11 +364,19 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     return alt || ''
   }
 
+  function normalizeRole(value) {
+    const raw = String(value || '').trim().toUpperCase()
+    if (!raw) return ''
+    if (raw === 'ADMIN') return 'GESTOR'
+    if (raw === 'OPERADOR') return 'INJETOR'
+    return raw
+  }
+
   function requireAdmin(req, res) {
     const devUser = tryDevSessionUser(req)
     if (devUser?.email) {
-      const role = String(devUser.role || '').toUpperCase()
-      if (role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE') {
+      const role = normalizeRole(devUser.role)
+      if (role === 'GESTOR' || role === 'GERENTE') {
         return actorFromReq(req, { kind: 'admin', id: devUser.email, label: devUser.name || devUser.email })
       }
     }

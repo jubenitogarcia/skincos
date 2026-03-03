@@ -217,7 +217,6 @@ export default function AppFunctionalNeatlab() {
     const isLocalDev = import.meta.env.DEV && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
     const devEmail = String(user?.email || '').trim().toLowerCase()
     const pontoCanAdmin =
-        roleKey === 'ADMIN' ||
         roleKey === 'GESTOR' ||
         roleKey === 'GERENTE' ||
         (isLocalDev && devEmail.endsWith('@local.test'))
@@ -225,8 +224,8 @@ export default function AppFunctionalNeatlab() {
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
             if (!key) return false
-            if (key === 'escala-profissionais') return roleKey === 'ADMIN'
-            if (roleKey === 'ADMIN') return true
+            if (key === 'escala-profissionais') return roleKey === 'GESTOR'
+            if (roleKey === 'GESTOR') return true
             const allowed = Array.isArray(user?.allowedModules)
                 ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
                 : []

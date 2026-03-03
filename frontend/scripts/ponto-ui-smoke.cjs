@@ -347,7 +347,7 @@ async function main() {
         let json = null
         try { json = text ? JSON.parse(text) : null } catch {}
         const role = String(json?.user?.role || '').toUpperCase()
-        out.isAdmin = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
+        out.isAdmin = role === 'GESTOR' || role === 'GERENTE'
         out.actorEmail = json?.user?.email ? String(json.user.email) : ''
         const allowed = Array.isArray(json?.user?.allowedUnits)
           ? json.user.allowedUnits.map((u) => String(u || '').trim()).filter(Boolean)

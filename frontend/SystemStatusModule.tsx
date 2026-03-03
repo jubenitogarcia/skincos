@@ -152,7 +152,7 @@ export function SystemStatusModule() {
 
   const hasInsumosSession = Boolean(insumosMe?.user?.username)
   const insumosRole = String(insumosMe?.user?.role || '').toUpperCase()
-  const canManageBackups = hasInsumosSession && (insumosRole === 'ADMIN' || insumosRole === 'GESTOR')
+  const canManageBackups = hasInsumosSession && insumosRole === 'GESTOR'
 
   const [backupLoading, setBackupLoading] = React.useState(false)
   const [backupStatus, setBackupStatus] = React.useState<BackupStatus | null>(null)
@@ -311,7 +311,7 @@ export function SystemStatusModule() {
     }
   }, [canManageBackups])
 
-  const canManageUsers = hasInsumosSession && (insumosRole === 'ADMIN' || insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
+  const canManageUsers = hasInsumosSession && (insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
   const [usersLoading, setUsersLoading] = React.useState(false)
   const [usersQuery, setUsersQuery] = React.useState('')
   const [users, setUsers] = React.useState<AdminUser[]>([])
@@ -335,7 +335,7 @@ export function SystemStatusModule() {
     }
   }, [canManageUsers, usersQuery])
 
-  const canViewAudit = hasInsumosSession && (insumosRole === 'ADMIN' || insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
+  const canViewAudit = hasInsumosSession && (insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
   const loadAudit = React.useCallback(async () => {
     if (!canViewAudit) return
     setAuditLoading(true)
@@ -601,7 +601,7 @@ export function SystemStatusModule() {
       <Card className="glass-morphism border border-white/10">
         <CardHeader className="space-y-2">
           <CardTitle className="text-white text-base flex items-center justify-between gap-2">
-            <span>Admin</span>
+            <span>Gestor</span>
             <div className="flex items-center gap-2">
               <Button variant="secondary" onClick={() => setAdminOpen((v) => !v)}>
                 {adminOpen ? 'Ocultar usuários' : 'Usuários'}
@@ -931,7 +931,7 @@ function AdminUserForm({
               <SelectValue placeholder="Selecione" />
             </SelectTrigger>
             <SelectContent>
-              {['CONSULTOR', 'OPERADOR', 'GERENTE', 'GESTOR', 'ADMIN'].map((r) => (
+              {['CONSULTOR', 'INJETOR', 'GERENTE', 'GESTOR'].map((r) => (
                 <SelectItem key={r} value={r}>
                   {r}
                 </SelectItem>
