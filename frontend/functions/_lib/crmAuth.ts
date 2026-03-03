@@ -17,8 +17,18 @@ const json = (status: number, body: any) =>
 
 export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
   const env = context?.env || {}
+  const requestOrigin = (() => {
+    try {
+      const url = context?.request?.url
+      if (!url) return ''
+      return new URL(url).origin
+    } catch {
+      return ''
+    }
+  })()
   const targetOrigin =
     (env.AUTH_API_TARGET as string | undefined) ||
+    requestOrigin ||
     (env.INSUMOS_API_TARGET as string | undefined) ||
     'https://api.skincos.com.br'
 
