@@ -146,6 +146,7 @@ const InsumosModule = lazy(() => import('@/InsumosModule').then(m => ({ default:
 const UsersModule = lazy(() => import('@/UsersModule').then(m => ({ default: m.UsersModule })))
 const SystemStatusModule = lazy(() => import('@/SystemStatusModule').then(m => ({ default: m.SystemStatusModule })))
 const PontoModule = lazy(() => import('@/PontoModule').then(m => ({ default: m.PontoModule })))
+const EscalaProfissionaisModule = lazy(() => import('@/EscalaProfissionaisModule').then(m => ({ default: m.EscalaProfissionaisModule })))
 
 // TODO: Add remaining modules if needed
 
@@ -165,6 +166,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
     { key: 'atendimento', label: 'Atendimento', icon: '💬', component: <AtendimentoModule /> },
+    { key: 'escala-profissionais', label: 'Escala', icon: '🗓️', component: <EscalaProfissionaisModule /> },
     { key: 'meta-ads', label: 'Meta Ads', icon: '📢', component: <MetaAdsManager /> },
     { key: 'meta-command', label: 'Meta Command', icon: '🧭', component: <MetaCommandCenter /> },
     { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
@@ -223,6 +225,7 @@ export default function AppFunctionalNeatlab() {
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
             if (!key) return false
+            if (key === 'escala-profissionais') return roleKey === 'ADMIN'
             if (roleKey === 'ADMIN') return true
             const allowed = Array.isArray(user?.allowedModules)
                 ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
@@ -295,7 +298,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'escala-profissionais']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
