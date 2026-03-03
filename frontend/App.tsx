@@ -224,7 +224,7 @@ export default function AppFunctionalNeatlab() {
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
             if (!key) return false
-            if (key === 'escala-profissionais') return roleKey === 'GESTOR'
+            if (key === 'escala-profissionais') return roleKey === 'GESTOR' || roleKey === 'GERENTE'
             if (roleKey === 'GESTOR') return true
             const allowed = Array.isArray(user?.allowedModules)
                 ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)

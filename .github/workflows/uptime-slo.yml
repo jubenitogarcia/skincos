@@ -17,7 +17,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          urls="${OBS_HEALTHCHECK_URLS:-https://crm.skincos.com.br/api/health,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health}"
+          urls="${OBS_HEALTHCHECK_URLS:-https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health}"
           max_ms="${OBS_LATENCY_MS:-800}"
           timeout_sec="${OBS_TIMEOUT_SEC:-10}"
           IFS=',' read -ra list <<< "$urls"

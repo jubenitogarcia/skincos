@@ -23,7 +23,7 @@ Workflow: `.github/workflows/uptime-slo.yml`
 
 Variáveis (repo → Settings → Variables → Actions):
 - `OBS_HEALTHCHECK_URLS` (CSV)  
-  Ex.: `https://crm.skincos.com.br/api/health,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health`
+  Ex.: `https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health`
 - `OBS_LATENCY_MS` (default: `800`)
 - `OBS_TIMEOUT_SEC` (default: `10`)
 
@@ -81,6 +81,6 @@ Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produt
 ## Runbook mínimo
 
 1. Validar status com os endpoints de health.
-2. Verificar logs de Worker/Pages e CRM API.
+2. Verificar logs de Worker/Pages e CRM API (Escala emite eventos `escala.*` e `escala.error`).
 3. Confirmar D1/R2 status no painel Cloudflare.
 4. Mitigar (rollback, fix, rate limits, cache) e registrar incidente.
