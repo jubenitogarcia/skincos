@@ -12,6 +12,7 @@ INSUMOS_API_TARGET = "https://api.skincos.com.br"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
 R2_KEY_PREFIX = ""
 R2_PRODUCTION_BRANCH = "main"
+VITE_ESCALA_API_URL = "https://escala-api.skincos.com.br/api/escala"
 
 [[env.preview.r2_buckets]]
 binding = "SHARE_BUCKET"
@@ -22,3 +23,4 @@ INSUMOS_API_TARGET = "https://api.skincos.com.br"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "false"
 R2_KEY_PREFIX = "preview/"
 R2_PRODUCTION_BRANCH = "main"
+VITE_ESCALA_API_URL = "https://escala-api-staging.skincos.com.br/api/escala"
