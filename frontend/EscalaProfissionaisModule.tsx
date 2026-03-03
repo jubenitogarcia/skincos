@@ -626,7 +626,7 @@ export function EscalaProfissionaisModule() {
                 <div className="space-y-1">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-blue-100/50">Profissional único</div>
                   <Select value={editorSingleProfessional} onValueChange={setEditorSingleProfessional}>
-                    <SelectTrigger className="bg-white/5">
+                    <SelectTrigger className="bg-white/5" data-testid="escala-editor-professional">
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>

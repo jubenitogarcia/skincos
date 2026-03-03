@@ -62,6 +62,8 @@ test.describe('escala', () => {
 
   test('edits schedule entries via editor', async ({ page }) => {
     let replacePayload: any = null
+    let addPayload: any = null
+    let removePayload: any = null
     let closedAddPayload: any = null
     let closedRemovePayload: any = null
     let holidayAddPayload: any = null
@@ -124,10 +126,10 @@ test.describe('escala', () => {
         replacePayload = await req.postDataJSON()
       }
       if (req.method() === 'POST') {
-        // Optional: add individual entry if needed later
+        addPayload = await req.postDataJSON()
       }
       if (req.method() === 'DELETE') {
-        // Optional: remove individual entry if needed later
+        removePayload = await req.postDataJSON()
       }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
     })
@@ -156,6 +158,23 @@ test.describe('escala', () => {
       date: '2026-03-15',
       unit: 'Novo Hamburgo',
       professionals: ['Dra. Ana', 'Dr. Lucas']
+    })
+
+    await page.getByTestId('escala-editor-professional').click()
+    await page.getByRole('option', { name: 'Dra. Ana' }).click()
+    await page.getByRole('button', { name: 'Adicionar ao dia' }).click()
+
+    await expect.poll(() => addPayload).toEqual({
+      date: '2026-03-15',
+      unit: 'Novo Hamburgo',
+      professional: 'Dra. Ana'
+    })
+
+    await page.getByRole('button', { name: 'Remover do dia' }).click()
+    await expect.poll(() => removePayload).toEqual({
+      date: '2026-03-15',
+      unit: 'Novo Hamburgo',
+      professional: 'Dra. Ana'
     })
 
     await page.locator('#escala-editor input[placeholder="Motivo do bloqueio"]').fill('Manutenção')
