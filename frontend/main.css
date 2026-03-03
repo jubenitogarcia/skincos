@@ -535,6 +535,21 @@ body {
   border: 1px solid oklch(0.89 0.01 240 / 0.3);
 }
 
+.escala-surface .glass-card {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: rgba(148, 163, 184, 0.35);
+  box-shadow: 0 16px 42px rgba(2, 6, 23, 0.35);
+}
+
+.escala-surface .glass-morphism {
+  background: rgba(15, 23, 42, 0.4);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+
+.escala-surface .escala-hero {
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.35), rgba(15, 23, 42, 0.6));
+}
+
 .atendimento-surface .glass-card {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.14);
