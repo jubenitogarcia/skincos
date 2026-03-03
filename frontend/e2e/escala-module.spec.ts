@@ -55,7 +55,7 @@ test.describe('escala', () => {
     await page.goto('/?module=escala-profissionais')
 
     await expect(page.getByText('Escala de Profissionais')).toBeVisible({ timeout: 30000 })
-    await expect(page.getByText('Dra. Ana')).toBeVisible()
+    await expect(page.getByRole('button', { name: /Dra\. Ana/i })).toBeVisible()
     await expect(page.getByText('Dia do Cliente')).toBeVisible()
     await expect(page.getByText('Feriado local')).toBeVisible()
   })
