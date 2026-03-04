@@ -326,7 +326,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 // Frontend expects `/api/auth/*` endpoints (normally served by Pages Functions).
 // When running locally with `NO_AUTH=true`, provide a minimal cookie-based session.
 // -------------------------------------------------------------
-const DEV_AUTH_ENABLED = String(process.env.NO_AUTH || '').toLowerCase() === 'true' && String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
+const NODE_ENV_NAME = String(process.env.NODE_ENV || '').toLowerCase()
+const NO_AUTH_RAW = String(process.env.NO_AUTH ?? '').trim().toLowerCase()
+const DEV_AUTH_ENABLED = NODE_ENV_NAME !== 'production' && NO_AUTH_RAW !== 'false'
 let devAuthRequireAdmin = null
 if (DEV_AUTH_ENABLED) {
     const DEV_AUTH_COOKIE = 'skincos_dev_session'
@@ -791,7 +793,7 @@ app.use('/api/meta-ads', createProxyMiddleware({
 // Cloudflare target (default production). Override for local testing.
 const isLocalEnv = String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
 const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || (isLocalEnv ? 'http://127.0.0.1:8787' : 'https://api.skincos.com.br')
-const LOCAL_INSUMOS_AUTH_STUB = isLocalEnv && String(process.env.NO_AUTH || '').toLowerCase() === 'true'
+const LOCAL_INSUMOS_AUTH_STUB = isLocalEnv && NO_AUTH_RAW !== 'false'
 
 function isLocalSafeMode() {
     // In local/dev, default to read-only for upstream production APIs unless explicitly allowed.
