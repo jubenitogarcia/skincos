@@ -26,9 +26,11 @@ export async function onRequest(context: any): Promise<Response> {
             )
         }
         if (rest === '/logout' && method === 'POST') {
+            const headers = new Headers({ 'content-type': 'application/json', 'cache-control': 'no-store' })
+            headers.append('Set-Cookie', 'crm.localAuth=off; Path=/; Max-Age=31536000; SameSite=Lax')
             return new Response(
                 JSON.stringify({ ok: true }),
-                { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }
+                { status: 200, headers }
             )
         }
     }
@@ -117,6 +119,16 @@ export async function onRequest(context: any): Promise<Response> {
         } else {
             const single = upstream.headers.get('set-cookie')
             if (single) applyCookies(splitSetCookie(single))
+        }
+
+        // Backward-compat: old deployments could have host-only auth cookies.
+        // On logout, clear both host-only and shared-domain variants.
+        if (rest === '/logout' && method === 'POST') {
+            const secureAttr = url.protocol === 'https:' ? '; Secure' : ''
+            const sameSite = url.protocol === 'https:' ? 'None' : 'Lax'
+            outHeaders.append('Set-Cookie', `session=deleted; Path=/; Max-Age=0; SameSite=${sameSite}${secureAttr}; HttpOnly`)
+            outHeaders.append('Set-Cookie', `csrfToken=deleted; Path=/; Max-Age=0; SameSite=${sameSite}${secureAttr}`)
+            outHeaders.append('Set-Cookie', 'crm.localAuth=off; Path=/; Max-Age=31536000; SameSite=Lax')
         }
     } catch {
         // ignore
