@@ -128,6 +128,20 @@ function isValidIsoDate(value: unknown): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
 }
 
+function normalizeUnitKey(value: unknown): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim()
+}
+
+function getAllowedUnitKeySet(actor: EscalaActor): Set<string> {
+  const raw = Array.isArray(actor.allowedUnits) ? actor.allowedUnits : []
+  return new Set(raw.map((unit) => normalizeUnitKey(unit)).filter(Boolean))
+}
+
 function sanitizeCsvNames(input: unknown): string[] {
   if (Array.isArray(input)) {
     return input
@@ -232,9 +246,11 @@ function getEscalaLocalStore(): EscalaLocalStore {
 }
 
 function canUseUnit(actor: EscalaActor, unit: string): boolean {
-  const allowed = Array.isArray(actor.allowedUnits) ? actor.allowedUnits.filter(Boolean) : []
-  if (!allowed.length) return true
-  return allowed.includes(unit)
+  const requested = normalizeUnitKey(unit)
+  if (!requested) return true
+  const allowed = getAllowedUnitKeySet(actor)
+  if (!allowed.size) return true
+  return allowed.has(requested)
 }
 
 function visibleByAllowedUnits<T extends { unit: string }>(rows: T[], actor: EscalaActor): T[] {
@@ -493,8 +509,9 @@ async function handleLocalEscalaRequest(
   }
 
   if (rest === '/professionals' && method === 'GET') {
+    const requestedUnitKey = normalizeUnitKey(unit)
     const visible = store.professionals.filter((prof) => {
-      if (unit && prof.units.length && !prof.units.includes(unit)) return false
+      if (requestedUnitKey && prof.units.length && !prof.units.some((u) => normalizeUnitKey(u) === requestedUnitKey)) return false
       if (!prof.units.length) return true
       return prof.units.some((u) => canUseUnit(actor, u))
     })

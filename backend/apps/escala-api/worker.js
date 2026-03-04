@@ -103,6 +103,7 @@ async function requireActor(request, env) {
     return { ok: false, status: 403, body: { ok: false, error: 'FORBIDDEN' } }
   }
   const allowedUnits = Array.isArray(actor.allowedUnits) ? actor.allowedUnits.map(String).filter(Boolean) : []
+  const allowedUnitKeys = Array.from(new Set(allowedUnits.map((unit) => normalizeUnitKey(unit)).filter(Boolean)))
   return {
     ok: true,
     actor: {
@@ -110,15 +111,16 @@ async function requireActor(request, env) {
       email: actor.email ? String(actor.email) : undefined,
       name: actor.name ? String(actor.name) : undefined,
       role,
-      allowedUnits
+      allowedUnits,
+      allowedUnitKeys
     }
   }
 }
 
 function ensureUnitAllowed(actor, unit) {
   if (!unit) return { ok: true }
-  if (!actor.allowedUnits.length) return { ok: true }
-  return actor.allowedUnits.includes(unit)
+  if (!actor.allowedUnitKeys.length) return { ok: true }
+  return isUnitVisibleForActor(actor, unit)
     ? { ok: true }
     : { ok: false, status: 403, body: { ok: false, error: 'FORBIDDEN_UNIT' } }
 }
@@ -135,59 +137,85 @@ function normalizeName(value) {
   return String(value || '').trim()
 }
 
+function normalizeUnitKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim()
+}
+
+function isUnitVisibleForActor(actor, unit) {
+  const key = normalizeUnitKey(unit)
+  if (!key) return true
+  if (!Array.isArray(actor.allowedUnitKeys) || !actor.allowedUnitKeys.length) return true
+  return actor.allowedUnitKeys.includes(key)
+}
+
 async function handleOverview(env, actor) {
-  const unitFilter = actor.allowedUnits.length ? ` where unit in (${actor.allowedUnits.map(() => '?').join(',')})` : ''
-  const unitValues = actor.allowedUnits.length ? actor.allowedUnits : []
   const unitsQuery = `
-    select distinct unit from schedule_entries${unitFilter}
+    select distinct unit from schedule_entries
     union
-    select distinct unit from closed_days${unitFilter}
+    select distinct unit from closed_days
     union
-    select distinct unit from holidays${unitFilter}
+    select distinct unit from holidays
     order by unit;
   `
-  const units = await env.DB.prepare(unitsQuery).bind(...unitValues, ...unitValues, ...unitValues).all()
+  const units = await env.DB.prepare(unitsQuery).all()
 
   const monthsQuery = `
-    select distinct substr(date, 1, 7) as month
-    from schedule_entries${unitFilter}
-    order by month;
+    select distinct unit, substr(date, 1, 7) as month
+    from schedule_entries
+    order by month, unit;
   `
-  const months = await env.DB.prepare(monthsQuery).bind(...unitValues).all()
-  return { units: (units.results || []).map((r) => r.unit), months: (months.results || []).map((r) => r.month) }
+  const months = await env.DB.prepare(monthsQuery).all()
+
+  const visibleUnits = (units.results || [])
+    .map((r) => String(r.unit || ''))
+    .filter(Boolean)
+    .filter((unit) => isUnitVisibleForActor(actor, unit))
+
+  const visibleMonths = new Set(
+    (months.results || [])
+      .filter((r) => isUnitVisibleForActor(actor, r.unit))
+      .map((r) => String(r.month || ''))
+      .filter(Boolean)
+  )
+
+  return { units: visibleUnits, months: Array.from(visibleMonths).sort() }
 }
 
 async function handleProfessionals(env, unit, actor) {
-  if (unit) {
-    const stmt = env.DB.prepare(
-      `select name, status, role, shift, nickname, phone, email, instagram, units_json
-       from professionals
-       where json_array_length(units_json) = 0
-          or exists (select 1 from json_each(units_json) where value = ?)
-       order by name`
-    ).bind(unit)
-    const res = await stmt.all()
-    const data = (res.results || []).map((row) => ({
-      ...row,
-      units: JSON.parse(row.units_json || '[]')
-    }))
-    return { data }
-  }
-
   const res = await env.DB.prepare(
     `select name, status, role, shift, nickname, phone, email, instagram, units_json
      from professionals
      order by name`
   ).all()
-  const allowed = new Set(actor.allowedUnits || [])
-  const data = (res.results || []).map((row) => ({
-    ...row,
-    units: JSON.parse(row.units_json || '[]')
-  })).filter((row) => {
-    if (!allowed.size) return true
-    if (!row.units || !row.units.length) return true
-    return row.units.some((u) => allowed.has(u))
-  })
+  const requestedUnitKey = normalizeUnitKey(unit)
+  const allowed = new Set(actor.allowedUnitKeys || [])
+  const data = (res.results || [])
+    .map((row) => {
+      let units = []
+      try {
+        units = JSON.parse(row.units_json || '[]')
+      } catch {
+        units = []
+      }
+      const unitKeys = Array.isArray(units) ? units.map((u) => normalizeUnitKey(u)).filter(Boolean) : []
+      return {
+        ...row,
+        units: Array.isArray(units) ? units : [],
+        unitKeys
+      }
+    })
+    .filter((row) => {
+      if (requestedUnitKey && row.unitKeys.length && !row.unitKeys.includes(requestedUnitKey)) return false
+      if (!allowed.size) return true
+      if (!row.unitKeys.length) return true
+      return row.unitKeys.some((key) => allowed.has(key))
+    })
+    .map(({ unitKeys, ...row }) => row)
   return { data }
 }
 
@@ -202,17 +230,12 @@ function buildScheduleWhere(params) {
     clauses.push('date like ?')
     values.push(`${params.month}-%`)
   }
-  if (params.allowedUnits && params.allowedUnits.length) {
-    const placeholders = params.allowedUnits.map(() => '?').join(',')
-    clauses.push(`unit in (${placeholders})`)
-    values.push(...params.allowedUnits)
-  }
   const where = clauses.length ? `where ${clauses.join(' and ')}` : ''
   return { where, values }
 }
 
 async function handleSchedule(env, unit, month, actor) {
-  const { where, values } = buildScheduleWhere({ unit, month, allowedUnits: actor.allowedUnits })
+  const { where, values } = buildScheduleWhere({ unit, month })
   const scheduleRes = await env.DB.prepare(
     `select date, unit, professional_name as professional
      from schedule_entries
@@ -235,9 +258,9 @@ async function handleSchedule(env, unit, month, actor) {
   ).bind(...values).all()
 
   return {
-    schedule: scheduleRes.results || [],
-    closedDays: closedRes.results || [],
-    holidays: holidaysRes.results || []
+    schedule: (scheduleRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit)),
+    closedDays: (closedRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit)),
+    holidays: (holidaysRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit))
   }
 }
 
