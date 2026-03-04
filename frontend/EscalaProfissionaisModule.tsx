@@ -5,18 +5,17 @@ import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Input } from '@/input'
 import { LoadingPercentText } from '@/LoadingPattern'
+import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useAuth } from '@/contexts'
-import { cn, getStatusColor } from '@/utils'
+import { cn } from '@/utils'
 import {
   addClosedDay,
-  addHoliday,
   addScheduleEntry,
   fetchEscalaOverview,
   fetchEscalaProfessionals,
   fetchEscalaSchedule,
   removeClosedDay,
-  removeHoliday,
   removeScheduleEntry,
   replaceScheduleEntries
 } from '@/escalaApi'
@@ -41,6 +40,7 @@ type EscalaProfessional = {
 type EscalaScheduleEntry = { date: string; unit: string; professional: string }
 type EscalaClosedDay = { date: string; unit: string; reason: string }
 type EscalaHoliday = { date: string; unit: string; name: string }
+type EscalaBlockEntry = { date: string; label: string; type: 'Bloqueio' | 'Feriado legado' }
 
 const MONTH_LABELS = new Map<string, string>()
 
@@ -71,6 +71,16 @@ function buildCalendarCells(monthValue: string): CalendarCell[] {
   return cells
 }
 
+function normalizeText(value: string) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function isActiveInjector(prof: EscalaProfessional) {
+  const role = normalizeText(prof.role)
+  const status = normalizeText(prof.status)
+  return role.includes('injetor') && status === 'ativo'
+}
+
 function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional[]) {
   const map = new Map(base.map((p) => [p.name, p]))
   scheduleNames.forEach((name) => {
@@ -90,6 +100,10 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
   return Array.from(map.values())
 }
 
+function uniqueNames(values: string[]) {
+  return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)))
+}
+
 export function EscalaProfissionaisModule() {
   const { user } = useAuth()
   const roleKey = String(user?.role || '').trim().toUpperCase()
@@ -100,7 +114,7 @@ export function EscalaProfissionaisModule() {
   const [selectedUnit, setSelectedUnit] = useState<string>('')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [selectedProfessional, setSelectedProfessional] = useState<string>('Todos')
-  const [search, setSearch] = useState('')
+  const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [professionals, setProfessionals] = useState<EscalaProfessional[]>([])
   const [schedule, setSchedule] = useState<EscalaScheduleEntry[]>([])
   const [closedDays, setClosedDays] = useState<EscalaClosedDay[]>([])
@@ -109,12 +123,12 @@ export function EscalaProfissionaisModule() {
   const [loadingSchedule, setLoadingSchedule] = useState(false)
   const [loadingProfessionals, setLoadingProfessionals] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [editorDate, setEditorDate] = useState('')
   const [editorProfessionals, setEditorProfessionals] = useState('')
   const [editorSingleProfessional, setEditorSingleProfessional] = useState('')
   const [editorReason, setEditorReason] = useState('')
-  const [editorHolidayName, setEditorHolidayName] = useState('')
   const [editorLoading, setEditorLoading] = useState(false)
+  const [quickSwapByEntryKey, setQuickSwapByEntryKey] = useState<Record<string, string>>({})
+  const [quickActionEntryKey, setQuickActionEntryKey] = useState<string | null>(null)
 
   const refreshOverview = useCallback(async () => {
     setLoadingOverview(true)
@@ -174,138 +188,87 @@ export function EscalaProfissionaisModule() {
       .filter(Boolean)
   }, [])
 
-  const ensureEditorReady = () => {
+  const toggleDateSelection = useCallback((date: string) => {
+    setSelectedDates((prev) => {
+      if (prev.includes(date)) return prev.filter((item) => item !== date)
+      return [...prev, date].sort()
+    })
+  }, [])
+
+  const clearDateSelection = useCallback(() => {
+    setSelectedDates([])
+  }, [])
+
+  const ensureEditorReady = useCallback(() => {
     if (!selectedUnit) {
       toast.error('Selecione uma unidade antes de editar a escala.')
       return false
     }
-    if (!editorDate) {
-      toast.error('Informe a data da escala.')
+    if (!selectedDates.length) {
+      toast.error('Selecione ao menos um dia na agenda para editar.')
       return false
     }
     return true
-  }
+  }, [selectedDates.length, selectedUnit])
 
-  const handleReplaceSchedule = async () => {
-    if (!ensureEditorReady()) return
-    const list = parseProfessionals(editorProfessionals)
+  const runOnSelectedDates = useCallback(async (
+    actionLabel: string,
+    runner: (date: string) => Promise<{ ok: boolean; error?: string }>
+  ) => {
+    if (!ensureEditorReady()) return false
+    setEditorLoading(true)
+    const failures: string[] = []
+    for (const date of selectedDates) {
+      const res = await runner(date)
+      if (!res.ok) failures.push(`${date}: ${res.error || 'falha desconhecida'}`)
+    }
+    setEditorLoading(false)
+
+    if (failures.length) {
+      toast.error(`Falha em ${failures.length} dia(s). Primeiro erro: ${failures[0]}`)
+      return false
+    }
+
+    toast.success(`${actionLabel} em ${selectedDates.length} dia(s).`)
+    await refreshSchedule()
+    await refreshOverview()
+    return true
+  }, [ensureEditorReady, refreshOverview, refreshSchedule, selectedDates])
+
+  const handleReplaceSchedule = useCallback(async () => {
+    const list = uniqueNames(parseProfessionals(editorProfessionals))
     if (!list.length) {
       toast.error('Informe ao menos um profissional para substituir a agenda.')
       return
     }
-    setEditorLoading(true)
-    const res = await replaceScheduleEntries({ date: editorDate, unit: selectedUnit, professionals: list })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao atualizar a agenda.')
-      return
-    }
-    toast.success('Agenda atualizada.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
+    await runOnSelectedDates('Agenda substituída', (date) => replaceScheduleEntries({ date, unit: selectedUnit, professionals: list }))
+  }, [editorProfessionals, parseProfessionals, runOnSelectedDates, selectedUnit])
 
-  const handleAddScheduleEntry = async () => {
-    if (!ensureEditorReady()) return
+  const handleAddScheduleEntry = useCallback(async () => {
     const professional = editorSingleProfessional.trim()
     if (!professional) {
       toast.error('Selecione um profissional para adicionar.')
       return
     }
-    setEditorLoading(true)
-    const res = await addScheduleEntry({ date: editorDate, unit: selectedUnit, professional })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao adicionar profissional.')
-      return
-    }
-    toast.success('Profissional adicionado ao dia.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
+    await runOnSelectedDates('Profissional adicionado', (date) => addScheduleEntry({ date, unit: selectedUnit, professional }))
+  }, [editorSingleProfessional, runOnSelectedDates, selectedUnit])
 
-  const handleRemoveScheduleEntry = async () => {
-    if (!ensureEditorReady()) return
+  const handleRemoveScheduleEntry = useCallback(async () => {
     const professional = editorSingleProfessional.trim()
     if (!professional) {
       toast.error('Selecione um profissional para remover.')
       return
     }
-    setEditorLoading(true)
-    const res = await removeScheduleEntry({ date: editorDate, unit: selectedUnit, professional })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao remover profissional.')
-      return
-    }
-    toast.success('Profissional removido do dia.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
+    await runOnSelectedDates('Profissional removido', (date) => removeScheduleEntry({ date, unit: selectedUnit, professional }))
+  }, [editorSingleProfessional, runOnSelectedDates, selectedUnit])
 
-  const handleCloseDay = async () => {
-    if (!ensureEditorReady()) return
-    setEditorLoading(true)
-    const res = await addClosedDay({ date: editorDate, unit: selectedUnit, reason: editorReason })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao bloquear dia.')
-      return
-    }
-    toast.success('Dia bloqueado.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
+  const handleCloseDay = useCallback(async () => {
+    await runOnSelectedDates('Dias bloqueados', (date) => addClosedDay({ date, unit: selectedUnit, reason: editorReason }))
+  }, [editorReason, runOnSelectedDates, selectedUnit])
 
-  const handleOpenDay = async () => {
-    if (!ensureEditorReady()) return
-    setEditorLoading(true)
-    const res = await removeClosedDay({ date: editorDate, unit: selectedUnit })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao remover bloqueio.')
-      return
-    }
-    toast.success('Bloqueio removido.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
-
-  const handleAddHoliday = async () => {
-    if (!ensureEditorReady()) return
-    if (!editorHolidayName.trim()) {
-      toast.error('Informe o nome do feriado.')
-      return
-    }
-    setEditorLoading(true)
-    const res = await addHoliday({ date: editorDate, unit: selectedUnit, name: editorHolidayName })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao cadastrar feriado.')
-      return
-    }
-    toast.success('Feriado cadastrado.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
-
-  const handleRemoveHoliday = async () => {
-    if (!ensureEditorReady()) return
-    if (!editorHolidayName.trim()) {
-      toast.error('Informe o nome do feriado.')
-      return
-    }
-    setEditorLoading(true)
-    const res = await removeHoliday({ date: editorDate, unit: selectedUnit, name: editorHolidayName })
-    setEditorLoading(false)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao remover feriado.')
-      return
-    }
-    toast.success('Feriado removido.')
-    void refreshSchedule()
-    void refreshOverview()
-  }
+  const handleOpenDay = useCallback(async () => {
+    await runOnSelectedDates('Bloqueios removidos', (date) => removeClosedDay({ date, unit: selectedUnit }))
+  }, [runOnSelectedDates, selectedUnit])
 
   const scrollToEditor = useCallback(() => {
     const el = document.getElementById('escala-editor')
@@ -326,6 +289,11 @@ export function EscalaProfissionaisModule() {
     void refreshSchedule(selectedUnit, selectedMonth)
   }, [selectedMonth, selectedUnit, refreshSchedule])
 
+  useEffect(() => {
+    if (!selectedMonth) return
+    setSelectedDates((prev) => prev.filter((date) => date.startsWith(`${selectedMonth}-`)))
+  }, [selectedMonth])
+
   const scheduleNames = useMemo(() => new Set(schedule.map((e) => e.professional)), [schedule])
   const mergedProfessionals = useMemo(() => mergeProfessionals(scheduleNames, professionals), [scheduleNames, professionals])
 
@@ -334,16 +302,23 @@ export function EscalaProfissionaisModule() {
     return mergedProfessionals.filter((p) => !p.units.length || p.units.includes(selectedUnit))
   }, [mergedProfessionals, selectedUnit])
 
-  const filteredProfessionals = useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    const list = professionalsByUnit
-    if (!needle) return list
-    return list.filter((p) => p.name.toLowerCase().includes(needle) || p.role.toLowerCase().includes(needle))
-  }, [professionalsByUnit, search])
+  const activeInjectors = useMemo(() => professionalsByUnit.filter(isActiveInjector), [professionalsByUnit])
 
-  const professionalOptions = useMemo(() => {
-    return professionalsByUnit.map((prof) => prof.name)
-  }, [professionalsByUnit])
+  const professionalOptions = useMemo(() => activeInjectors.map((prof) => prof.name), [activeInjectors])
+
+  useEffect(() => {
+    if (selectedProfessional === 'Todos') return
+    if (!professionalOptions.includes(selectedProfessional)) {
+      setSelectedProfessional('Todos')
+    }
+  }, [professionalOptions, selectedProfessional])
+
+  useEffect(() => {
+    if (!editorSingleProfessional) return
+    if (!professionalOptions.includes(editorSingleProfessional)) {
+      setEditorSingleProfessional('')
+    }
+  }, [editorSingleProfessional, professionalOptions])
 
   const scheduleForMonth = schedule
   const closedDaysForMonth = closedDays
@@ -370,6 +345,27 @@ export function EscalaProfissionaisModule() {
     return map
   }, [holidaysForMonth])
 
+  const blockedDates = useMemo(() => {
+    const set = new Set<string>()
+    closedDaysForMonth.forEach((entry) => set.add(entry.date))
+    holidaysForMonth.forEach((entry) => set.add(entry.date))
+    return set
+  }, [closedDaysForMonth, holidaysForMonth])
+
+  const blockedEntries = useMemo<EscalaBlockEntry[]>(() => {
+    const legacy = holidaysForMonth.map((entry) => ({
+      date: entry.date,
+      label: entry.name,
+      type: 'Feriado legado' as const
+    }))
+    const blocked = closedDaysForMonth.map((entry) => ({
+      date: entry.date,
+      label: entry.reason || 'Sem atendimento',
+      type: 'Bloqueio' as const
+    }))
+    return [...blocked, ...legacy].sort((a, b) => a.date.localeCompare(b.date))
+  }, [closedDaysForMonth, holidaysForMonth])
+
   const calendarCells = useMemo(() => (selectedMonth ? buildCalendarCells(selectedMonth) : []), [selectedMonth])
 
   const monthProfessionals = useMemo(() => {
@@ -388,6 +384,38 @@ export function EscalaProfissionaisModule() {
   const totalScheduledDays = useMemo(() => {
     return new Set(scheduleForMonth.map((entry) => entry.date)).size
   }, [scheduleForMonth])
+
+  const handleQuickReplace = useCallback(async (entry: EscalaScheduleEntry, key: string) => {
+    const nextProfessional = String(quickSwapByEntryKey[key] || '').trim()
+    if (!nextProfessional || nextProfessional === entry.professional) return
+    const dayEntries = (scheduleByDate.get(entry.date) || []).map((item) => item.professional)
+    const nextNames = uniqueNames(dayEntries.map((name) => (name === entry.professional ? nextProfessional : name)))
+    if (!nextNames.length) return
+
+    setQuickActionEntryKey(key)
+    const res = await replaceScheduleEntries({ date: entry.date, unit: selectedUnit, professionals: nextNames })
+    setQuickActionEntryKey(null)
+    if (!res.ok) {
+      toast.error(res.error || 'Falha ao trocar profissional.')
+      return
+    }
+    toast.success('Profissional alterado.')
+    await refreshSchedule()
+    await refreshOverview()
+  }, [quickSwapByEntryKey, refreshOverview, refreshSchedule, scheduleByDate, selectedUnit])
+
+  const handleQuickRemove = useCallback(async (entry: EscalaScheduleEntry, key: string) => {
+    setQuickActionEntryKey(key)
+    const res = await removeScheduleEntry({ date: entry.date, unit: selectedUnit, professional: entry.professional })
+    setQuickActionEntryKey(null)
+    if (!res.ok) {
+      toast.error(res.error || 'Falha ao remover profissional.')
+      return
+    }
+    toast.success('Profissional removido do dia.')
+    await refreshSchedule()
+    await refreshOverview()
+  }, [refreshOverview, refreshSchedule, selectedUnit])
 
   if (!canAccess) {
     return (
@@ -411,7 +439,7 @@ export function EscalaProfissionaisModule() {
             <div>
               <CardTitle className="text-white">Escala de Profissionais</CardTitle>
               <div className="text-sm text-slate-200/80">
-                Visualize a escala cadastrada no CRM e organize os atendimentos por unidade, mês e profissional.
+                Clique nos dias da agenda para selecionar múltiplas datas e editar em lote.
               </div>
               {loadingOverview && (
                 <div className="mt-2 text-xs text-slate-300/80">
@@ -486,15 +514,36 @@ export function EscalaProfissionaisModule() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Todos">Todos</SelectItem>
-                  {filteredProfessionals.map((prof) => (
-                    <SelectItem key={prof.name} value={prof.name}>
-                      {prof.name}
+                  {professionalOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-slate-200/90">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="uppercase tracking-[0.2em] text-slate-300/70">Dias selecionados</span>
+              <Badge className="bg-emerald-500/20 text-emerald-100">{selectedDates.length}</Badge>
+              {selectedDates.slice(0, 4).map((date) => (
+                <Badge key={date} variant="outline" className="border-white/20 bg-white/10 text-white/90">
+                  {date}
+                </Badge>
+              ))}
+              {selectedDates.length > 4 && (
+                <Badge variant="outline" className="border-white/20 bg-white/10 text-white/90">
+                  +{selectedDates.length - 4}
+                </Badge>
+              )}
+            </div>
+            <Button variant="outline" className="border-white/20 bg-white/5 text-white/90" onClick={clearDateSelection} disabled={!selectedDates.length}>
+              Limpar seleção
+            </Button>
+          </div>
+
           <div className="grid gap-3 md:grid-cols-3">
             <div className="glass-morphism rounded-xl border border-white/10 px-4 py-3">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Dias com atendimento</div>
@@ -503,13 +552,13 @@ export function EscalaProfissionaisModule() {
             </div>
             <div className="glass-morphism rounded-xl border border-white/10 px-4 py-3">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Dias sem atendimento</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{closedDaysForMonth.length}</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{blockedDates.size}</div>
               <div className="text-xs text-slate-300/80">para {selectedUnit || '—'}</div>
             </div>
             <div className="glass-morphism rounded-xl border border-white/10 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Profissionais escalados</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{monthProfessionals.length}</div>
-              <div className="text-xs text-slate-300/80">com pelo menos 1 atendimento</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Injetores ativos</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{professionalOptions.length}</div>
+              <div className="text-xs text-slate-300/80">disponíveis para escala</div>
             </div>
           </div>
         </CardContent>
@@ -543,19 +592,24 @@ export function EscalaProfissionaisModule() {
                   return <div key={`empty-${index}`} className="rounded-xl border border-dashed border-white/5" />
                 }
                 const entries = scheduleByDate.get(cell.date) || []
-                const isClosed = closedDates.has(cell.date)
+                const isClosed = blockedDates.has(cell.date)
                 const holidayLabels = holidayByDate.get(cell.date) || []
                 const visibleEntries = selectedProfessional === 'Todos'
                   ? entries
                   : entries.filter((entry) => entry.professional === selectedProfessional)
                 const highlight = selectedProfessional !== 'Todos' && visibleEntries.length
+                const selected = selectedDates.includes(cell.date)
 
                 return (
-                  <div
+                  <button
                     key={cell.date}
+                    type="button"
+                    data-testid={`escala-day-${cell.date}`}
+                    onClick={() => toggleDateSelection(cell.date)}
                     className={cn(
-                      'flex h-full flex-col gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-100/90 transition-all',
-                      highlight && 'ring-2 ring-emerald-400/40'
+                      'flex h-full flex-col gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-left text-xs text-slate-100/90 transition-all hover:border-white/30',
+                      highlight && 'ring-2 ring-emerald-400/40',
+                      selected && 'border-cyan-300/70 ring-2 ring-cyan-300/50'
                     )}
                   >
                     <div className="flex items-center justify-between text-[11px] text-slate-300/80">
@@ -567,11 +621,63 @@ export function EscalaProfissionaisModule() {
                       ) : null}
                     </div>
                     <div className="space-y-1">
-                      {visibleEntries.map((entry) => (
-                        <div key={`${entry.date}-${entry.professional}`} className="rounded-lg bg-white/10 px-2 py-1 text-[11px]">
-                          {entry.professional}
-                        </div>
-                      ))}
+                      {visibleEntries.map((entry) => {
+                        const entryKey = `${entry.date}__${entry.professional}`
+                        const quickValue = quickSwapByEntryKey[entryKey] || entry.professional
+                        const quickOptions = uniqueNames([entry.professional, ...professionalOptions])
+                        return (
+                          <Popover key={entryKey}>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                className="w-full rounded-lg bg-white/10 px-2 py-1 text-left text-[11px] hover:bg-white/20"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {entry.professional}
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-72 border-white/15 bg-slate-900/95 text-slate-100" onClick={(event) => event.stopPropagation()}>
+                              <div className="space-y-3 text-xs">
+                                <div>
+                                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Edição rápida</div>
+                                  <div className="text-sm text-white">{entry.date}</div>
+                                  <div className="text-[11px] text-slate-300/80">{entry.professional}</div>
+                                </div>
+                                <Select value={quickValue} onValueChange={(value) => setQuickSwapByEntryKey((prev) => ({ ...prev, [entryKey]: value }))}>
+                                  <SelectTrigger className="bg-white/5">
+                                    <SelectValue placeholder="Selecione" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {quickOptions.map((name) => (
+                                      <SelectItem key={`${entryKey}-${name}`} value={name}>
+                                        {name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="premium"
+                                    className="flex-1"
+                                    onClick={() => void handleQuickReplace(entry, entryKey)}
+                                    disabled={quickActionEntryKey === entryKey}
+                                  >
+                                    Trocar
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    className="flex-1"
+                                    onClick={() => void handleQuickRemove(entry, entryKey)}
+                                    disabled={quickActionEntryKey === entryKey}
+                                  >
+                                    Remover
+                                  </Button>
+                                </div>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        )
+                      })}
                       {!visibleEntries.length && isClosed && (
                         <div className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-100/80">
                           Sem atendimento
@@ -583,9 +689,9 @@ export function EscalaProfissionaisModule() {
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
-              )}
+                  </button>
+                )
+              })}
             </div>
           </CardContent>
         </Card>
@@ -596,16 +702,11 @@ export function EscalaProfissionaisModule() {
               <CardTitle className="text-white">Editor da escala</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 text-xs text-slate-100/90">
+              <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
+                Dias selecionados na agenda: <span className="font-semibold text-white">{selectedDates.length}</span>
+              </div>
+
               <div className="grid gap-3">
-                <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Data</div>
-                  <Input
-                    type="date"
-                    value={editorDate}
-                    onChange={(event) => setEditorDate(event.target.value)}
-                    className="bg-white/5"
-                  />
-                </div>
                 <div className="space-y-1">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Profissionais (CSV)</div>
                   <Input
@@ -617,12 +718,13 @@ export function EscalaProfissionaisModule() {
                   <Button
                     variant="outline"
                     className="mt-2 border-white/20 bg-white/5 text-white/90"
-                    onClick={handleReplaceSchedule}
+                    onClick={() => void handleReplaceSchedule()}
                     disabled={editorLoading}
                   >
-                    Substituir agenda do dia
+                    Substituir agenda dos dias selecionados
                   </Button>
                 </div>
+
                 <div className="space-y-1">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Profissional único</div>
                   <Select value={editorSingleProfessional} onValueChange={setEditorSingleProfessional}>
@@ -638,51 +740,35 @@ export function EscalaProfissionaisModule() {
                         ))
                       ) : (
                         <SelectItem value="__empty" disabled>
-                          Nenhum profissional encontrado
+                          Nenhum injetor ativo encontrado
                         </SelectItem>
                       )}
                     </SelectContent>
                   </Select>
                   <div className="flex flex-wrap gap-2 pt-2">
-                    <Button variant="premium" onClick={handleAddScheduleEntry} disabled={editorLoading}>
-                      Adicionar ao dia
+                    <Button variant="premium" onClick={() => void handleAddScheduleEntry()} disabled={editorLoading}>
+                      Adicionar nos dias selecionados
                     </Button>
-                    <Button variant="outline" onClick={handleRemoveScheduleEntry} disabled={editorLoading}>
-                      Remover do dia
+                    <Button variant="outline" onClick={() => void handleRemoveScheduleEntry()} disabled={editorLoading}>
+                      Remover dos dias selecionados
                     </Button>
                   </div>
                 </div>
+
                 <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Bloqueio do dia</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Bloqueio (inclui feriados)</div>
                   <Input
                     value={editorReason}
                     onChange={(event) => setEditorReason(event.target.value)}
-                    placeholder="Motivo do bloqueio"
+                    placeholder="Motivo do bloqueio (ex: Feriado Nacional)"
                     className="bg-white/5"
                   />
                   <div className="flex flex-wrap gap-2 pt-2">
-                    <Button variant="premium" onClick={handleCloseDay} disabled={editorLoading}>
-                      Bloquear dia
+                    <Button variant="premium" onClick={() => void handleCloseDay()} disabled={editorLoading}>
+                      Bloquear dias selecionados
                     </Button>
-                    <Button variant="outline" onClick={handleOpenDay} disabled={editorLoading}>
+                    <Button variant="outline" onClick={() => void handleOpenDay()} disabled={editorLoading}>
                       Remover bloqueio
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Feriado</div>
-                  <Input
-                    value={editorHolidayName}
-                    onChange={(event) => setEditorHolidayName(event.target.value)}
-                    placeholder="Nome do feriado"
-                    className="bg-white/5"
-                  />
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    <Button variant="premium" onClick={handleAddHoliday} disabled={editorLoading}>
-                      Adicionar feriado
-                    </Button>
-                    <Button variant="outline" onClick={handleRemoveHoliday} disabled={editorLoading}>
-                      Remover feriado
                     </Button>
                   </div>
                 </div>
@@ -693,7 +779,7 @@ export function EscalaProfissionaisModule() {
           <Card className="glass-card">
             <CardHeader className="border-b border-white/10">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-white">Profissionais</CardTitle>
+                <CardTitle className="text-white">Próximos atendimentos</CardTitle>
                 {loadingProfessionals && (
                   <div className="text-xs text-slate-300/80">
                     <LoadingPercentText label="Sincronizando" showPercent={false} />
@@ -701,52 +787,10 @@ export function EscalaProfissionaisModule() {
                 )}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Busque por nome ou cargo"
-                className="bg-white/5"
-              />
-              <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
-                {filteredProfessionals.map((prof) => (
-                  <button
-                    key={prof.name}
-                    type="button"
-                    onClick={() => setSelectedProfessional(prof.name)}
-                    className={cn(
-                      'flex w-full flex-col gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-xs transition-all hover:border-white/20',
-                      selectedProfessional === prof.name && 'border-emerald-400/40 bg-emerald-500/10'
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-white/90">{prof.name}</span>
-                      <Badge className={cn('text-[10px]', getStatusColor(prof.status))}>{prof.status || '—'}</Badge>
-                    </div>
-                    <div className="text-[11px] text-slate-200/80">{prof.role || 'Profissional'}</div>
-                    {prof.units.length ? (
-                      <div className="flex flex-wrap gap-1 text-[10px] text-slate-300/80">
-                        {prof.units.map((unit) => (
-                          <span key={unit} className="rounded-md bg-white/10 px-2 py-0.5">
-                            {unit}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="glass-card">
-            <CardHeader className="border-b border-white/10">
-              <CardTitle className="text-white">Próximos atendimentos</CardTitle>
-            </CardHeader>
             <CardContent className="space-y-2 text-xs">
               {selectedProfessional === 'Todos' && (
                 <div className="text-slate-200/80">
-                  Selecione um profissional para ver as próximas datas confirmadas.
+                  Selecione um profissional no filtro do topo para ver as próximas datas confirmadas.
                 </div>
               )}
               {selectedProfessional !== 'Todos' && !upcomingForProfessional.length && (
@@ -764,41 +808,23 @@ export function EscalaProfissionaisModule() {
 
           <Card className="glass-card">
             <CardHeader className="border-b border-white/10">
-              <CardTitle className="text-white">Feriados & Bloqueios</CardTitle>
+              <CardTitle className="text-white">Bloqueios do mês</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-xs">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Feriados</div>
-                <div className="mt-2 space-y-2">
-                  {!holidaysForMonth.length && (
-                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
-                      Nenhum feriado cadastrado no mês.
-                    </div>
-                  )}
-                  {holidaysForMonth.slice(0, 6).map((holiday) => (
-                    <div key={`${holiday.date}-${holiday.name}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-                      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">{holiday.date}</div>
-                      <div className="text-sm font-semibold text-white">{holiday.name}</div>
-                    </div>
-                  ))}
+            <CardContent className="space-y-2 text-xs">
+              {!blockedEntries.length && (
+                <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
+                  Nenhum bloqueio registrado.
                 </div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Dias sem atendimento</div>
-                <div className="mt-2 space-y-2">
-                  {!closedDaysForMonth.length && (
-                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
-                      Nenhum bloqueio registrado.
-                    </div>
-                  )}
-                  {closedDaysForMonth.slice(0, 6).map((entry) => (
-                    <div key={`${entry.date}-${entry.unit}`} className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-2">
-                      <div className="text-[11px] uppercase tracking-[0.2em] text-rose-100/70">{entry.date}</div>
-                      <div className="text-sm font-semibold text-white">{entry.reason}</div>
-                    </div>
-                  ))}
+              )}
+              {blockedEntries.slice(0, 10).map((entry, index) => (
+                <div key={`${entry.date}-${entry.label}-${index}`} className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-rose-100/70">{entry.date}</div>
+                    <Badge variant="outline" className="border-rose-200/40 text-rose-100/90">{entry.type}</Badge>
+                  </div>
+                  <div className="text-sm font-semibold text-white">{entry.label}</div>
                 </div>
-              </div>
+              ))}
             </CardContent>
           </Card>
         </div>
