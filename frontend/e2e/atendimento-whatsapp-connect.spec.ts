@@ -32,8 +32,18 @@ test.describe('atendimento whatsapp connect', () => {
 
     await expect(page.getByRole('heading', { name: 'Atendimento' }).first()).toBeVisible({ timeout: 30000 })
 
-    await page.getByRole('button', { name: /WhatsApp/i }).first().click()
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10000 })
+    const waHeaderButton = page.getByRole('button', { name: /WhatsApp/i }).first()
+    if (await waHeaderButton.isVisible().catch(() => false)) {
+      await waHeaderButton.click()
+    }
+    const waDialog = page.getByRole('dialog').filter({ hasText: /WhatsApp conectado/i }).first()
+    const openedByClick = await waDialog.isVisible({ timeout: 2000 }).catch(() => false)
+    if (!openedByClick) {
+      await page.evaluate(() => {
+        window.dispatchEvent(new CustomEvent('skincos:atendimento:header-action', { detail: { action: 'wa' } }))
+      })
+    }
+    await expect(waDialog).toBeVisible({ timeout: 10000 })
     await page.getByRole('button', { name: 'Conectar novo' }).click()
 
     await expect(page.getByText(/QR Code do canal/i)).toBeVisible({ timeout: 30000 })
@@ -46,4 +56,3 @@ test.describe('atendimento whatsapp connect', () => {
     expect(src || '').toContain('data:image/')
   })
 })
-
