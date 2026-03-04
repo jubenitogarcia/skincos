@@ -35,6 +35,18 @@ function parseList(value: unknown): string[] | undefined {
   return items.length ? items : undefined
 }
 
+function parseCookieValue(rawCookie: string, name: string): string {
+  const cookie = String(rawCookie || '')
+  if (!cookie || !name) return ''
+  const parts = cookie.split(';')
+  for (const part of parts) {
+    const [k, ...rest] = part.split('=')
+    if (String(k || '').trim() !== name) continue
+    return decodeURIComponent(rest.join('=').trim())
+  }
+  return ''
+}
+
 export function isLocalDevAuthBypassEnabled(context: any): boolean {
   const env = context?.env || {}
   const rawToggle =
@@ -43,17 +55,33 @@ export function isLocalDevAuthBypassEnabled(context: any): boolean {
     env.DEV_AUTH_BYPASS ??
     ''
   const toggle = String(rawToggle).trim().toLowerCase()
-  if (toggle === 'false' || toggle === '0' || toggle === 'no') return false
-  if (toggle === 'true' || toggle === '1' || toggle === 'yes') return true
-
   const requestUrl = String(context?.request?.url || '')
   if (!requestUrl) return false
+  let localHost = false
   try {
     const { hostname } = new URL(requestUrl)
-    return isLocalHostname(hostname)
+    localHost = isLocalHostname(hostname)
   } catch {
     return false
   }
+  if (!localHost) return false
+
+  const cookieHeader = String(context?.request?.headers?.get?.('cookie') || '')
+  const cookieToggle =
+    parseCookieValue(cookieHeader, 'crm.localAuth') ||
+    parseCookieValue(cookieHeader, 'crm_local_auth')
+  const cookieNormalized = String(cookieToggle || '').trim().toLowerCase()
+  if (cookieNormalized === 'false' || cookieNormalized === '0' || cookieNormalized === 'no' || cookieNormalized === 'off') {
+    return false
+  }
+  if (cookieNormalized === 'true' || cookieNormalized === '1' || cookieNormalized === 'yes' || cookieNormalized === 'on') {
+    return true
+  }
+
+  if (toggle === 'false' || toggle === '0' || toggle === 'no') return false
+  if (toggle === 'true' || toggle === '1' || toggle === 'yes') return true
+
+  return true
 }
 
 export function getLocalDevAuthUser(context: any): CrmAuthUser {

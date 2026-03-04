@@ -32,7 +32,7 @@ interface AuthContextValue {
   initProgress: number
   signIn: (email: string, password: string) => Promise<void>
   signUp: (name: string, email: string, password: string, inviteToken: string) => Promise<void>
-  signOut: () => void
+  signOut: () => Promise<void>
   updateProfile: (data: Partial<Pick<AuthUser, 'name' | 'avatarUrl'>>) => void
   token: string | null
   isAuthenticated: boolean
@@ -221,10 +221,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const signOut = () => {
-    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
-      .catch(() => null)
-      .finally(() => { window.location.href = '/' })
+  const isLocalHost =
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+
+  const signOut = async () => {
+    // In local development, allow explicit logout by disabling auth bypass for this browser.
+    if (import.meta.env.DEV && isLocalHost) {
+      try {
+        localStorage.setItem('crm.localAuth', 'off')
+      } catch {
+        // ignore storage errors
+      }
+      try {
+        document.cookie = 'crm.localAuth=off; Path=/; Max-Age=31536000; SameSite=Lax'
+      } catch {
+        // ignore cookie errors
+      }
+    }
+
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { accept: 'application/json', ...csrfHeader() }
+    }).catch(() => null)
+
+    // Reset any cached auth state before reloading.
+    queryClient.setQueryData(AUTH_ME_QUERY_KEY, null)
+    queryClient.removeQueries({ queryKey: AUTH_ME_QUERY_KEY, exact: true })
+    window.location.assign('/')
   }
 
   const updateProfile = () => {

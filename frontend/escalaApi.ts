@@ -29,14 +29,14 @@ async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
   const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
   const text = await res.text()
   const json = parseJsonResponse(text)
+  const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+  const likelyJson = contentType.includes('application/json')
   if (!res.ok || json?.ok === false) {
     return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
   }
   if (!json || typeof json !== 'object') {
-    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
-  }
-  if (!json) {
-    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
+    const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
+    return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
   }
   return json as ApiResponse<T>
 }
@@ -51,14 +51,14 @@ async function apiWrite<T>(path: string, method: string, body?: any): Promise<Ap
   })
   const text = await res.text()
   const json = parseJsonResponse(text)
+  const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+  const likelyJson = contentType.includes('application/json')
   if (!res.ok || json?.ok === false) {
     return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
   }
   if (!json || typeof json !== 'object') {
-    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
-  }
-  if (!json) {
-    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
+    const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
+    return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
   }
   return json as ApiResponse<T>
 }
