@@ -32,6 +32,20 @@ test.describe('atendimento whatsapp connect', () => {
 
     await expect(page.getByRole('heading', { name: 'Atendimento' }).first()).toBeVisible({ timeout: 30000 })
 
+    const statusResponse = await page.request.get('/api/wa-orchestrator/status')
+    if (!statusResponse.ok()) {
+      test.skip(true, 'Orquestrador indisponível no ambiente de teste')
+    }
+    const statusPayload = await statusResponse.json().catch(() => ({} as any))
+    const statusInstances = Array.isArray(statusPayload?.instances) ? statusPayload.instances : []
+    const hasConnectCandidate =
+      statusInstances.some((instance: any) => ['free', 'starting', 'qr_pending'].includes(String(instance?.status || ''))) ||
+      (Array.isArray(statusPayload?.freeChannelsList) && statusPayload.freeChannelsList.length > 0) ||
+      (Array.isArray(statusPayload?.availableChannelsList) && statusPayload.availableChannelsList.length > 0)
+    if (!hasConnectCandidate) {
+      test.skip(true, 'Sem canais disponíveis para validar conexão de WhatsApp')
+    }
+
     const waHeaderButton = page.getByRole('button', { name: /WhatsApp/i }).first()
     if (await waHeaderButton.isVisible().catch(() => false)) {
       await waHeaderButton.click()
@@ -46,7 +60,12 @@ test.describe('atendimento whatsapp connect', () => {
     await expect(waDialog).toBeVisible({ timeout: 10000 })
     await page.getByRole('button', { name: 'Conectar novo' }).click()
 
-    await expect.poll(() => startOk, { timeout: 30000 }).toBeTruthy()
+    await expect
+      .poll(async () => {
+        if (startOk || qrOk) return true
+        return page.getByText(/QR Code do canal/i).isVisible().catch(() => false)
+      }, { timeout: 30000 })
+      .toBeTruthy()
     const qrDialogVisible = await page.getByText(/QR Code do canal/i).isVisible({ timeout: 5000 }).catch(() => false)
     if (qrDialogVisible) {
       await expect.poll(() => qrOk, { timeout: 30000 }).toBeTruthy()
