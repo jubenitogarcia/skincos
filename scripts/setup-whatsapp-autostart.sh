@@ -8,6 +8,7 @@ TUNNEL_LABEL="com.skincos.cloudflared.cs"
 EVOLUTION_LABEL="com.skincos.evolution-api"
 CRM_LABEL="com.skincos.crm-api"
 LEGACY_LABELS=("com.n8n.automation" "com.skincos.cloudflared.wa" "com.skincos.keepawake")
+N8N_ENV_FILE="/Users/jubenitogarcia/Automation/n8n/.env"
 
 bootstrap_if_missing() {
   local label="$1"
@@ -40,7 +41,42 @@ disable_legacy() {
   fi
 }
 
+upsert_env() {
+  local key="$1"
+  local value="$2"
+  if [[ ! -f "$N8N_ENV_FILE" ]]; then
+    touch "$N8N_ENV_FILE"
+  fi
+  if grep -qE "^${key}=" "$N8N_ENV_FILE"; then
+    sed -i '' "s|^${key}=.*|${key}=${value}|" "$N8N_ENV_FILE"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$N8N_ENV_FILE"
+  fi
+}
+
+apply_power_defaults() {
+  upsert_env "WATCHDOG_MANAGE_KEEPAWAKE" "false"
+  upsert_env "KEEPAWAKE_ON_BATTERY" "true"
+  upsert_env "KEEPAWAKE_BATTERY_SCHEDULE_ENABLED" "true"
+  upsert_env "KEEPAWAKE_BATTERY_START_HOUR" "6"
+  upsert_env "KEEPAWAKE_BATTERY_END_HOUR" "22"
+  upsert_env "KEEPAWAKE_CHECK_INTERVAL_SEC" "30"
+  upsert_env "KEEPAWAKE_IDLE_LOCK_ENABLED" "true"
+  upsert_env "KEEPAWAKE_IDLE_LOCK_SEC" "180"
+  upsert_env "KEEPAWAKE_IDLE_FORCE_DISPLAY_SLEEP" "true"
+  upsert_env "MAC_IDLE_LOCK_SEC" "180"
+  upsert_env "MAC_REQUIRE_PASSWORD_ON_LOCK" "true"
+}
+
 chmod +x /Users/jubenitogarcia/Automation/n8n/scripts/ensure-whatsapp-stack.sh
+chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh
+
+apply_power_defaults
+bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh >/dev/null 2>&1
+if ! launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" >/dev/null 2>&1; then
+  echo "[setup] keepawake agent não carregou na primeira tentativa; retry com logs."
+  bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh
+fi
 
 bootstrap_if_missing "$N8N_LABEL" "$HOME/Library/LaunchAgents/com.jubenito.n8n-evolution.plist"
 bootstrap_if_missing "$TUNNEL_LABEL" "$HOME/Library/LaunchAgents/com.skincos.cloudflared.cs.plist"
@@ -63,5 +99,10 @@ kickstart_job "$WATCHDOG_LABEL"
 for legacy in "${LEGACY_LABELS[@]}"; do
   disable_legacy "$legacy"
 done
+
+if ! launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" >/dev/null 2>&1; then
+  echo "[setup] keepawake agent ausente após reload; reativando."
+  bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh >/dev/null 2>&1 || true
+fi
 
 echo "[setup] concluído."

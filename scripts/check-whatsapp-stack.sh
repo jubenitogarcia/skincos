@@ -44,24 +44,40 @@ echo "== launchd =="
 launchctl list | grep -E "com.jubenito.n8n-evolution|com.skincos.cloudflared.cs|com.skincos.whatsapp-watchdog" || true
 launchctl list | grep -E "com.skincos.evolution-api" || true
 launchctl list | grep -E "com.skincos.crm-api" || true
+launchctl list | grep -E "com.skincos.keepawake.agent" || true
 
 echo
 echo "== energia/awake =="
 pmset -g custom | sed -n '/AC Power:/,/Battery Power:/p' | sed '$d' || true
 UID_VALUE="$(id -u)"
-PID_FILE="/Users/jubenitogarcia/Automation/n8n/health/keepawake-assertion.pid"
-MODE_FILE="/Users/jubenitogarcia/Automation/n8n/health/keepawake.mode"
-if [[ -f "$MODE_FILE" ]]; then
-  echo "keepawake mode: $(cat "$MODE_FILE" 2>/dev/null || echo none)"
+if launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" 2>/dev/null | grep -q "state = running"; then
+  echo "keepawake service: ativo"
 else
-  echo "keepawake mode: none"
+  echo "keepawake service: inativo"
 fi
-if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE" 2>/dev/null || true)" >/dev/null 2>&1; then
+PID_FILE="/Users/jubenitogarcia/Automation/n8n/health/keepawake-caffeinate.pid"
+ASSERTION_ACTIVE="false"
+if [[ -f "$PID_FILE" ]]; then
+  PID_VALUE="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if [[ "$PID_VALUE" =~ ^[0-9]+$ ]] && kill -0 "$PID_VALUE" >/dev/null 2>&1; then
+    PID_CMDLINE="$(ps -p "$PID_VALUE" -o args= 2>/dev/null || true)"
+    if printf '%s' "$PID_CMDLINE" | grep -q "/usr/bin/caffeinate"; then
+      ASSERTION_ACTIVE="true"
+    fi
+  fi
+fi
+if [[ "$ASSERTION_ACTIVE" == "true" ]]; then
   echo "caffeinate assertion: ativa"
 else
   echo "caffeinate assertion: inativa"
 fi
-echo "keepawake policy: battery=${KEEPAWAKE_ON_BATTERY:-true}, schedule=${KEEPAWAKE_BATTERY_SCHEDULE_ENABLED:-true} ${KEEPAWAKE_BATTERY_START_HOUR:-6}-${KEEPAWAKE_BATTERY_END_HOUR:-22}, ttl=${KEEPAWAKE_ASSERTION_TTL_SEC:-75}s"
+echo "keepawake policy: battery=${KEEPAWAKE_ON_BATTERY:-true}, schedule=${KEEPAWAKE_BATTERY_SCHEDULE_ENABLED:-true} ${KEEPAWAKE_BATTERY_START_HOUR:-6}-${KEEPAWAKE_BATTERY_END_HOUR:-22}, check=${KEEPAWAKE_CHECK_INTERVAL_SEC:-30}s"
+echo "                 idle-lock=${KEEPAWAKE_IDLE_LOCK_ENABLED:-true}, threshold=${KEEPAWAKE_IDLE_LOCK_SEC:-180}s, displaySleep=${KEEPAWAKE_IDLE_FORCE_DISPLAY_SLEEP:-true}"
+SCREENSAVER_IDLE="$(defaults -currentHost read com.apple.screensaver idleTime 2>/dev/null || echo "n/a")"
+SCREENSAVER_PW="$(defaults read com.apple.screensaver askForPassword 2>/dev/null || echo "n/a")"
+SCREENSAVER_PW_DELAY="$(defaults read com.apple.screensaver askForPasswordDelay 2>/dev/null || echo "n/a")"
+echo "macOS lock profile: idleTime=${SCREENSAVER_IDLE}s, askForPassword=${SCREENSAVER_PW}, askForPasswordDelay=${SCREENSAVER_PW_DELAY}"
+echo "                 target idle lock=${MAC_IDLE_LOCK_SEC:-${KEEPAWAKE_IDLE_LOCK_SEC:-180}}s, passwordRequired=${MAC_REQUIRE_PASSWORD_ON_LOCK:-true}"
 
 echo
 echo "== alertas =="

@@ -3,12 +3,16 @@ set -euo pipefail
 
 HEALTH_DIR="/Users/jubenitogarcia/Automation/n8n/health"
 PID_FILE="$HEALTH_DIR/keepawake-caffeinate.pid"
+STATE_FILE="$HEALTH_DIR/keepawake.state"
 
 KEEP_AWAKE_ON_BATTERY="${KEEPAWAKE_ON_BATTERY:-true}"
 KEEP_AWAKE_BATTERY_SCHEDULE_ENABLED="${KEEPAWAKE_BATTERY_SCHEDULE_ENABLED:-true}"
 KEEP_AWAKE_BATTERY_START_HOUR="${KEEPAWAKE_BATTERY_START_HOUR:-6}"
 KEEP_AWAKE_BATTERY_END_HOUR="${KEEPAWAKE_BATTERY_END_HOUR:-22}"
 KEEP_AWAKE_CHECK_INTERVAL_SEC="${KEEPAWAKE_CHECK_INTERVAL_SEC:-30}"
+KEEP_AWAKE_IDLE_LOCK_ENABLED="${KEEPAWAKE_IDLE_LOCK_ENABLED:-true}"
+KEEP_AWAKE_IDLE_LOCK_SEC="${KEEPAWAKE_IDLE_LOCK_SEC:-180}"
+KEEP_AWAKE_IDLE_FORCE_DISPLAY_SLEEP="${KEEPAWAKE_IDLE_FORCE_DISPLAY_SLEEP:-true}"
 
 mkdir -p "$HEALTH_DIR"
 
@@ -30,6 +34,7 @@ sanitize_int() {
 KEEP_AWAKE_BATTERY_START_HOUR="$(sanitize_int "$KEEP_AWAKE_BATTERY_START_HOUR" "6")"
 KEEP_AWAKE_BATTERY_END_HOUR="$(sanitize_int "$KEEP_AWAKE_BATTERY_END_HOUR" "22")"
 KEEP_AWAKE_CHECK_INTERVAL_SEC="$(sanitize_int "$KEEP_AWAKE_CHECK_INTERVAL_SEC" "30")"
+KEEP_AWAKE_IDLE_LOCK_SEC="$(sanitize_int "$KEEP_AWAKE_IDLE_LOCK_SEC" "180")"
 
 if (( KEEP_AWAKE_BATTERY_START_HOUR < 0 || KEEP_AWAKE_BATTERY_START_HOUR > 23 )); then
   KEEP_AWAKE_BATTERY_START_HOUR=6
@@ -39,6 +44,9 @@ if (( KEEP_AWAKE_BATTERY_END_HOUR < 0 || KEEP_AWAKE_BATTERY_END_HOUR > 23 )); th
 fi
 if (( KEEP_AWAKE_CHECK_INTERVAL_SEC < 10 )); then
   KEEP_AWAKE_CHECK_INTERVAL_SEC=10
+fi
+if (( KEEP_AWAKE_IDLE_LOCK_SEC < 30 )); then
+  KEEP_AWAKE_IDLE_LOCK_SEC=30
 fi
 
 log() {
@@ -72,6 +80,52 @@ in_battery_schedule() {
 }
 
 current_state="none"
+idle_lock_armed="true"
+
+persist_state() {
+  cat >"$STATE_FILE" <<EOF
+mode=$current_state
+idle_lock_armed=$idle_lock_armed
+EOF
+}
+
+idle_seconds() {
+  local raw
+  raw="$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print $NF; exit}')"
+  if [[ -z "$raw" || ! "$raw" =~ ^[0-9]+$ ]]; then
+    echo "0"
+    return 0
+  fi
+  echo $((raw / 1000000000))
+}
+
+lock_screen_now() {
+  if to_bool "$KEEP_AWAKE_IDLE_FORCE_DISPLAY_SLEEP"; then
+    pmset displaysleepnow >/dev/null 2>&1 || true
+  fi
+  if [[ -x "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession" ]]; then
+    "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession" -suspend >/dev/null 2>&1 || true
+  else
+    osascript -e 'tell application "System Events" to keystroke "q" using {control down, command down}' >/dev/null 2>&1 || true
+  fi
+}
+
+maybe_lock_on_idle() {
+  if ! to_bool "$KEEP_AWAKE_IDLE_LOCK_ENABLED"; then
+    return 0
+  fi
+  local idle
+  idle="$(idle_seconds)"
+  if (( idle < KEEP_AWAKE_IDLE_LOCK_SEC / 3 )); then
+    idle_lock_armed="true"
+    return 0
+  fi
+  if (( idle >= KEEP_AWAKE_IDLE_LOCK_SEC )) && [[ "$idle_lock_armed" == "true" ]]; then
+    log "idle lock acionado (${idle}s ocioso)"
+    lock_screen_now
+    idle_lock_armed="false"
+  fi
+}
 
 stop_caffeinate() {
   if [[ -f "$PID_FILE" ]]; then
@@ -88,9 +142,9 @@ stop_caffeinate() {
 
 start_caffeinate() {
   local mode="$1"
-  local flags="-dimu"
+  local flags="-i"
   if [[ "$mode" == "ac" ]]; then
-    flags="-dimus"
+    flags="-is"
   fi
 
   if [[ -f "$PID_FILE" ]]; then
@@ -110,6 +164,7 @@ start_caffeinate() {
 apply_state() {
   local wanted_state="$1"
   if [[ "$wanted_state" == "$current_state" ]]; then
+    persist_state
     return 0
   fi
   stop_caffeinate
@@ -123,6 +178,7 @@ apply_state() {
       ;;
   esac
   current_state="$wanted_state"
+  persist_state
 }
 
 cleanup() {
@@ -130,7 +186,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "iniciado (battery=${KEEP_AWAKE_ON_BATTERY}, schedule=${KEEP_AWAKE_BATTERY_SCHEDULE_ENABLED}, ${KEEP_AWAKE_BATTERY_START_HOUR}-${KEEP_AWAKE_BATTERY_END_HOUR})"
+log "iniciado (battery=${KEEP_AWAKE_ON_BATTERY}, schedule=${KEEP_AWAKE_BATTERY_SCHEDULE_ENABLED}, ${KEEP_AWAKE_BATTERY_START_HOUR}-${KEEP_AWAKE_BATTERY_END_HOUR}, idle_lock=${KEEP_AWAKE_IDLE_LOCK_ENABLED}:${KEEP_AWAKE_IDLE_LOCK_SEC}s)"
 
 while true; do
   if is_ac_power; then
@@ -143,6 +199,10 @@ while true; do
     else
       apply_state "none"
     fi
+  fi
+  if [[ "$current_state" != "none" ]]; then
+    maybe_lock_on_idle
+    persist_state
   fi
   sleep "$KEEP_AWAKE_CHECK_INTERVAL_SEC"
 done
