@@ -405,8 +405,8 @@ export function EscalaProfissionaisModule() {
   return (
     <div className="escala-surface flex h-full min-h-0 flex-col gap-4 px-4 pb-6 pt-2">
       <Card className="glass-card escala-hero relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.45),_rgba(14,165,233,0.18),_transparent_70%)]" />
-        <CardHeader>
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.45),_rgba(14,165,233,0.18),_transparent_70%)]" />
+        <CardHeader className="relative z-10">
           <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-white">Escala de Profissionais</CardTitle>
@@ -434,7 +434,7 @@ export function EscalaProfissionaisModule() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
+        <CardContent className="relative z-10 flex flex-col gap-4">
           <div className="grid gap-3 md:grid-cols-[1.2fr_1fr_1fr]">
             <div className="space-y-1">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-300/70">Unidade</div>
