@@ -5,19 +5,35 @@ export const ESCALA_API_BASE =
 
 type ApiResponse<T> = { ok: boolean; error?: string } & T
 
+function parseJsonResponse(text: string) {
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function normalizeApiError(res: Response, json: any, text: string) {
+  if (json?.error) return String(json.error)
+  if (json?.message) return String(json.message)
+  if (text && !json) {
+    const compact = text.replace(/\s+/g, ' ').trim()
+    if (compact) return compact.slice(0, 180)
+  }
+  return `HTTP ${res.status}`
+}
+
 async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
   const url = `${ESCALA_API_BASE}${path}`
   const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
   const text = await res.text()
-  const json = text ? (() => {
-    try {
-      return JSON.parse(text)
-    } catch {
-      return null
-    }
-  })() : null
-  if (!res.ok) {
-    return { ok: false, error: json?.error || `HTTP ${res.status}` } as ApiResponse<T>
+  const json = parseJsonResponse(text)
+  if (!res.ok || json?.ok === false) {
+    return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+  }
+  if (!json || typeof json !== 'object') {
+    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
   }
   if (!json) {
     return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
@@ -34,15 +50,12 @@ async function apiWrite<T>(path: string, method: string, body?: any): Promise<Ap
     body: body ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
-  const json = text ? (() => {
-    try {
-      return JSON.parse(text)
-    } catch {
-      return null
-    }
-  })() : null
-  if (!res.ok) {
-    return { ok: false, error: json?.error || `HTTP ${res.status}` } as ApiResponse<T>
+  const json = parseJsonResponse(text)
+  if (!res.ok || json?.ok === false) {
+    return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+  }
+  if (!json || typeof json !== 'object') {
+    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
   }
   if (!json) {
     return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>

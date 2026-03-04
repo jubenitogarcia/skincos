@@ -15,7 +15,77 @@ const json = (status: number, body: any) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   })
 
+function normalizeRole(value: unknown): string {
+  const raw = String(value || '').trim().toUpperCase()
+  if (!raw) return ''
+  if (raw === 'ADMIN') return 'GESTOR'
+  if (raw === 'OPERADOR') return 'INJETOR'
+  return raw
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const host = String(hostname || '').trim().toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+}
+
+function parseList(value: unknown): string[] | undefined {
+  const raw = String(value || '').trim()
+  if (!raw) return undefined
+  const items = raw.split(',').map((item) => item.trim()).filter(Boolean)
+  return items.length ? items : undefined
+}
+
+export function isLocalDevAuthBypassEnabled(context: any): boolean {
+  const env = context?.env || {}
+  const rawToggle =
+    env.LOCAL_AUTH_BYPASS ??
+    env.CRM_LOCAL_NO_AUTH ??
+    env.DEV_AUTH_BYPASS ??
+    ''
+  const toggle = String(rawToggle).trim().toLowerCase()
+  if (toggle === 'false' || toggle === '0' || toggle === 'no') return false
+  if (toggle === 'true' || toggle === '1' || toggle === 'yes') return true
+
+  const requestUrl = String(context?.request?.url || '')
+  if (!requestUrl) return false
+  try {
+    const { hostname } = new URL(requestUrl)
+    return isLocalHostname(hostname)
+  } catch {
+    return false
+  }
+}
+
+export function getLocalDevAuthUser(context: any): CrmAuthUser {
+  const env = context?.env || {}
+  const role = normalizeRole(env.LOCAL_AUTH_ROLE || env.DEV_AUTH_ROLE || 'GESTOR') || 'GESTOR'
+  const email = String(env.LOCAL_AUTH_EMAIL || env.DEV_AUTH_EMAIL || 'dev@local.test').trim() || 'dev@local.test'
+  const username = String(env.LOCAL_AUTH_USERNAME || email.split('@')[0] || 'dev').trim() || 'dev'
+  const displayName = String(env.LOCAL_AUTH_NAME || env.DEV_AUTH_NAME || 'Dev Local').trim() || 'Dev Local'
+  const allowedUnits =
+    parseList(env.LOCAL_AUTH_ALLOWED_UNITS) ||
+    parseList(env.DEV_AUTH_ALLOWED_UNITS)
+  const allowedModules =
+    parseList(env.LOCAL_AUTH_ALLOWED_MODULES) ||
+    parseList(env.DEV_AUTH_ALLOWED_MODULES)
+
+  return {
+    id: username,
+    username,
+    displayName,
+    name: displayName,
+    email,
+    role,
+    allowedUnits,
+    allowedModules,
+  }
+}
+
 export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
+  if (isLocalDevAuthBypassEnabled(context)) {
+    return getLocalDevAuthUser(context)
+  }
+
   const env = context?.env || {}
   const requestOrigin = (() => {
     try {
@@ -78,7 +148,7 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
     displayName: displayName ? String(displayName) : undefined,
     name: displayName ? String(displayName) : undefined,
     email: email ? String(email) : undefined,
-    role: raw?.role || undefined,
+    role: normalizeRole(raw?.role || undefined) || undefined,
     allowedUnits: Array.isArray(raw?.allowedUnits) ? raw.allowedUnits : undefined,
     allowedModules: Array.isArray(raw?.allowedModules) ? raw.allowedModules : undefined,
   }
