@@ -35,6 +35,9 @@ async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
   if (!json || typeof json !== 'object') {
     return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
   }
+  if (!json) {
+    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
+  }
   return json as ApiResponse<T>
 }
 
@@ -52,6 +55,9 @@ async function apiWrite<T>(path: string, method: string, body?: any): Promise<Ap
     return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
   }
   if (!json || typeof json !== 'object') {
+    return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
+  }
+  if (!json) {
     return { ok: false, error: 'Resposta inválida do servidor.' } as ApiResponse<T>
   }
   return json as ApiResponse<T>
