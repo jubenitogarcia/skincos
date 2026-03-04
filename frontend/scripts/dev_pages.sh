@@ -16,6 +16,38 @@ COMPAT_DATE="${COMPAT_DATE:-2026-01-13}"
 
 cd "$ROOT_DIR"
 
+if [[ ! -f "$ROOT_DIR/.dev.vars" && -f "$ROOT_DIR/.dev.vars.example" ]]; then
+  cp "$ROOT_DIR/.dev.vars.example" "$ROOT_DIR/.dev.vars"
+  echo "[dev_pages] .dev.vars não existia; criado a partir de .dev.vars.example"
+fi
+
+ensure_dev_var() {
+  local key="$1"
+  local value="$2"
+  if [[ ! -f "$ROOT_DIR/.dev.vars" ]]; then
+    return
+  fi
+  if ! grep -qE "^${key}=" "$ROOT_DIR/.dev.vars"; then
+    printf '\n%s=%s\n' "$key" "$value" >> "$ROOT_DIR/.dev.vars"
+    echo "[dev_pages] ${key} não estava em .dev.vars; adicionado default local"
+  fi
+}
+
+ensure_dev_var "LOCAL_AUTH_BYPASS" "true"
+ensure_dev_var "LOCAL_AUTH_ROLE" "GESTOR"
+ensure_dev_var "LOCAL_AUTH_EMAIL" "dev@local.test"
+ensure_dev_var "LOCAL_AUTH_NAME" "Dev Local"
+ensure_dev_var "ESCALA_API_TARGET" "https://escala-api.skincos.com.br"
+ensure_dev_var "LOCAL_ESCALA_MOCK" "false"
+ensure_dev_var "LOCAL_ESCALA_SHADOW_WRITES" "true"
+ensure_dev_var "ESCALA_ACTOR_HMAC_KEY" "__CONFIGURE_REAL_ESCALA_HMAC_KEY__"
+
+# Evita rota API quebrada por _routes.json desatualizado em dist/
+if [[ -f "$ROOT_DIR/public/_routes.json" ]]; then
+  mkdir -p "$ROOT_DIR/dist"
+  cp "$ROOT_DIR/public/_routes.json" "$ROOT_DIR/dist/_routes.json"
+fi
+
 echo "[dev_pages] Iniciando Vite em :$VITE_PORT"
 npm run dev -- --host 127.0.0.1 --port "$VITE_PORT" &
 VITE_PID=$!

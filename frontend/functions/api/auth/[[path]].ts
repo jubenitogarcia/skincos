@@ -1,3 +1,5 @@
+import { getLocalDevAuthUser, isLocalDevAuthBypassEnabled } from '../../_lib/crmAuth'
+
 export async function onRequest(context: any): Promise<Response> {
     const request: Request = context.request
     const url = new URL(request.url)
@@ -6,6 +8,30 @@ export async function onRequest(context: any): Promise<Response> {
     // Outgoing:  https://api.skincos.com.br/auth/<rest>
     const prefix = '/api/auth'
     const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
+    const method = (request.method || 'GET').toUpperCase()
+
+    if (isLocalDevAuthBypassEnabled(context)) {
+        const user = getLocalDevAuthUser(context)
+        const csrfToken = 'local-dev-csrf'
+        if (rest === '/me' && method === 'GET') {
+            return new Response(
+                JSON.stringify({ ok: true, user, csrfToken }),
+                { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }
+            )
+        }
+        if ((rest === '/login' || rest === '/register' || rest === '/refresh') && method === 'POST') {
+            return new Response(
+                JSON.stringify({ ok: true, user, csrfToken }),
+                { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }
+            )
+        }
+        if (rest === '/logout' && method === 'POST') {
+            return new Response(
+                JSON.stringify({ ok: true }),
+                { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }
+            )
+        }
+    }
 
     const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
     const authPrefix = String((context.env?.AUTH_PATH_PREFIX as string | undefined) || '/insumos/auth')
@@ -22,7 +48,6 @@ export async function onRequest(context: any): Promise<Response> {
     headers.delete('transfer-encoding')
     headers.delete('connection')
 
-    const method = (request.method || 'GET').toUpperCase()
     const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
 
     const upstreamRequest = new Request(targetUrl.toString(), {

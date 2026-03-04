@@ -13,6 +13,16 @@ Plataforma interna (local) para automações e operações da clínica.
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
  - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
 
+### Auth local (sem login manual)
+- Em `localhost`, o frontend ativa bypass de auth por padrão para testes (`/api/auth/me` e `/api/insumos/auth/me` retornam usuário dev).
+- Para desligar bypass no frontend local: `VITE_LOCAL_AUTH_BYPASS=false npm run dev`.
+- Overrides úteis (frontend local): `VITE_LOCAL_AUTH_ROLE`, `VITE_LOCAL_AUTH_EMAIL`, `VITE_LOCAL_AUTH_NAME`.
+- Em Pages Functions local (`npm run dev:pages`), o bypass também é ativo para `requireCrmUser` em `localhost`.
+- No CRM API local (`backend/apps/crm-api/server.js`), o stub de sessão dev fica ativo por padrão fora de produção; para exigir login real localmente, rode com `NO_AUTH=false`.
+- Escala em local (Pages): padrão em `frontend/.dev.vars` é leitura de dados reais (`LOCAL_ESCALA_MOCK=false`, `ESCALA_API_TARGET=https://escala-api.skincos.com.br`) com escrita sombra local (`LOCAL_ESCALA_SHADOW_WRITES=true`).
+- Efeito da escrita sombra: o CRM local confirma CRUD e reflete as mudanças localmente, mas **não grava no banco online**.
+- Para isso, configure `ESCALA_ACTOR_HMAC_KEY` real em `frontend/.dev.vars`; sem essa chave, as leituras reais da Escala retornam erro de autenticação.
+
 ## Módulo Ponto (face + PIN)
 - Backend (CRM API): expõe endpoints em `/api/ponto/*` e persiste em `backend/var/core/` (ignorado do git).
 - Config (env): `PONTO_ADMIN_TOKEN` (rotas admin) e `PONTO_ACTOR_HMAC_KEY` (assinatura do actor para rotas `/me/*` via Pages proxy).
