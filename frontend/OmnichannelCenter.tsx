@@ -215,24 +215,6 @@ function extractPhoneFromId(value?: string | null) {
   return digits.length >= MIN_PHONE_LEN ? digits : ''
 }
 
-function normalizeName(value?: string | null) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function namesMatch(a?: string | null, b?: string | null) {
-  const na = normalizeName(a)
-  const nb = normalizeName(b)
-  if (!na || !nb) return true
-  const tokensA = na.split(' ').filter((t) => t.length >= 3)
-  const tokensB = nb.split(' ').filter((t) => t.length >= 3)
-  if (!tokensA.length || !tokensB.length) return true
-  return tokensA.some((t) => tokensB.includes(t))
-}
-
 function isLikelyWhatsAppJid(value?: string | null) {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return false
@@ -245,6 +227,10 @@ function isLikelyWhatsAppJid(value?: string | null) {
 function normalizeWhatsAppJid(value?: string | null) {
   const raw = String(value || '').trim()
   if (!raw) return ''
+  if (raw.includes('@g.us') || raw.includes('@broadcast')) return raw
+  const localPart = raw.includes('@') ? raw.split('@')[0] : raw
+  const normalizedLocal = localPart.split(':')[0].replace(/\D+/g, '')
+  if (normalizedLocal) return `${normalizedLocal}@s.whatsapp.net`
   if (raw.includes('@')) return raw
   const digits = normalizePhone(raw)
   if (!digits) return raw
@@ -2012,17 +1998,19 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (phoneKey && indexByPhone.has(phoneKey)) {
         const idx = indexByPhone.get(phoneKey)!
         const existing = merged[idx]
-        if (namesMatch(existing?.leadName || existing?.name, item.name)) {
-          merged[idx] = {
-            ...item,
-            leadId: existing.leadId,
-            stage: existing.stage,
-            leadUpdatedAt: existing.leadUpdatedAt,
-            leadName: existing.leadName,
-            leadPhone: existing.leadPhone,
-          }
-        } else {
-          pushWithIndex(item, phoneKey)
+        const existingName = String(existing?.name || '')
+        const incomingName = String(item?.name || '')
+        const useIncomingName = incomingName && !isLikelyWhatsAppJid(incomingName)
+        const useExistingName = existingName && !isLikelyWhatsAppJid(existingName)
+        merged[idx] = {
+          ...existing,
+          ...item,
+          name: useIncomingName ? incomingName : (useExistingName ? existingName : incomingName || existingName),
+          leadId: existing.leadId,
+          stage: existing.stage,
+          leadUpdatedAt: existing.leadUpdatedAt,
+          leadName: existing.leadName,
+          leadPhone: existing.leadPhone,
         }
       } else {
         pushWithIndex(item, phoneKey)
@@ -2040,21 +2028,17 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (phoneKey && indexByPhone.has(phoneKey)) {
         const idx = indexByPhone.get(phoneKey)!
         const current = merged[idx]
-        if (namesMatch(current?.name, item.name)) {
-          const currentTs = current.updatedAt ? new Date(current.updatedAt).getTime() : 0
-          const leadTs = item.updatedAt ? new Date(item.updatedAt).getTime() : 0
-          merged[idx] = {
-            ...current,
-            name: current.name || item.name,
-            leadId: item.leadId,
-            stage: item.stage,
-            leadUpdatedAt: item.leadUpdatedAt || current.leadUpdatedAt,
-            leadName: item.name,
-            leadPhone: item.phone,
-            updatedAt: leadTs > currentTs ? item.updatedAt : current.updatedAt,
-          }
-        } else {
-          pushWithIndex(item, phoneKey)
+        const currentTs = current.updatedAt ? new Date(current.updatedAt).getTime() : 0
+        const leadTs = item.updatedAt ? new Date(item.updatedAt).getTime() : 0
+        merged[idx] = {
+          ...current,
+          name: current.name || item.name,
+          leadId: item.leadId,
+          stage: item.stage,
+          leadUpdatedAt: item.leadUpdatedAt || current.leadUpdatedAt,
+          leadName: item.name,
+          leadPhone: item.phone,
+          updatedAt: leadTs > currentTs ? item.updatedAt : current.updatedAt,
         }
       } else {
         pushWithIndex(item, phoneKey)
@@ -2158,8 +2142,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
             </span>
           </div>
         ) : null}
-        <div className="grid flex-1 min-h-0 grid-cols-1 gap-4 xl:grid-cols-12">
-          <Card className="glass-card xl:col-span-4 flex min-h-0 flex-col overflow-hidden">
+        <div className="grid flex-1 min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] gap-4 overflow-hidden xl:grid-cols-12">
+          <Card className="glass-card xl:col-span-4 flex h-full min-h-0 flex-col overflow-hidden">
                 <CardContent className="flex min-h-0 flex-col gap-2 pt-4">
                   <div data-testid="conversation-filters" className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 p-1.5">
                     {[
@@ -2193,8 +2177,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="h-9 bg-white/10 border-white/15 text-white placeholder:text-blue-100/55"
                   />
-                      <div data-testid="conversation-scroll" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-0">
-                        <div className="space-y-1.5 pb-1 pr-2">
+                      <div data-testid="conversation-scroll" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
+                        <div className="space-y-1.5 pb-1">
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                       )}
@@ -2215,7 +2199,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         <div
                           key={`${conv.conversationId}-${conv.channel ?? conv.platform ?? ''}`}
                           data-testid="conversation-item"
-                          className={`mx-0.5 box-border w-[calc(100%-4px)] min-w-0 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white/10 ${
+                          className={`box-border w-full min-w-0 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white/10 ${
                             selectedConversation?.conversationId === conv.conversationId &&
                             selectedConversation?.channel === conv.channel
                               ? 'border-blue-500/70 bg-blue-500/15'
@@ -2283,7 +2267,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     </CardContent>
                   </Card>
 
-          <Card className="glass-card xl:col-span-8 flex min-h-0 flex-col overflow-hidden">
+          <Card className="glass-card xl:col-span-8 flex h-full min-h-0 flex-col overflow-hidden">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-lg text-white">
@@ -2448,9 +2432,53 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                     : undefined)
                                 const showReactionActions = selectedConversation?.platform !== 'lead' && selectedConversation?.platform !== 'instagram'
                                 return (
-                                  <div key={msg.id} className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
+                                  <div key={msg.id} className={`group flex items-end gap-2 ${outbound ? 'justify-end' : 'justify-start'}`}>
+                                    {showReactionActions && outbound ? (
+                                      <div className="relative flex items-center gap-1 self-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          className="h-6 rounded-full border border-white/15 bg-white/10 px-2 text-[10px] text-blue-100 hover:bg-white/20"
+                                          onClick={() => openReplyComposer(msg)}
+                                          aria-label="Responder mensagem"
+                                        >
+                                          <ArrowBendUpLeft className="h-3.5 w-3.5" />
+                                          Reply
+                                        </Button>
+                                        <div className="relative">
+                                          <Button
+                                            type="button"
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-6 w-6 rounded-full border border-white/15 bg-white/10 text-blue-100 hover:bg-white/20"
+                                            onClick={() => setReactionPickerMessageId((current) => current === messageId ? null : messageId)}
+                                            aria-label="Reagir mensagem"
+                                          >
+                                            <Smiley className="h-3.5 w-3.5" />
+                                          </Button>
+                                          {reactionPickerMessageId === messageId ? (
+                                            <div className="absolute right-0 top-7 z-20 flex items-center gap-1 rounded-full border border-white/10 bg-slate-950/95 p-1 shadow-lg">
+                                              {reactionOptions.map((emoji) => (
+                                                <button
+                                                  key={`${messageId}-${emoji}`}
+                                                  type="button"
+                                                  className="h-7 w-7 rounded-full hover:bg-white/10"
+                                                  onClick={() => {
+                                                    void toggleReaction(msg, emoji)
+                                                    setReactionPickerMessageId(null)
+                                                  }}
+                                                  disabled={reactionBusyKey === `${messageId}:${emoji}`}
+                                                >
+                                                  {emoji}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ) : null}
                                     <div
-                                      className={`group max-w-[88%] md:max-w-[75%] p-3 rounded-lg border ${outbound ? 'border-blue-300/20 bg-blue-500/35 text-white' : 'border-white/10 bg-white/10 text-blue-100'}`}
+                                      className={`max-w-[88%] md:max-w-[75%] p-3 rounded-lg border ${outbound ? 'border-blue-300/20 bg-blue-500/35 text-white' : 'border-white/10 bg-white/10 text-blue-100'}`}
                                       onDoubleClick={() => {
                                         openReplyComposer(msg)
                                       }}
@@ -2497,54 +2525,54 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                           ))}
                                         </div>
                                       ) : null}
-                                      {showReactionActions ? (
-                                        <div className="mt-2 flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            className="h-6 rounded-full border border-white/15 bg-white/10 px-2 text-[10px] text-blue-100 hover:bg-white/20"
-                                            onClick={() => openReplyComposer(msg)}
-                                            aria-label="Responder mensagem"
-                                          >
-                                            <ArrowBendUpLeft className="h-3.5 w-3.5" />
-                                            Reply
-                                          </Button>
-                                          <div className="relative">
-                                            <Button
-                                              type="button"
-                                              size="icon"
-                                              variant="ghost"
-                                              className="h-6 w-6 rounded-full border border-white/15 bg-white/10 text-blue-100 hover:bg-white/20"
-                                              onClick={() => setReactionPickerMessageId((current) => current === messageId ? null : messageId)}
-                                              aria-label="Reagir mensagem"
-                                            >
-                                              <Smiley className="h-3.5 w-3.5" />
-                                            </Button>
-                                            {reactionPickerMessageId === messageId ? (
-                                              <div className="absolute right-0 top-7 z-20 flex items-center gap-1 rounded-full border border-white/10 bg-slate-950/95 p-1 shadow-lg">
-                                                {reactionOptions.map((emoji) => (
-                                                  <button
-                                                    key={`${messageId}-${emoji}`}
-                                                    type="button"
-                                                    className="h-7 w-7 rounded-full hover:bg-white/10"
-                                                    onClick={() => {
-                                                      void toggleReaction(msg, emoji)
-                                                      setReactionPickerMessageId(null)
-                                                    }}
-                                                    disabled={reactionBusyKey === `${messageId}:${emoji}`}
-                                                  >
-                                                    {emoji}
-                                                  </button>
-                                                ))}
-                                              </div>
-                                            ) : null}
-                                          </div>
-                                        </div>
-                                      ) : null}
                                       <div className={`text-xs mt-1 ${outbound ? 'text-blue-100/80' : 'text-blue-100/60'}`}>
                                         {ts ? new Date(ts).toLocaleTimeString() : ''}
                                       </div>
                                     </div>
+                                    {showReactionActions && !outbound ? (
+                                      <div className="relative flex items-center gap-1 self-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          className="h-6 rounded-full border border-white/15 bg-white/10 px-2 text-[10px] text-blue-100 hover:bg-white/20"
+                                          onClick={() => openReplyComposer(msg)}
+                                          aria-label="Responder mensagem"
+                                        >
+                                          <ArrowBendUpLeft className="h-3.5 w-3.5" />
+                                          Reply
+                                        </Button>
+                                        <div className="relative">
+                                          <Button
+                                            type="button"
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-6 w-6 rounded-full border border-white/15 bg-white/10 text-blue-100 hover:bg-white/20"
+                                            onClick={() => setReactionPickerMessageId((current) => current === messageId ? null : messageId)}
+                                            aria-label="Reagir mensagem"
+                                          >
+                                            <Smiley className="h-3.5 w-3.5" />
+                                          </Button>
+                                          {reactionPickerMessageId === messageId ? (
+                                            <div className="absolute left-0 top-7 z-20 flex items-center gap-1 rounded-full border border-white/10 bg-slate-950/95 p-1 shadow-lg">
+                                              {reactionOptions.map((emoji) => (
+                                                <button
+                                                  key={`${messageId}-${emoji}`}
+                                                  type="button"
+                                                  className="h-7 w-7 rounded-full hover:bg-white/10"
+                                                  onClick={() => {
+                                                    void toggleReaction(msg, emoji)
+                                                    setReactionPickerMessageId(null)
+                                                  }}
+                                                  disabled={reactionBusyKey === `${messageId}:${emoji}`}
+                                                >
+                                                  {emoji}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ) : null}
                                   </div>
                                   )
                                 })}

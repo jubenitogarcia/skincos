@@ -4573,16 +4573,41 @@ function normalizePlatform(raw) {
 
 function extractPhoneFromJid(remoteJid) {
     if (!remoteJid) return ''
-    const value = String(remoteJid)
-    if (value.includes('@')) return value.split('@')[0]
-    return value
+    const value = String(remoteJid).trim()
+    if (!value) return ''
+    if (value.includes('@g.us') || value.includes('@broadcast')) {
+        return value.includes('@') ? value.split('@')[0] : value
+    }
+    const localPart = value.includes('@') ? value.split('@')[0] : value
+    return localPart.split(':')[0].replace(/\D/g, '')
 }
 
 function normalizeWhatsAppJid(value) {
     const raw = String(value || '').trim()
     if (!raw) return ''
+    if (raw.includes('@g.us') || raw.includes('@broadcast')) return raw
+    const localPart = raw.includes('@') ? raw.split('@')[0] : raw
+    const normalizedLocal = localPart.split(':')[0].replace(/\D/g, '')
+    if (normalizedLocal) return `${normalizedLocal}@s.whatsapp.net`
     if (raw.includes('@')) return raw
     return `${raw}@s.whatsapp.net`
+}
+
+function resolveChatConversationJid(chat) {
+    const candidates = [
+        chat?.remoteJid,
+        chat?.id,
+        chat?.chatId,
+        chat?.jid,
+        chat?.lastMessage?.key?.remoteJid,
+        chat?.lastMessage?.key?.participant,
+        chat?.lastMessage?.participant
+    ]
+    for (const candidate of candidates) {
+        const normalized = normalizeWhatsAppJid(candidate)
+        if (normalized) return normalized
+    }
+    return ''
 }
 
 function normalizeEvolutionTimestamp(value) {
@@ -4719,11 +4744,8 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const data = await evolutionOrchestrator.fetchChats(channel, { limit, offset })
             const chats = Array.isArray(data) ? data : (data?.chats || data?.data || [])
-            const items = chats.map((chat) => {
-                const rawRemoteJid = chat.remoteJid || chat.id || chat.chatId || ''
-                const remoteJid = rawRemoteJid && String(rawRemoteJid).includes('@')
-                    ? String(rawRemoteJid)
-                    : (rawRemoteJid ? `${rawRemoteJid}@s.whatsapp.net` : '')
+            const mapped = chats.map((chat) => {
+                const remoteJid = resolveChatConversationJid(chat)
                 const lastMessageText = extractEvolutionMessageText(chat.lastMessage?.message || chat.lastMessage)
                 const updatedAt = normalizeEvolutionTimestamp(chat.updatedAt || chat.lastMessage?.messageTimestamp)
                 const profilePic = chat.profilePicUrl || chat.profilePictureUrl || chat.avatarUrl || chat.avatar || chat.imgUrl || chat.pictureUrl || chat.photoUrl || null
@@ -4738,6 +4760,33 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                     unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0
                 }
             }).filter((item) => item.conversationId)
+
+            const dedupedMap = new Map()
+            for (const item of mapped) {
+                const key = normalizeWhatsAppJid(item.conversationId || item.phone)
+                const previous = dedupedMap.get(key)
+                if (!previous) {
+                    dedupedMap.set(key, {
+                        ...item,
+                        conversationId: key,
+                        phone: extractPhoneFromJid(key)
+                    })
+                    continue
+                }
+                const prevUpdatedAt = Date.parse(previous.updatedAt || '') || 0
+                const currentUpdatedAt = Date.parse(item.updatedAt || '') || 0
+                const newest = currentUpdatedAt >= prevUpdatedAt ? item : previous
+                dedupedMap.set(key, {
+                    ...previous,
+                    ...newest,
+                    conversationId: key,
+                    phone: extractPhoneFromJid(key),
+                    unreadCount: Number(previous.unreadCount || 0) + Number(item.unreadCount || 0)
+                })
+            }
+
+            const items = Array.from(dedupedMap.values())
+                .sort((a, b) => (Date.parse(b.updatedAt || '') || 0) - (Date.parse(a.updatedAt || '') || 0))
             const hasMore = items.length >= limit
             return res.json({ success: true, items, meta: { limit, offset, hasMore } })
         }
@@ -4777,12 +4826,12 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/message
             const records = data?.messages?.records || []
                 const items = records.map((record) => {
                     const fromMe = !!record?.key?.fromMe
-                    const jid = record?.key?.remoteJid || remoteJid
+                    const jid = normalizeWhatsAppJid(record?.key?.remoteJid || remoteJid)
                     const meta = extractEvolutionMessageMeta(record?.message)
                     const replyTo = extractEvolutionReplyMeta(record)
                     return {
                         id: record?.id || record?.key?.id || `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                        conversationId: jid,
+                        conversationId: normalizedRemoteJid || jid,
                         direction: fromMe ? 'outbound' : 'inbound',
                         type: meta.mediaType || record?.messageType || record?.type || 'text',
                         text: meta.text || extractEvolutionMessageText(record?.message),

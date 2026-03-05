@@ -12,6 +12,29 @@ if [[ -f "$N8N_ENV" ]]; then
   set +a
 fi
 
+NETWORK_FALLBACK_PROBE_URL="${NETWORK_FALLBACK_PROBE_URL:-https://cp.cloudflare.com/generate_204}"
+NETWORK_FALLBACK_STATE="/Users/jubenitogarcia/Automation/n8n/health/network-fallback.state"
+
+detect_wifi_interface() {
+  /usr/sbin/networksetup -listallhardwareports 2>/dev/null \
+    | awk '/Hardware Port: Wi-Fi/{getline; if($1=="Device:"){print $2; exit}}'
+}
+
+current_wifi_ssid() {
+  local iface="${1:-}"
+  if [[ -z "$iface" ]]; then
+    return 0
+  fi
+  local output
+  output="$(/usr/sbin/networksetup -getairportnetwork "$iface" 2>/dev/null || true)"
+  if printf '%s' "$output" | grep -qi "not associated"; then
+    return 0
+  fi
+  if [[ "$output" == *": "* ]]; then
+    printf '%s' "${output#*: }"
+  fi
+}
+
 echo "== Processos =="
 ps aux | grep -Ei "cloudflared|n8n start|crm-api/server.js|evolution-api" | grep -v grep || true
 
@@ -45,6 +68,7 @@ launchctl list | grep -E "com.jubenito.n8n-evolution|com.skincos.cloudflared.cs|
 launchctl list | grep -E "com.skincos.evolution-api" || true
 launchctl list | grep -E "com.skincos.crm-api" || true
 launchctl list | grep -E "com.skincos.keepawake.agent" || true
+launchctl list | grep -E "com.skincos.network-fallback" || true
 
 echo
 echo "== energia/awake =="
@@ -87,4 +111,22 @@ if [[ -n "${ALERT_WEBHOOK_URL:-}" ]] || [[ -n "${ALERT_EMAIL_TO:-}" ]]; then
   echo "           silêncio=${ALERT_QUIET_START_HOUR:-23}-${ALERT_QUIET_END_HOUR:-7}, limite diário=${ALERT_MAX_REMINDERS_PER_DAY:-6}"
 else
   echo "Canal de alerta NÃO configurado (use ALERT_WEBHOOK_URL ou SMTP + ALERT_EMAIL_TO no /Users/jubenitogarcia/Automation/n8n/.env)."
+fi
+
+echo
+echo "== fallback de rede =="
+WIFI_IFACE="$(detect_wifi_interface || true)"
+WIFI_SSID="$(current_wifi_ssid "$WIFI_IFACE" || true)"
+echo "Wi-Fi interface: ${WIFI_IFACE:-n/d}"
+echo "Wi-Fi SSID atual: ${WIFI_SSID:-n/d}"
+if curl -fsS -m 6 -o /dev/null "$NETWORK_FALLBACK_PROBE_URL"; then
+  echo "Probe internet: OK ($NETWORK_FALLBACK_PROBE_URL)"
+else
+  echo "Probe internet: FAIL ($NETWORK_FALLBACK_PROBE_URL)"
+fi
+if [[ -f "$NETWORK_FALLBACK_STATE" ]]; then
+  echo "Estado daemon:"
+  sed -n '1,12p' "$NETWORK_FALLBACK_STATE"
+else
+  echo "Estado daemon: arquivo não encontrado ($NETWORK_FALLBACK_STATE)"
 fi
