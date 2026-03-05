@@ -3,6 +3,7 @@ set -euo pipefail
 
 UID_VALUE="$(id -u)"
 WATCHDOG_LABEL="com.skincos.whatsapp-watchdog"
+NETWORK_FALLBACK_LABEL="com.skincos.network-fallback"
 N8N_LABEL="com.jubenito.n8n-evolution"
 TUNNEL_LABEL="com.skincos.cloudflared.cs"
 EVOLUTION_LABEL="com.skincos.evolution-api"
@@ -48,8 +49,22 @@ upsert_env() {
     touch "$N8N_ENV_FILE"
   fi
   if grep -qE "^${key}=" "$N8N_ENV_FILE"; then
-    sed -i '' "s|^${key}=.*|${key}=${value}|" "$N8N_ENV_FILE"
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk -v key="$key" -v value="$value" 'BEGIN{updated=0} index($0, key"=")==1 {print key"="value; updated=1; next} {print} END{if(updated==0) print key"="value}' "$N8N_ENV_FILE" >"$tmp_file"
+    mv "$tmp_file" "$N8N_ENV_FILE"
   else
+    printf '\n%s=%s\n' "$key" "$value" >> "$N8N_ENV_FILE"
+  fi
+}
+
+upsert_env_if_missing() {
+  local key="$1"
+  local value="$2"
+  if [[ ! -f "$N8N_ENV_FILE" ]]; then
+    touch "$N8N_ENV_FILE"
+  fi
+  if ! grep -qE "^${key}=" "$N8N_ENV_FILE"; then
     printf '\n%s=%s\n' "$key" "$value" >> "$N8N_ENV_FILE"
   fi
 }
@@ -68,14 +83,35 @@ apply_power_defaults() {
   upsert_env "MAC_REQUIRE_PASSWORD_ON_LOCK" "true"
 }
 
+apply_network_defaults() {
+  upsert_env "NETWORK_FALLBACK_ENABLED" "true"
+  upsert_env "NETWORK_FALLBACK_CHECK_INTERVAL_SEC" "30"
+  upsert_env "NETWORK_FALLBACK_PROBE_URL" "https://cp.cloudflare.com/generate_204"
+  upsert_env "NETWORK_FALLBACK_PROBE_TIMEOUT_SEC" "6"
+  upsert_env "NETWORK_FALLBACK_SWITCH_COOLDOWN_SEC" "120"
+  upsert_env "NETWORK_FALLBACK_AUTO_DETECT_IPHONE" "true"
+  upsert_env "NETWORK_FALLBACK_AUTO_PATTERN" "iPhone,Hotspot,Android,Galaxy,Pixel"
+  upsert_env_if_missing "NETWORK_FALLBACK_SSIDS" ""
+  upsert_env_if_missing "NETWORK_FALLBACK_PRIMARY_SSID" ""
+  upsert_env_if_missing "NETWORK_FALLBACK_PRIMARY_PASSWORD" ""
+}
+
 chmod +x /Users/jubenitogarcia/Automation/n8n/scripts/ensure-whatsapp-stack.sh
 chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh
+chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/setup-network-fallback-service.sh
+chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/network-fallback-daemon.sh
 
 apply_power_defaults
+apply_network_defaults
 bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh >/dev/null 2>&1
 if ! launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" >/dev/null 2>&1; then
   echo "[setup] keepawake agent não carregou na primeira tentativa; retry com logs."
   bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh
+fi
+bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-network-fallback-service.sh >/dev/null 2>&1
+if ! launchctl print "gui/$UID_VALUE/$NETWORK_FALLBACK_LABEL" >/dev/null 2>&1; then
+  echo "[setup] network fallback não carregou na primeira tentativa; retry com logs."
+  bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-network-fallback-service.sh
 fi
 
 bootstrap_if_missing "$N8N_LABEL" "$HOME/Library/LaunchAgents/com.jubenito.n8n-evolution.plist"
@@ -83,6 +119,7 @@ bootstrap_if_missing "$TUNNEL_LABEL" "$HOME/Library/LaunchAgents/com.skincos.clo
 bootstrap_if_missing "$EVOLUTION_LABEL" "$HOME/Library/LaunchAgents/com.skincos.evolution-api.plist"
 bootstrap_if_missing "$CRM_LABEL" "$HOME/Library/LaunchAgents/com.skincos.crm-api.plist"
 bootstrap_if_missing "$WATCHDOG_LABEL" "$HOME/Library/LaunchAgents/com.skincos.whatsapp-watchdog.plist"
+bootstrap_if_missing "$NETWORK_FALLBACK_LABEL" "$HOME/Library/LaunchAgents/com.skincos.network-fallback.plist"
 
 # Reload n8n job to apply updated EnvironmentVariables (N8N_MANAGE_EVOLUTION=0).
 if launchctl print "gui/$UID_VALUE/$N8N_LABEL" >/dev/null 2>&1; then
@@ -95,6 +132,7 @@ kickstart_job "$TUNNEL_LABEL"
 kickstart_job "$EVOLUTION_LABEL"
 kickstart_job "$CRM_LABEL"
 kickstart_job "$WATCHDOG_LABEL"
+kickstart_job "$NETWORK_FALLBACK_LABEL"
 
 for legacy in "${LEGACY_LABELS[@]}"; do
   disable_legacy "$legacy"
