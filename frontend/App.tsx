@@ -1556,11 +1556,11 @@ export default function AppFunctionalNeatlab() {
                         </header>
 
                         {/* Premium Main Content */}
-                        <main className={`flex-1 p-8 relative ${active === 'atendimento' ? 'overflow-hidden' : 'overflow-auto'}`}>
+                        <main className={`flex-1 p-8 relative ${active === 'atendimento' ? 'overflow-hidden flex min-h-0 flex-col' : 'overflow-auto'}`}>
                             {/* Content Background */}
                             <div className="absolute inset-0 bg-white/[0.02] backdrop-blur-sm"></div>
 
-                            <div className="relative z-10">
+                            <div className={`relative z-10 ${active === 'atendimento' ? 'flex h-full min-h-0 flex-col' : ''}`}>
                                 <div className="hidden">{search}</div>
                                 <ErrorBoundary>
                                     <Suspense fallback={
@@ -1571,7 +1571,7 @@ export default function AppFunctionalNeatlab() {
                                             </div>
                                         </div>
                                     }>
-                                    <div className="animate-fade-in">
+                                    <div className={`animate-fade-in ${active === 'atendimento' ? 'flex h-full min-h-0 flex-col' : ''}`}>
                                         {mountedModuleKeys
                                             .map((key) => permittedModulesSorted.find((m) => m.key === key))
                                             .filter((m) => Boolean(m) && UNLOCKED_MODULE_KEYS.has((m as any).key))
@@ -1579,7 +1579,7 @@ export default function AppFunctionalNeatlab() {
                                                 const moduleEntry = m as (typeof modules)[number]
                                                 const isActive = moduleEntry.key === active
                                                 return (
-                                                    <div key={moduleEntry.key} hidden={!isActive}>
+                                                    <div key={moduleEntry.key} hidden={!isActive} className={active === 'atendimento' ? 'h-full min-h-0' : undefined}>
                                                         {moduleEntry.component}
                                                     </div>
                                                 )
