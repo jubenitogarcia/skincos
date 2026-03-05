@@ -65,9 +65,10 @@ jobs:
           import json
           required = [
             "PONTO_API_TARGET",
-            # recommended hardening:
             "PONTO_PROXY_TOKEN",
             "PONTO_ACTOR_HMAC_KEY",
+            "ESCALA_API_TARGET",
+            "ESCALA_ACTOR_HMAC_KEY",
           ]
           with open("pages_project.json","r",encoding="utf-8") as f:
             data=json.load(f)
@@ -78,13 +79,19 @@ jobs:
           def has(env, k):
             return k in env
           print("Required vars presence (prod/preview):")
-          missing=[]
+          missing_prod=[]
+          missing_preview=[]
           for k in required:
             p=has(prod,k); v=has(prev,k)
             print(f" - {k}: prod={'yes' if p else 'no'} preview={'yes' if v else 'no'}")
             if not p:
-              missing.append(k)
-          if missing:
-            print("\nMissing in production:", ", ".join(missing))
+              missing_prod.append(k)
+            if not v:
+              missing_preview.append(k)
+          if missing_prod:
+            print("\nMissing in production:", ", ".join(missing_prod))
+          if missing_preview:
+            print("Missing in preview:", ", ".join(missing_preview))
+          if missing_prod or missing_preview:
+            raise SystemExit(1)
           PY
-

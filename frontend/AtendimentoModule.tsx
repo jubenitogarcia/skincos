@@ -36,12 +36,14 @@ function TabShell({ title, children }: { title: string; children: React.ReactNod
     >
       <Suspense
         fallback={
-          <div className="glass-morphism rounded-2xl p-6 border border-white/20 animate-pulse text-white">
+          <div className="glass-morphism h-full min-h-0 rounded-2xl p-6 border border-white/20 animate-pulse text-white">
             <LoadingPercentText label="Carregando módulo" className="text-white/90" showPercent={false} />
           </div>
         }
       >
-        {children}
+        <div className="h-full min-h-0">
+          {children}
+        </div>
       </Suspense>
     </ErrorBoundary>
   )
