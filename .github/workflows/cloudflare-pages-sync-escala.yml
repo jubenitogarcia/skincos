@@ -61,9 +61,8 @@ jobs:
           PROJECT: ${{ steps.guard.outputs.project }}
         run: |
           set -euo pipefail
-          # Production already has ESCALA_API_TARGET as regular env var.
-          # If a secret with the same name exists, Cloudflare deployment fails with
-          # "Binding name 'ESCALA_API_TARGET' already in use."
+          # ESCALA_API_TARGET is defined in frontend/wrangler.toml for production.
+          # Keep dashboard free of duplicate secret bindings for this key.
           npx --yes wrangler@4 pages secret delete ESCALA_API_TARGET --project-name "$PROJECT" --env production >/dev/null || true
           echo "Ensured no duplicate secret binding for ESCALA_API_TARGET in production."
 
