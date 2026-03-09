@@ -20,7 +20,6 @@ jobs:
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-          ESCALA_API_TARGET: ${{ vars.ESCALA_API_TARGET }}
           ESCALA_API_TARGET_PREVIEW: ${{ vars.ESCALA_API_TARGET_PREVIEW }}
         run: |
           set -euo pipefail
@@ -30,10 +29,6 @@ jobs:
           fi
           if [[ -z "${ESCALA_ACTOR_HMAC_KEY:-}" ]]; then
             echo "::error::Missing GitHub secret ESCALA_ACTOR_HMAC_KEY."
-            exit 1
-          fi
-          if [[ -z "${ESCALA_API_TARGET:-}" ]]; then
-            echo "::error::Missing GitHub variable ESCALA_API_TARGET."
             exit 1
           fi
           if [[ -z "${ESCALA_API_TARGET_PREVIEW:-}" ]]; then
@@ -57,20 +52,30 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ steps.guard.outputs.project }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-          ESCALA_API_TARGET: ${{ vars.ESCALA_API_TARGET }}
           ESCALA_API_TARGET_PREVIEW: ${{ vars.ESCALA_API_TARGET_PREVIEW }}
         run: |
           set -euo pipefail
           for env_name in production preview; do
             printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 pages secret put ESCALA_ACTOR_HMAC_KEY --project-name "$PROJECT" --env "$env_name" >/dev/null
             echo "Synced ESCALA_ACTOR_HMAC_KEY for env=$env_name"
-            target="$ESCALA_API_TARGET"
             if [[ "$env_name" == "preview" ]]; then
-              target="$ESCALA_API_TARGET_PREVIEW"
+              printf "%s" "$ESCALA_API_TARGET_PREVIEW" | npx --yes wrangler@4 pages secret put ESCALA_API_TARGET --project-name "$PROJECT" --env "$env_name" >/dev/null
+              echo "Synced ESCALA_API_TARGET for env=preview"
             fi
-            printf "%s" "$target" | npx --yes wrangler@4 pages secret put ESCALA_API_TARGET --project-name "$PROJECT" --env "$env_name" >/dev/null
-            echo "Synced ESCALA_API_TARGET for env=$env_name"
           done
+
+      - name: Cleanup duplicate production secret binding (Escala target)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+        run: |
+          set -euo pipefail
+          # Production already has ESCALA_API_TARGET as regular env var.
+          # If a secret with the same name exists, Cloudflare deployment fails with
+          # "Binding name 'ESCALA_API_TARGET' already in use."
+          npx --yes wrangler@4 pages secret delete ESCALA_API_TARGET --project-name "$PROJECT" --env production >/dev/null || true
+          echo "Ensured no duplicate secret binding for ESCALA_API_TARGET in production."
 
       - name: Sync Worker secret (Escala API) by environment
         if: ${{ github.event_name == 'workflow_dispatch' }}
