@@ -20,7 +20,6 @@ jobs:
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-          ESCALA_API_TARGET_PREVIEW: ${{ vars.ESCALA_API_TARGET_PREVIEW }}
         run: |
           set -euo pipefail
           if [[ -z "${TOKEN:-}" || -z "${ACCOUNT_ID:-}" ]]; then
@@ -29,10 +28,6 @@ jobs:
           fi
           if [[ -z "${ESCALA_ACTOR_HMAC_KEY:-}" ]]; then
             echo "::error::Missing GitHub secret ESCALA_ACTOR_HMAC_KEY."
-            exit 1
-          fi
-          if [[ -z "${ESCALA_API_TARGET_PREVIEW:-}" ]]; then
-            echo "::error::Missing GitHub variable ESCALA_API_TARGET_PREVIEW."
             exit 1
           fi
           echo "project=${PROJECT:-skincos}" >> "$GITHUB_OUTPUT"
@@ -52,16 +47,11 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ steps.guard.outputs.project }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-          ESCALA_API_TARGET_PREVIEW: ${{ vars.ESCALA_API_TARGET_PREVIEW }}
         run: |
           set -euo pipefail
           for env_name in production preview; do
             printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 pages secret put ESCALA_ACTOR_HMAC_KEY --project-name "$PROJECT" --env "$env_name" >/dev/null
             echo "Synced ESCALA_ACTOR_HMAC_KEY for env=$env_name"
-            if [[ "$env_name" == "preview" ]]; then
-              printf "%s" "$ESCALA_API_TARGET_PREVIEW" | npx --yes wrangler@4 pages secret put ESCALA_API_TARGET --project-name "$PROJECT" --env "$env_name" >/dev/null
-              echo "Synced ESCALA_API_TARGET for env=preview"
-            fi
           done
 
       - name: Cleanup duplicate production secret binding (Escala target)
@@ -116,13 +106,9 @@ jobs:
             missing.append("production")
           if "ESCALA_ACTOR_HMAC_KEY" not in prev:
             missing.append("preview")
-          if "ESCALA_API_TARGET" not in prod:
-            missing.append("production (ESCALA_API_TARGET)")
-          if "ESCALA_API_TARGET" not in prev:
-            missing.append("preview (ESCALA_API_TARGET)")
           if missing:
             raise SystemExit(f"Escala env vars ausentes em: {', '.join(missing)}")
-          print("ESCALA_ACTOR_HMAC_KEY e ESCALA_API_TARGET presentes em production/preview.")
+          print("ESCALA_ACTOR_HMAC_KEY presente em production/preview.")
           PY
 
       - name: Force redeploy CRM Pages (apply escala secret)
