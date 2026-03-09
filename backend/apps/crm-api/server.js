@@ -1,13 +1,19 @@
 import express from 'express'
 import cors from 'cors'
 import { randomUUID, createHmac, timingSafeEqual, randomBytes, createHash, createCipheriv, createDecipheriv } from 'crypto'
+import nodeUtil from 'node:util'
 import { promises as fs } from 'fs'
 import fsSync from 'fs'
 import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { spawn, spawnSync } from 'child_process'
-import { createProxyMiddleware } from 'http-proxy-middleware'
+
+// http-proxy still calls util._extend on some Node versions. Patch before loading the middleware.
+if (typeof nodeUtil._extend === 'function' && nodeUtil._extend !== Object.assign) {
+    nodeUtil._extend = Object.assign
+}
+const { createProxyMiddleware } = await import('http-proxy-middleware')
 
 let devAuthSessionResolver = null
 let devAuthEnabled = false
@@ -66,6 +72,28 @@ function resolveCrmUiDir() {
 const CRM_UI_DIR = resolveCrmUiDir()
 const VAR_DIR = process.env.VAR_DIR || path.join(BACKEND_ROOT, 'var')
 const CORE_STATE_DIR = path.join(VAR_DIR, 'core')
+const WA_LOCAL_RECOVERY_ENABLED = String(
+    process.env.WA_LOCAL_RECOVERY_ENABLED || (process.platform === 'darwin' ? 'true' : 'false')
+).toLowerCase() === 'true'
+const WA_LOCAL_RECOVERY_SCRIPT = String(
+    process.env.WA_LOCAL_RECOVERY_SCRIPT || '/Users/jubenitogarcia/Automation/n8n/scripts/ensure-whatsapp-stack.sh'
+).trim()
+const WA_LOCAL_RECOVERY_TIMEOUT_MS = Math.max(
+    15_000,
+    Number.parseInt(String(process.env.WA_LOCAL_RECOVERY_TIMEOUT_MS || '90000'), 10) || 90_000
+)
+const LOCAL_EVOLUTION_LAUNCHD_LABEL = String(
+    process.env.LOCAL_EVOLUTION_LAUNCHD_LABEL || 'com.skincos.evolution-api'
+).trim()
+const WA_BOOTSTRAP_SYNC_ENABLED = String(process.env.WA_BOOTSTRAP_SYNC_ENABLED || 'true').toLowerCase() !== 'false'
+const WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED = String(process.env.WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED || 'true').toLowerCase() !== 'false'
+const WA_BOOTSTRAP_CONTACT_PAGE_SIZE = Math.min(500, Math.max(25, Number.parseInt(String(process.env.WA_BOOTSTRAP_CONTACT_PAGE_SIZE || '200'), 10) || 200))
+const WA_BOOTSTRAP_MAX_CONTACT_PAGES = Math.min(2000, Math.max(1, Number.parseInt(String(process.env.WA_BOOTSTRAP_MAX_CONTACT_PAGES || '80'), 10) || 80))
+const WA_BOOTSTRAP_CHAT_PAGE_SIZE = Math.min(500, Math.max(25, Number.parseInt(String(process.env.WA_BOOTSTRAP_CHAT_PAGE_SIZE || '150'), 10) || 150))
+const WA_BOOTSTRAP_MESSAGE_PAGE_SIZE = Math.min(250, Math.max(25, Number.parseInt(String(process.env.WA_BOOTSTRAP_MESSAGE_PAGE_SIZE || '100'), 10) || 100))
+const WA_BOOTSTRAP_MAX_CHAT_PAGES = Math.min(2000, Math.max(1, Number.parseInt(String(process.env.WA_BOOTSTRAP_MAX_CHAT_PAGES || '60'), 10) || 60))
+const WA_BOOTSTRAP_MAX_MESSAGE_PAGES_PER_CHAT = Math.min(2000, Math.max(1, Number.parseInt(String(process.env.WA_BOOTSTRAP_MAX_MESSAGE_PAGES_PER_CHAT || '80'), 10) || 80))
+const WA_BOOTSTRAP_AUTO_COOLDOWN_MS = Math.max(30_000, Number.parseInt(String(process.env.WA_BOOTSTRAP_AUTO_COOLDOWN_MS || '300000'), 10) || 300_000)
 
 try { await fs.mkdir(CORE_STATE_DIR, { recursive: true }) } catch { /* ignore */ }
 
@@ -77,6 +105,90 @@ const shouldLog = (level) => {
     const current = LOG_LEVEL_RANK[String(level || 'info').toLowerCase()] ?? 3
     const min = LOG_LEVEL_RANK[LOG_LEVEL] ?? 3
     return current <= min
+}
+
+function isLoopbackIp(ipRaw) {
+    const ip = String(ipRaw || '').trim().toLowerCase()
+    if (!ip) return false
+    if (ip === '::1') return true
+    if (ip === '127.0.0.1') return true
+    if (ip.startsWith('127.')) return true
+    if (ip === '::ffff:127.0.0.1') return true
+    if (ip.startsWith('::ffff:127.')) return true
+    return false
+}
+
+function truncateText(value, max = 3000) {
+    const text = String(value || '')
+    if (text.length <= max) return text
+    return `${text.slice(0, max)}\n...[truncated]`
+}
+
+function runCommandWithTimeout(command, args = [], options = {}) {
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 30_000))
+    const cwd = options.cwd || REPO_ROOT
+    const env = options.env || process.env
+    return new Promise((resolve) => {
+        let stdout = ''
+        let stderr = ''
+        let timedOut = false
+        let settled = false
+        let exitCode = null
+        let exitSignal = null
+        const child = spawn(command, args, {
+            cwd,
+            env,
+            stdio: ['ignore', 'pipe', 'pipe']
+        })
+
+        const finalize = () => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolve({
+                command,
+                args,
+                cwd,
+                code: typeof exitCode === 'number' ? exitCode : (timedOut ? 124 : null),
+                signal: exitSignal || null,
+                timedOut,
+                stdout: truncateText(stdout),
+                stderr: truncateText(stderr)
+            })
+        }
+
+        child.stdout.on('data', (chunk) => {
+            stdout += String(chunk || '')
+        })
+        child.stderr.on('data', (chunk) => {
+            stderr += String(chunk || '')
+        })
+        child.on('error', (error) => {
+            stderr += `${error?.message || String(error)}\n`
+            exitCode = 1
+            finalize()
+        })
+        child.on('close', (code, signal) => {
+            exitCode = code
+            exitSignal = signal
+            finalize()
+        })
+
+        const timer = setTimeout(() => {
+            if (settled) return
+            timedOut = true
+            try {
+                child.kill('SIGTERM')
+            } catch { /* ignore */ }
+            setTimeout(() => {
+                if (settled) return
+                try {
+                    child.kill('SIGKILL')
+                } catch { /* ignore */ }
+            }, 1000).unref?.()
+        }, timeoutMs)
+        timer.unref?.()
+    })
 }
 
 // -------------------------------------------------------------
@@ -794,6 +906,7 @@ app.use('/api/meta-ads', createProxyMiddleware({
 const isLocalEnv = String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
 const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || (isLocalEnv ? 'http://127.0.0.1:8787' : 'https://api.skincos.com.br')
 const LOCAL_INSUMOS_AUTH_STUB = isLocalEnv && NO_AUTH_RAW !== 'false'
+const FORCE_LOCAL_INSUMOS_AUTH_STUB = String(process.env.LOCAL_INSUMOS_AUTH_STUB_FORCE || '').trim() === '1'
 
 function isLocalSafeMode() {
     // In local/dev, default to read-only for upstream production APIs unless explicitly allowed.
@@ -840,8 +953,48 @@ app.get('/api/insumos/_proxy-status', (_req, res) => {
     })
 })
 
+async function fetchUpstreamInsumosAuthMe(req) {
+    try {
+        const targetUrl = new URL('/insumos/auth/me', INSUMOS_API_TARGET)
+        const headers = new Headers({ accept: 'application/json' })
+        const forwardHeader = (name) => {
+            const value = req.headers?.[name]
+            if (typeof value === 'string' && value.trim()) headers.set(name, value)
+        }
+        forwardHeader('cookie')
+        forwardHeader('authorization')
+        forwardHeader('user-agent')
+        forwardHeader('x-csrf-token')
+
+        const upstream = await fetch(targetUrl, { method: 'GET', headers })
+        const text = await upstream.text()
+        let json = null
+        try {
+            json = text ? JSON.parse(text) : null
+        } catch {
+            json = null
+        }
+        return { ok: upstream.ok, status: upstream.status, json }
+    } catch {
+        return null
+    }
+}
+
 if (LOCAL_INSUMOS_AUTH_STUB) {
     app.get('/api/insumos/auth/me', async (req, res) => {
+        const upstream = await fetchUpstreamInsumosAuthMe(req)
+        if (upstream?.ok && upstream?.json) {
+            return res.status(200).set('cache-control', 'no-store').json(upstream.json)
+        }
+        if (!FORCE_LOCAL_INSUMOS_AUTH_STUB) {
+            return res.status(200).set('cache-control', 'no-store').json({
+                success: false,
+                user: null,
+                csrfToken: null,
+                source: 'local-dev:no-insumos-session'
+            })
+        }
+
         const user = await resolveCrmUser(req).catch(() => null)
         return res.status(200).set('cache-control', 'no-store').json({
             success: true,
@@ -3485,6 +3638,13 @@ function channelForPort(port) {
 const WA_ORCHESTRATOR_PROVIDER = String(process.env.WA_ORCHESTRATOR_PROVIDER || '').toLowerCase()
 const USE_EVOLUTION_ORCHESTRATOR = WA_ORCHESTRATOR_PROVIDER === 'evolution'
 const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
+const WA_BOOTSTRAP_SYNC_FILE = process.env.WA_BOOTSTRAP_SYNC_FILE || path.join(CORE_STATE_DIR, 'wa_bootstrap_sync.v1.json')
+const WA_CONTACT_DIRECTORY_FILE = process.env.WA_CONTACT_DIRECTORY_FILE || path.join(CORE_STATE_DIR, 'wa_contact_directory.v1.json')
+let waBootstrapSyncState = { channels: {} }
+let waContactDirectory = { channels: {} }
+let waBootstrapPersistTimer = null
+let waContactDirectoryPersistTimer = null
+const waBootstrapSyncTasks = new Map()
 
 // Legacy compatibility - remove port 3002 reservation
 function portFor(inst) {
@@ -4315,13 +4475,45 @@ function resolveMessageActor(req) {
 }
 
 function buildWaMediaProxyUrl(req, { channel, remoteJid, messageId }) {
-    const base = resolveCrmPublicUrl(req)
     const params = new URLSearchParams({
         channel: String(channel),
         remoteJid: String(remoteJid || ''),
         messageId: String(messageId || '')
     })
-    return `${base}/api/wa-orchestrator/media?${params.toString()}`
+    return `/api/wa-orchestrator/media?${params.toString()}`
+}
+
+function mediaBufferLooksDecoded(buffer, mimeType) {
+    if (!Buffer.isBuffer(buffer) || !buffer.length) return false
+    const mime = String(mimeType || '').toLowerCase()
+    const startsWith = (...bytes) => bytes.every((value, index) => buffer[index] === value)
+    const asciiAt = (offset, value) => buffer.subarray(offset, offset + value.length).toString('ascii') === value
+
+    if (mime.includes('image/webp')) {
+        return asciiAt(0, 'RIFF') && asciiAt(8, 'WEBP')
+    }
+    if (mime.includes('image/jpeg') || mime.includes('image/jpg')) {
+        return startsWith(0xff, 0xd8, 0xff)
+    }
+    if (mime.includes('image/png')) {
+        return startsWith(0x89, 0x50, 0x4e, 0x47)
+    }
+    if (mime.includes('image/gif')) {
+        return asciiAt(0, 'GIF8')
+    }
+    if (mime.includes('audio/ogg')) {
+        return asciiAt(0, 'OggS')
+    }
+    if (mime.includes('audio/mpeg') || mime.includes('audio/mp3')) {
+        return asciiAt(0, 'ID3') || startsWith(0xff, 0xfb) || startsWith(0xff, 0xf3) || startsWith(0xff, 0xf2)
+    }
+    if (mime.includes('video/mp4') || mime.includes('audio/mp4')) {
+        return asciiAt(4, 'ftyp')
+    }
+    if (mime.includes('application/pdf')) {
+        return asciiAt(0, '%PDF')
+    }
+    return true
 }
 
 function recordWebhookSuccess() {
@@ -4386,6 +4578,8 @@ function extractEvolutionMessageText(message) {
     if (message.imageMessage?.caption) return message.imageMessage.caption
     if (message.videoMessage?.caption) return message.videoMessage.caption
     if (message.documentMessage?.caption) return message.documentMessage.caption
+    if (message.reactionMessage?.text) return message.reactionMessage.text
+    if (message.call) return '[Ligação]'
     if (message.audioMessage) return '[Áudio]'
     if (message.stickerMessage) return '[Sticker]'
     return '[Mensagem]'
@@ -4427,7 +4621,27 @@ function extractEvolutionMessageMeta(message) {
             msg?.ptvMessage?.url ||
             msg?.stickerMessage?.url
         )
-        return typeof candidate === 'string' ? candidate : undefined
+        const directPath = (
+            msg?.directPath ||
+            msg?.imageMessage?.directPath ||
+            msg?.videoMessage?.directPath ||
+            msg?.documentMessage?.directPath ||
+            msg?.audioMessage?.directPath ||
+            msg?.ptvMessage?.directPath ||
+            msg?.stickerMessage?.directPath
+        )
+        const buildFromDirectPath = (value) => {
+            const path = String(value || '').trim()
+            if (!path) return undefined
+            if (path.startsWith('http://') || path.startsWith('https://')) return path
+            if (path.startsWith('/')) return `https://mmg.whatsapp.net${path}`
+            return `https://mmg.whatsapp.net/${path}`
+        }
+        const rawCandidate = typeof candidate === 'string' ? candidate.trim() : ''
+        const directUrl = buildFromDirectPath(directPath)
+        if (rawCandidate && !rawCandidate.startsWith('https://web.whatsapp.net')) return rawCandidate
+        if (directUrl) return directUrl
+        return rawCandidate || undefined
     }
     const resolveMimeType = (msg) => {
         const candidate = (
@@ -4514,6 +4728,12 @@ function extractEvolutionMessageMeta(message) {
     if (message.audioMessage) {
         return { text: '', caption: undefined, mediaType: 'audio', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
+    if (message.call) {
+        return { text: '', caption: undefined, mediaType: 'call', mediaUrl: undefined, mimeType: undefined, fileName: undefined, durationSec: undefined, sizeBytes: undefined }
+    }
+    if (message.reactionMessage) {
+        return { text: message.reactionMessage.text || '', caption: undefined, mediaType: 'reaction', mediaUrl: undefined, mimeType: undefined, fileName: undefined, durationSec: undefined, sizeBytes: undefined }
+    }
     if (message.stickerMessage) {
         return { text: '', caption: undefined, mediaType: 'sticker', mediaUrl, mimeType, fileName, durationSec, sizeBytes }
     }
@@ -4551,6 +4771,53 @@ function extractEvolutionReplyMeta(record) {
     }
 }
 
+function extractEvolutionReactionMeta(record) {
+    const reactionMessage = record?.message?.reactionMessage
+    const targetKey = reactionMessage?.key
+    const targetMessageId = String(targetKey?.id || '').trim()
+    const emoji = String(reactionMessage?.text || '').trim()
+    if (!targetMessageId || !emoji) return null
+
+    const senderJidPrimaryRaw = record?.key?.participant || record?.participant || record?.sender?.jid || ''
+    const senderJidAltRaw = record?.key?.participantAlt || record?.participantAlt || record?.sender?.participantAlt || record?.key?.remoteJidAlt || ''
+    const senderJidRaw = senderJidAltRaw || senderJidPrimaryRaw || record?.key?.remoteJid || ''
+    const senderJid = normalizeWhatsAppJid(senderJidRaw)
+    const senderLid = String(senderJidPrimaryRaw || '').includes('@lid') ? String(senderJidPrimaryRaw).trim() : ''
+    const senderPhone = extractPhoneFromJid(senderJidAltRaw || senderJid || senderJidPrimaryRaw)
+    const senderName = String(record?.pushName || record?.senderName || record?.sender?.pushName || '').trim()
+    const actorKey = senderJid || senderLid || senderPhone || senderName || String(record?.id || record?.key?.id || '').trim()
+    return {
+        targetMessageId,
+        emoji,
+        actorKey,
+        reactedByMe: Boolean(record?.key?.fromMe)
+    }
+}
+
+function extractEvolutionMentionJids(message) {
+    if (!message || typeof message !== 'object') return []
+    const contexts = [
+        message?.extendedTextMessage?.contextInfo,
+        message?.imageMessage?.contextInfo,
+        message?.videoMessage?.contextInfo,
+        message?.documentMessage?.contextInfo,
+        message?.audioMessage?.contextInfo,
+        message?.ptvMessage?.contextInfo,
+        message?.conversation?.contextInfo,
+        message?.messageContextInfo
+    ]
+    const mentions = new Set()
+    contexts.forEach((context) => {
+        if (!context) return
+        const mentioned = Array.isArray(context?.mentionedJid) ? context.mentionedJid : []
+        mentioned.forEach((jid) => {
+            const normalized = normalizeWhatsAppJid(jid)
+            if (normalized) mentions.add(normalized)
+        })
+    })
+    return Array.from(mentions)
+}
+
 function extractEvolutionMessageIdFromSendResult(result) {
     return (
         result?.key?.id ||
@@ -4582,15 +4849,77 @@ function extractPhoneFromJid(remoteJid) {
     return localPart.split(':')[0].replace(/\D/g, '')
 }
 
-function normalizeWhatsAppJid(value) {
+function parseWhatsAppJidIdentity(value) {
     const raw = String(value || '').trim()
-    if (!raw) return ''
-    if (raw.includes('@g.us') || raw.includes('@broadcast')) return raw
-    const localPart = raw.includes('@') ? raw.split('@')[0] : raw
-    const normalizedLocal = localPart.split(':')[0].replace(/\D/g, '')
-    if (normalizedLocal) return `${normalizedLocal}@s.whatsapp.net`
-    if (raw.includes('@')) return raw
-    return `${raw}@s.whatsapp.net`
+    if (!raw) {
+        return { raw: '', normalized: '', domain: '', local: '', localNoDevice: '', kind: 'unknown' }
+    }
+    if (!raw.includes('@')) {
+        const digits = raw.replace(/\D/g, '')
+        const normalized = digits ? `${digits}@s.whatsapp.net` : `${raw}@s.whatsapp.net`
+        return {
+            raw,
+            normalized,
+            domain: 's.whatsapp.net',
+            local: digits || raw,
+            localNoDevice: digits || raw,
+            kind: 'direct'
+        }
+    }
+
+    const [localRaw, domainRaw = ''] = raw.split('@')
+    const domain = String(domainRaw || '').trim().toLowerCase()
+    const local = String(localRaw || '').trim()
+    const localNoDevice = (domain === 'lid' || domain === 's.whatsapp.net') ? local.split(':')[0] : local
+    const normalized = `${localNoDevice}@${domain}`
+    const kind =
+        domain === 'g.us' || domain === 'broadcast'
+            ? 'group'
+            : domain === 'lid'
+                ? 'lid'
+                : domain === 's.whatsapp.net'
+                    ? 'direct'
+                    : 'other'
+
+    return { raw, normalized, domain, local, localNoDevice, kind }
+}
+
+function normalizeWhatsAppJid(value) {
+    return parseWhatsAppJidIdentity(value).normalized
+}
+
+function buildConversationIdentity(value) {
+    const parsed = parseWhatsAppJidIdentity(value)
+    const rawJid = parsed.raw
+    const normalizedJid = parsed.normalized
+    const phone = extractPhoneFromJid(rawJid || normalizedJid)
+    const aliases = new Set()
+    if (rawJid) aliases.add(rawJid.toLowerCase())
+    if (normalizedJid) aliases.add(normalizedJid.toLowerCase())
+    if (phone) {
+        aliases.add(phone)
+        if (parsed.kind === 'direct') aliases.add(`${phone}@s.whatsapp.net`)
+    }
+    return {
+        rawJid,
+        normalizedJid,
+        phone,
+        kind: parsed.kind,
+        aliases: Array.from(aliases)
+    }
+}
+
+function resolveConversationMergeKey(conversationId, fallbackPhone) {
+    const identity = buildConversationIdentity(conversationId || fallbackPhone)
+    if (identity.kind === 'group') {
+        if (identity.rawJid) return `jid:${identity.rawJid.toLowerCase()}`
+        if (identity.normalizedJid) return `jid:${identity.normalizedJid.toLowerCase()}`
+        return ''
+    }
+    if (identity.kind === 'direct' && identity.phone && identity.phone.length >= 10) return `phone:${identity.phone}`
+    if (identity.rawJid) return `jid:${identity.rawJid.toLowerCase()}`
+    if (identity.normalizedJid) return `jid:${identity.normalizedJid.toLowerCase()}`
+    return ''
 }
 
 function resolveChatConversationJid(chat) {
@@ -4610,6 +4939,581 @@ function resolveChatConversationJid(chat) {
     return ''
 }
 
+function resolveChatConversationAltJid(chat) {
+    const candidates = [
+        chat?.remoteJidAlt,
+        chat?.lastMessage?.key?.remoteJidAlt,
+        chat?.lastMessage?.remoteJidAlt
+    ]
+    for (const candidate of candidates) {
+        const normalized = normalizeWhatsAppJid(candidate)
+        if (normalized) return normalized
+    }
+    return ''
+}
+
+async function loadWaBootstrapSyncState() {
+    try {
+        const raw = await fs.readFile(WA_BOOTSTRAP_SYNC_FILE, 'utf-8')
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object' && parsed.channels && typeof parsed.channels === 'object') {
+            waBootstrapSyncState = parsed
+        }
+    } catch { /* ignore */ }
+}
+
+async function persistWaBootstrapSyncStateNow() {
+    try {
+        await fs.writeFile(WA_BOOTSTRAP_SYNC_FILE, JSON.stringify(waBootstrapSyncState, null, 2))
+    } catch (error) {
+        console.error('[WA_BOOTSTRAP_SYNC] Persist failed', error?.message || String(error))
+    }
+}
+
+function schedulePersistWaBootstrapSyncState() {
+    if (waBootstrapPersistTimer) clearTimeout(waBootstrapPersistTimer)
+    waBootstrapPersistTimer = setTimeout(() => { void persistWaBootstrapSyncStateNow() }, 600).unref?.()
+}
+
+async function loadWaContactDirectory() {
+    try {
+        const raw = await fs.readFile(WA_CONTACT_DIRECTORY_FILE, 'utf-8')
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object' && parsed.channels && typeof parsed.channels === 'object') {
+            waContactDirectory = parsed
+        }
+    } catch { /* ignore */ }
+}
+
+async function persistWaContactDirectoryNow() {
+    try {
+        await fs.writeFile(WA_CONTACT_DIRECTORY_FILE, JSON.stringify(waContactDirectory, null, 2))
+    } catch (error) {
+        console.error('[WA_CONTACT_DIRECTORY] Persist failed', error?.message || String(error))
+    }
+}
+
+function schedulePersistWaContactDirectory() {
+    if (waContactDirectoryPersistTimer) clearTimeout(waContactDirectoryPersistTimer)
+    waContactDirectoryPersistTimer = setTimeout(() => { void persistWaContactDirectoryNow() }, 1000).unref?.()
+}
+
+function ensureWaBootstrapChannelState(channel) {
+    const key = String(channel)
+    if (!waBootstrapSyncState.channels[key] || typeof waBootstrapSyncState.channels[key] !== 'object') {
+        waBootstrapSyncState.channels[key] = {
+            channel,
+            running: false,
+            startedAt: null,
+            completedAt: null,
+            failedAt: null,
+            lastError: null,
+            lastRunReason: null,
+            sourceIdentity: null,
+            lastAutoTriggerAt: null,
+            progress: {
+                phase: 'idle',
+                contactsPages: 0,
+                contactsCount: 0,
+                chatPages: 0,
+                chatsCount: 0,
+                conversationsProcessed: 0,
+                messagesCount: 0
+            },
+            stats: {
+                contactsCount: 0,
+                chatsCount: 0,
+                conversationsProcessed: 0,
+                messagesCount: 0,
+                contactAliasCount: 0
+            }
+        }
+    }
+    return waBootstrapSyncState.channels[key]
+}
+
+function ensureWaContactDirectoryChannel(channel) {
+    const key = String(channel)
+    if (!waContactDirectory.channels[key] || typeof waContactDirectory.channels[key] !== 'object') {
+        waContactDirectory.channels[key] = {
+            updatedAt: null,
+            entries: {}
+        }
+    }
+    if (!waContactDirectory.channels[key].entries || typeof waContactDirectory.channels[key].entries !== 'object') {
+        waContactDirectory.channels[key].entries = {}
+    }
+    return waContactDirectory.channels[key]
+}
+
+function markWaBootstrapStateInterrupted(channel, reason = 'Bootstrap sync interrupted by server restart.') {
+    const state = ensureWaBootstrapChannelState(channel)
+    if (!state.running) return state
+    state.running = false
+    state.failedAt = new Date().toISOString()
+    state.lastError = reason
+    state.progress = {
+        ...(state.progress || {}),
+        phase: 'interrupted'
+    }
+    schedulePersistWaBootstrapSyncState()
+    return state
+}
+
+function isLikelyUnresolvedName(value) {
+    const text = String(value || '').trim()
+    if (!text) return true
+    const digits = text.replace(/\D/g, '')
+    if (digits.length >= 10 && digits.length >= text.length - 2) return true
+    if (text.includes('@') && normalizeWhatsAppJid(text)) return true
+    return false
+}
+
+function pickBetterDisplayName(currentValue, nextValue) {
+    const current = String(currentValue || '').trim()
+    const next = String(nextValue || '').trim()
+    if (!next) return current
+    if (!current) return next
+    const currentIsPlaceholder = isLikelyUnresolvedName(current)
+    const nextIsPlaceholder = isLikelyUnresolvedName(next)
+    if (currentIsPlaceholder && !nextIsPlaceholder) return next
+    if (!currentIsPlaceholder && nextIsPlaceholder) return current
+    return next.length >= current.length ? next : current
+}
+
+function collectIdentityAliases(...values) {
+    const aliases = new Set()
+    for (const value of values) {
+        const raw = String(value || '').trim()
+        if (!raw) continue
+        aliases.add(raw.toLowerCase())
+        const identity = buildConversationIdentity(raw)
+        for (const alias of identity.aliases || []) {
+            aliases.add(String(alias || '').toLowerCase())
+        }
+    }
+    return Array.from(aliases).filter(Boolean)
+}
+
+function resolveDirectoryEntryKey(payload = {}) {
+    const remoteJid = normalizeWhatsAppJid(payload.remoteJid || '')
+    const phone = extractPhoneFromJid(payload.phone || remoteJid || '')
+    if (remoteJid) return `jid:${remoteJid.toLowerCase()}`
+    if (phone) return `phone:${phone}`
+    const fallback = String(payload.name || '').trim().toLowerCase()
+    return fallback ? `name:${fallback}` : ''
+}
+
+function upsertWaContactDirectoryEntry(channel, payload = {}) {
+    const bucket = ensureWaContactDirectoryChannel(channel)
+    const aliases = collectIdentityAliases(
+        ...(Array.isArray(payload.aliases) ? payload.aliases : []),
+        payload.remoteJid,
+        payload.phone
+    )
+    if (!aliases.length) return null
+
+    const lookup = bucket.entries || {}
+    let previous = null
+    for (const alias of aliases) {
+        const found = lookup[alias]
+        if (found && typeof found === 'object') {
+            previous = found
+            break
+        }
+    }
+
+    const nextEntry = {
+        key: resolveDirectoryEntryKey(payload) || previous?.key || aliases[0],
+        remoteJid: normalizeWhatsAppJid(payload.remoteJid || previous?.remoteJid || ''),
+        phone: extractPhoneFromJid(payload.phone || previous?.phone || payload.remoteJid || previous?.remoteJid || ''),
+        name: pickBetterDisplayName(previous?.name, payload.name),
+        profilePicUrl: String(payload.profilePicUrl || previous?.profilePicUrl || '').trim() || null,
+        aliases: Array.from(new Set([...(previous?.aliases || []), ...aliases])),
+        source: String(payload.source || previous?.source || 'unknown'),
+        updatedAt: new Date().toISOString()
+    }
+
+    const changed =
+        !previous ||
+        previous.name !== nextEntry.name ||
+        previous.profilePicUrl !== nextEntry.profilePicUrl ||
+        previous.remoteJid !== nextEntry.remoteJid ||
+        previous.phone !== nextEntry.phone ||
+        (previous.aliases || []).length !== nextEntry.aliases.length
+
+    if (!changed) return previous
+
+    for (const alias of nextEntry.aliases) {
+        lookup[alias] = nextEntry
+    }
+    bucket.updatedAt = nextEntry.updatedAt
+    schedulePersistWaContactDirectory()
+    return nextEntry
+}
+
+function lookupWaContactDirectoryEntry(channel, candidates = []) {
+    const key = String(channel)
+    const bucket = waContactDirectory.channels[key]
+    if (!bucket || !bucket.entries || typeof bucket.entries !== 'object') return null
+    const aliases = collectIdentityAliases(...candidates)
+    for (const alias of aliases) {
+        const entry = bucket.entries[alias]
+        if (entry && typeof entry === 'object') return entry
+    }
+    return null
+}
+
+function listFromEvolutionResponse(payload, preferredKeys = []) {
+    if (Array.isArray(payload)) return payload
+    if (!payload || typeof payload !== 'object') return []
+    for (const key of preferredKeys) {
+        const candidate = payload?.[key]
+        if (Array.isArray(candidate)) return candidate
+    }
+    const genericKeys = ['data', 'items', 'records', 'contacts', 'chats', 'messages']
+    for (const key of genericKeys) {
+        const candidate = payload?.[key]
+        if (Array.isArray(candidate)) return candidate
+    }
+    if (Array.isArray(payload?.messages?.records)) return payload.messages.records
+    return []
+}
+
+function resolveChannelSourceIdentity(channelStatus, fallback = '') {
+    const value = String(
+        channelStatus?.metadata?.phoneNumber ||
+        channelStatus?.metadata?.ownerJid ||
+        channelStatus?.number ||
+        channelStatus?.ownerJid ||
+        channelStatus?.name ||
+        fallback ||
+        ''
+    ).trim()
+    return value || null
+}
+
+function parseEvolutionChannelFromInstanceName(instanceNameRaw) {
+    const instanceName = String(instanceNameRaw || '').trim()
+    if (!instanceName) return null
+    const suffixMatch = instanceName.match(/(\d+)$/)
+    if (!suffixMatch) return null
+    const channel = Number.parseInt(suffixMatch[1], 10)
+    if (!Number.isInteger(channel) || channel < 1 || channel > 9) return null
+    return channel
+}
+
+function payloadSignalsConnectedState(payload = {}) {
+    const states = [
+        payload?.data?.state,
+        payload?.data?.connection,
+        payload?.data?.status,
+        payload?.status,
+        payload?.state
+    ]
+    return states.some((value) => {
+        const normalized = String(value || '').trim().toLowerCase()
+        return normalized === 'open' || normalized === 'connected'
+    })
+}
+
+function maybeTriggerBootstrapFromWebhook(payload = {}) {
+    if (!USE_EVOLUTION_ORCHESTRATOR || !WA_BOOTSTRAP_SYNC_ENABLED) return
+    const channel = parseEvolutionChannelFromInstanceName(payload?.instance)
+    if (!channel) return
+
+    const eventName = String(payload?.event || '').trim().toLowerCase()
+    const isConnectedSignal = eventName.includes('connection') && payloadSignalsConnectedState(payload)
+    const isConversationActivity = eventName === 'messages.upsert' || eventName === 'chats.update'
+    if (!isConnectedSignal && !isConversationActivity) return
+
+    const state = ensureWaBootstrapChannelState(channel)
+    if (state.running) return
+    if (state.completedAt) return
+
+    void triggerEvolutionBootstrapSync(channel, {
+        force: true,
+        reason: isConnectedSignal ? 'webhook-connected' : 'webhook-activity'
+    })
+}
+
+function summarizeWaBootstrapSync(channel) {
+    const key = String(channel)
+    const state = ensureWaBootstrapChannelState(channel)
+    const contactBucket = waContactDirectory.channels[key]
+    const aliasCount = contactBucket?.entries ? Object.keys(contactBucket.entries).length : 0
+    return {
+        channel,
+        running: Boolean(state.running),
+        startedAt: state.startedAt || null,
+        completedAt: state.completedAt || null,
+        failedAt: state.failedAt || null,
+        lastError: state.lastError || null,
+        lastRunReason: state.lastRunReason || null,
+        sourceIdentity: state.sourceIdentity || null,
+        lastAutoTriggerAt: state.lastAutoTriggerAt || null,
+        progress: state.progress || null,
+        stats: {
+            ...(state.stats || {}),
+            contactAliasCount: aliasCount
+        }
+    }
+}
+
+async function runEvolutionBootstrapSync(channel, { force = false, reason = 'manual' } = {}) {
+    if (!USE_EVOLUTION_ORCHESTRATOR) {
+        throw new Error('Bootstrap sync is only available for Evolution provider.')
+    }
+    if (!WA_BOOTSTRAP_SYNC_ENABLED) {
+        throw new Error('Bootstrap sync is disabled.')
+    }
+    const state = ensureWaBootstrapChannelState(channel)
+    if (state.running) return summarizeWaBootstrapSync(channel)
+
+    state.running = true
+    state.startedAt = new Date().toISOString()
+    state.lastRunReason = reason
+    state.lastError = null
+    state.failedAt = null
+    state.progress = {
+        phase: 'starting',
+        contactsPages: 0,
+        contactsCount: 0,
+        chatPages: 0,
+        chatsCount: 0,
+        conversationsProcessed: 0,
+        messagesCount: 0
+    }
+    schedulePersistWaBootstrapSyncState()
+
+    try {
+        const channelStatus = await evolutionOrchestrator.getChannelStatus(channel)
+        const statusLabel = String(channelStatus?.status || '').toLowerCase()
+        if (statusLabel !== 'connected' && statusLabel !== 'available') {
+            throw new Error(`Channel ${channel} is not connected (status=${statusLabel || 'unknown'}).`)
+        }
+
+        const sourceIdentity = resolveChannelSourceIdentity(channelStatus?.instance, `channel-${channel}`)
+        state.sourceIdentity = sourceIdentity
+        state.progress.phase = 'contacts'
+        schedulePersistWaBootstrapSyncState()
+
+        let contactsCount = 0
+        for (let page = 1; page <= WA_BOOTSTRAP_MAX_CONTACT_PAGES; page += 1) {
+            const contactsPayload = await evolutionOrchestrator.fetchContacts(channel, {
+                limit: WA_BOOTSTRAP_CONTACT_PAGE_SIZE,
+                page
+            })
+            const contacts = listFromEvolutionResponse(contactsPayload, ['contacts', 'data', 'records'])
+            state.progress.contactsPages = page
+            state.progress.contactsCount += contacts.length
+            schedulePersistWaBootstrapSyncState()
+            if (!contacts.length) break
+            for (const contact of contacts) {
+                const identity = buildConversationIdentity(contact?.remoteJid || contact?.jid || contact?.id || '')
+                upsertWaContactDirectoryEntry(channel, {
+                    aliases: identity.aliases,
+                    remoteJid: identity.rawJid || identity.normalizedJid,
+                    phone: identity.phone || contact?.phone || contact?.number || '',
+                    name: contact?.pushName || contact?.name || contact?.subject || '',
+                    profilePicUrl: contact?.profilePicUrl || contact?.profilePictureUrl || contact?.imgUrl || contact?.avatarUrl || '',
+                    source: 'bootstrap:contacts'
+                })
+            }
+            contactsCount += contacts.length
+            if (contacts.length < WA_BOOTSTRAP_CONTACT_PAGE_SIZE) break
+        }
+
+        state.progress.phase = 'chats'
+        schedulePersistWaBootstrapSyncState()
+        let chatsCount = 0
+        let messagesCount = 0
+        let conversationsProcessed = 0
+        const knownChats = []
+        for (let page = 1; page <= WA_BOOTSTRAP_MAX_CHAT_PAGES; page += 1) {
+            const offset = (page - 1) * WA_BOOTSTRAP_CHAT_PAGE_SIZE
+            const chatsPayload = await evolutionOrchestrator.fetchChats(channel, {
+                limit: WA_BOOTSTRAP_CHAT_PAGE_SIZE,
+                offset
+            })
+            const chats = listFromEvolutionResponse(chatsPayload, ['chats', 'data', 'records'])
+            state.progress.chatPages = page
+            state.progress.chatsCount += chats.length
+            schedulePersistWaBootstrapSyncState()
+            if (!chats.length) break
+            knownChats.push(...chats)
+            for (const chat of chats) {
+                const identity = buildConversationIdentity(resolveChatConversationJid(chat))
+                upsertWaContactDirectoryEntry(channel, {
+                    aliases: identity.aliases,
+                    remoteJid: identity.rawJid || identity.normalizedJid,
+                    phone: identity.phone,
+                    name: chat?.pushName || chat?.name || chat?.subject || '',
+                    profilePicUrl: chat?.profilePicUrl || chat?.profilePictureUrl || chat?.avatarUrl || chat?.imgUrl || '',
+                    source: 'bootstrap:chats'
+                })
+            }
+            chatsCount += chats.length
+            if (chats.length < WA_BOOTSTRAP_CHAT_PAGE_SIZE) break
+        }
+
+        state.progress.phase = 'messages'
+        schedulePersistWaBootstrapSyncState()
+        for (const chat of knownChats) {
+            const remoteJid = resolveChatConversationJid(chat) || resolveChatConversationAltJid(chat)
+            if (!remoteJid) continue
+            conversationsProcessed += 1
+            for (let page = 1; page <= WA_BOOTSTRAP_MAX_MESSAGE_PAGES_PER_CHAT; page += 1) {
+                const messagesPayload = await evolutionOrchestrator.fetchMessages(channel, remoteJid, {
+                    limit: WA_BOOTSTRAP_MESSAGE_PAGE_SIZE,
+                    page
+                })
+                const records = listFromEvolutionResponse(messagesPayload, ['records'])
+                if (!records.length) break
+                messagesCount += records.length
+                state.progress.messagesCount = messagesCount
+                state.progress.conversationsProcessed = conversationsProcessed
+                schedulePersistWaBootstrapSyncState()
+                for (const record of records) {
+                    const senderJidPrimaryRaw = record?.key?.participant || record?.participant || record?.sender?.jid || ''
+                    const senderJidAltRaw = record?.key?.participantAlt || record?.participantAlt || record?.sender?.participantAlt || ''
+                    const senderJidRaw = senderJidAltRaw || senderJidPrimaryRaw || record?.key?.remoteJid || ''
+                    const senderJid = normalizeWhatsAppJid(senderJidRaw)
+                    const senderPhone = extractPhoneFromJid(senderJidAltRaw || senderJid || senderJidPrimaryRaw)
+                    const senderName =
+                        record?.pushName ||
+                        record?.senderName ||
+                        record?.participantPushName ||
+                        record?.sender?.pushName ||
+                        record?.sender?.name ||
+                        ''
+                    const senderAvatarUrl =
+                        record?.profilePicUrl ||
+                        record?.sender?.profilePicUrl ||
+                        record?.sender?.avatarUrl ||
+                        record?.participantProfilePicUrl ||
+                        ''
+                    upsertWaContactDirectoryEntry(channel, {
+                        aliases: collectIdentityAliases(senderJid, senderPhone),
+                        remoteJid: senderJid,
+                        phone: senderPhone,
+                        name: senderName,
+                        profilePicUrl: senderAvatarUrl,
+                        source: 'bootstrap:messages'
+                    })
+                }
+                if (records.length < WA_BOOTSTRAP_MESSAGE_PAGE_SIZE) break
+            }
+        }
+
+        state.running = false
+        state.completedAt = new Date().toISOString()
+        state.progress.phase = 'completed'
+        state.stats = {
+            contactsCount,
+            chatsCount,
+            conversationsProcessed,
+            messagesCount,
+            contactAliasCount: Object.keys(ensureWaContactDirectoryChannel(channel).entries || {}).length
+        }
+        schedulePersistWaBootstrapSyncState()
+        schedulePersistWaContactDirectory()
+        await persistWaBootstrapSyncStateNow()
+        await persistWaContactDirectoryNow()
+    } catch (error) {
+        state.running = false
+        state.failedAt = new Date().toISOString()
+        state.lastError = error?.message || String(error)
+        state.progress = {
+            ...(state.progress || {}),
+            phase: 'failed'
+        }
+        schedulePersistWaBootstrapSyncState()
+        await persistWaBootstrapSyncStateNow()
+    }
+
+    return summarizeWaBootstrapSync(channel)
+}
+
+function triggerEvolutionBootstrapSync(channel, options = {}) {
+    const numericChannel = Number(channel)
+    if (!Number.isInteger(numericChannel) || numericChannel < 1 || numericChannel > 9) {
+        return null
+    }
+    if (!USE_EVOLUTION_ORCHESTRATOR || !WA_BOOTSTRAP_SYNC_ENABLED) return null
+    const currentState = ensureWaBootstrapChannelState(numericChannel)
+    if (currentState.running && !waBootstrapSyncTasks.has(numericChannel)) {
+        markWaBootstrapStateInterrupted(
+            numericChannel,
+            'Bootstrap sync interrupted before completion. Retrying in current server session.'
+        )
+    }
+    if (waBootstrapSyncTasks.has(numericChannel)) {
+        return waBootstrapSyncTasks.get(numericChannel)
+    }
+    const task = Promise.resolve()
+        .then(() => runEvolutionBootstrapSync(numericChannel, options))
+        .catch((error) => {
+            const state = ensureWaBootstrapChannelState(numericChannel)
+            state.running = false
+            state.failedAt = new Date().toISOString()
+            state.lastError = error?.message || String(error)
+            state.progress = {
+                ...(state.progress || {}),
+                phase: 'failed'
+            }
+            schedulePersistWaBootstrapSyncState()
+            return summarizeWaBootstrapSync(numericChannel)
+        })
+        .finally(() => {
+            waBootstrapSyncTasks.delete(numericChannel)
+        })
+    waBootstrapSyncTasks.set(numericChannel, task)
+    return task
+}
+
+function maybeAutoBootstrapSync(status) {
+    if (!USE_EVOLUTION_ORCHESTRATOR || !WA_BOOTSTRAP_SYNC_ENABLED || !WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED) return
+    const channels = Array.isArray(status?.channels) ? status.channels : []
+    const now = Date.now()
+    for (const channelStatus of channels) {
+        const channel = Number(channelStatus?.channel || 0)
+        if (!Number.isInteger(channel) || channel < 1 || channel > 9) continue
+        if (String(channelStatus?.status || '').toLowerCase() !== 'connected') continue
+        const state = ensureWaBootstrapChannelState(channel)
+        if (state.running && !waBootstrapSyncTasks.has(channel)) {
+            markWaBootstrapStateInterrupted(
+                channel,
+                'Bootstrap sync interrupted before completion. Retrying automatically.'
+            )
+        }
+        if (state.running) continue
+        const sourceIdentity = resolveChannelSourceIdentity(channelStatus, `channel-${channel}`)
+        const isSourceChanged = Boolean(sourceIdentity && state.sourceIdentity && sourceIdentity !== state.sourceIdentity)
+        const hasNeverCompleted = !state.completedAt
+        const lastAutoAt = Date.parse(String(state.lastAutoTriggerAt || '')) || 0
+        if (!hasNeverCompleted && !isSourceChanged) continue
+        if (lastAutoAt && now - lastAutoAt < WA_BOOTSTRAP_AUTO_COOLDOWN_MS) continue
+        state.lastAutoTriggerAt = new Date(now).toISOString()
+        schedulePersistWaBootstrapSyncState()
+        void triggerEvolutionBootstrapSync(channel, {
+            force: isSourceChanged || hasNeverCompleted,
+            reason: 'auto'
+        })
+    }
+}
+
+await loadWaBootstrapSyncState()
+await loadWaContactDirectory()
+for (const [channel, state] of Object.entries(waBootstrapSyncState.channels || {})) {
+    if (state?.running) {
+        markWaBootstrapStateInterrupted(
+            Number(channel),
+            'Bootstrap sync interrupted by server restart. Retrying when channel is connected.'
+        )
+    }
+}
+
 function normalizeEvolutionTimestamp(value) {
     if (!value) return new Date().toISOString()
     const num = Number(value)
@@ -4627,10 +5531,15 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
     try {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const status = await evolutionOrchestrator.getStatus()
+            maybeAutoBootstrapSync(status)
+            const bootstrapSync = Object.fromEntries(
+                (status.channels || []).map((item) => [String(item.channel), summarizeWaBootstrapSync(item.channel)])
+            )
             return res.json({
                 success: true,
                 provider: 'evolution',
                 ...status,
+                bootstrapSync,
                 sseClients: waEventClients.size,
                 webhookMetrics: waWebhookMetrics,
                 availableChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
@@ -4642,7 +5551,9 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
                     getChannelStatus: '/api/wa-orchestrator/channels/{channel}',
                     getChannelQR: '/api/wa-orchestrator/channels/{channel}/qr',
                     stopChannel: '/api/wa-orchestrator/channels/{channel}/stop',
-                    restartChannel: '/api/wa-orchestrator/channels/{channel}/restart'
+                    restartChannel: '/api/wa-orchestrator/channels/{channel}/restart',
+                    bootstrapSync: '/api/wa-orchestrator/channels/{channel}/bootstrap-sync',
+                    restartLocalRecovery: '/api/wa-orchestrator/local/recovery/restart'
                 }
             })
         }
@@ -4672,6 +5583,173 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
         })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
+    try {
+        if (!WA_LOCAL_RECOVERY_ENABLED) {
+            return res.status(403).json({
+                success: false,
+                error: 'LOCAL_RECOVERY_DISABLED'
+            })
+        }
+
+        const requestIp = String(req.ip || '').trim()
+        if (!isLoopbackIp(requestIp)) {
+            return res.status(403).json({
+                success: false,
+                error: 'LOCAL_RECOVERY_FORBIDDEN_REMOTE_IP',
+                ip: requestIp || null
+            })
+        }
+
+        const mode = String(req.body?.mode || req.body?.scope || 'evolution').trim().toLowerCase()
+        if (!['evolution', 'stack'].includes(mode)) {
+            return res.status(400).json({
+                success: false,
+                error: 'INVALID_RECOVERY_MODE',
+                allowed: ['evolution', 'stack']
+            })
+        }
+
+        const uid = Number(process.getuid?.() || os.userInfo().uid || 0)
+        const launchdTarget = `gui/${uid}/${LOCAL_EVOLUTION_LAUNCHD_LABEL}`
+
+        const steps = []
+        let coreStep = null
+        if (mode === 'stack') {
+            const exists = fsSync.existsSync(WA_LOCAL_RECOVERY_SCRIPT)
+            if (!exists) {
+                return res.status(500).json({
+                    success: false,
+                    error: 'RECOVERY_SCRIPT_NOT_FOUND',
+                    script: WA_LOCAL_RECOVERY_SCRIPT
+                })
+            }
+            coreStep = await runCommandWithTimeout('bash', [WA_LOCAL_RECOVERY_SCRIPT], {
+                cwd: '/Users/jubenitogarcia/Automation/n8n',
+                timeoutMs: WA_LOCAL_RECOVERY_TIMEOUT_MS
+            })
+            steps.push(coreStep)
+        } else {
+            steps.push(await runCommandWithTimeout('launchctl', ['stop', launchdTarget], {
+                timeoutMs: 8_000
+            }))
+            coreStep = await runCommandWithTimeout('launchctl', ['kickstart', '-k', launchdTarget], {
+                timeoutMs: 20_000
+            })
+            steps.push(coreStep)
+        }
+
+        let status = null
+        for (let attempt = 0; attempt < 12; attempt++) {
+            try {
+                status = await evolutionOrchestrator.runWithoutAutoRecovery(() => evolutionOrchestrator.getStatus())
+            } catch {
+                status = null
+            }
+            if (status?.providerOnline) break
+            if (attempt < 11) {
+                await new Promise((resolve) => setTimeout(resolve, 1000))
+            }
+        }
+
+        const hasFailure = Boolean(
+            coreStep?.timedOut ||
+            (typeof coreStep?.code === 'number' && coreStep.code !== 0)
+        )
+        const responseStatus = hasFailure ? 500 : 200
+        return res.status(responseStatus).json({
+            success: !hasFailure,
+            mode,
+            steps,
+            status: status ? {
+                providerOnline: Boolean(status.providerOnline),
+                connectedInstances: Number(status.connectedInstances || 0),
+                startingInstances: Number(status.startingInstances || 0),
+                errorInstances: Number(status.errorInstances || 0),
+                totalChannels: Number(status.totalChannels || 0)
+            } : null
+        })
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            error: error?.message || 'LOCAL_RECOVERY_RESTART_FAILED'
+        })
+    }
+})
+
+app.get('/api/wa-orchestrator/channels/:channel/bootstrap-sync', async (req, res) => {
+    const channel = Number.parseInt(String(req.params.channel || ''), 10)
+    if (!Number.isInteger(channel) || channel < 1 || channel > 9) {
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid channel. Must be between 1 and 9.'
+        })
+    }
+    return res.json({
+        success: true,
+        channel,
+        state: summarizeWaBootstrapSync(channel)
+    })
+})
+
+app.post('/api/wa-orchestrator/channels/:channel/bootstrap-sync', async (req, res) => {
+    try {
+        const channel = Number.parseInt(String(req.params.channel || ''), 10)
+        if (!Number.isInteger(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid channel. Must be between 1 and 9.'
+            })
+        }
+        if (!USE_EVOLUTION_ORCHESTRATOR) {
+            return res.status(400).json({
+                success: false,
+                error: 'Bootstrap sync is only available for Evolution provider.'
+            })
+        }
+        if (!WA_BOOTSTRAP_SYNC_ENABLED) {
+            return res.status(403).json({
+                success: false,
+                error: 'WA_BOOTSTRAP_SYNC_DISABLED'
+            })
+        }
+
+        const force = Boolean(req.body?.force)
+        const wait = Boolean(req.body?.wait)
+        const reason = String(req.body?.reason || 'manual').trim().slice(0, 40) || 'manual'
+        const task = triggerEvolutionBootstrapSync(channel, { force, reason })
+
+        if (!task) {
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to trigger bootstrap sync.'
+            })
+        }
+
+        if (wait) {
+            const state = await task
+            return res.json({
+                success: true,
+                channel,
+                queued: false,
+                state
+            })
+        }
+
+        return res.status(202).json({
+            success: true,
+            channel,
+            queued: true,
+            state: summarizeWaBootstrapSync(channel)
+        })
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            error: error?.message || 'WA_BOOTSTRAP_SYNC_FAILED'
+        })
     }
 })
 
@@ -4722,6 +5800,7 @@ app.post('/api/wa-orchestrator/webhook', (req, res) => {
             event: payload.event,
             instance: payload.instance
         })
+        maybeTriggerBootstrapFromWebhook(payload)
         broadcastWaEvent(payload)
         recordWebhookSuccess()
         res.json({ success: true })
@@ -4745,43 +5824,103 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
             const data = await evolutionOrchestrator.fetchChats(channel, { limit, offset })
             const chats = Array.isArray(data) ? data : (data?.chats || data?.data || [])
             const mapped = chats.map((chat) => {
-                const remoteJid = resolveChatConversationJid(chat)
-                const lastMessageText = extractEvolutionMessageText(chat.lastMessage?.message || chat.lastMessage)
+                upsertWaContactDirectoryEntry(channel, {
+                    aliases: collectIdentityAliases(chat?.remoteJid, chat?.remoteJidAlt, chat?.id, chat?.chatId, chat?.jid),
+                    remoteJid: resolveChatConversationJid(chat),
+                    phone: extractPhoneFromJid(chat?.remoteJid || chat?.id || ''),
+                    name: chat?.pushName || chat?.name || chat?.subject || '',
+                    profilePicUrl: chat?.profilePicUrl || chat?.profilePictureUrl || chat?.avatarUrl || chat?.imgUrl || '',
+                    source: 'fetch:chats'
+                })
+                const rawRemoteJid = resolveChatConversationJid(chat)
+                const altRemoteJid = resolveChatConversationAltJid(chat)
+                const rawIdentity = buildConversationIdentity(rawRemoteJid)
+                const altIdentity = buildConversationIdentity(altRemoteJid)
+                const preferredRemoteJid =
+                    rawIdentity.kind === 'group'
+                        ? rawRemoteJid
+                        : (altIdentity.kind === 'direct' ? altRemoteJid : rawRemoteJid)
+                const identity = buildConversationIdentity(preferredRemoteJid)
+                const rawLastMessage = chat.lastMessage?.message || chat.lastMessage
+                const lastMessageText = extractEvolutionMessageText(rawLastMessage)
+                const lastMessageMeta = extractEvolutionMessageMeta(rawLastMessage)
+                const lastMessageId = String(chat?.lastMessage?.id || chat?.lastMessage?.key?.id || '').trim()
                 const updatedAt = normalizeEvolutionTimestamp(chat.updatedAt || chat.lastMessage?.messageTimestamp)
                 const profilePic = chat.profilePicUrl || chat.profilePictureUrl || chat.avatarUrl || chat.avatar || chat.imgUrl || chat.pictureUrl || chat.photoUrl || null
-                return {
-                    conversationId: remoteJid,
-                    name: chat.pushName || chat.name || chat.subject || remoteJid,
-                    phone: extractPhoneFromJid(remoteJid),
+                const mappedItem = {
+                    conversationId: identity.rawJid || identity.normalizedJid,
+                    rawJid: rawIdentity.rawJid || identity.rawJid || identity.normalizedJid,
+                    normalizedJid: identity.normalizedJid || rawIdentity.normalizedJid || identity.rawJid,
+                    name: chat.pushName || chat.name || chat.subject || preferredRemoteJid || rawRemoteJid,
+                    phone:
+                        identity.kind === 'group'
+                            ? (identity.phone || rawIdentity.phone || extractPhoneFromJid(rawRemoteJid))
+                            : (
+                                (altIdentity.kind === 'direct' ? altIdentity.phone : '') ||
+                                identity.phone ||
+                                rawIdentity.phone ||
+                                extractPhoneFromJid(preferredRemoteJid || rawRemoteJid)
+                            ),
                     platform: 'whatsapp',
                     profilePic,
                     lastMessage: lastMessageText || 'Sem mensagens',
+                    lastMessageType: String(lastMessageMeta?.mediaType || chat?.lastMessage?.messageType || chat?.lastMessage?.type || '').trim() || undefined,
+                    lastMessageMediaType: lastMessageMeta?.mediaType || undefined,
+                    lastMessageCaption: lastMessageMeta?.caption || undefined,
+                    lastMessageMimeType: lastMessageMeta?.mimeType || undefined,
+                    lastMessageFileName: lastMessageMeta?.fileName || undefined,
+                    lastMessageMediaProxyUrl:
+                        lastMessageMeta?.mediaType && lastMessageId
+                            ? buildWaMediaProxyUrl(req, { channel, remoteJid: identity.rawJid || identity.normalizedJid, messageId: lastMessageId })
+                            : undefined,
                     updatedAt,
-                    unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0
+                    unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0,
+                    aliases: Array.from(new Set([...(rawIdentity.aliases || []), ...(identity.aliases || []), ...(altIdentity.aliases || [])]))
                 }
+                const directoryEntry = lookupWaContactDirectoryEntry(channel, [
+                    mappedItem.conversationId,
+                    mappedItem.rawJid,
+                    mappedItem.normalizedJid,
+                    mappedItem.phone,
+                    ...(mappedItem.aliases || [])
+                ])
+                if (directoryEntry) {
+                    mappedItem.name = pickBetterDisplayName(mappedItem.name, directoryEntry.name)
+                    if (!mappedItem.profilePic && directoryEntry.profilePicUrl) {
+                        mappedItem.profilePic = directoryEntry.profilePicUrl
+                    }
+                }
+                return mappedItem
             }).filter((item) => item.conversationId)
 
             const dedupedMap = new Map()
             for (const item of mapped) {
-                const key = normalizeWhatsAppJid(item.conversationId || item.phone)
+                const key = resolveConversationMergeKey(item.conversationId, item.phone) || `fallback:${item.conversationId || item.phone || Math.random()}`
                 const previous = dedupedMap.get(key)
                 if (!previous) {
                     dedupedMap.set(key, {
-                        ...item,
-                        conversationId: key,
-                        phone: extractPhoneFromJid(key)
+                        ...item
                     })
                     continue
                 }
                 const prevUpdatedAt = Date.parse(previous.updatedAt || '') || 0
                 const currentUpdatedAt = Date.parse(item.updatedAt || '') || 0
                 const newest = currentUpdatedAt >= prevUpdatedAt ? item : previous
+                const mergedAliases = Array.from(new Set([...(previous.aliases || []), ...(item.aliases || [])]))
                 dedupedMap.set(key, {
                     ...previous,
                     ...newest,
-                    conversationId: key,
-                    phone: extractPhoneFromJid(key),
-                    unreadCount: Number(previous.unreadCount || 0) + Number(item.unreadCount || 0)
+                    conversationId: newest.conversationId || previous.conversationId,
+                    rawJid: newest.rawJid || previous.rawJid,
+                    normalizedJid: newest.normalizedJid || previous.normalizedJid,
+                    phone: newest.phone || previous.phone,
+                    aliases: mergedAliases,
+                    unreadCount: Number(previous.unreadCount || 0) + Number(item.unreadCount || 0),
+                    name: (
+                        (newest.name && !/^\d{10,}$/.test(String(newest.name || ''))) ? newest.name : null
+                    ) || (
+                        (previous.name && !/^\d{10,}$/.test(String(previous.name || ''))) ? previous.name : null
+                    ) || newest.name || previous.name
                 })
             }
 
@@ -4824,13 +5963,80 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/message
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const data = await evolutionOrchestrator.fetchMessages(channel, remoteJid, { limit, page })
             const records = data?.messages?.records || []
-                const items = records.map((record) => {
+                const remoteReactionMap = new Map()
+                const registerRemoteReaction = (reaction) => {
+                    const targetMessageId = String(reaction?.targetMessageId || '').trim()
+                    const emoji = String(reaction?.emoji || '').trim()
+                    const actorKey = String(reaction?.actorKey || '').trim()
+                    if (!targetMessageId || !emoji || !actorKey) return
+                    if (!remoteReactionMap.has(targetMessageId)) remoteReactionMap.set(targetMessageId, {})
+                    const bucket = remoteReactionMap.get(targetMessageId)
+                    if (!bucket[emoji]) bucket[emoji] = { actors: new Set(), reactedByMe: false }
+                    bucket[emoji].actors.add(actorKey)
+                    bucket[emoji].reactedByMe = bucket[emoji].reactedByMe || Boolean(reaction?.reactedByMe)
+                }
+                const items = records.flatMap((record) => {
+                    const reactionMeta = extractEvolutionReactionMeta(record)
+                    if (reactionMeta) {
+                        registerRemoteReaction(reactionMeta)
+                        return []
+                    }
                     const fromMe = !!record?.key?.fromMe
                     const jid = normalizeWhatsAppJid(record?.key?.remoteJid || remoteJid)
+                    const isGroupConversation = String(normalizedRemoteJid || jid || '').includes('@g.us')
+                    const senderJidPrimaryRaw = record?.key?.participant || record?.participant || record?.sender?.jid || ''
+                    const senderJidAltRaw = record?.key?.participantAlt || record?.participantAlt || record?.sender?.participantAlt || ''
+                    const senderJidRaw = senderJidAltRaw || senderJidPrimaryRaw
+                    const senderJid = normalizeWhatsAppJid(senderJidRaw)
+                    const senderLid = String(senderJidPrimaryRaw || '').includes('@lid') ? String(senderJidPrimaryRaw) : undefined
+                    const senderPhone = extractPhoneFromJid(senderJidAltRaw || senderJid || senderJidPrimaryRaw)
+                    const senderNameRaw =
+                        record?.pushName ||
+                        record?.senderName ||
+                        record?.participantPushName ||
+                        record?.sender?.pushName ||
+                        record?.sender?.name ||
+                        ''
+                    const senderAvatarRaw =
+                        record?.profilePicUrl ||
+                        record?.sender?.profilePicUrl ||
+                        record?.sender?.avatarUrl ||
+                        record?.participantProfilePicUrl ||
+                        ''
+                    upsertWaContactDirectoryEntry(channel, {
+                        aliases: collectIdentityAliases(senderJid, senderLid, senderPhone, senderJidPrimaryRaw, senderJidAltRaw),
+                        remoteJid: senderJid,
+                        phone: senderPhone,
+                        name: senderNameRaw,
+                        profilePicUrl: senderAvatarRaw,
+                        source: 'fetch:messages'
+                    })
+                    const directoryEntry = lookupWaContactDirectoryEntry(channel, [
+                        senderJid,
+                        senderLid,
+                        senderPhone,
+                        senderJidPrimaryRaw,
+                        senderJidAltRaw
+                    ])
+                    const senderName = fromMe
+                        ? 'Você'
+                        : (
+                            pickBetterDisplayName(String(senderNameRaw || '').trim(), directoryEntry?.name) ||
+                            senderPhone ||
+                            senderJid ||
+                            'Contato'
+                        )
+                    const senderAvatarUrl =
+                        senderAvatarRaw ||
+                        directoryEntry?.profilePicUrl ||
+                        null
                     const meta = extractEvolutionMessageMeta(record?.message)
                     const replyTo = extractEvolutionReplyMeta(record)
-                    return {
+                    const mentions = extractEvolutionMentionJids(record?.message)
+                    const sourceMessageKeyId = String(record?.key?.id || '').trim()
+                    return [{
                         id: record?.id || record?.key?.id || `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                        sourceMessageKeyId,
                         conversationId: normalizedRemoteJid || jid,
                         direction: fromMe ? 'outbound' : 'inbound',
                         type: meta.mediaType || record?.messageType || record?.type || 'text',
@@ -4843,8 +6049,15 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/message
                         durationSec: meta.durationSec,
                         sizeBytes: meta.sizeBytes,
                         replyTo,
+                        senderJid: fromMe ? (record?.key?.remoteJid || normalizedRemoteJid || jid) : (senderJid || record?.key?.remoteJid || normalizedRemoteJid || jid),
+                        senderLid,
+                        senderPhone,
+                        senderName,
+                        senderAvatarUrl,
+                        mentions,
+                        isGroupMessage: isGroupConversation,
                         createdAt: normalizeEvolutionTimestamp(record?.messageTimestamp || record?.timestamp)
-                    }
+                    }]
                 })
             const sortedItems = items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
             sortedItems.forEach((item) => {
@@ -4860,13 +6073,46 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/message
                 ({ channel: ch, remoteJid: jid, messageId }) =>
                     buildWaMediaProxyUrl(req, { channel: ch, remoteJid: jid, messageId })
             )
+            const mergedRemoteReactions = decorated.map((item) => {
+                const messageKeys = Array.from(new Set([
+                    String(item?.id || '').trim(),
+                    String(item?.sourceMessageKeyId || '').trim()
+                ].filter(Boolean)))
+                const bucket = messageKeys.map((key) => remoteReactionMap.get(key)).find(Boolean)
+                if (!bucket) return item
+                const existing = new Map(
+                    (Array.isArray(item?.reactions) ? item.reactions : []).map((reaction) => [
+                        String(reaction?.emoji || '').trim(),
+                        {
+                            emoji: String(reaction?.emoji || '').trim(),
+                            count: Number(reaction?.count || 0),
+                            reactedByMe: Boolean(reaction?.reactedByMe)
+                        }
+                    ])
+                )
+                Object.entries(bucket).forEach(([emoji, reaction]) => {
+                    const current = existing.get(emoji) || { emoji, count: 0, reactedByMe: false }
+                    const overlapsCurrentActor = current.reactedByMe && Boolean(reaction.reactedByMe)
+                    current.count = Math.max(
+                        current.count,
+                        reaction.actors.size,
+                        current.count + reaction.actors.size - (overlapsCurrentActor ? 1 : 0)
+                    )
+                    current.reactedByMe = current.reactedByMe || Boolean(reaction.reactedByMe)
+                    existing.set(emoji, current)
+                })
+                return {
+                    ...item,
+                    reactions: Array.from(existing.values()).filter((reaction) => reaction.count > 0)
+                }
+            })
             const meta = {
                 total: data?.messages?.total,
                 pages: data?.messages?.pages,
                 page: data?.messages?.currentPage || page,
                 limit
             }
-            return res.json({ success: true, items: decorated, meta })
+            return res.json({ success: true, items: mergedRemoteReactions, meta })
         }
 
         ensureConv(remoteJid)
@@ -4882,6 +6128,82 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/message
         return res.json({ success: true, items: decorated, meta: { page: 1, limit, total: baseItems.length } })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/read', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel, 10)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        if (!USE_EVOLUTION_ORCHESTRATOR) {
+            return res.status(400).json({ success: false, error: 'Read sync is only available for Evolution provider.' })
+        }
+        const normalizedRemoteJid = normalizeWhatsAppJid(req.params.remoteJid)
+        if (!normalizedRemoteJid) {
+            return res.status(400).json({ success: false, error: 'remoteJid is required' })
+        }
+
+        const messageIds = Array.isArray(req.body?.messageIds) ? req.body.messageIds : []
+        const providedReadMessages = Array.isArray(req.body?.readMessages) ? req.body.readMessages : []
+        const onlyInbound = req.body?.onlyInbound !== false
+
+        let readMessages = providedReadMessages
+            .map((entry) => ({
+                id: String(entry?.id || '').trim(),
+                fromMe: Boolean(entry?.fromMe),
+                remoteJid: normalizeWhatsAppJid(entry?.remoteJid || normalizedRemoteJid)
+            }))
+            .filter((entry) => entry.id && entry.remoteJid)
+
+        if (!readMessages.length && messageIds.length) {
+            readMessages = messageIds
+                .map((id) => String(id || '').trim())
+                .filter(Boolean)
+                .map((id) => ({ id, fromMe: false, remoteJid: normalizedRemoteJid }))
+        }
+
+        if (!readMessages.length) {
+            const data = await evolutionOrchestrator.fetchMessages(channel, normalizedRemoteJid, { limit: 80, page: 1 })
+            const records = Array.isArray(data?.messages?.records) ? data.messages.records : []
+            readMessages = records
+                .map((record) => ({
+                    id: String(record?.id || record?.key?.id || '').trim(),
+                    fromMe: Boolean(record?.key?.fromMe),
+                    remoteJid: normalizeWhatsAppJid(record?.key?.remoteJid || normalizedRemoteJid)
+                }))
+                .filter((entry) => entry.id && entry.remoteJid)
+        }
+
+        if (onlyInbound) {
+            readMessages = readMessages.filter((entry) => !entry.fromMe)
+        }
+
+        if (!readMessages.length) {
+            return res.json({
+                success: true,
+                skipped: true,
+                reason: 'NO_MESSAGES_TO_MARK',
+                conversationId: normalizedRemoteJid
+            })
+        }
+
+        const result = await evolutionOrchestrator.markMessagesAsRead(channel, normalizedRemoteJid, readMessages)
+        broadcastWaEvent({
+            type: 'conversation_marked_read',
+            channel,
+            remoteJid: normalizedRemoteJid,
+            readCount: readMessages.length
+        })
+        return res.json({
+            success: true,
+            conversationId: normalizedRemoteJid,
+            readCount: readMessages.length,
+            result
+        })
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message })
     }
 })
 
@@ -4985,6 +6307,59 @@ app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/messag
     }
 })
 
+app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/messages/:messageId/flags/toggle', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel, 10)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        const remoteJid = normalizeWhatsAppJid(req.params.remoteJid)
+        const messageId = String(req.params.messageId || '').trim()
+        const field = String(req.body?.field || '').trim().toLowerCase()
+        if (!remoteJid || !messageId || !field) {
+            return res.status(400).json({ success: false, error: 'channel, remoteJid, messageId and field are required' })
+        }
+        const flags = waMessageMetaStore.toggleFlag(channel, remoteJid, messageId, field)
+        const payload = {
+            type: 'message_metadata_updated',
+            channel,
+            remoteJid,
+            messageId,
+            ...flags
+        }
+        broadcastWaEvent(payload)
+        return res.json({ success: true, flags })
+    } catch (error) {
+        const message = error?.message || 'MESSAGE_FLAG_TOGGLE_FAILED'
+        const status = message === 'FLAG_INVALID' ? 400 : 500
+        return res.status(status).json({ success: false, error: message })
+    }
+})
+
+app.delete('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/messages/:messageId', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel, 10)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        const remoteJid = normalizeWhatsAppJid(req.params.remoteJid)
+        const messageId = String(req.params.messageId || '').trim()
+        if (!remoteJid || !messageId) {
+            return res.status(400).json({ success: false, error: 'channel, remoteJid and messageId are required' })
+        }
+        waMessageMetaStore.markDeleted(channel, remoteJid, messageId, true)
+        broadcastWaEvent({
+            type: 'message_deleted',
+            channel,
+            remoteJid,
+            messageId
+        })
+        return res.json({ success: true, deleted: true })
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error?.message || 'MESSAGE_DELETE_FAILED' })
+    }
+})
+
 app.get('/api/wa-orchestrator/media', async (req, res) => {
     try {
         const channel = parseInt(String(req.query.channel || ''), 10)
@@ -4995,30 +6370,105 @@ app.get('/api/wa-orchestrator/media', async (req, res) => {
         }
 
         let media = waMessageMetaStore.findMedia(channel, remoteJid, messageId)
-        if (!media && USE_EVOLUTION_ORCHESTRATOR) {
-            try {
-                const data = await evolutionOrchestrator.fetchMessages(channel, remoteJid, { limit: 200, page: 1 })
+        let matchedRecord = null
+
+        const findMatchedRecord = async () => {
+            if (!USE_EVOLUTION_ORCHESTRATOR) return null
+            if (matchedRecord) return matchedRecord
+            const pageLimit = 200
+            let currentPage = 1
+            const maxPages = 5
+            while (!matchedRecord && currentPage <= maxPages) {
+                const data = await evolutionOrchestrator.fetchMessages(channel, remoteJid, { limit: pageLimit, page: currentPage })
                 const records = Array.isArray(data?.messages?.records) ? data.messages.records : []
-                const record = records.find((entry) => {
+                matchedRecord = records.find((entry) => {
                     const candidate = entry?.id || entry?.key?.id
                     return String(candidate || '') === messageId
+                }) || null
+                const totalPages = Number(data?.messages?.pages || 0)
+                if (matchedRecord) break
+                if (totalPages > 0 && currentPage >= totalPages) break
+                currentPage += 1
+            }
+            if (matchedRecord) {
+                const extracted = extractEvolutionMessageMeta(matchedRecord?.message)
+                if (extracted?.mediaUrl) {
+                    media = waMessageMetaStore.setMedia(channel, remoteJid, messageId, {
+                        type: extracted.mediaType || 'unknown',
+                        url: extracted.mediaUrl,
+                        mimeType: extracted.mimeType,
+                        fileName: extracted.fileName,
+                        durationSec: extracted.durationSec,
+                        sizeBytes: extracted.sizeBytes
+                    }) || media
+                }
+            }
+            return matchedRecord
+        }
+
+        const tryEvolutionFallback = async () => {
+            if (!USE_EVOLUTION_ORCHESTRATOR) return null
+            try {
+                const record = await findMatchedRecord()
+                if (!record?.key?.id) return null
+                const payload = await evolutionOrchestrator.getBase64FromMediaMessage(channel, {
+                    key: record.key,
+                    message: record.message
                 })
-                if (record) {
-                    const extracted = extractEvolutionMessageMeta(record?.message)
-                    if (extracted?.mediaUrl) {
-                        media = waMessageMetaStore.setMedia(channel, remoteJid, messageId, {
-                            type: extracted.mediaType || 'unknown',
-                            url: extracted.mediaUrl,
-                            mimeType: extracted.mimeType,
-                            fileName: extracted.fileName,
-                            durationSec: extracted.durationSec,
-                            sizeBytes: extracted.sizeBytes
-                        })
+                const base64 = String(payload?.base64 || '').trim()
+                if (!base64) return null
+                const mimeType = String(payload?.mimetype || media?.mimeType || 'application/octet-stream')
+                const fileName = String(payload?.fileName || media?.fileName || `media-${messageId}`).replace(/[^\w.\-]/g, '_')
+                const buffer = Buffer.from(base64, 'base64')
+                if (!buffer.length) return null
+                return { buffer, mimeType, fileName }
+            } catch (error) {
+                if (shouldLog('warn')) {
+                    console.warn('[WA_MEDIA] Evolution base64 fallback failed', {
+                        channel,
+                        remoteJid,
+                        messageId,
+                        error: error?.message || String(error)
+                    })
+                }
+                return null
+            }
+        }
+
+        let buffer = null
+        let mimeType = ''
+        let fileName = ''
+
+        if (media?.url) {
+            try {
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), 12000)
+                let upstream
+                try {
+                    upstream = await fetch(media.url, { signal: controller.signal })
+                } finally {
+                    clearTimeout(timeoutId)
+                }
+                if (upstream?.ok) {
+                    mimeType = media.mimeType || upstream.headers.get('content-type') || 'application/octet-stream'
+                    fileName = String(media.fileName || `media-${messageId}`).replace(/[^\w.\-]/g, '_')
+                    buffer = Buffer.from(await upstream.arrayBuffer())
+                    if (!mediaBufferLooksDecoded(buffer, mimeType)) {
+                        if (shouldLog('warn')) {
+                            console.warn('[WA_MEDIA] Upstream returned undecodable payload, trying evolution fallback', {
+                                channel,
+                                remoteJid,
+                                messageId,
+                                mimeType,
+                                sourceUrl: media.url
+                            })
+                        }
+                        buffer = null
                     }
                 }
             } catch (error) {
                 if (shouldLog('warn')) {
-                    console.warn('[WA_MEDIA] Failed to refresh message metadata', {
+                    console.warn('[WA_MEDIA] Upstream fetch failed, trying evolution fallback', {
                         channel,
                         remoteJid,
                         messageId,
@@ -5028,25 +6478,19 @@ app.get('/api/wa-orchestrator/media', async (req, res) => {
             }
         }
 
-        if (!media?.url) {
+        if (!buffer || !buffer.length) {
+            const fallback = await tryEvolutionFallback()
+            if (fallback) {
+                buffer = fallback.buffer
+                mimeType = fallback.mimeType
+                fileName = fallback.fileName
+            }
+        }
+
+        if (!buffer || !buffer.length) {
             return res.status(404).json({ success: false, error: 'MEDIA_NOT_FOUND' })
         }
 
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 12000)
-        let upstream
-        try {
-            upstream = await fetch(media.url, { signal: controller.signal })
-        } finally {
-            clearTimeout(timeoutId)
-        }
-        if (!upstream?.ok) {
-            return res.status(502).json({ success: false, error: 'MEDIA_UPSTREAM_FAILED', status: upstream?.status || 0 })
-        }
-
-        const mimeType = media.mimeType || upstream.headers.get('content-type') || 'application/octet-stream'
-        const fileName = String(media.fileName || `media-${messageId}`).replace(/[^\w.\-]/g, '_')
-        const buffer = Buffer.from(await upstream.arrayBuffer())
         res.setHeader('Content-Type', mimeType)
         res.setHeader('Cache-Control', 'private, max-age=60')
         res.setHeader('Content-Disposition', `inline; filename="${fileName}"`)
@@ -5389,9 +6833,15 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
 app.get('/api/wa-orchestrator/channels', async (req, res) => {
     try {
         const status = USE_EVOLUTION_ORCHESTRATOR ? await evolutionOrchestrator.getStatus() : whatsappOrchestrator.getStatus()
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            maybeAutoBootstrapSync(status)
+        }
         res.json({
             success: true,
             channels: status.channels,
+            bootstrapSync: USE_EVOLUTION_ORCHESTRATOR
+                ? Object.fromEntries((status.channels || []).map((item) => [String(item.channel), summarizeWaBootstrapSync(item.channel)]))
+                : null,
             summary: {
                 totalChannels: status.totalChannels,
                 availableChannels: status.availableChannels,
@@ -5443,6 +6893,9 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
                 })
             } catch (err) {
                 webhookWarning = err?.message || 'Falha ao configurar webhook do Evolution.'
+            }
+            if (String(result?.instance?.status || '').toLowerCase() === 'connected') {
+                void triggerEvolutionBootstrapSync(channel, { force: false, reason: 'channel-start' })
             }
             return res.json({
                 success: true,
@@ -5506,6 +6959,7 @@ app.get('/api/wa-orchestrator/channels/:channel', async (req, res) => {
                 channel: result.channel || channel,
                 port: result.port || 3001,
                 instance: result.instance || null,
+                bootstrapSync: summarizeWaBootstrapSync(channel),
                 liveData: null,
                 warning: null
             })

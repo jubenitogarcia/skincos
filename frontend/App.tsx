@@ -13,8 +13,10 @@ import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
 import { BrDatePickerInput } from '@/br-date-picker'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
 import { useKV } from '@/spark-mock'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
+import { BriefcaseBusiness, CalendarX2, Download } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -31,6 +33,33 @@ function fmtMoneyBRLCompact(value: number) {
         const rounded = Math.round(num / 1000)
         return `R$ ${rounded}k`
     }
+}
+
+function formatMonthLabelHeader(value: string) {
+    if (!value) return 'Mês'
+    const month = Number(value)
+    if (!month) return value
+    const date = new Date(2000, month - 1, 1)
+    let label = date.toLocaleDateString('pt-BR', { month: 'long' })
+    return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+function hashEscalaValue(value: string) {
+    let hash = 0
+    for (let index = 0; index < value.length; index += 1) {
+        hash = value.charCodeAt(index) + ((hash << 5) - hash)
+    }
+    return Math.abs(hash)
+}
+
+function getEscalaProfessionalTriggerStyle(name: string) {
+    const hue = hashEscalaValue(name) % 360
+    return {
+        background: `linear-gradient(135deg, hsla(${hue}, 78%, 56%, 0.2), hsla(${(hue + 24) % 360}, 78%, 58%, 0.1))`,
+        borderColor: `hsla(${hue}, 84%, 72%, 0.42)`,
+        color: `hsl(${hue} 88% 92%)`,
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+    } as React.CSSProperties
 }
 
 type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
@@ -61,6 +90,24 @@ type AtendimentoHeaderState = {
     }
     ticketFilter: 'total' | 'open' | 'overdue' | 'resolved'
     paused: boolean
+}
+
+type EscalaHeaderState = {
+    units: string[]
+    monthOptions: string[]
+    yearOptions: string[]
+    selectedUnit: string
+    selectedMonth: string
+    selectedMonthNumber: string
+    selectedYear: string
+    selectedProfessional: string
+    professionalOptions: string[]
+    totalScheduledDays: number
+    unavailableDaysCount?: number
+    activeInjectors: number
+    selectedDatesCount: number
+    highlightMode?: 'scheduled' | 'empty' | null
+    loadingOverview: boolean
 }
 
 async function insumosApiJson<T>(
@@ -340,16 +387,7 @@ export default function AppFunctionalNeatlab() {
 		            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
 		        } catch { return DEFAULT_MODULE_KEY }
 		    })
-		    const [visitedModuleKeys, setVisitedModuleKeys] = useState<string[]>(() => [DEFAULT_MODULE_KEY])
-		    const mountedModuleKeys = useMemo(() => {
-		        if (visitedModuleKeys.includes(active)) return visitedModuleKeys
-		        return [...visitedModuleKeys, active]
-		    }, [active, visitedModuleKeys])
-		    React.useEffect(() => {
-		        if (!visitedModuleKeys.includes(active)) {
-		            setVisitedModuleKeys((prev) => (prev.includes(active) ? prev : [...prev, active]))
-		        }
-		    }, [active, visitedModuleKeys])
+		    const mountedModuleKeys = useMemo(() => [active], [active])
 
 	    React.useEffect(() => {
 	        if (UNLOCKED_MODULE_KEYS.has(active)) return
@@ -357,6 +395,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
 	    const [search, setSearch] = useState('')
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
+        const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
 			        online: boolean | null
 			        authed: boolean | null
@@ -535,6 +574,19 @@ export default function AppFunctionalNeatlab() {
                     try {
                         window.dispatchEvent(new CustomEvent('skincos:atendimento:header-action', { detail: { action } }))
                     } catch { /* ignore */ }
+                }, [])
+
+                React.useEffect(() => {
+                    const handler = (event: Event) => {
+                        const detail = (event as CustomEvent<EscalaHeaderState | null>)?.detail || null
+                        if (!detail || typeof detail !== 'object') {
+                            setEscalaHeaderState(null)
+                            return
+                        }
+                        setEscalaHeaderState(detail)
+                    }
+                    window.addEventListener('skincos:escala:header', handler as EventListener)
+                    return () => window.removeEventListener('skincos:escala:header', handler as EventListener)
                 }, [])
 
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
@@ -1062,7 +1114,7 @@ export default function AppFunctionalNeatlab() {
 					                                        </h1>
 			                                    </div>
 				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-				                                    <div className="hidden lg:flex items-center gap-2">
+				                                    <div className={`${active === 'escala-profissionais' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
 				                                        {active === 'insumos' ? (
 					                                            <>
 					                                                <Select
@@ -1246,10 +1298,162 @@ export default function AppFunctionalNeatlab() {
 				                                                </SelectContent>
 				                                            </Select>
 			                                        ) : null}
+				                                        {active === 'escala-profissionais' ? (
+					                                            <div className="flex items-center gap-2 max-w-[56vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-escala-preserve-filter="true">
+					                                                <Select
+					                                                    value={escalaHeaderState?.selectedUnit || ''}
+				                                                    onValueChange={(value) => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-unit', value } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+					                                                    <SelectTrigger className="h-8 w-48 bg-white/[0.06] border-white/20 text-white" data-escala-preserve-filter="true">
+					                                                        <SelectValue placeholder="Unidade" />
+					                                                    </SelectTrigger>
+					                                                    <SelectContent data-escala-preserve-filter="true">
+				                                                        {(escalaHeaderState?.units || []).map((unit) => (
+				                                                            <SelectItem key={unit} value={unit}>
+				                                                                {formatUnitLabel(unit)}
+				                                                            </SelectItem>
+				                                                        ))}
+				                                                    </SelectContent>
+				                                                </Select>
+					                                                <Select
+					                                                    value={escalaHeaderState?.selectedMonthNumber || ''}
+					                                                    onValueChange={(value) => {
+					                                                        try {
+					                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-month', value } }))
+					                                                        } catch { /* ignore */ }
+					                                                    }}
+					                                                >
+					                                                    <SelectTrigger className="h-8 w-36 bg-white/[0.06] border-white/20 text-white" data-escala-preserve-filter="true">
+					                                                        <SelectValue placeholder={formatMonthLabelHeader(escalaHeaderState?.selectedMonthNumber || '')} />
+					                                                    </SelectTrigger>
+					                                                    <SelectContent data-escala-preserve-filter="true">
+					                                                        {(escalaHeaderState?.monthOptions || []).map((month) => (
+					                                                            <SelectItem key={month} value={month}>
+					                                                                {formatMonthLabelHeader(month)}
+					                                                            </SelectItem>
+					                                                        ))}
+					                                                    </SelectContent>
+					                                                </Select>
+					                                                <Select
+					                                                    value={escalaHeaderState?.selectedYear || ''}
+					                                                    onValueChange={(value) => {
+					                                                        try {
+					                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-year', value } }))
+					                                                        } catch { /* ignore */ }
+					                                                    }}
+					                                                >
+					                                                    <SelectTrigger className="h-8 w-28 bg-white/[0.06] border-white/20 text-white" data-escala-preserve-filter="true">
+					                                                        <SelectValue placeholder={escalaHeaderState?.selectedYear || new Date().getFullYear().toString()} />
+					                                                    </SelectTrigger>
+					                                                    <SelectContent data-escala-preserve-filter="true">
+					                                                        {(escalaHeaderState?.yearOptions || []).map((year) => (
+					                                                            <SelectItem key={year} value={year}>
+					                                                                {year}
+					                                                            </SelectItem>
+					                                                        ))}
+					                                                    </SelectContent>
+					                                                </Select>
+					                                                <Select
+					                                                    value={escalaHeaderState?.selectedProfessional || '–'}
+				                                                    onValueChange={(value) => {
+				                                                        try {
+				                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-professional', value } }))
+				                                                        } catch { /* ignore */ }
+				                                                    }}
+				                                                >
+					                                                    <SelectTrigger
+                                                                            className="h-8 w-48 bg-white/[0.06] border-white/20 text-white"
+                                                                            data-escala-preserve-filter="true"
+                                                                            style={
+                                                                                escalaHeaderState?.selectedProfessional && escalaHeaderState.selectedProfessional !== '–'
+                                                                                    ? getEscalaProfessionalTriggerStyle(escalaHeaderState.selectedProfessional)
+                                                                                    : undefined
+                                                                            }
+                                                                        >
+					                                                        <SelectValue placeholder="Profissional" />
+					                                                    </SelectTrigger>
+					                                                    <SelectContent data-escala-preserve-filter="true">
+					                                                        <SelectItem value="–">–</SelectItem>
+				                                                        {(escalaHeaderState?.professionalOptions || []).map((name) => (
+				                                                            <SelectItem key={name} value={name}>
+				                                                                {name}
+				                                                            </SelectItem>
+				                                                        ))}
+				                                                    </SelectContent>
+				                                                </Select>
+				                                            </div>
+				                                        ) : null}
 		                                    </div>
 	                                </div>
 
-		                                <div className="flex items-center gap-4">
+		                                <div className={`flex items-center gap-4 ${active === 'escala-profissionais' ? 'pr-44' : ''}`}>
+	                                    {active === 'escala-profissionais' ? (
+		                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-escala-preserve-filter="true">
+		                                            <Tooltip>
+		                                                <TooltipTrigger asChild>
+		                                                    <button
+                                                            type="button"
+                                                            className={`escala-kpi-badge inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === 'scheduled' ? 'border-sky-300/55 bg-sky-300/16 text-sky-50 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]' : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
+                                                            data-escala-preserve-filter="true"
+                                                            aria-label="Destacar dias laborais"
+                                                            onClick={() => {
+                                                                try {
+                                                                    window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'toggle-highlight-mode', value: 'scheduled' } }))
+                                                                } catch { /* ignore */ }
+                                                            }}
+                                                        >
+	                                                        <BriefcaseBusiness className="size-3.5" aria-hidden="true" />
+                                                            <span>{escalaHeaderState?.totalScheduledDays ?? 0}</span>
+	                                                    </button>
+	                                                </TooltipTrigger>
+		                                                <TooltipContent>
+		                                                    Atendimentos do mês: {escalaHeaderState?.totalScheduledDays ?? 0}
+		                                                </TooltipContent>
+		                                            </Tooltip>
+	                                            <Tooltip>
+	                                                <TooltipTrigger asChild>
+	                                                    <button
+                                                            type="button"
+                                                            className={`escala-kpi-badge inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === 'empty' ? 'border-amber-300/55 bg-amber-300/14 text-amber-50 shadow-[0_0_0_1px_rgba(252,211,77,0.16)]' : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
+                                                            data-escala-preserve-filter="true"
+                                                            aria-label="Destacar dias sem atendimento"
+                                                            onClick={() => {
+                                                                try {
+                                                                    window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'toggle-highlight-mode', value: 'empty' } }))
+                                                                } catch { /* ignore */ }
+                                                            }}
+                                                        >
+	                                                        <CalendarX2 className="size-3.5" aria-hidden="true" />
+                                                            <span>{escalaHeaderState?.unavailableDaysCount ?? 0}</span>
+	                                                    </button>
+	                                                </TooltipTrigger>
+	                                                <TooltipContent>
+	                                                    Sem atendimento e bloqueios: {escalaHeaderState?.unavailableDaysCount ?? 0}
+	                                                </TooltipContent>
+	                                            </Tooltip>
+	                                            <Tooltip>
+	                                                <TooltipTrigger asChild>
+	                                                    <span data-escala-preserve-filter="true">
+	                                                        <Button
+	                                                            size="icon"
+	                                                            variant="ghost"
+	                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/5 text-blue-50 opacity-60"
+	                                                            disabled
+	                                                        >
+                                                                <Download className="size-3.5" aria-hidden="true" />
+	                                                        </Button>
+	                                                    </span>
+	                                                </TooltipTrigger>
+	                                                <TooltipContent>
+	                                                    Exportar resumo
+	                                                </TooltipContent>
+	                                            </Tooltip>
+                                        </div>
+                                    ) : null}
                                     {active === 'atendimento' ? (
                                         <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                             <Button

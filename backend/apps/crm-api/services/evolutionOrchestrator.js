@@ -1,6 +1,10 @@
 const DEFAULT_CHANNELS = Array.from({ length: 9 }, (_, i) => i + 1)
 const DEFAULT_INSTANCE_PREFIX = 'crm-channel-'
 const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
+const AUTO_RECOVERY_TAG = 'evolution-auto-recovery'
+let autoRecoveryInFlight = null
+let autoRecoveryLastAt = 0
+let autoRecoverySuppressionDepth = 0
 
 function resolveEvolutionConfig() {
   const baseUrl =
@@ -11,6 +15,132 @@ function resolveEvolutionConfig() {
   const apiKey = process.env.EVOLUTION_API_KEY || process.env.EVOLUTION_API_TOKEN || process.env.WHATSAPP_EVOLUTION_API_KEY || ''
   const instancePrefix = process.env.EVOLUTION_INSTANCE_PREFIX || DEFAULT_INSTANCE_PREFIX
   return { baseUrl, apiKey, instancePrefix }
+}
+
+function resolveAutoRecoveryConfig() {
+  const enabled = String(
+    process.env.EVOLUTION_AUTO_RECOVERY_ENABLED ||
+    process.env.WA_EVOLUTION_AUTO_RECOVERY_ENABLED ||
+    'true'
+  ).toLowerCase() !== 'false'
+  const endpoint = String(
+    process.env.EVOLUTION_AUTO_RECOVERY_ENDPOINT ||
+    `http://127.0.0.1:${process.env.CRM_API_PORT || process.env.PORT || '8099'}/api/wa-orchestrator/local/recovery/restart`
+  ).trim()
+  const mode = String(process.env.EVOLUTION_AUTO_RECOVERY_MODE || 'evolution').trim().toLowerCase() === 'stack'
+    ? 'stack'
+    : 'evolution'
+  const cooldownMs = Math.max(
+    1000,
+    Number.parseInt(String(process.env.EVOLUTION_AUTO_RECOVERY_COOLDOWN_MS || '30000'), 10) || 30000
+  )
+  const retryDelayMs = Math.max(
+    0,
+    Number.parseInt(String(process.env.EVOLUTION_AUTO_RECOVERY_RETRY_DELAY_MS || '1200'), 10) || 1200
+  )
+  const requestTimeoutMs = Math.max(
+    3000,
+    Number.parseInt(String(process.env.EVOLUTION_FETCH_TIMEOUT_MS || '22000'), 10) || 22000
+  )
+  return { enabled, endpoint, mode, cooldownMs, retryDelayMs, requestTimeoutMs }
+}
+
+function wait(ms) {
+  if (!ms) return Promise.resolve()
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isRecoverableStatus(status) {
+  const code = Number(status || 0)
+  return code >= 500 || code === 429
+}
+
+function isRecoverableTransportError(error) {
+  const message = String(error?.message || error || '').toLowerCase()
+  return (
+    message.includes('failed to fetch') ||
+    message.includes('fetch failed') ||
+    message.includes('networkerror') ||
+    message.includes('network error') ||
+    message.includes('econnrefused') ||
+    message.includes('ehostunreach') ||
+    message.includes('etimedout') ||
+    message.includes('econnreset') ||
+    message.includes('socket hang up') ||
+    message.includes('abort') ||
+    message.includes('timed out')
+  )
+}
+
+async function triggerAutoRecovery(reason, context = {}) {
+  const config = resolveAutoRecoveryConfig()
+  if (!config.enabled || !config.endpoint) {
+    return { success: false, skipped: 'disabled' }
+  }
+
+  const now = Date.now()
+  if (now - autoRecoveryLastAt < config.cooldownMs) {
+    return { success: false, skipped: 'cooldown' }
+  }
+
+  if (autoRecoveryInFlight) {
+    return autoRecoveryInFlight
+  }
+
+  autoRecoveryInFlight = (async () => {
+    const payload = {
+      mode: config.mode,
+      trigger: AUTO_RECOVERY_TAG,
+      reason: String(reason || '').slice(0, 200) || 'Evolution request failure',
+      context: {
+        path: String(context?.path || ''),
+        status: Number(context?.status || 0) || undefined
+      }
+    }
+    try {
+      const response = await fetch(config.endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const rawText = await response.text()
+      let json = null
+      try {
+        json = rawText ? JSON.parse(rawText) : null
+      } catch {
+        json = null
+      }
+      const success = Boolean(response.ok && (json?.success !== false))
+      if (success) {
+        autoRecoveryLastAt = Date.now()
+      }
+      console.warn('[EVOLUTION_AUTO_RECOVERY] trigger result', {
+        success,
+        status: response.status,
+        mode: config.mode,
+        reason: payload.reason
+      })
+      return { success, status: response.status, payload: json || rawText || null }
+    } catch (error) {
+      console.warn('[EVOLUTION_AUTO_RECOVERY] trigger failed', {
+        error: error?.message || String(error)
+      })
+      return { success: false, error: error?.message || String(error) }
+    } finally {
+      autoRecoveryInFlight = null
+    }
+  })()
+
+  return autoRecoveryInFlight
+}
+
+async function runWithoutAutoRecovery(task) {
+  autoRecoverySuppressionDepth += 1
+  try {
+    return await task()
+  } finally {
+    autoRecoverySuppressionDepth = Math.max(0, autoRecoverySuppressionDepth - 1)
+  }
 }
 
 function normalizeState(raw) {
@@ -42,6 +172,8 @@ function normalizeRemoteJid(remoteJid) {
   const normalizedLocal = localPart.split(':')[0].replace(/\D/g, '')
   if (normalizedLocal) return `${normalizedLocal}@s.whatsapp.net`
   if (value.includes('@')) return value
+  const digits = value.replace(/\D/g, '')
+  if (digits) return `${digits}@s.whatsapp.net`
   return `${value}@s.whatsapp.net`
 }
 
@@ -50,8 +182,13 @@ function normalizeNumber(numberOrJid) {
   const value = String(numberOrJid).trim()
   if (!value) return ''
   if (value.includes('@g.us')) return value
-  if (value.includes('@s.whatsapp.net')) return value.split('@')[0]
-  return value
+  if (value.includes('@')) {
+    const localPart = value.split('@')[0]
+    const digits = localPart.replace(/\D/g, '')
+    return digits || localPart
+  }
+  const digits = value.replace(/\D/g, '')
+  return digits || value
 }
 
 function extractQrCandidate(result) {
@@ -109,8 +246,10 @@ function debugQr(event, payload = {}) {
   }
 }
 
-async function evolutionFetch(path, options = {}) {
+async function evolutionFetch(path, options = {}, attempt = 0) {
   const { baseUrl, apiKey } = resolveEvolutionConfig()
+  const recoveryConfig = resolveAutoRecoveryConfig()
+  const canAutoRecover = recoveryConfig.enabled && autoRecoverySuppressionDepth === 0 && !options?.disableAutoRecovery
   if (!baseUrl) {
     throw new Error('EVOLUTION_API_URL not configured')
   }
@@ -119,11 +258,34 @@ async function evolutionFetch(path, options = {}) {
   if (apiKey) headers.set('apikey', apiKey)
   if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
 
-  const res = await fetch(url.toString(), {
-    method: options.method || 'GET',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(new Error(`Evolution request timeout after ${recoveryConfig.requestTimeoutMs}ms`)), recoveryConfig.requestTimeoutMs)
+
+  let res
+  try {
+    res = await fetch(url.toString(), {
+      method: options.method || 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    })
+  } catch (error) {
+    if (attempt === 0 && canAutoRecover && isRecoverableTransportError(error)) {
+      await triggerAutoRecovery(error?.message || 'Evolution transport error', { path, status: 0 })
+      await wait(recoveryConfig.retryDelayMs)
+      return evolutionFetch(path, options, 1)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!res.ok && attempt === 0 && canAutoRecover && isRecoverableStatus(res.status)) {
+    await triggerAutoRecovery(`Evolution HTTP ${res.status}`, { path, status: res.status })
+    await wait(recoveryConfig.retryDelayMs)
+    return evolutionFetch(path, options, 1)
+  }
+
   const text = await res.text()
   let json = null
   try {
@@ -186,7 +348,41 @@ async function connectInstance(instanceName) {
 
 async function getStatus() {
   const { instancePrefix } = resolveEvolutionConfig()
-  const instances = await fetchInstances()
+  let instances = []
+  let providerError = null
+  try {
+    instances = await fetchInstances()
+  } catch (error) {
+    providerError = error instanceof Error ? error.message : String(error)
+  }
+
+  if (providerError) {
+    const channels = DEFAULT_CHANNELS.map((channel) => ({
+      id: `wa-channel-${channel}`,
+      channel,
+      port: 3001,
+      status: 'error',
+      name: `WhatsApp Channel ${channel}`,
+      createdAt: null,
+      updatedAt: null,
+      metadata: {
+        phoneNumber: null,
+        errorMessage: providerError
+      }
+    }))
+    return {
+      totalChannels: DEFAULT_CHANNELS.length,
+      availableChannels: 0,
+      freeInstances: 0,
+      connectedInstances: 0,
+      errorInstances: channels.length,
+      startingInstances: 0,
+      providerOnline: false,
+      providerError,
+      channels
+    }
+  }
+
   const channels = DEFAULT_CHANNELS.map((channel) => {
     const name = channelName(channel, instancePrefix)
     const instance = instances.find((inst) => String(inst?.name) === name)
@@ -225,6 +421,8 @@ async function getStatus() {
     connectedInstances: channels.filter((c) => c.status === 'connected').length,
     errorInstances: channels.filter((c) => c.status === 'error').length,
     startingInstances: channels.filter((c) => c.status === 'starting' || c.status === 'qr_pending').length,
+    providerOnline: true,
+    providerError: null,
     channels
   }
 }
@@ -335,6 +533,28 @@ async function fetchChats(channel, { limit = 50, offset = 0 } = {}) {
   return res.json
 }
 
+async function fetchContacts(channel, { limit = 200, page = 1, remoteJid = '' } = {}) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const where = {}
+  if (remoteJid) {
+    where.remoteJid = normalizeRemoteJid(remoteJid)
+  }
+  const res = await evolutionFetch(`/chat/findContacts/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      where,
+      offset: limit,
+      page
+    }
+  })
+  if (!res.ok) {
+    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
 async function fetchMessages(channel, remoteJid, { limit = 50, page = 1 } = {}) {
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
@@ -392,6 +612,64 @@ async function sendText(channel, remoteJid, text, options = {}) {
   return res.json
 }
 
+function normalizeReadMessageKey(rawKey, fallbackRemoteJid) {
+  const messageId = String(rawKey?.id || '').trim()
+  const candidateRemoteJid = String(rawKey?.remoteJid || fallbackRemoteJid || '').trim()
+  const normalizedRemote = normalizeRemoteJid(candidateRemoteJid)
+  if (!messageId || !normalizedRemote) return null
+  return {
+    id: messageId,
+    fromMe: Boolean(rawKey?.fromMe),
+    remoteJid: normalizedRemote
+  }
+}
+
+async function markMessagesAsRead(channel, remoteJid, readMessages = []) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const fallbackRemoteJid = normalizeRemoteJid(remoteJid)
+  const keys = (Array.isArray(readMessages) ? readMessages : [])
+    .map((entry) => normalizeReadMessageKey(entry, fallbackRemoteJid))
+    .filter(Boolean)
+
+  if (!keys.length) {
+    throw new Error('No valid message keys for mark as read.')
+  }
+
+  const res = await evolutionFetch(`/chat/markMessageAsRead/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      readMessages: keys
+    }
+  })
+  if (!res.ok) {
+    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
+async function getBase64FromMediaMessage(channel, message, { convertToMp4 = false } = {}) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const keyId = String(message?.key?.id || '').trim()
+  if (!keyId) {
+    throw new Error('Message key.id is required for media download.')
+  }
+  const res = await evolutionFetch(`/chat/getBase64FromMediaMessage/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      message,
+      convertToMp4: Boolean(convertToMp4)
+    }
+  })
+  if (!res.ok) {
+    const messageText = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(messageText)
+  }
+  return res.json
+}
+
 async function setWebhook(channel, url, { events = [], headers = {}, byEvents = false } = {}) {
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
@@ -421,8 +699,12 @@ export const evolutionOrchestrator = {
   startChannel,
   stopChannel,
   restartChannel,
+  fetchContacts,
   fetchChats,
   fetchMessages,
   sendText,
-  setWebhook
+  markMessagesAsRead,
+  getBase64FromMediaMessage,
+  setWebhook,
+  runWithoutAutoRecovery
 }
