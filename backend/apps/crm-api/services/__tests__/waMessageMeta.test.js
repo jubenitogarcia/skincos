@@ -80,3 +80,33 @@ test('decorateMessages merges media/reply/reactions', async () => {
     assert.equal(items[0].media?.type, 'audio')
   })
 })
+
+test('toggle flags persist and deleted messages are filtered from decoration', async () => {
+  await withStore(async (store, file) => {
+    const key = { channel: 1, remoteJid: '5511999990000@s.whatsapp.net', messageId: 'mid-4' }
+    let flags = store.toggleFlag(key.channel, key.remoteJid, key.messageId, 'favorite')
+    assert.equal(flags.favorite, true)
+    flags = store.toggleFlag(key.channel, key.remoteJid, key.messageId, 'pinned')
+    assert.equal(flags.pinned, true)
+    flags = store.toggleFlag(key.channel, key.remoteJid, key.messageId, 'reported')
+    assert.equal(flags.reported, true)
+    store.markDeleted(key.channel, key.remoteJid, key.messageId, true)
+    await store.persist()
+
+    const second = new WaMessageMetaStore(file)
+    await second.init()
+    const persistedFlags = second.getFlags(key.channel, key.remoteJid, key.messageId)
+    assert.equal(persistedFlags.favorite, true)
+    assert.equal(persistedFlags.pinned, true)
+    assert.equal(persistedFlags.reported, true)
+    assert.equal(persistedFlags.deleted, true)
+
+    const items = second.decorateMessages(
+      key.channel,
+      key.remoteJid,
+      [{ id: key.messageId, text: 'Oculta', mediaType: 'text' }],
+      'email:a@a.com'
+    )
+    assert.equal(items.length, 0)
+  })
+})

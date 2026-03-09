@@ -1,5 +1,5 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
-import type { ReactNode } from "react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react"
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Badge } from "@/badge"
 import { Button } from "@/button"
@@ -33,16 +33,36 @@ import {
   CalendarBlank,
   User,
   Clock,
+  CircleNotch,
   CheckCircle,
   Warning,
   Sparkle,
   Ticket,
   Star,
   Smiley,
+  ArrowCircleDown,
   ArrowBendUpLeft,
+  ArrowBendUpRight,
+  ArrowCircleUp,
+  Archive,
+  BellSimpleSlash,
+  Broom,
+  CaretDown,
+  ChatCircleText,
+  CopySimple,
+  DotsThreeVertical,
   DownloadSimple,
+  EnvelopeSimpleOpen,
   FilePdf,
-  ImageSquare
+  HeartStraight,
+  ImageSquare,
+  LockSimple,
+  Prohibit,
+  PushPin,
+  Trash,
+  TrashSimple,
+  UserList,
+  WarningCircle
 } from "@phosphor-icons/react"
 import type { Activity } from "@/types"
 
@@ -175,6 +195,8 @@ interface ChannelInstance {
   updatedAt?: string
   metadata?: {
     phoneNumber?: string
+    ownerJid?: string
+    profileName?: string
     errorCount?: number
     restartCount?: number
     lastActivity?: string
@@ -227,14 +249,33 @@ function isLikelyWhatsAppJid(value?: string | null) {
 function normalizeWhatsAppJid(value?: string | null) {
   const raw = String(value || '').trim()
   if (!raw) return ''
-  if (raw.includes('@g.us') || raw.includes('@broadcast')) return raw
-  const localPart = raw.includes('@') ? raw.split('@')[0] : raw
-  const normalizedLocal = localPart.split(':')[0].replace(/\D+/g, '')
-  if (normalizedLocal) return `${normalizedLocal}@s.whatsapp.net`
   if (raw.includes('@')) return raw
   const digits = normalizePhone(raw)
-  if (!digits) return raw
-  return `${digits}@s.whatsapp.net`
+  return digits ? `${digits}@s.whatsapp.net` : raw
+}
+
+function buildWhatsAppIdentityAliases(value?: string | null) {
+  const raw = String(value || '').trim()
+  const normalized = normalizeWhatsAppJid(raw)
+  const phone = extractPhoneFromId(raw || normalized)
+  const aliases = new Set<string>()
+  if (raw) aliases.add(raw.toLowerCase())
+  if (normalized) aliases.add(normalized.toLowerCase())
+  if (phone) {
+    aliases.add(phone)
+    aliases.add(`${phone}@s.whatsapp.net`)
+  }
+  return aliases
+}
+
+function doesWhatsAppIdentityMatch(a?: string | null, b?: string | null) {
+  const left = buildWhatsAppIdentityAliases(a)
+  const right = buildWhatsAppIdentityAliases(b)
+  if (!left.size || !right.size) return false
+  for (const alias of left) {
+    if (right.has(alias)) return true
+  }
+  return false
 }
 
 function formatPhone(value?: string | null) {
@@ -253,7 +294,14 @@ function formatPhone(value?: string | null) {
 }
 
 function resolveConversationDisplayName(conv: any) {
-  const rawName = conv?.leadName || conv?.name || conv?.contact_display_name || ''
+  const rawName =
+    conv?.preferredName ||
+    conv?.leadName ||
+    conv?.name ||
+    conv?.contact_display_name ||
+    conv?.contactName ||
+    conv?.pushName ||
+    ''
   if (rawName && !isLikelyWhatsAppJid(rawName)) return rawName
   const phoneCandidate =
     conv?.phone ||
@@ -265,6 +313,29 @@ function resolveConversationDisplayName(conv: any) {
   const formatted = formatPhone(phoneCandidate)
   if (formatted) return formatted
   return rawName || conv?.conversationId || 'Contato'
+}
+
+function resolveConversationInteractionTimestamp(conv: any) {
+  const candidates = [
+    conv?.lastInteractionAt,
+    conv?.lastMessageAt,
+    conv?.last_message_at,
+    conv?.lastActivity,
+    conv?.last_activity_at,
+    conv?.updatedAt,
+    conv?.updated_at,
+    conv?.leadUpdatedAt,
+    conv?.createdAt,
+    conv?.created_at
+  ]
+
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    const value = new Date(candidate).getTime()
+    if (Number.isFinite(value) && value > 0) return value
+  }
+
+  return 0
 }
 
 function fmtDateTime(iso?: string | null) {
@@ -308,6 +379,100 @@ function formatReplyPrefix(text: string) {
   return `↪ ${preview}`
 }
 
+function normalizeMessageSemanticType(raw?: string | null) {
+  const type = String(raw || '').trim().toLowerCase()
+  if (!type) return ''
+  if (type.includes('sticker')) return 'sticker'
+  if (type.includes('image')) return 'image'
+  if (type.includes('audio') || type.includes('ptt') || type.includes('voice')) return 'audio'
+  if (type.includes('video') || type.includes('ptv')) return 'video'
+  if (type.includes('document') || type.includes('pdf') || type.includes('doc') || type.includes('file')) return 'document'
+  if (type.includes('call') || type.includes('phone')) return 'call'
+  if (type.includes('templatebuttonreply')) return 'template'
+  if (type.includes('interactive')) return 'interactive'
+  if (type.includes('template')) return 'template'
+  if (type.includes('placeholder')) return 'placeholder'
+  if (type.includes('pininchat') || type === 'pin') return 'pin'
+  if (type.includes('reaction')) return 'reaction'
+  return type
+}
+
+function resolveSemanticLabel(raw?: string | null) {
+  switch (normalizeMessageSemanticType(raw)) {
+    case 'sticker':
+      return 'Sticker'
+    case 'image':
+      return 'Imagem'
+    case 'audio':
+      return 'Áudio'
+    case 'video':
+      return 'Vídeo'
+    case 'document':
+      return 'Arquivo'
+    case 'call':
+      return 'Ligação'
+    case 'template':
+      return 'Modelo'
+    case 'interactive':
+      return 'Interativa'
+    case 'placeholder':
+      return 'Conteúdo'
+    case 'pin':
+      return 'Fixada'
+    case 'reaction':
+      return 'Reação'
+    default:
+      return ''
+  }
+}
+
+function isTransportPlaceholderText(value?: string | null) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  return ['[Sticker]', '[Mensagem]', '[Áudio]', '[Video]', '[Vídeo]', '[Documento]', '[Arquivo]', '[Ligação]'].includes(text)
+}
+
+function resolveConversationPreviewMeta(conv: any) {
+  const rawText = String(conv?.lastMessage || conv?.last_message_text || '').trim()
+  const explicitType =
+    conv?.lastMessageMediaType ||
+    conv?.lastMessageType ||
+    conv?.last_message_media_type ||
+    conv?.last_message_type ||
+    ''
+  const caption = String(conv?.lastMessageCaption || conv?.last_message_caption || '').trim()
+  const fileName = String(conv?.lastMessageFileName || conv?.last_message_file_name || '').trim()
+  const semanticType =
+    normalizeMessageSemanticType(explicitType) ||
+    (rawText === '[Sticker]' ? 'sticker' :
+      rawText === '[Imagem]' ? 'image' :
+      rawText === '[Áudio]' ? 'audio' :
+      rawText === '[Ligação]' ? 'call' :
+      rawText === '[Mensagem]' ? '' : '')
+
+  const label = resolveSemanticLabel(semanticType)
+  const visibleText = caption || (!isTransportPlaceholderText(rawText) ? rawText : '')
+  const fallbackText = rawText === '[Mensagem]' ? 'Mensagem' : ''
+  const previewText = visibleText || fileName || label || fallbackText || 'Sem mensagens'
+
+  return {
+    semanticType,
+    previewText,
+    mediaProxyUrl: String(conv?.lastMessageMediaProxyUrl || '').trim()
+  }
+}
+
+function resolveMessageBodyText(msg: any) {
+  const text = String(msg?.text || '').trim()
+  const caption = String(msg?.caption || '').trim()
+  if (caption && !isTransportPlaceholderText(caption)) return caption
+  if (text && !isTransportPlaceholderText(text)) return text
+  const label = resolveSemanticLabel(msg?.mediaType || msg?.type)
+  if (normalizeMessageSemanticType(msg?.mediaType || msg?.type) === 'reaction') return ''
+  if (msg?.media || msg?.mediaUrl) return ''
+  return label
+}
+
 function resolveAvatarUrl(conv: any) {
   return (
     conv?.profilePic ||
@@ -328,7 +493,54 @@ function getInitials(value?: string | null) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
 }
 
-function renderFormattedText(input?: string | null): ReactNode {
+type MentionRenderMeta = {
+  label: string
+  color?: string
+}
+
+type ParticipantRenderMeta = MentionRenderMeta & {
+  avatarUrl?: string
+}
+
+type RenderFormattedTextOptions = {
+  resolveMention?: (token: string) => MentionRenderMeta | null
+}
+
+const GROUP_SENDER_PALETTE = [
+  { bubbleBg: 'rgba(56, 189, 248, 0.16)', border: 'rgba(56, 189, 248, 0.45)', title: '#7dd3fc', mention: '#7dd3fc' },
+  { bubbleBg: 'rgba(16, 185, 129, 0.16)', border: 'rgba(16, 185, 129, 0.45)', title: '#6ee7b7', mention: '#6ee7b7' },
+  { bubbleBg: 'rgba(245, 158, 11, 0.16)', border: 'rgba(245, 158, 11, 0.45)', title: '#fcd34d', mention: '#fcd34d' },
+  { bubbleBg: 'rgba(244, 63, 94, 0.16)', border: 'rgba(244, 63, 94, 0.45)', title: '#fda4af', mention: '#fda4af' },
+  { bubbleBg: 'rgba(167, 139, 250, 0.16)', border: 'rgba(167, 139, 250, 0.45)', title: '#c4b5fd', mention: '#c4b5fd' },
+  { bubbleBg: 'rgba(20, 184, 166, 0.16)', border: 'rgba(20, 184, 166, 0.45)', title: '#5eead4', mention: '#5eead4' }
+]
+
+function resolveGroupSenderStyle(seed?: string | null) {
+  const value = String(seed || '').trim().toLowerCase() || 'unknown'
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i)
+    hash |= 0
+  }
+  return GROUP_SENDER_PALETTE[Math.abs(hash) % GROUP_SENDER_PALETTE.length]
+}
+
+function buildMentionAliases(value?: string | null) {
+  const aliases = new Set<string>()
+  const raw = String(value || '').trim()
+  if (!raw) return aliases
+  const normalized = raw.toLowerCase()
+  aliases.add(normalized)
+  const local = normalized.includes('@') ? normalized.split('@')[0] : normalized
+  if (local) aliases.add(local)
+  const localNoDevice = local.split(':')[0]
+  if (localNoDevice) aliases.add(localNoDevice)
+  const digits = normalizePhone(raw)
+  if (digits) aliases.add(digits)
+  return aliases
+}
+
+function renderFormattedText(input?: string | null, options?: RenderFormattedTextOptions): ReactNode {
   const text = String(input || '')
   if (!text) return null
 
@@ -337,12 +549,41 @@ function renderFormattedText(input?: string | null): ReactNode {
   let lastIndex = 0
   let match: RegExpExecArray | null
 
+  const mentionPattern = /(^|[^\w])@([0-9A-Za-z._:-]{3,})/g
+
+  const pushMentionAwareLine = (line: string) => {
+    let cursor = 0
+    mentionPattern.lastIndex = 0
+    let mentionMatch: RegExpExecArray | null
+    while ((mentionMatch = mentionPattern.exec(line)) !== null) {
+      const [full, prefix, mentionToken] = mentionMatch
+      const start = mentionMatch.index
+      const prefixStart = start
+      if (prefixStart > cursor) {
+        tokens.push(line.slice(cursor, prefixStart))
+      }
+      if (prefix) tokens.push(prefix)
+      const resolvedMention = options?.resolveMention?.(mentionToken)
+      tokens.push(
+        <span
+          key={`mention-${tokens.length}`}
+          className="font-semibold underline underline-offset-2 decoration-solid"
+          style={{ color: resolvedMention?.color || '#93c5fd' }}
+        >
+          @{resolvedMention?.label || mentionToken}
+        </span>
+      )
+      cursor = start + full.length
+    }
+    if (cursor < line.length) tokens.push(line.slice(cursor))
+  }
+
   const pushPlain = (value: string) => {
     if (!value) return
     const parts = value.split('\n')
     parts.forEach((part, idx) => {
       if (idx > 0) tokens.push(<br key={`br-${tokens.length}`} />)
-      if (part) tokens.push(part)
+      if (part) pushMentionAwareLine(part)
     })
   }
 
@@ -482,12 +723,14 @@ function MessageMedia({
   media,
   mediaProxyUrl,
   fallbackText,
-  onImagePreview
+  onImagePreview,
+  onFilePreview
 }: {
   media?: { type?: string; url?: string; mimeType?: string; fileName?: string; durationSec?: number }
   mediaProxyUrl?: string
   fallbackText?: string
   onImagePreview: (payload: { src: string; alt?: string }) => void
+  onFilePreview: (payload: { src: string; title?: string; mimeType?: string }) => void
 }) {
   const [loadFailed, setLoadFailed] = useState(false)
   const type = String(media?.type || '').toLowerCase()
@@ -509,6 +752,7 @@ function MessageMedia({
   const isPdf = type.includes('document') && (mimeType.includes('pdf') || String(media?.fileName || '').toLowerCase().endsWith('.pdf'))
   const isDocument = type.includes('document') && !isPdf
   const isVideo = type.includes('video') || type.includes('ptv')
+  const isSticker = type.includes('sticker')
 
   if (!src || loadFailed) {
     return (
@@ -521,7 +765,7 @@ function MessageMedia({
     )
   }
 
-  if (isImage) {
+  if (isImage || isSticker) {
     return (
       <button
         type="button"
@@ -531,7 +775,7 @@ function MessageMedia({
         <img
           src={src}
           alt={media?.fileName || 'Imagem'}
-          className="max-h-64 w-full object-cover"
+          className={isSticker ? 'max-h-48 w-auto object-contain' : 'max-h-64 w-full object-cover'}
           loading="lazy"
           onError={() => setLoadFailed(true)}
         />
@@ -555,15 +799,15 @@ function MessageMedia({
             onError={() => setLoadFailed(true)}
           />
         </div>
-        <a
-          href={src}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-2 py-1 text-xs text-blue-100 hover:bg-white/20"
+        <Button
+          type="button"
+          variant="outline"
+          className="h-7 w-fit border-white/15 bg-white/10 text-xs text-blue-100 hover:bg-white/20"
+          onClick={() => onFilePreview({ src, title: media?.fileName || 'Documento PDF', mimeType })}
         >
           <DownloadSimple className="h-3.5 w-3.5" />
-          Download PDF
-        </a>
+          Visualizar arquivo
+        </Button>
       </div>
     )
   }
@@ -572,17 +816,18 @@ function MessageMedia({
     return (
       <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-black/20 px-2 py-1.5 text-xs text-blue-100">
         <FilePdf className="h-4 w-4" />
-        <a href={src} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+        <span className="max-w-[200px] truncate">
           {media?.fileName || 'Abrir documento'}
-        </a>
-        <a
-          href={src}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] hover:bg-white/10"
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-6 border-white/15 bg-white/10 px-2 text-[10px] hover:bg-white/20"
+          onClick={() => onFilePreview({ src, title: media?.fileName || 'Documento', mimeType })}
         >
-          Download
-        </a>
+          Visualizar arquivo
+        </Button>
       </div>
     )
   }
@@ -601,15 +846,19 @@ function MessageMedia({
   }
 
   return (
-    <a
-      href={src}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-black/20 px-2 py-1.5 text-xs text-blue-100 hover:bg-white/10"
-    >
+    <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-black/20 px-2 py-1.5 text-xs text-blue-100">
       <ImageSquare className="h-4 w-4" />
-      Abrir anexo
-    </a>
+      <span className="max-w-[220px] truncate">{media?.fileName || 'Arquivo'}</span>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-6 border-white/15 bg-white/10 px-2 text-[10px] hover:bg-white/20"
+        onClick={() => onFilePreview({ src, title: media?.fileName || 'Arquivo', mimeType })}
+      >
+        Visualizar arquivo
+      </Button>
+    </div>
   )
 }
 
@@ -667,15 +916,18 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const [selectedConversation, setSelectedConversation] = useState<any | null>(null)
   const [messages, setMessages] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [conversationFilter, setConversationFilter] = useState<'all' | 'unread' | 'labels' | 'favorites' | 'communities' | 'groups' | 'archived'>('all')
+  const [conversationFilter, setConversationFilter] = useState<'unread' | 'labels' | 'favorites' | 'communities' | 'groups' | 'archived' | null>(null)
   const [loadingConversations, setLoadingConversations] = useState(false)
   const [conversationsFailureCount, setConversationsFailureCount] = useState(0)
   const [conversationsPausedUntil, setConversationsPausedUntil] = useState<number | null>(null)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sendingMessage, setSendingMessage] = useState(false)
+  const [markingConversationRead, setMarkingConversationRead] = useState(false)
   const [messageInput, setMessageInput] = useState('')
+  const [sendUnitChannel, setSendUnitChannel] = useState<string>('')
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
+  const conversationFiltersRef = useRef<HTMLDivElement | null>(null)
   const autoScrollRef = useRef(false)
   const lastMessageKeyRef = useRef<string>('')
   const [replyTarget, setReplyTarget] = useState<{
@@ -685,15 +937,38 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     platform?: string
   } | null>(null)
   const [imagePreview, setImagePreview] = useState<{ src: string; alt?: string } | null>(null)
+  const [filePreview, setFilePreview] = useState<{ src: string; title?: string; mimeType?: string } | null>(null)
   const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null)
+  const [openMessageActionMenuId, setOpenMessageActionMenuId] = useState<string | null>(null)
+  const [expandedReactionMenuId, setExpandedReactionMenuId] = useState<string | null>(null)
+  const [messageActionMenuLayout, setMessageActionMenuLayout] = useState<{
+    messageId: string
+    top: number
+    left: number
+    maxHeight: number
+    width: number
+  } | null>(null)
+  const [openConversationActionMenuId, setOpenConversationActionMenuId] = useState<string | null>(null)
+  const [conversationActionMenuLayout, setConversationActionMenuLayout] = useState<{
+    conversationId: string
+    top: number
+    left: number
+    width: number
+  } | null>(null)
   const [reactionBusyKey, setReactionBusyKey] = useState<string | null>(null)
+  const [messageSelectionMode, setMessageSelectionMode] = useState(false)
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([])
+  const [messageScrollState, setMessageScrollState] = useState({ canScrollUp: false, canScrollDown: false })
+  const [scrollAffordanceZone, setScrollAffordanceZone] = useState<'top' | 'bottom' | null>(null)
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
   const [statusFailureCount, setStatusFailureCount] = useState(0)
   const [statusPausedUntil, setStatusPausedUntil] = useState<number | null>(null)
   const [channelQR, setChannelQR] = useState<Map<number, QRData>>(new Map())
   const [qrDialogChannel, setQrDialogChannel] = useState<number | null>(null)
   const qrPollingRef = useRef<Map<number, NodeJS.Timeout>>(new Map())
+  const qrDialogChannelRef = useRef<number | null>(null)
   const waEventsRefreshTimerRef = useRef<number | null>(null)
+  const waConversationRefreshTimerRef = useRef<number | null>(null)
   const [waStatusOpen, setWaStatusOpen] = useState(false)
   const [igStatusOpen, setIgStatusOpen] = useState(false)
   const [igDialogOpen, setIgDialogOpen] = useState(false)
@@ -707,6 +982,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const [fbPageId, setFbPageId] = useState('')
   const [igLoading, setIgLoading] = useState(false)
   const reactionOptions = useMemo(() => ['👍', '❤️', '😂', '😮', '😢', '🙏'], [])
+  const selectedMessageIdSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds])
   const [igProfiles, setIgProfiles] = useState<Record<string, InstagramUserProfile>>({})
   const [igDMs, setIgDMs] = useState<Record<string, InstagramDMMessage[]>>({})
   const facebookConfig = systemConfig?.integrations?.facebook || { pageId: '', accessToken: '' }
@@ -743,6 +1019,12 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const [harmoniaActionError, setHarmoniaActionError] = useState<string | null>(null)
   const [harmoniaActionSuccess, setHarmoniaActionSuccess] = useState<string | null>(null)
   const harmoniaActionTimerRef = useRef<number | null>(null)
+  const messageActionRootRefs = useRef(new Map<string, HTMLDivElement>())
+  const messageActionMenuRef = useRef<HTMLDivElement | null>(null)
+  const messageActionMenuLayoutRafRef = useRef<number | null>(null)
+  const conversationScrollViewportRef = useRef<HTMLDivElement | null>(null)
+  const conversationActionTriggerRefs = useRef(new Map<string, HTMLButtonElement>())
+  const conversationActionMenuRef = useRef<HTMLDivElement | null>(null)
   const harmoniaTokens = systemConfig?.integrations?.harmonia || {}
   const resolvedExecToken = useMemo(() => {
     let token = harmoniaTokens.execToken || ''
@@ -923,33 +1205,98 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   ])
 
   const loadMessages = useCallback(async (conv: any, opts?: { silent?: boolean }) => {
-    if (!provider || !conv) return
+    if (!provider || !conv) return []
     if (!opts?.silent) setLoadingMessages(true)
     try {
       if (provider === 'evolution') {
         const channel = Number(conv?.channel)
-        if (!channel) return
+        if (!channel) return []
         const res = await fetch(
           `/api/wa-orchestrator/channels/${channel}/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`,
           { headers: buildCrmBasicAuthHeaders() }
         )
-        const data = await res.json()
+        const data = await res.json().catch(() => ({}))
         if (res.ok && data?.success) {
           const items = data.items || []
           setMessages(items)
           return items
         }
+        if (!opts?.silent) {
+          toast.error(String(data?.error || 'Falha ao carregar mensagens.'))
+        }
+        return []
       } else {
         const res = await fetch(`/api/conversations/${encodeURIComponent(conv.conversationId)}/messages?limit=80`)
-        const data = await res.json()
+        const data = await res.json().catch(() => ({}))
         if (res.ok) {
           const items = data.items || []
           setMessages(items)
           return items
         }
+        if (!opts?.silent) {
+          toast.error(String(data?.error || 'Falha ao carregar mensagens.'))
+        }
+        return []
       }
+    } catch (error: any) {
+      if (!opts?.silent && error?.name !== 'AbortError') {
+        toast.error(error?.message || 'Falha ao carregar mensagens.')
+      }
+      return []
     } finally {
       if (!opts?.silent) setLoadingMessages(false)
+    }
+  }, [provider])
+
+  const markConversationAsRead = useCallback(async (conv: any, loadedMessages?: any[]) => {
+    if (!conv || provider !== 'evolution') return
+    const channel = Number(conv?.channel)
+    const remoteJid = String(conv?.conversationId || conv?.rawJid || conv?.phone || '').trim()
+    if (!channel || !remoteJid) return
+
+    const sourceMessages = Array.isArray(loadedMessages) ? loadedMessages : []
+    const inboundIds = sourceMessages
+      .filter((msg) => {
+        const direction = String(msg?.direction || '').toLowerCase()
+        return direction !== 'outbound' && direction !== 'human'
+      })
+      .map((msg) => String(msg?.id || '').trim())
+      .filter(Boolean)
+
+    setMarkingConversationRead(true)
+    try {
+      const response = await fetch(
+        `/api/wa-orchestrator/channels/${channel}/conversations/${encodeURIComponent(remoteJid)}/read`,
+        {
+          method: 'POST',
+          headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            messageIds: inboundIds,
+            onlyInbound: true
+          })
+        }
+      )
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.success === false) {
+        return
+      }
+      setConversations((prev) => prev.map((item) => {
+        const sameChannel = Number(item?.channel || 0) === channel
+        const sameContact = doesWhatsAppIdentityMatch(item?.conversationId || item?.rawJid || item?.phone, remoteJid)
+        if (!sameChannel || !sameContact) return item
+        return { ...item, unreadCount: 0, unreadMessages: 0, unread_messages: 0 }
+      }))
+      setSelectedConversation((current) => {
+        if (!current) return current
+        const sameChannel = Number(current?.channel || 0) === channel
+        const sameContact = doesWhatsAppIdentityMatch(current?.conversationId || current?.rawJid || current?.phone, remoteJid)
+        if (!sameChannel || !sameContact) return current
+        return { ...current, unreadCount: 0, unreadMessages: 0, unread_messages: 0 }
+      })
+    } catch {
+      // Best-effort sync: failure to mark as read must not break UI interaction.
+    } finally {
+      setMarkingConversationRead(false)
     }
   }, [provider])
 
@@ -973,12 +1320,278 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     messageInputRef.current?.focus()
   }, [])
 
+  const toggleMessageSelection = useCallback((messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    setMessageSelectionMode(true)
+    setSelectedMessageIds((prev) => (
+      prev.includes(normalizedId)
+        ? prev.filter((item) => item !== normalizedId)
+        : [...prev, normalizedId]
+    ))
+  }, [])
+
+  const clearMessageSelection = useCallback(() => {
+    setSelectedMessageIds([])
+    setMessageSelectionMode(false)
+  }, [])
+
+  const toggleMessageFlag = useCallback(async (messageId: string, field: 'favorite' | 'pinned' | 'reported') => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    const channel =
+      Number(selectedConversation?.channel) ||
+      orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel
+    const remoteJid = normalizeWhatsAppJid(
+      selectedConversation?.conversationId ||
+      selectedConversation?.rawJid ||
+      selectedConversation?.normalizedJid ||
+      selectedConversation?.phone ||
+      ''
+    )
+    let previousValue = false
+    let nextValue = false
+    patchMessageById(normalizedId, (item) => {
+      previousValue = Boolean(item?.[field])
+      nextValue = !Boolean(item?.[field])
+      return { ...item, [field]: nextValue }
+    })
+    try {
+      if (channel && remoteJid) {
+        const response = await fetch(
+          `/api/wa-orchestrator/channels/${channel}/conversations/${encodeURIComponent(remoteJid)}/messages/${encodeURIComponent(normalizedId)}/flags/toggle`,
+          {
+            method: 'POST',
+            headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ field })
+          }
+        )
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || payload?.success === false) {
+          throw new Error(payload?.error || 'Falha ao atualizar metadados da mensagem.')
+        }
+        const flags = payload?.flags || {}
+        patchMessageById(normalizedId, (item) => ({
+          ...item,
+          favorite: Boolean(flags.favorite),
+          pinned: Boolean(flags.pinned),
+          reported: Boolean(flags.reported)
+        }))
+      }
+      const labels = {
+        favorite: nextValue ? 'Mensagem favoritada.' : 'Favorito removido.',
+        pinned: nextValue ? 'Mensagem fixada.' : 'Mensagem desfixada.',
+        reported: nextValue ? 'Mensagem marcada como denunciada.' : 'Denúncia removida.'
+      }
+      toast.success(labels[field])
+    } catch (error: any) {
+      patchMessageById(normalizedId, (item) => ({ ...item, [field]: previousValue }))
+      toast.error(error?.message || 'Falha ao atualizar metadados da mensagem.')
+    }
+  }, [orchestratorStatus, patchMessageById, selectedConversation])
+
+  const copyMessageContent = useCallback(async (message: any) => {
+    const visibleText = resolveMessageBodyText(message)
+    const mediaLabel = resolveSemanticLabel(message?.mediaType || message?.type)
+    const mediaUrl = String(message?.mediaProxyUrl || message?.media?.url || '').trim()
+    const content = [
+      visibleText,
+      !visibleText ? mediaLabel : '',
+      !visibleText && !mediaLabel ? String(message?.media?.fileName || '').trim() : '',
+      !visibleText && !mediaLabel && !message?.media?.fileName ? mediaUrl : ''
+    ].filter(Boolean).join('\n')
+
+    if (!content) {
+      toast.error('Nada para copiar nesta mensagem.')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(content)
+      toast.success('Mensagem copiada.')
+    } catch {
+      toast.error('Falha ao copiar a mensagem.')
+    }
+  }, [])
+
+  const forwardMessageToComposer = useCallback((message: any) => {
+    const visibleText = resolveMessageBodyText(message)
+    const mediaLabel = resolveSemanticLabel(message?.mediaType || message?.type)
+    const payload = visibleText || mediaLabel || String(message?.media?.fileName || '').trim() || 'Mensagem'
+    setReplyTarget(null)
+    setMessageInput((current) => {
+      const prefix = `[Encaminhada]\n${payload}`
+      if (!String(current || '').trim()) return prefix
+      return `${current.trim()}\n\n${prefix}`
+    })
+    messageInputRef.current?.focus()
+    toast.success('Conteúdo preparado para encaminhamento.')
+  }, [])
+
+  const removeMessageFromView = useCallback(async (messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    const channel =
+      Number(selectedConversation?.channel) ||
+      orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel
+    const remoteJid = normalizeWhatsAppJid(
+      selectedConversation?.conversationId ||
+      selectedConversation?.rawJid ||
+      selectedConversation?.normalizedJid ||
+      selectedConversation?.phone ||
+      ''
+    )
+    const previousMessages = messages
+    setMessages((prev) => prev.filter((item) => String(item?.id || '') !== normalizedId))
+    setSelectedMessageIds((prev) => prev.filter((item) => item !== normalizedId))
+    setReplyTarget((current) => current?.id === normalizedId ? null : current)
+    try {
+      if (channel && remoteJid) {
+        const response = await fetch(
+          `/api/wa-orchestrator/channels/${channel}/conversations/${encodeURIComponent(remoteJid)}/messages/${encodeURIComponent(normalizedId)}`,
+          {
+            method: 'DELETE',
+            headers: buildCrmBasicAuthHeaders()
+          }
+        )
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || payload?.success === false) {
+          throw new Error(payload?.error || 'Falha ao remover a mensagem.')
+        }
+      }
+      toast.success('Mensagem removida da conversa atual.')
+    } catch (error: any) {
+      setMessages(previousMessages)
+      toast.error(error?.message || 'Falha ao remover a mensagem.')
+    }
+  }, [messages, orchestratorStatus, selectedConversation])
+
+  const computeMessageActionMenuLayout = useCallback((messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    const viewport = messagesViewportRef.current
+    const anchor = messageActionRootRefs.current.get(normalizedId) || null
+    if (!normalizedId || !viewport || !anchor) return null
+
+    const viewportRect = viewport.getBoundingClientRect()
+    const anchorRect = anchor.getBoundingClientRect()
+    const horizontalPadding = 12
+    const verticalPadding = 12
+    const gutter = 8
+    const measuredWidth = Math.max(messageActionMenuRef.current?.offsetWidth || 260, 240)
+    const measuredHeight = Math.max(messageActionMenuRef.current?.offsetHeight || 360, 220)
+    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+    const availableWidth = Math.max(220, viewportRect.width - horizontalPadding * 2)
+    const width = Math.min(measuredWidth, availableWidth)
+    const availableHeight = Math.max(180, viewportRect.height - verticalPadding * 2)
+    const spaceBelow = viewportRect.bottom - anchorRect.bottom - gutter - verticalPadding
+    const spaceAbove = anchorRect.top - viewportRect.top - gutter - verticalPadding
+    const openDown = spaceBelow >= measuredHeight || spaceBelow >= spaceAbove
+    const sideAvailableHeight = openDown ? spaceBelow : spaceAbove
+    const maxHeight = Math.min(measuredHeight, availableHeight, Math.max(sideAvailableHeight, 140))
+
+    const topPreferred = openDown
+      ? anchorRect.bottom + gutter
+      : anchorRect.top - maxHeight - gutter
+    const top = clamp(
+      topPreferred,
+      viewportRect.top + verticalPadding,
+      viewportRect.bottom - maxHeight - verticalPadding
+    )
+
+    const spaceRight = viewportRect.right - anchorRect.left - horizontalPadding
+    const spaceLeft = anchorRect.right - viewportRect.left - horizontalPadding
+    const openToRight = spaceRight >= width || spaceRight >= spaceLeft
+    const leftPreferred = openToRight ? anchorRect.left : anchorRect.right - width
+    const left = clamp(
+      leftPreferred,
+      viewportRect.left + horizontalPadding,
+      viewportRect.right - width - horizontalPadding
+    )
+
+    return {
+      messageId: normalizedId,
+      top,
+      left,
+      maxHeight: Math.max(180, Math.floor(maxHeight)),
+      width: Math.max(220, Math.floor(width))
+    }
+  }, [])
+
+  const syncMessageActionMenuLayout = useCallback((messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    const nextLayout = computeMessageActionMenuLayout(normalizedId)
+    setMessageActionMenuLayout((current) => {
+      if (!nextLayout) return current
+      if (
+        current?.messageId === nextLayout.messageId &&
+        current.top === nextLayout.top &&
+        current.left === nextLayout.left &&
+        current.maxHeight === nextLayout.maxHeight &&
+        current.width === nextLayout.width
+      ) {
+        return current
+      }
+      return nextLayout
+    })
+  }, [computeMessageActionMenuLayout])
+
+  const scheduleMessageActionMenuLayout = useCallback((messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    if (messageActionMenuLayoutRafRef.current !== null) {
+      window.cancelAnimationFrame(messageActionMenuLayoutRafRef.current)
+    }
+    messageActionMenuLayoutRafRef.current = window.requestAnimationFrame(() => {
+      messageActionMenuLayoutRafRef.current = null
+      syncMessageActionMenuLayout(normalizedId)
+    })
+  }, [syncMessageActionMenuLayout])
+
+  const closeMessageActionMenu = useCallback(() => {
+    if (messageActionMenuLayoutRafRef.current !== null) {
+      window.cancelAnimationFrame(messageActionMenuLayoutRafRef.current)
+      messageActionMenuLayoutRafRef.current = null
+    }
+    setOpenMessageActionMenuId(null)
+    setExpandedReactionMenuId(null)
+    setMessageActionMenuLayout(null)
+  }, [])
+
+  const toggleMessageActionMenu = useCallback((messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    setOpenMessageActionMenuId((current) => {
+      const nextOpen = current === normalizedId ? null : normalizedId
+      setExpandedReactionMenuId((currentExpanded) => (
+        nextOpen && currentExpanded === normalizedId ? currentExpanded : null
+      ))
+      setMessageActionMenuLayout(nextOpen ? computeMessageActionMenuLayout(normalizedId) : null)
+      return nextOpen
+    })
+  }, [computeMessageActionMenuLayout])
+
+  const openMessageActionMenu = useCallback((messageId: string) => {
+    const normalizedId = String(messageId || '').trim()
+    if (!normalizedId) return
+    setReactionPickerMessageId(null)
+    setOpenMessageActionMenuId(normalizedId)
+    setExpandedReactionMenuId(null)
+    setMessageActionMenuLayout(computeMessageActionMenuLayout(normalizedId))
+  }, [computeMessageActionMenuLayout])
+
   const toggleReaction = useCallback(async (message: any, emoji: string) => {
     if (!selectedConversation || selectedConversation?.platform === 'lead' || selectedConversation?.platform === 'instagram') return
     const channel =
       Number(selectedConversation?.channel) ||
       orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel
-    const remoteJid = normalizeWhatsAppJid(selectedConversation?.conversationId || selectedConversation?.phone || '')
+    const remoteJid = normalizeWhatsAppJid(
+      selectedConversation?.conversationId ||
+      selectedConversation?.rawJid ||
+      selectedConversation?.normalizedJid ||
+      selectedConversation?.phone ||
+      ''
+    )
     const messageId = String(message?.id || '').trim()
     if (!channel || !remoteJid || !messageId) return
 
@@ -1018,6 +1631,77 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       setReactionBusyKey((current) => (current === requestKey ? null : current))
     }
   }, [selectedConversation, orchestratorStatus, reactionBusyKey, patchMessageById])
+
+  useEffect(() => {
+    if (selectedMessageIds.length > 0) return
+    setMessageSelectionMode(false)
+  }, [selectedMessageIds.length])
+
+  useEffect(() => {
+    if (!openMessageActionMenuId) return
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target instanceof Node ? event.target : null
+      if (!target) return
+      const root = (target instanceof Element ? target.closest('[data-message-action-root]') : null) as HTMLElement | null
+      if (root?.dataset.messageActionRoot === openMessageActionMenuId) return
+      setOpenMessageActionMenuId(null)
+      setExpandedReactionMenuId(null)
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpenMessageActionMenuId(null)
+      setExpandedReactionMenuId(null)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('touchstart', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openMessageActionMenuId])
+
+  useLayoutEffect(() => {
+    if (!openMessageActionMenuId) return
+
+    const updateLayout = () => {
+      scheduleMessageActionMenuLayout(openMessageActionMenuId)
+    }
+
+    updateLayout()
+    const viewport = messagesViewportRef.current
+    const anchor = messageActionRootRefs.current.get(openMessageActionMenuId) || null
+    const handleViewportChange = () => {
+      updateLayout()
+    }
+
+    viewport?.addEventListener('scroll', handleViewportChange, { passive: true })
+    window.addEventListener('scroll', handleViewportChange, true)
+    window.addEventListener('resize', handleViewportChange)
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        updateLayout()
+      })
+      if (viewport) resizeObserver.observe(viewport)
+      if (anchor) resizeObserver.observe(anchor)
+    }
+
+    return () => {
+      if (messageActionMenuLayoutRafRef.current !== null) {
+        window.cancelAnimationFrame(messageActionMenuLayoutRafRef.current)
+        messageActionMenuLayoutRafRef.current = null
+      }
+      viewport?.removeEventListener('scroll', handleViewportChange)
+      window.removeEventListener('scroll', handleViewportChange, true)
+      window.removeEventListener('resize', handleViewportChange)
+      resizeObserver?.disconnect()
+    }
+  }, [expandedReactionMenuId, openMessageActionMenuId, scheduleMessageActionMenuLayout])
 
   const loadInstagramConversations = useCallback(async () => {
     if (!instagram?.connected) return
@@ -1142,8 +1826,14 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         })
         setMessages((prev) => [...prev, sent])
       } else if (provider === 'evolution') {
+        const directChannels = Array.isArray(selectedConversation?.channels)
+          ? selectedConversation.channels.map((value: any) => Number(value)).filter((value: number) => Number.isFinite(value) && value > 0)
+          : []
+        const primaryConversationChannel = directChannels.length
+          ? directChannels[0]
+          : Number(selectedConversation?.channel || 0)
         const channel =
-          Number(selectedConversation?.channel) ||
+          Number(sendUnitChannel || primaryConversationChannel || selectedConversation?.channel) ||
           orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel
         if (!channel) {
           toast.error('Nenhum canal WhatsApp conectado para envio.')
@@ -1152,7 +1842,13 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         const phoneKey = extractPhoneFromId(selectedConversation?.phone || selectedConversation?.leadPhone || '')
         const remoteJid = isLeadOnly
           ? (phoneKey ? `${phoneKey}@s.whatsapp.net` : '')
-          : normalizeWhatsAppJid(selectedConversation.conversationId || selectedConversation.phone || '')
+          : normalizeWhatsAppJid(
+              selectedConversation.conversationId ||
+              selectedConversation.rawJid ||
+              selectedConversation.normalizedJid ||
+              selectedConversation.phone ||
+              ''
+            )
         if (!remoteJid) {
           toast.error('Número inválido para envio.')
           return
@@ -1205,12 +1901,48 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     } finally {
       setSendingMessage(false)
     }
-  }, [igAccessToken, instagram.businessAccountId, loadMessages, messageInput, provider, selectedConversation, orchestratorStatus, replyTarget])
+  }, [igAccessToken, instagram.businessAccountId, loadMessages, messageInput, provider, selectedConversation, orchestratorStatus, replyTarget, sendUnitChannel])
 
   const scrollMessagesToBottom = useCallback(() => {
     const viewport = messagesViewportRef.current
     if (!viewport) return
     viewport.scrollTop = viewport.scrollHeight
+  }, [])
+
+  const scrollMessagesToTop = useCallback(() => {
+    const viewport = messagesViewportRef.current
+    if (!viewport) return
+    viewport.scrollTop = 0
+  }, [])
+
+  const updateMessageScrollState = useCallback(() => {
+    const viewport = messagesViewportRef.current
+    if (!viewport) return
+    const canScrollUp = viewport.scrollTop > 12
+    const canScrollDown = (viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop) > 12
+    setMessageScrollState({ canScrollUp, canScrollDown })
+  }, [])
+
+  const handleMessagesViewportMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const viewport = messagesViewportRef.current
+    if (!viewport) return
+    const rect = viewport.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    const nearRightEdge = x >= rect.width - 112
+    if (!nearRightEdge) {
+      setScrollAffordanceZone(null)
+      return
+    }
+    if (y <= 108) {
+      setScrollAffordanceZone('top')
+      return
+    }
+    if (y >= rect.height - 116) {
+      setScrollAffordanceZone('bottom')
+      return
+    }
+    setScrollAffordanceZone(null)
   }, [])
 
   useEffect(() => {
@@ -1287,13 +2019,13 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (!payload) return
 
       if (payload.type === 'message_reaction_updated') {
-        const remoteJid = normalizeWhatsAppJid(payload.remoteJid || '')
-        const selectedJid = normalizeWhatsAppJid(selectedConversation?.conversationId || selectedConversation?.phone || '')
+        const remoteJid = String(payload.remoteJid || '')
+        const selectedJid = String(selectedConversation?.conversationId || selectedConversation?.rawJid || selectedConversation?.phone || '')
         if (
           payload.messageId &&
           selectedConversation &&
           remoteJid &&
-          selectedJid === remoteJid &&
+          doesWhatsAppIdentityMatch(selectedJid, remoteJid) &&
           Number(payload.channel) === Number(selectedConversation?.channel || payload.channel)
         ) {
           patchMessageById(String(payload.messageId), (item) => ({ ...item, reactions: payload.reactions || [] }))
@@ -1302,13 +2034,13 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       }
 
       if (payload.type === 'message_metadata_updated') {
-        const remoteJid = normalizeWhatsAppJid(payload.remoteJid || '')
-        const selectedJid = normalizeWhatsAppJid(selectedConversation?.conversationId || selectedConversation?.phone || '')
+        const remoteJid = String(payload.remoteJid || '')
+        const selectedJid = String(selectedConversation?.conversationId || selectedConversation?.rawJid || selectedConversation?.phone || '')
         if (
           payload.messageId &&
           selectedConversation &&
           remoteJid &&
-          selectedJid === remoteJid &&
+          doesWhatsAppIdentityMatch(selectedJid, remoteJid) &&
           Number(payload.channel) === Number(selectedConversation?.channel || payload.channel)
         ) {
           patchMessageById(String(payload.messageId), (item) => ({ ...item, replyTo: payload.replyTo || item.replyTo }))
@@ -1317,14 +2049,26 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       }
 
       const webhookEvent = String(payload.event || '').toLowerCase()
-      if (!selectedConversation) return
-      if (webhookEvent === 'messages.upsert' || webhookEvent === 'messages.update' || webhookEvent === 'chats.update') {
-        if (waEventsRefreshTimerRef.current) {
-          window.clearTimeout(waEventsRefreshTimerRef.current)
+      const normalizedWebhookEvent = webhookEvent.replace(/_/g, '.')
+      if (
+        normalizedWebhookEvent === 'messages.upsert' ||
+        normalizedWebhookEvent === 'messages.update' ||
+        normalizedWebhookEvent === 'chats.update'
+      ) {
+        if (waConversationRefreshTimerRef.current) {
+          window.clearTimeout(waConversationRefreshTimerRef.current)
         }
-        waEventsRefreshTimerRef.current = window.setTimeout(() => {
-          void loadMessages(selectedConversation, { silent: true })
-        }, 350)
+        waConversationRefreshTimerRef.current = window.setTimeout(() => {
+          void loadConversations()
+        }, 450)
+        if (selectedConversation) {
+          if (waEventsRefreshTimerRef.current) {
+            window.clearTimeout(waEventsRefreshTimerRef.current)
+          }
+          waEventsRefreshTimerRef.current = window.setTimeout(() => {
+            void loadMessages(selectedConversation, { silent: true })
+          }, 350)
+        }
       }
     }
 
@@ -1333,28 +2077,47 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
 
     return () => {
+      if (waConversationRefreshTimerRef.current) {
+        window.clearTimeout(waConversationRefreshTimerRef.current)
+        waConversationRefreshTimerRef.current = null
+      }
       if (waEventsRefreshTimerRef.current) {
         window.clearTimeout(waEventsRefreshTimerRef.current)
         waEventsRefreshTimerRef.current = null
       }
       source.close()
     }
-  }, [provider, selectedConversation, loadMessages, patchMessageById])
+  }, [provider, selectedConversation, loadConversations, loadMessages, patchMessageById])
+
+  useEffect(() => {
+    qrDialogChannelRef.current = qrDialogChannel
+  }, [qrDialogChannel])
+
+  const stopQrPolling = useCallback((channel?: number | null) => {
+    if (typeof channel === 'number' && Number.isFinite(channel)) {
+      const timer = qrPollingRef.current.get(channel)
+      if (timer) {
+        window.clearTimeout(timer)
+        qrPollingRef.current.delete(channel)
+      }
+      return
+    }
+    qrPollingRef.current.forEach((timer) => {
+      window.clearTimeout(timer)
+    })
+    qrPollingRef.current.clear()
+  }, [])
 
   useEffect(() => {
     if (!qrDialogChannel || !orchestratorStatus?.instances?.length) return
     const instance = orchestratorStatus.instances.find((item) => item.channel === qrDialogChannel)
     if (instance?.status === 'connected') {
-      const timer = qrPollingRef.current.get(qrDialogChannel)
-      if (timer) {
-        window.clearTimeout(timer)
-        qrPollingRef.current.delete(qrDialogChannel)
-      }
+      stopQrPolling(qrDialogChannel)
       toast.success(`WhatsApp conectado no canal ${qrDialogChannel}`)
       setQrDialogChannel(null)
       setWaStatusOpen(false)
     }
-  }, [orchestratorStatus, qrDialogChannel])
+  }, [orchestratorStatus, qrDialogChannel, stopQrPolling])
 
   useEffect(() => {
     if (selectedConversation?.platform === 'instagram') {
@@ -1367,6 +2130,25 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     setReplyTarget(null)
     setReactionPickerMessageId(null)
   }, [selectedConversation?.conversationId, selectedConversation?.channel])
+
+  useEffect(() => {
+    const channels = Array.isArray(selectedConversation?.channels)
+      ? selectedConversation.channels.map((value: any) => Number(value)).filter((value: number) => Number.isFinite(value) && value > 0)
+      : []
+    const fallback = Number(selectedConversation?.channel || 0)
+    const resolved = channels.length ? channels : (fallback > 0 ? [fallback] : [])
+
+    if (resolved.length > 0) {
+      const current = Number(sendUnitChannel || 0)
+      if (current > 0 && resolved.includes(current)) return
+      setSendUnitChannel(String(resolved[0]))
+      return
+    }
+    const firstConnected = orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel
+    if (firstConnected) {
+      setSendUnitChannel(String(firstConnected))
+    }
+  }, [selectedConversation?.channels, selectedConversation?.channel, orchestratorStatus?.instances, sendUnitChannel])
 
   useEffect(() => {
     if (!selectedConversation) return
@@ -1409,10 +2191,35 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   }, [selectedConversation, harmoniaMessagesLoading, loadingMessages, messages.length, harmoniaMessages.length, scrollMessagesToBottom])
 
   useEffect(() => {
+    updateMessageScrollState()
+  }, [messages.length, harmoniaMessages.length, loadingMessages, harmoniaMessagesLoading, selectedConversation?.conversationId, updateMessageScrollState])
+
+  useEffect(() => {
+    const viewport = messagesViewportRef.current
+    if (!viewport) return
+    const handleScroll = () => updateMessageScrollState()
+    viewport.addEventListener('scroll', handleScroll, { passive: true })
+    return () => viewport.removeEventListener('scroll', handleScroll)
+  }, [updateMessageScrollState])
+
+  useEffect(() => {
+    if (!conversationFilter) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target instanceof Node ? event.target : null
+      if (!target) return
+      if (conversationFiltersRef.current?.contains(target)) return
+      setConversationFilter(null)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [conversationFilter])
+
+  useEffect(() => {
     return () => {
       if (harmoniaActionTimerRef.current) window.clearTimeout(harmoniaActionTimerRef.current)
+      stopQrPolling()
     }
-  }, [])
+  }, [stopQrPolling])
 
   useEffect(() => {
     let storedDebug = ''
@@ -1597,6 +2404,314 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     [harmoniaApiJson]
   )
 
+  const openConversation = useCallback(async (conv: any) => {
+    setSelectedConversation(conv)
+    setSelectedMessageIds([])
+    setMessageSelectionMode(false)
+    if (conv?.leadId) {
+      void openHarmoniaConversationById(conv.leadId)
+      return
+    }
+    if (conv?.platform === 'instagram') {
+      setMessages(igDMs[conv.conversationId] || [])
+      return
+    }
+    if (conv?.platform === 'lead') {
+      setMessages([])
+      return
+    }
+    setMessages([])
+    try {
+      const loaded = await loadMessages(conv)
+      await markConversationAsRead(conv, loaded)
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao abrir conversa.')
+    }
+  }, [igDMs, loadMessages, markConversationAsRead, openHarmoniaConversationById])
+
+  const isSameConversationRecord = useCallback((left: any, right: any) => {
+    if (!left || !right) return false
+    const leftPlatform = String(left?.platform || left?.type || '')
+    const rightPlatform = String(right?.platform || right?.type || '')
+    if (leftPlatform !== rightPlatform) return false
+
+    const leftChannel = Number(left?.channel || 0)
+    const rightChannel = Number(right?.channel || 0)
+    if (leftChannel && rightChannel && leftChannel !== rightChannel) return false
+
+    const leftId = String(left?.conversationId || left?.rawJid || left?.phone || left?.leadId || '')
+    const rightId = String(right?.conversationId || right?.rawJid || right?.phone || right?.leadId || '')
+    if (!leftId || !rightId) return false
+    return leftPlatform === 'lead'
+      ? leftId === rightId
+      : leftId === rightId || doesWhatsAppIdentityMatch(leftId, rightId)
+  }, [])
+
+  const updateConversationRecord = useCallback((target: any, updater: (conv: any) => any) => {
+    setConversations((prev) => prev.map((item) => (isSameConversationRecord(item, target) ? updater(item) : item)))
+    setSelectedConversation((current) => (isSameConversationRecord(current, target) ? updater(current) : current))
+  }, [isSameConversationRecord])
+
+  const removeConversationRecord = useCallback((target: any) => {
+    setConversations((prev) => prev.filter((item) => !isSameConversationRecord(item, target)))
+    setSelectedConversation((current) => (isSameConversationRecord(current, target) ? null : current))
+  }, [isSameConversationRecord])
+
+  const computeConversationActionMenuLayout = useCallback((conversationId: string) => {
+    const normalizedId = String(conversationId || '').trim()
+    const viewport = conversationScrollViewportRef.current
+    const trigger = conversationActionTriggerRefs.current.get(normalizedId) || null
+    if (!normalizedId || !viewport || !trigger) return null
+
+    const viewportRect = viewport.getBoundingClientRect()
+    const triggerRect = trigger.getBoundingClientRect()
+    const horizontalPadding = 12
+    const verticalPadding = 12
+    const gutter = 8
+    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+    const measuredWidth = Math.max(conversationActionMenuRef.current?.offsetWidth || 320, 280)
+    const width = Math.min(measuredWidth, Math.max(280, viewportRect.width - horizontalPadding * 2))
+    const availableBelow = viewportRect.bottom - triggerRect.bottom - gutter - verticalPadding
+    const availableAbove = triggerRect.top - viewportRect.top - gutter - verticalPadding
+    const estimatedHeight = Math.max(conversationActionMenuRef.current?.offsetHeight || 420, 260)
+    const openDown = availableBelow >= estimatedHeight || availableBelow >= availableAbove
+    const topPreferred = openDown ? triggerRect.bottom + gutter : triggerRect.top - estimatedHeight - gutter
+    const top = clamp(
+      topPreferred,
+      viewportRect.top + verticalPadding,
+      viewportRect.bottom - Math.min(estimatedHeight, viewportRect.height - verticalPadding * 2) - verticalPadding
+    )
+    const leftPreferred = triggerRect.right - width
+    const left = clamp(
+      leftPreferred,
+      viewportRect.left + horizontalPadding,
+      viewportRect.right - width - horizontalPadding
+    )
+
+    return {
+      conversationId: normalizedId,
+      top,
+      left,
+      width: Math.floor(width)
+    }
+  }, [])
+
+  const closeConversationActionMenu = useCallback(() => {
+    setOpenConversationActionMenuId(null)
+    setConversationActionMenuLayout(null)
+  }, [])
+
+  useEffect(() => {
+    if (!openConversationActionMenuId) return
+
+    const viewport = conversationScrollViewportRef.current
+    const syncLayout = () => {
+      setConversationActionMenuLayout(computeConversationActionMenuLayout(openConversationActionMenuId))
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target instanceof Node ? event.target : null
+      if (!target) return
+      const menu = conversationActionMenuRef.current
+      const trigger = conversationActionTriggerRefs.current.get(openConversationActionMenuId) || null
+      if (menu?.contains(target)) return
+      if (trigger?.contains(target)) return
+      closeConversationActionMenu()
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeConversationActionMenu()
+      }
+    }
+
+    syncLayout()
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    viewport?.addEventListener('scroll', syncLayout, { passive: true })
+    window.addEventListener('resize', syncLayout)
+    window.addEventListener('scroll', syncLayout, true)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+      viewport?.removeEventListener('scroll', syncLayout)
+      window.removeEventListener('resize', syncLayout)
+      window.removeEventListener('scroll', syncLayout, true)
+    }
+  }, [closeConversationActionMenu, computeConversationActionMenuLayout, openConversationActionMenuId])
+
+  const handleConversationListAction = useCallback((action: string, conv: any) => {
+    const displayName = resolveConversationDisplayName(conv)
+
+    if (action === 'mark-unread') {
+      updateConversationRecord(conv, (current) => ({
+        ...current,
+        unreadCount: Math.max(1, Number(current?.unreadCount ?? current?.unreadMessages ?? current?.unread_messages ?? 0) || 0),
+        unreadMessages: Math.max(1, Number(current?.unreadMessages ?? current?.unreadCount ?? current?.unread_messages ?? 0) || 0),
+        unread_messages: Math.max(1, Number(current?.unread_messages ?? current?.unreadCount ?? current?.unreadMessages ?? 0) || 0)
+      }))
+      closeConversationActionMenu()
+      toast.success('Conversa marcada como não lida.')
+      return
+    }
+
+    if (action === 'archive') {
+      updateConversationRecord(conv, (current) => ({ ...current, archived: !Boolean(current?.archived || current?.isArchived) }))
+      closeConversationActionMenu()
+      toast.success('Status de arquivamento atualizado.')
+      return
+    }
+
+    if (action === 'mute') {
+      updateConversationRecord(conv, (current) => ({ ...current, muted: !Boolean(current?.muted || current?.isMuted) }))
+      closeConversationActionMenu()
+      toast.success('Status de silenciamento atualizado.')
+      return
+    }
+
+    if (action === 'lock') {
+      updateConversationRecord(conv, (current) => ({ ...current, locked: !Boolean(current?.locked || current?.isLocked) }))
+      closeConversationActionMenu()
+      toast.success('Status de bloqueio visual atualizado.')
+      return
+    }
+
+    if (action === 'favorite') {
+      updateConversationRecord(conv, (current) => ({
+        ...current,
+        isFavorite: !Boolean(current?.isFavorite || current?.favorite || current?.starred),
+        favorite: !Boolean(current?.isFavorite || current?.favorite || current?.starred),
+        starred: !Boolean(current?.isFavorite || current?.favorite || current?.starred)
+      }))
+      closeConversationActionMenu()
+      toast.success('Favorito atualizado.')
+      return
+    }
+
+    if (action === 'list') {
+      updateConversationRecord(conv, (current) => {
+        const currentLabels = Array.isArray(current?.labels)
+          ? current.labels
+          : Array.isArray(current?.tags)
+            ? current.tags
+            : Array.isArray(current?.etiquetas)
+              ? current.etiquetas
+              : []
+        const hasList = currentLabels.some((label: any) => String(label).toLowerCase() === 'lista')
+        const nextLabels = hasList
+          ? currentLabels.filter((label: any) => String(label).toLowerCase() !== 'lista')
+          : [...currentLabels, 'Lista']
+        return { ...current, labels: nextLabels, tags: nextLabels, etiquetas: nextLabels }
+      })
+      closeConversationActionMenu()
+      toast.success('Lista da conversa atualizada.')
+      return
+    }
+
+    if (action === 'block') {
+      updateConversationRecord(conv, (current) => ({ ...current, blocked: !Boolean(current?.blocked) }))
+      closeConversationActionMenu()
+      toast.success(`Status de bloqueio de ${displayName} atualizado.`)
+      return
+    }
+
+    if (action === 'clear') {
+      updateConversationRecord(conv, (current) => ({
+        ...current,
+        lastMessage: '',
+        lastMessageText: '',
+        last_message_text: '',
+        lastActivity: current?.lastActivity || current?.updatedAt || new Date().toISOString()
+      }))
+      if (isSameConversationRecord(selectedConversation, conv)) {
+        setMessages([])
+        setHarmoniaMessages([])
+        setHarmoniaConversation(null)
+        setIgDMs((prev) => {
+          const key = String(conv?.conversationId || '')
+          if (!key || !(key in prev)) return prev
+          return { ...prev, [key]: [] }
+        })
+      }
+      closeConversationActionMenu()
+      toast.success('Mensagens visíveis da conversa foram limpas.')
+      return
+    }
+
+    if (action === 'delete') {
+      const isCurrent = isSameConversationRecord(selectedConversation, conv)
+      removeConversationRecord(conv)
+      if (isCurrent) {
+        setMessages([])
+        setHarmoniaMessages([])
+        setHarmoniaConversation(null)
+        setReplyTarget(null)
+        setOpenMessageActionMenuId(null)
+        setExpandedReactionMenuId(null)
+        setSelectedMessageIds([])
+        setMessageSelectionMode(false)
+      }
+      closeConversationActionMenu()
+      toast.success('Conversa removida da lista.')
+    }
+  }, [closeConversationActionMenu, isSameConversationRecord, removeConversationRecord, selectedConversation, updateConversationRecord])
+
+  const renderConversationListMenuItems = useCallback((conv: any) => {
+    const displayName = resolveConversationDisplayName(conv)
+    const iconClassName = "h-5 w-5 shrink-0 text-white/80"
+    const itemClassName = "flex items-center justify-between gap-6 rounded-2xl px-5 py-4 text-left text-[15px] font-medium text-white/95 transition-colors hover:bg-white/10"
+
+    return (
+      <>
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('mark-unread', conv)}>
+          <span>Marcar como não lida</span>
+          <EnvelopeSimpleOpen className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('archive', conv)}>
+          <span>Arquivar</span>
+          <Archive className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('mute', conv)}>
+          <span>Silenciar</span>
+          <BellSimpleSlash className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('lock', conv)}>
+          <span>Trancar conversa</span>
+          <LockSimple className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('favorite', conv)}>
+          <span>Adicionar aos favoritos</span>
+          <HeartStraight className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('list', conv)}>
+          <span>Adicionar à lista</span>
+          <UserList className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('block', conv)}>
+          <span className="max-w-[240px] whitespace-normal">Bloquear {displayName}</span>
+          <Prohibit className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className={itemClassName} onClick={() => handleConversationListAction('clear', conv)}>
+          <span>Limpar conversa</span>
+          <Broom className={iconClassName} />
+        </button>
+        <div className="mx-1 h-px bg-white/10" />
+        <button type="button" className="flex items-center justify-between gap-6 rounded-2xl px-5 py-4 text-left text-[15px] font-medium text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300" onClick={() => handleConversationListAction('delete', conv)}>
+          <span>Apagar conversa</span>
+          <TrashSimple className="h-5 w-5 shrink-0 text-red-400" />
+        </button>
+      </>
+    )
+  }, [handleConversationListAction])
+
   const patchHarmoniaConversation = useCallback(
     async (patch: { stage?: string; lead_speed_class?: string }) => {
       if (!harmoniaConversation?.id) return
@@ -1626,6 +2741,18 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   )
 
   const pollChannelQR = useCallback(async (channel: number) => {
+    stopQrPolling(channel)
+    const queueNextPoll = (delayMs = 3000) => {
+      if (qrDialogChannelRef.current !== channel) {
+        stopQrPolling(channel)
+        return
+      }
+      const timer = setTimeout(() => {
+        void pollChannelQR(channel)
+      }, delayMs)
+      qrPollingRef.current.set(channel, timer)
+    }
+
     const resolveQrDataUrl = async (qrValue: unknown) => {
       if (typeof qrValue !== 'string') return null
       const normalized = qrValue.trim().replace(/\\\//g, '/')
@@ -1644,16 +2771,20 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       })
 
       if (!response.ok) {
-        if (response.status === 404) {
-          const timer = setTimeout(() => pollChannelQR(channel), 1500)
-          qrPollingRef.current.set(channel, timer)
+        if (response.status === 404 || response.status === 409 || response.status === 425) {
+          queueNextPoll(1500)
           return
         }
-        throw new Error(`HTTP ${response.status}`)
+        console.warn('[WA_QR_DEBUG] pollChannelQR:non_ok', { channel, status: response.status })
+        queueNextPoll(3000)
+        return
       }
 
       const result = await response.json().catch(() => ({}))
-      if (!result?.success || (!result?.qr && !result?.dataUrl)) return
+      if (!result?.success || (!result?.qr && !result?.dataUrl)) {
+        queueNextPoll(2500)
+        return
+      }
 
       let qrDataUrl: string | undefined
       if (result.dataUrl) {
@@ -1665,11 +2796,26 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (qrDataUrl) {
         setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
       }
+
+      const status = String(result?.status || '').toLowerCase()
+      if (status === 'connected') {
+        stopQrPolling(channel)
+        return
+      }
+      queueNextPoll(3000)
     } catch (err: any) {
-      console.error('[WA_QR_DEBUG] pollChannelQR:error', { channel, error: err?.message || String(err) })
-      toast.error(`Falha ao carregar QR: ${err.message || 'erro inesperado'}`)
+      console.warn('[WA_QR_DEBUG] pollChannelQR:error', { channel, error: err?.message || String(err) })
+      queueNextPoll(3500)
     }
-  }, [])
+  }, [QR_DARK, QR_LIGHT, stopQrPolling])
+
+  useEffect(() => {
+    if (!qrDialogChannel) return
+    void pollChannelQR(qrDialogChannel)
+    return () => {
+      stopQrPolling(qrDialogChannel)
+    }
+  }, [qrDialogChannel, pollChannelQR, stopQrPolling])
 
   const startChannel = useCallback(async (channel: number) => {
     try {
@@ -1696,7 +2842,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       console.error('[WA_QR_DEBUG] startChannel:error', { channel, error: message })
       toast.error(message)
     }
-  }, [pollChannelQR])
+  }, [QR_DARK, QR_LIGHT, pollChannelQR])
 
   const resolveNextWhatsAppChannel = useCallback(() => {
     const instances = orchestratorStatus?.instances ?? []
@@ -1735,12 +2881,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     setQrDialogChannel(next.channel)
 
     if (next.action === 'poll') {
-      pollChannelQR(next.channel)
       return
     }
 
     await startChannel(next.channel)
-  }, [pollChannelQR, resolveNextWhatsAppChannel, startChannel])
+  }, [resolveNextWhatsAppChannel, startChannel])
 
   const createTicket = () => {
     if (newTicket.subject && newTicket.customer && newTicket.customerEmail) {
@@ -1828,6 +2973,210 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     () => orchestratorStatus?.instances?.filter((instance) => instance.status === 'connected') ?? [],
     [orchestratorStatus?.instances]
   )
+  const selectedConversationChannels = useMemo(() => {
+    const channelsFromConversation = Array.isArray(selectedConversation?.channels)
+      ? selectedConversation.channels
+      : []
+    const fallback = Number(selectedConversation?.channel || 0)
+    const merged = channelsFromConversation.length
+      ? channelsFromConversation
+      : (fallback > 0 ? [fallback] : [])
+    return Array.from(new Set<number>(
+      merged
+        .map((value: any) => Number(value))
+        .filter((value: number) => Number.isFinite(value) && value > 0)
+    )).sort((a, b) => a - b)
+  }, [selectedConversation?.channels, selectedConversation?.channel])
+  const shouldShowSendUnitSelector = useMemo(
+    () =>
+      provider === 'evolution' &&
+      selectedConversation?.platform !== 'instagram' &&
+      selectedConversationChannels.length > 1,
+    [provider, selectedConversation?.platform, selectedConversationChannels]
+  )
+  const sendUnitOptions = useMemo(
+    () => {
+      const allowed = new Set(selectedConversationChannels)
+      const options = connectedWhatsapps
+        .filter((instance) => (allowed.size ? allowed.has(instance.channel) : true))
+        .map((instance) => ({
+          value: String(instance.channel),
+          label: `Unidade/Canal ${instance.channel}${instance.metadata?.phoneNumber ? ` • ${instance.metadata.phoneNumber}` : ''}`
+        }))
+      if (options.length) return options
+      return selectedConversationChannels.map((channel) => ({
+        value: String(channel),
+        label: `Unidade/Canal ${channel}`
+      }))
+    },
+    [connectedWhatsapps, selectedConversationChannels]
+  )
+  const selfIdentityAliasesByChannel = useMemo(() => {
+    const map = new Map<number, Set<string>>()
+    ;(orchestratorStatus?.instances || []).forEach((instance) => {
+      const aliases = new Set<string>()
+      ;[
+        instance?.metadata?.phoneNumber,
+        instance?.metadata?.ownerJid,
+        instance?.metadata?.profileName,
+        instance?.name
+      ].forEach((value) => {
+        if (!value) return
+        buildWhatsAppIdentityAliases(String(value)).forEach((alias) => aliases.add(alias))
+        buildMentionAliases(String(value)).forEach((alias) => aliases.add(alias))
+        aliases.add(String(value).trim().toLowerCase())
+      })
+      if (aliases.size) {
+        map.set(Number(instance.channel || 0), aliases)
+      }
+    })
+    return map
+  }, [orchestratorStatus?.instances])
+  const isOutboundMessage = useCallback((message: any) => {
+    const direction = String(message?.direction || '').toLowerCase()
+    if (direction === 'outbound' || direction === 'human') return true
+    if (message?.fromMe === true || message?.key?.fromMe === true) return true
+    const senderName = String(message?.senderName || '').trim().toLowerCase()
+    if (senderName === 'você' || senderName === 'voce') return true
+
+    const channel = Number(selectedConversation?.channel || 0)
+    const selfAliases = selfIdentityAliasesByChannel.get(channel)
+    if (!selfAliases?.size) return false
+
+    const candidates = [
+      message?.senderJid,
+      message?.senderLid,
+      message?.senderPhone,
+      message?.author,
+      message?.participant,
+      message?.participantAlt,
+      senderName
+    ]
+
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      const raw = String(candidate).trim()
+      if (!raw) continue
+      if (selfAliases.has(raw.toLowerCase())) return true
+      const aliases = new Set<string>([
+        ...buildWhatsAppIdentityAliases(raw),
+        ...buildMentionAliases(raw),
+        raw.toLowerCase()
+      ])
+      for (const alias of aliases) {
+        if (selfAliases.has(alias)) return true
+      }
+    }
+
+    return false
+  }, [selectedConversation?.channel, selfIdentityAliasesByChannel])
+  const conversationAvatarDirectory = useMemo(() => {
+    const map = new Map<string, string>()
+    ;(conversations || []).forEach((conv: any) => {
+      const avatarUrl = String(resolveAvatarUrl(conv) || '').trim()
+      if (!avatarUrl) return
+      const aliases = new Set<string>()
+      ;[
+        conv?.conversationId,
+        conv?.rawJid,
+        conv?.normalizedJid,
+        conv?.phone,
+        ...(Array.isArray(conv?.aliases) ? conv.aliases : [])
+      ].forEach((value) => {
+        buildMentionAliases(value).forEach((alias) => aliases.add(alias))
+      })
+      aliases.forEach((alias) => map.set(alias, avatarUrl))
+    })
+    return map
+  }, [conversations])
+  const groupParticipantDirectory = useMemo(() => {
+    const map = new Map<string, ParticipantRenderMeta>()
+    messages.forEach((msg: any) => {
+      const senderSeed = String(msg?.senderJid || msg?.senderLid || msg?.senderPhone || msg?.senderName || msg?.id || '')
+      if (!senderSeed) return
+      const style = resolveGroupSenderStyle(senderSeed)
+      const senderLabel = String(
+        msg?.senderName ||
+        formatPhone(msg?.senderPhone || msg?.senderJid || msg?.senderLid || '') ||
+        ''
+      ).trim()
+      if (!senderLabel || senderLabel.toLowerCase() === 'você') return
+      const aliases = new Set<string>()
+      ;[
+        ...buildMentionAliases(msg?.senderJid),
+        ...buildMentionAliases(msg?.senderLid),
+        ...buildMentionAliases(msg?.senderPhone)
+      ].forEach((alias) => aliases.add(alias))
+      const avatarUrl = String(msg?.senderAvatarUrl || '').trim() || Array.from(aliases).map((alias) => conversationAvatarDirectory.get(alias)).find(Boolean) || undefined
+      aliases.forEach((alias) => {
+        map.set(alias, { label: senderLabel, color: style.mention, avatarUrl })
+      })
+    })
+    return map
+  }, [messages, conversationAvatarDirectory])
+  const openPrivateConversationForMessage = useCallback(async (message: any, opts?: { prefill?: boolean }) => {
+    const senderJid = normalizeWhatsAppJid(message?.senderJid || message?.senderLid || message?.senderPhone || '')
+    if (!senderJid || senderJid.includes('@g.us')) {
+      toast.error('Não foi possível identificar o remetente desta mensagem.')
+      return
+    }
+
+    const aliases = new Set<string>()
+    ;[
+      message?.senderJid,
+      message?.senderLid,
+      message?.senderPhone,
+      senderJid
+    ].forEach((value) => {
+      buildWhatsAppIdentityAliases(value).forEach((alias) => aliases.add(alias))
+      buildMentionAliases(value).forEach((alias) => aliases.add(alias))
+    })
+
+    const existingConversation = (conversations || []).find((conv: any) => {
+      const candidate = String(conv?.conversationId || conv?.rawJid || conv?.normalizedJid || conv?.phone || '').trim()
+      if (!candidate || candidate.includes('@g.us')) return false
+      for (const alias of aliases) {
+        if (doesWhatsAppIdentityMatch(candidate, alias)) return true
+      }
+      return false
+    })
+
+    const senderName = String(
+      message?.senderName ||
+      formatPhone(message?.senderPhone || senderJid) ||
+      'Contato'
+    ).trim()
+    const avatarUrl = String(
+      message?.senderAvatarUrl ||
+      Array.from(aliases).map((alias) => conversationAvatarDirectory.get(alias)).find(Boolean) ||
+      ''
+    ).trim()
+    const fallbackConversation = {
+      conversationId: senderJid,
+      rawJid: senderJid,
+      normalizedJid: senderJid,
+      phone: extractPhoneFromId(senderJid),
+      name: senderName,
+      preferredName: senderName,
+      profilePic: avatarUrl,
+      channel: Number(selectedConversation?.channel || orchestratorStatus?.instances?.find((instance) => instance.status === 'connected')?.channel || 0)
+    }
+
+    const targetConversation = existingConversation || fallbackConversation
+    if (!existingConversation) {
+      setConversations((prev) => [
+        targetConversation,
+        ...prev.filter((item) => !doesWhatsAppIdentityMatch(item?.conversationId || item?.rawJid || item?.phone, senderJid))
+      ])
+    }
+
+    await openConversation(targetConversation)
+    if (opts?.prefill) {
+      const firstName = senderName.split(/\s+/).filter(Boolean)[0] || senderName
+      setMessageInput((current) => current || `Olá ${firstName}, `)
+    }
+    messageInputRef.current?.focus()
+  }, [conversationAvatarDirectory, conversations, openConversation, orchestratorStatus?.instances, selectedConversation?.channel])
   const paused = Boolean(
     (statusPausedUntil && Date.now() < statusPausedUntil) ||
       (conversationsPausedUntil && Date.now() < conversationsPausedUntil) ||
@@ -1945,10 +3294,15 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const combinedConversations = useMemo(() => {
     const whatsappItems = (conversations || []).map((conv) => ({
       ...conv,
-      conversationId: normalizeWhatsAppJid(conv.conversationId || conv.id || conv.remoteJid),
+      conversationId: String(conv.conversationId || conv.rawJid || conv.id || conv.remoteJid || '').trim(),
+      rawJid: String(conv.rawJid || conv.conversationId || conv.remoteJid || '').trim(),
+      normalizedJid: normalizeWhatsAppJid(conv.normalizedJid || conv.conversationId || conv.rawJid || conv.id || conv.remoteJid),
       platform: conv.platform || (provider === 'evolution' ? 'whatsapp' : provider),
       name: conv.name && !isLikelyWhatsAppJid(conv.name) ? conv.name : undefined,
+      preferredName: conv.preferredName || (conv.name && !isLikelyWhatsAppJid(conv.name) ? conv.name : undefined),
       phone: conv.phone || conv.contactPhone || conv.contact_phone || conv.contact_phone_raw,
+      aliases: Array.isArray(conv.aliases) ? conv.aliases : [],
+      channels: Number.isFinite(Number(conv.channel)) ? [Number(conv.channel)] : []
     }))
 
     const instagramItems = Object.entries(igDMs || {}).map(([userId, msgs]) => {
@@ -1961,6 +3315,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         profilePic: profile?.profilePic,
         platform: 'instagram',
         lastMessage: last?.text || 'Sem mensagens',
+        lastInteractionAt: last?.timestamp || null,
         updatedAt: last?.timestamp || new Date().toISOString(),
       }
     })
@@ -1976,6 +3331,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         stage: it.stage,
         platform: 'lead',
         lastMessage: it.last_message_text || 'Sem mensagens',
+        lastInteractionAt: it.last_message_at || it.last_activity_at || null,
         updatedAt: it.last_message_at || it.last_activity_at || new Date().toISOString(),
         leadUpdatedAt: it.last_message_at || it.last_activity_at || null,
       }
@@ -1990,7 +3346,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
 
     whatsappItems.forEach((item) => {
-      const phoneKey = extractPhoneFromId(item.phone || item.conversationId || '')
+      const phoneKey = extractPhoneFromId(item.phone || item.conversationId || item.rawJid || '')
       if (phoneKey.length < 10) {
         pushWithIndex(item, '')
         return
@@ -2006,6 +3362,12 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           ...existing,
           ...item,
           name: useIncomingName ? incomingName : (useExistingName ? existingName : incomingName || existingName),
+          preferredName: useIncomingName ? incomingName : (existing.preferredName || incomingName || existingName),
+          conversationId: item.conversationId || existing.conversationId,
+          rawJid: item.rawJid || existing.rawJid,
+          normalizedJid: item.normalizedJid || existing.normalizedJid,
+          aliases: Array.from(new Set([...(existing.aliases || []), ...(item.aliases || [])])),
+          channels: Array.from(new Set([...(existing.channels || []), ...(item.channels || [])])).filter((n) => Number.isFinite(Number(n))),
           leadId: existing.leadId,
           stage: existing.stage,
           leadUpdatedAt: existing.leadUpdatedAt,
@@ -2028,16 +3390,25 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (phoneKey && indexByPhone.has(phoneKey)) {
         const idx = indexByPhone.get(phoneKey)!
         const current = merged[idx]
-        const currentTs = current.updatedAt ? new Date(current.updatedAt).getTime() : 0
-        const leadTs = item.updatedAt ? new Date(item.updatedAt).getTime() : 0
+        const currentTs = resolveConversationInteractionTimestamp(current)
+        const leadTs = resolveConversationInteractionTimestamp(item)
+        const currentName = String(current?.name || '')
+        const leadName = String(item?.name || '')
+        const preferredName =
+          (currentName && !isLikelyWhatsAppJid(currentName) ? currentName : '') ||
+          (leadName && !isLikelyWhatsAppJid(leadName) ? leadName : '') ||
+          currentName ||
+          leadName
         merged[idx] = {
           ...current,
-          name: current.name || item.name,
+          name: preferredName,
+          preferredName,
           leadId: item.leadId,
           stage: item.stage,
           leadUpdatedAt: item.leadUpdatedAt || current.leadUpdatedAt,
           leadName: item.name,
           leadPhone: item.phone,
+          lastInteractionAt: leadTs > currentTs ? item.lastInteractionAt || item.updatedAt : current.lastInteractionAt || current.updatedAt,
           updatedAt: leadTs > currentTs ? item.updatedAt : current.updatedAt,
         }
       } else {
@@ -2046,8 +3417,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     })
 
     return merged.sort((a, b) => {
-      const da = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
-      const db = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+      const da = resolveConversationInteractionTimestamp(a)
+      const db = resolveConversationInteractionTimestamp(b)
       return db - da
     })
   }, [conversations, igDMs, igProfiles, provider, harmoniaInbox])
@@ -2055,7 +3426,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const filteredConversations = useMemo(() => {
     const term = searchQuery.trim().toLowerCase()
     const matchesFilter = (conv: any) => {
-      if (conversationFilter === 'all') return true
+      if (!conversationFilter) return true
       const unreadCount = Number(conv?.unreadCount ?? conv?.unreadMessages ?? conv?.unread_messages ?? 0)
       const labels = conv?.labels || conv?.tags || conv?.etiquetas || []
       const hasLabels = Array.isArray(labels) ? labels.length > 0 : Boolean(labels)
@@ -2142,12 +3513,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
             </span>
           </div>
         ) : null}
-        <div className="grid flex-1 min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] gap-4 overflow-hidden xl:grid-cols-12">
-          <Card className="glass-card xl:col-span-4 flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="grid flex-1 min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] gap-4 overflow-visible xl:grid-cols-12">
+          <Card className="glass-card hover:translate-y-0 xl:col-span-4 flex h-full min-h-0 flex-col overflow-hidden">
                 <CardContent className="flex min-h-0 flex-col gap-2 pt-4">
-                  <div data-testid="conversation-filters" className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 p-1.5">
+                  <div ref={conversationFiltersRef} data-testid="conversation-filters" className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 p-1.5">
                     {[
-                      { id: 'all', label: 'Todas' },
                       { id: 'unread', label: 'Não lidas' },
                       { id: 'labels', label: 'Etiquetas' },
                       { id: 'favorites', label: 'Favoritos' },
@@ -2164,7 +3534,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                             ? 'border-blue-300/60 bg-blue-500/35 text-white'
                             : 'border-white/25 bg-white/15 text-white hover:bg-white/20 hover:text-white'
                         }`}
-                        onClick={() => setConversationFilter(item.id as any)}
+                        onClick={() => setConversationFilter((current) => current === item.id ? null : item.id as any)}
                       >
                         {item.label}
                       </Button>
@@ -2177,8 +3547,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="h-9 bg-white/10 border-white/15 text-white placeholder:text-blue-100/55"
                   />
-                      <div data-testid="conversation-scroll" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
-                        <div className="space-y-1.5 pb-1">
+                      <div ref={conversationScrollViewportRef} data-testid="conversation-scroll" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1 pr-1">
+                        <div className="space-y-1.5 pb-2">
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                       )}
@@ -2196,60 +3566,137 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         </div>
                       )}
                       {filteredConversations.map((conv) => (
-                        <div
-                          key={`${conv.conversationId}-${conv.channel ?? conv.platform ?? ''}`}
-                          data-testid="conversation-item"
-                          className={`box-border w-full min-w-0 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white/10 ${
+                        (() => {
+                          const unreadCount = Number(conv.unreadCount || conv.unreadMessages || conv.unread_messages || 0)
+                          const isSelected =
                             selectedConversation?.conversationId === conv.conversationId &&
                             selectedConversation?.channel === conv.channel
-                              ? 'border-blue-500/70 bg-blue-500/15'
-                              : 'border-white/10'
-                          }`}
-                          onClick={() => {
-                            setSelectedConversation(conv)
-                            if (conv.leadId) {
-                              void openHarmoniaConversationById(conv.leadId)
-                            }
-                            if (conv.platform === 'instagram') {
-                              setMessages(igDMs[conv.conversationId] || [])
-                            } else if (conv.platform === 'lead') {
-                              setMessages([])
-                            } else {
-                              loadMessages(conv)
-                            }
+                          const previewMeta = resolveConversationPreviewMeta(conv)
+                          const conversationKey = `${conv.conversationId}-${conv.channel ?? conv.platform ?? ''}`
+                          return (
+                            <div
+                              key={conversationKey}
+                              data-testid="conversation-item"
+                              className={`box-border relative w-full min-w-0 rounded-xl border p-3 pr-12 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/10 ${
+                                isSelected
+                                  ? 'cursor-pointer border-blue-500/70 bg-blue-500/15'
+                                  : unreadCount > 0
+                                    ? 'cursor-pointer border-sky-300/35 bg-sky-400/10'
+                                    : 'cursor-pointer border-white/10'
+                              }`}
+                              onClick={() => {
+                                closeConversationActionMenu()
+                                void openConversation(conv)
+                              }}
+                              onContextMenu={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                setOpenConversationActionMenuId(conversationKey)
+                                setConversationActionMenuLayout(computeConversationActionMenuLayout(conversationKey))
+                              }}
+                            >
+                                  <button
+                                    type="button"
+                                    ref={(node) => {
+                                      if (node) {
+                                        conversationActionTriggerRefs.current.set(conversationKey, node)
+                                      } else {
+                                        conversationActionTriggerRefs.current.delete(conversationKey)
+                                      }
+                                    }}
+                                    className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+                                    aria-label="Abrir ações da conversa"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      setOpenConversationActionMenuId((current) => {
+                                        const next = current === conversationKey ? null : conversationKey
+                                        setConversationActionMenuLayout(next ? computeConversationActionMenuLayout(conversationKey) : null)
+                                        return next
+                                      })
+                                    }}
+                                  >
+                                    <DotsThreeVertical className="h-4 w-4" weight="bold" />
+                                  </button>
+
+                                  <div className="flex items-start gap-2">
+                                    <div className="mt-1">
+                                      {getPlatformIcon(conv.platform || conv.channel || conv.type, conv.channel)}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-sm font-medium text-white truncate">
+                                        {resolveConversationDisplayName(conv)}
+                                      </div>
+                                      {conv.leadId ? (
+                                        <div className="mt-1 inline-flex items-center gap-2 text-[11px] text-emerald-200">
+                                          <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5">
+                                            Lead
+                                          </span>
+                                          {conv.stage ? <span className="text-emerald-200/80">{conv.stage}</span> : null}
+                                        </div>
+                                      ) : null}
+                                      <div className="mt-1 flex items-center gap-1.5 text-xs text-blue-100/70">
+                                        {previewMeta.semanticType === 'image' || previewMeta.semanticType === 'sticker' ? (
+                                          <ImageSquare className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'audio' ? (
+                                          <ChatCircle className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'call' ? (
+                                          <Phone className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'video' ? (
+                                          <VideoCamera className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'document' ? (
+                                          <FilePdf className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'template' || previewMeta.semanticType === 'interactive' ? (
+                                          <ChatCircle className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'placeholder' ? (
+                                          <Warning className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'pin' ? (
+                                          <PushPin className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        {previewMeta.semanticType === 'reaction' ? (
+                                          <Smiley className="h-3.5 w-3.5 shrink-0 text-blue-100/55" weight="fill" />
+                                        ) : null}
+                                        <span className="truncate" data-testid="conversation-preview">
+                                          {previewMeta.previewText}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="ml-2 shrink-0 flex items-center gap-2">
+                                      <ConversationAvatar conv={conv} size={34} />
+                                      {unreadCount > 0 ? (
+                                        <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-sky-500/90 px-1 text-[10px] font-semibold text-white">
+                                          {unreadCount > 99 ? '99+' : unreadCount}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                            </div>
+                          )
+                        })()
+                      ))}
+                      {openConversationActionMenuId && conversationActionMenuLayout ? (
+                        <div
+                          ref={conversationActionMenuRef}
+                          className="fixed z-[80] flex flex-col overflow-y-auto rounded-[28px] border border-white/12 bg-slate-950/88 p-1.5 text-white shadow-2xl backdrop-blur-2xl"
+                          style={{
+                            top: `${conversationActionMenuLayout.top}px`,
+                            left: `${conversationActionMenuLayout.left}px`,
+                            width: `${conversationActionMenuLayout.width}px`,
+                            maxHeight: `min(70vh, 560px)`
                           }}
                         >
-                          <div className="flex items-start gap-2">
-                            <div className="mt-1 relative">
-                              {getPlatformIcon(conv.platform || conv.channel || conv.type, conv.channel)}
-                              {Number(conv.unreadCount || 0) > 0 ? (
-                                <span className="absolute -top-2 -right-2 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold text-white">
-                                  {conv.unreadCount}
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm font-medium text-white truncate">
-                                {resolveConversationDisplayName(conv)}
-                              </div>
-                              {conv.leadId ? (
-                                <div className="mt-1 inline-flex items-center gap-2 text-[11px] text-emerald-200">
-                                  <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5">
-                                    Lead
-                                  </span>
-                                  {conv.stage ? <span className="text-emerald-200/80">{conv.stage}</span> : null}
-                                </div>
-                              ) : null}
-                              <div className="text-xs text-blue-100/70 truncate mt-1">
-                                {conv.lastMessage || 'Sem mensagens'}
-                              </div>
-                            </div>
-                            <div className="ml-2 shrink-0">
-                              <ConversationAvatar conv={conv} size={34} />
-                            </div>
-                          </div>
+                          {(() => {
+                            const conversation = filteredConversations.find((item) => `${item.conversationId}-${item.channel ?? item.platform ?? ''}` === openConversationActionMenuId)
+                            return conversation ? renderConversationListMenuItems(conversation) : null
+                          })()}
                         </div>
-                      ))}
+                      ) : null}
                         </div>
                       </div>
                       {harmoniaInboxCursor?.cursorTs && (
@@ -2267,7 +3714,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     </CardContent>
                   </Card>
 
-          <Card className="glass-card xl:col-span-8 flex h-full min-h-0 flex-col overflow-hidden">
+          <Card className="glass-card hover:translate-y-0 xl:col-span-8 flex h-full min-h-0 flex-col overflow-hidden">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-lg text-white">
@@ -2347,12 +3794,30 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                         </div>
                       ) : null}
 
-                      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-white/10 bg-white/5 p-4">
-                        <div ref={messagesViewportRef} className="flex-1 min-h-0 overflow-y-auto pr-2">
-                          <div className="space-y-3">
+                      <div className="relative flex min-h-0 flex-1 flex-col rounded-xl border border-white/10 bg-white/5 p-4">
+                        <div
+                          ref={messagesViewportRef}
+                          className="relative flex-1 min-h-0 overflow-y-auto pr-2"
+                          onMouseMove={handleMessagesViewportMouseMove}
+                          onMouseLeave={() => setScrollAffordanceZone(null)}
+                        >
+                          {openMessageActionMenuId ? (
+                            <button
+                              type="button"
+                              aria-label="Fechar menu de ações da mensagem"
+                              className="absolute inset-0 z-20 bg-slate-950/35 backdrop-blur-[1.5px]"
+                              onClick={closeMessageActionMenu}
+                            />
+                          ) : null}
+                          <div className="relative space-y-3 px-1 pb-4 pt-2">
                             {selectedConversation.platform === 'lead' ? (
                               harmoniaMessagesLoading ? (
-                                <div className="text-sm text-blue-100/60 text-center py-4">Carregando mensagens...</div>
+                                <div className="flex min-h-[220px] items-center justify-center">
+                                  <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-slate-950/45 px-3 py-1.5 text-sm text-blue-100/80 backdrop-blur-sm">
+                                    <CircleNotch className="h-4 w-4 animate-spin" />
+                                    <span>Carregando mensagens...</span>
+                                  </div>
+                                </div>
                               ) : (
                                 harmoniaMessages.map((m) => {
                                   const dir = String(m.direction || '')
@@ -2412,13 +3877,56 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                               )
                             ) : (
                               <>
-                                {loadingMessages && (
-                                  <div className="text-sm text-blue-100/60 text-center py-4">Carregando mensagens...</div>
-                                )}
-                              {messages.map((msg) => {
-                                const outbound = msg.direction === 'outbound' || msg.direction === 'human'
+                                {loadingMessages ? (
+                                  <div className="flex min-h-[220px] items-center justify-center">
+                                    <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-slate-950/45 px-3 py-1.5 text-sm text-blue-100/80 backdrop-blur-sm">
+                                      <CircleNotch className="h-4 w-4 animate-spin" />
+                                      <span>Carregando mensagens...</span>
+                                    </div>
+                                  </div>
+                                ) : messages.map((msg) => {
+                                const outbound = isOutboundMessage(msg)
                                 const ts = msg.createdAt || msg.timestamp
                                 const messageId = String(msg?.id || '')
+                                const isGroupConversation = String(
+                                  selectedConversation?.conversationId ||
+                                  selectedConversation?.rawJid ||
+                                  selectedConversation?.normalizedJid ||
+                                  ''
+                                ).includes('@g.us')
+                                const senderSeed = String(
+                                  msg?.senderJid ||
+                                  msg?.senderLid ||
+                                  msg?.senderPhone ||
+                                  msg?.senderName ||
+                                  messageId
+                                )
+                                const senderStyle = resolveGroupSenderStyle(senderSeed)
+                                const senderAliases = Array.from(new Set([
+                                  ...buildMentionAliases(msg?.senderJid),
+                                  ...buildMentionAliases(msg?.senderLid),
+                                  ...buildMentionAliases(msg?.senderPhone)
+                                ]))
+                                const senderDirectoryEntry = senderAliases.map((alias) => groupParticipantDirectory.get(alias)).find(Boolean)
+                                const senderDisplayName = String(
+                                  msg?.senderName ||
+                                  (outbound ? 'Você' : (
+                                    formatPhone(msg?.senderPhone || msg?.senderJid || msg?.senderLid || '') ||
+                                    'Participante'
+                                  ))
+                                ).trim()
+                                const senderInitials = getInitials(senderDisplayName || (outbound ? 'Você' : 'Contato'))
+                                const resolveMentionLabel = (token: string): MentionRenderMeta => {
+                                  const aliases = buildMentionAliases(token)
+                                  for (const alias of aliases) {
+                                    const found = groupParticipantDirectory.get(alias)
+                                    if (found) return found
+                                  }
+                                  return {
+                                    label: formatPhone(token) || token,
+                                    color: senderStyle.mention
+                                  }
+                                }
                                 const media =
                                   msg?.media ||
                                   (msg?.mediaUrl
@@ -2430,7 +3938,23 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                         durationSec: msg.durationSec
                                       }
                                     : undefined)
+                                const visibleBodyText = resolveMessageBodyText(msg)
+                                const semanticType = normalizeMessageSemanticType(msg?.mediaType || msg?.type)
+                                if (semanticType === 'reaction' && (!Array.isArray(msg?.reactions) || msg.reactions.length === 0)) {
+                                  return null
+                                }
+                                const resolvedSenderAvatarUrl = String(
+                                  msg?.senderAvatarUrl ||
+                                  senderDirectoryEntry?.avatarUrl ||
+                                  (!isGroupConversation && !outbound ? resolveAvatarUrl(selectedConversation) : '')
+                                ).trim()
                                 const showReactionActions = selectedConversation?.platform !== 'lead' && selectedConversation?.platform !== 'instagram'
+                                const isSelectedMessage = selectedMessageIdSet.has(messageId)
+                                const isFavoritedMessage = Boolean(msg?.favorite)
+                                const isPinnedMessage = Boolean(msg?.pinned)
+                                const isReportedMessage = Boolean(msg?.reported)
+                                const isMessageActionMenuOpen = openMessageActionMenuId === messageId
+                                const isReactionMenuExpanded = expandedReactionMenuId === messageId
                                 return (
                                   <div key={msg.id} className={`group flex items-end gap-2 ${outbound ? 'justify-end' : 'justify-start'}`}>
                                     {showReactionActions && outbound ? (
@@ -2478,11 +4002,296 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                       </div>
                                     ) : null}
                                     <div
-                                      className={`max-w-[88%] md:max-w-[75%] p-3 rounded-lg border ${outbound ? 'border-blue-300/20 bg-blue-500/35 text-white' : 'border-white/10 bg-white/10 text-blue-100'}`}
+                                      className={`relative max-w-[88%] md:max-w-[75%] rounded-lg border pb-3 pt-4 transition-colors duration-200 ${
+                                        outbound ? 'pl-10 pr-3' : 'pl-3 pr-10'
+                                      } ${
+                                        outbound ? 'border-blue-300/20 bg-blue-500/35 text-white' : 'border-white/10 bg-white/10 text-blue-100'
+                                      } ${
+                                        isSelectedMessage ? 'ring-2 ring-emerald-300/70 ring-offset-2 ring-offset-slate-950/40' : ''
+                                      } ${
+                                        isReportedMessage ? 'border-rose-300/45' : ''
+                                      }`}
+                                      style={isGroupConversation && !outbound ? {
+                                        borderColor: senderStyle.border,
+                                        backgroundColor: senderStyle.bubbleBg
+                                      } : undefined}
+                                      data-testid="message-bubble"
+                                      onClick={() => {
+                                        if (!messageSelectionMode) return
+                                        toggleMessageSelection(messageId)
+                                      }}
                                       onDoubleClick={() => {
                                         openReplyComposer(msg)
                                       }}
+                                      onContextMenu={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        openMessageActionMenu(messageId)
+                                      }}
                                     >
+                                      <div
+                                        className={`absolute top-2 z-40 ${outbound ? 'left-2' : 'right-2'}`}
+                                        data-message-action-root={messageId}
+                                        ref={(node) => {
+                                          if (node) {
+                                            messageActionRootRefs.current.set(messageId, node)
+                                          } else {
+                                            messageActionRootRefs.current.delete(messageId)
+                                          }
+                                        }}
+                                      >
+                                        <Button
+                                          type="button"
+                                          size="icon"
+                                          variant="ghost"
+                                          className="h-6 w-6 rounded-full border border-white/10 bg-black/15 text-blue-100 opacity-75 transition-opacity hover:bg-black/25 hover:opacity-100"
+                                          aria-label="Abrir ações da mensagem"
+                                          aria-expanded={isMessageActionMenuOpen}
+                                          data-testid={`message-actions-trigger-${messageId}`}
+                                          onClick={(event) => {
+                                            event.stopPropagation()
+                                            toggleMessageActionMenu(messageId)
+                                          }}
+                                        >
+                                          <CaretDown className="h-3.5 w-3.5" />
+                                        </Button>
+                                        {isMessageActionMenuOpen ? (
+                                          <div
+                                            ref={messageActionMenuRef}
+                                            role="menu"
+                                            data-testid={`message-actions-menu-${messageId}`}
+                                            className="fixed z-[70] flex flex-col overflow-y-auto rounded-2xl border border-white/20 bg-slate-900/72 p-1 text-sm text-blue-50 shadow-2xl backdrop-blur-xl"
+                                            style={messageActionMenuLayout?.messageId === messageId ? {
+                                              top: `${messageActionMenuLayout.top}px`,
+                                              left: `${messageActionMenuLayout.left}px`,
+                                              maxHeight: `${messageActionMenuLayout.maxHeight}px`,
+                                              width: `${messageActionMenuLayout.width}px`
+                                            } : {
+                                              visibility: 'hidden'
+                                            }}
+                                            onClick={(event) => event.stopPropagation()}
+                                          >
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                openReplyComposer(msg)
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <ArrowBendUpLeft className="h-4 w-4" />
+                                              Responder
+                                            </button>
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                if (!showReactionActions) return
+                                                setExpandedReactionMenuId((current) => current === messageId ? null : messageId)
+                                              }}
+                                            >
+                                              <Smiley className="h-4 w-4" />
+                                              Reagir
+                                            </button>
+                                            {isReactionMenuExpanded ? (
+                                              <div className="mb-1 mt-1 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+                                                {reactionOptions.map((emoji) => (
+                                                  <button
+                                                    key={`${messageId}-menu-${emoji}`}
+                                                    type="button"
+                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-base transition-colors hover:bg-white/10 disabled:opacity-50"
+                                                    onClick={() => {
+                                                      void toggleReaction(msg, emoji)
+                                                      closeMessageActionMenu()
+                                                    }}
+                                                    disabled={!showReactionActions || reactionBusyKey === `${messageId}:${emoji}`}
+                                                    aria-label={`Reagir com ${emoji}`}
+                                                  >
+                                                    {emoji}
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            ) : null}
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                toggleMessageFlag(messageId, 'favorite')
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <Star className="h-4 w-4" weight={isFavoritedMessage ? 'fill' : 'regular'} />
+                                              {isFavoritedMessage ? 'Desfavoritar' : 'Favoritar'}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                toggleMessageFlag(messageId, 'pinned')
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <PushPin className="h-4 w-4" weight={isPinnedMessage ? 'fill' : 'regular'} />
+                                              {isPinnedMessage ? 'Desfixar' : 'Fixar'}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                forwardMessageToComposer(msg)
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <ArrowBendUpRight className="h-4 w-4" />
+                                              Encaminhar
+                                            </button>
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                void copyMessageContent(msg)
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <CopySimple className="h-4 w-4" />
+                                              Copiar
+                                            </button>
+                                            {isGroupConversation ? (
+                                              <>
+                                                <div className="my-1 h-px bg-white/10" />
+                                                <button
+                                                  type="button"
+                                                  role="menuitem"
+                                                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                                  onClick={() => {
+                                                    void openPrivateConversationForMessage(msg, { prefill: true })
+                                                    closeMessageActionMenu()
+                                                  }}
+                                                >
+                                                  <ArrowBendUpLeft className="h-4 w-4" />
+                                                  Responder em particular
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  role="menuitem"
+                                                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                                  onClick={() => {
+                                                    void openPrivateConversationForMessage(msg)
+                                                    closeMessageActionMenu()
+                                                  }}
+                                                >
+                                                  <ChatCircle className="h-4 w-4" />
+                                                  Conversar com {senderDisplayName || 'contato'}
+                                                </button>
+                                              </>
+                                            ) : null}
+                                            <div className="my-1 h-px bg-white/10" />
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                toggleMessageFlag(messageId, 'reported')
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <WarningCircle className="h-4 w-4" />
+                                              {isReportedMessage ? 'Remover denúncia' : 'Denunciar'}
+                                            </button>
+                                            <div className="my-1 h-px bg-white/10" />
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                removeMessageFromView(messageId)
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <Trash className="h-4 w-4" />
+                                              Apagar
+                                            </button>
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
+                                              onClick={() => {
+                                                toggleMessageSelection(messageId)
+                                                closeMessageActionMenu()
+                                              }}
+                                            >
+                                              <CheckCircle className="h-4 w-4" weight={isSelectedMessage ? 'fill' : 'regular'} />
+                                              {isSelectedMessage ? 'Desselecionar mensagem' : 'Selecionar mensagens'}
+                                            </button>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                      {Array.isArray(msg?.reactions) && msg.reactions.length > 0 ? (
+                                        <div className="absolute right-10 top-0 z-10 flex max-w-[70%] -translate-y-1/2 flex-wrap justify-end gap-1">
+                                          {msg.reactions.map((reaction: any) => (
+                                            <button
+                                              key={`${messageId}-${reaction.emoji}`}
+                                              type="button"
+                                              className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] shadow-sm ${
+                                                reaction.reactedByMe
+                                                  ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-100'
+                                                  : 'border-white/15 bg-slate-950/85 text-blue-100/90'
+                                              }`}
+                                              onClick={() => toggleReaction(msg, reaction.emoji)}
+                                            >
+                                              <span>{reaction.emoji}</span>
+                                              {Number(reaction.count || 0) > 1 ? <span>{reaction.count}</span> : null}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      {isFavoritedMessage || isPinnedMessage || isReportedMessage ? (
+                                        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wide text-blue-100/65">
+                                          {isFavoritedMessage ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-amber-100">
+                                              <Star className="h-3 w-3" weight="fill" />
+                                              Favorita
+                                            </span>
+                                          ) : null}
+                                          {isPinnedMessage ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-sky-300/30 bg-sky-400/10 px-2 py-0.5 text-sky-100">
+                                              <PushPin className="h-3 w-3" weight="fill" />
+                                              Fixada
+                                            </span>
+                                          ) : null}
+                                          {isReportedMessage ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-rose-300/30 bg-rose-400/10 px-2 py-0.5 text-rose-100">
+                                              <WarningCircle className="h-3 w-3" weight="fill" />
+                                              Denunciada
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
+                                      {isGroupConversation || (!outbound && resolvedSenderAvatarUrl) ? (
+                                        <div className={`mb-2 flex items-center gap-2 ${outbound ? 'justify-end' : 'justify-start'}`}>
+                                          {resolvedSenderAvatarUrl ? (
+                                            <img
+                                              src={resolvedSenderAvatarUrl}
+                                              alt={senderDisplayName}
+                                              className="h-5 w-5 rounded-full border border-white/20 object-cover bg-white/10"
+                                              loading="lazy"
+                                            />
+                                          ) : (
+                                            <div className="h-5 w-5 rounded-full border border-white/20 bg-white/10 text-[9px] font-semibold text-blue-100 flex items-center justify-center">
+                                              {senderInitials}
+                                            </div>
+                                          )}
+                                          <div className="text-[11px] font-semibold" style={{ color: outbound ? '#bfdbfe' : senderStyle.title }}>
+                                            {senderDisplayName || 'Contato'}
+                                          </div>
+                                        </div>
+                                      ) : null}
                                       {msg?.replyTo ? (
                                         <button
                                           type="button"
@@ -2495,35 +4304,21 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                           <div className="truncate text-blue-100/90">{msg.replyTo.textPreview}</div>
                                         </button>
                                       ) : null}
-                                      <div className="text-sm">
-                                        {renderFormattedText(msg.text || msg.caption || `[${msg.type}]`)}
-                                      </div>
+                                      {visibleBodyText ? (
+                                        <div className="text-sm">
+                                          {renderFormattedText(visibleBodyText, {
+                                            resolveMention: isGroupConversation ? resolveMentionLabel : undefined
+                                          })}
+                                        </div>
+                                      ) : null}
                                       {media ? (
                                         <MessageMedia
                                           media={media}
                                           mediaProxyUrl={msg.mediaProxyUrl}
                                           fallbackText="Mídia indisponível no momento."
                                           onImagePreview={(payload) => setImagePreview(payload)}
+                                          onFilePreview={(payload) => setFilePreview(payload)}
                                         />
-                                      ) : null}
-                                      {Array.isArray(msg?.reactions) && msg.reactions.length > 0 ? (
-                                        <div className="mt-2 flex flex-wrap gap-1">
-                                          {msg.reactions.map((reaction: any) => (
-                                            <button
-                                              key={`${messageId}-${reaction.emoji}`}
-                                              type="button"
-                                              className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] ${
-                                                reaction.reactedByMe
-                                                  ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-100'
-                                                  : 'border-white/15 bg-white/10 text-blue-100/80'
-                                              }`}
-                                              onClick={() => toggleReaction(msg, reaction.emoji)}
-                                            >
-                                              <span>{reaction.emoji}</span>
-                                              <span>{reaction.count}</span>
-                                            </button>
-                                          ))}
-                                        </div>
                                       ) : null}
                                       <div className={`text-xs mt-1 ${outbound ? 'text-blue-100/80' : 'text-blue-100/60'}`}>
                                         {ts ? new Date(ts).toLocaleTimeString() : ''}
@@ -2579,7 +4374,56 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                               </>
                             )}
                           </div>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className={`pointer-events-auto absolute right-4 top-4 z-20 h-9 w-9 rounded-full border-white/20 bg-slate-900/70 text-blue-100 shadow-lg backdrop-blur transition-all duration-200 hover:bg-slate-800/85 ${
+                              messageScrollState.canScrollUp && scrollAffordanceZone === 'top'
+                                ? 'opacity-100 translate-y-0'
+                                : 'pointer-events-none opacity-0 -translate-y-2'
+                            }`}
+                            onClick={scrollMessagesToTop}
+                            aria-label="Ir para o topo da conversa"
+                          >
+                            <ArrowCircleUp className="h-4 w-4" />
+                          </Button>
+
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            data-testid="scroll-bottom-button"
+                            className={`pointer-events-auto absolute bottom-4 right-4 z-20 h-9 w-9 rounded-full border-white/20 bg-slate-900/70 text-blue-100 shadow-lg backdrop-blur transition-all duration-200 hover:bg-slate-800/85 ${
+                              messageScrollState.canScrollDown && scrollAffordanceZone === 'bottom'
+                                ? 'opacity-100 translate-y-0'
+                                : 'pointer-events-none opacity-0 translate-y-2'
+                            }`}
+                            onClick={() => {
+                              autoScrollRef.current = true
+                              scrollMessagesToBottom()
+                            }}
+                            aria-label="Ir para o fim da conversa"
+                          >
+                            <ArrowCircleDown className="h-4 w-4" />
+                          </Button>
                         </div>
+
+                        {messageSelectionMode && selectedMessageIds.length > 0 ? (
+                          <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                            <div className="truncate">
+                              {selectedMessageIds.length} {selectedMessageIds.length === 1 ? 'mensagem selecionada' : 'mensagens selecionadas'}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-emerald-100 hover:bg-emerald-500/10"
+                              onClick={clearMessageSelection}
+                            >
+                              Limpar seleção
+                            </Button>
+                          </div>
+                        ) : null}
 
                         {replyTarget && (
                           <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-blue-100/70">
@@ -2598,6 +4442,31 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                           </div>
                         )}
 
+                        {shouldShowSendUnitSelector ? (
+                          <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[11px] uppercase tracking-wide text-blue-100/60">Unidade de envio</div>
+                              <Select value={sendUnitChannel} onValueChange={setSendUnitChannel}>
+                                <SelectTrigger className="mt-1 h-8 border-white/15 bg-white/10 text-xs text-white">
+                                  <SelectValue placeholder="Selecione a unidade/canal" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {sendUnitOptions.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {markingConversationRead ? (
+                              <div className="shrink-0 rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-100">
+                                Sincronizando leitura...
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+
                         <div className="mt-3 flex gap-2">
                           <Textarea
                             placeholder="Digite sua mensagem..."
@@ -2613,7 +4482,14 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                               }
                             }}
                           />
-                          <Button onClick={sendMessage} disabled={!messageInput.trim() || sendingMessage}>
+                          <Button
+                            onClick={sendMessage}
+                            disabled={
+                              !messageInput.trim() ||
+                              sendingMessage ||
+                              (shouldShowSendUnitSelector && !sendUnitChannel)
+                            }
+                          >
                             {sendingMessage ? '...' : 'Enviar'}
                           </Button>
                         </div>
@@ -2642,6 +4518,32 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
             {imagePreview?.src ? (
               <div className="max-h-[75vh] overflow-auto rounded-lg border border-white/10 bg-black/40 p-2">
                 <img src={imagePreview.src} alt={imagePreview.alt || 'Imagem'} className="mx-auto max-h-[70vh] w-auto object-contain" />
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={Boolean(filePreview)} onOpenChange={(open) => { if (!open) setFilePreview(null) }}>
+          <DialogContent className="max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>{filePreview?.title || 'Visualizar arquivo'}</DialogTitle>
+              <DialogDescription>Pré-visualização do arquivo na conversa.</DialogDescription>
+            </DialogHeader>
+            {filePreview?.src ? (
+              <div className="max-h-[75vh] overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                {String(filePreview?.mimeType || '').includes('pdf') ? (
+                  <iframe
+                    title={filePreview?.title || 'Arquivo'}
+                    src={filePreview.src}
+                    className="h-[70vh] w-full"
+                  />
+                ) : (
+                  <iframe
+                    title={filePreview?.title || 'Arquivo'}
+                    src={filePreview.src}
+                    className="h-[70vh] w-full"
+                  />
+                )}
               </div>
             ) : null}
           </DialogContent>

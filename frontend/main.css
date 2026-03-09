@@ -550,6 +550,49 @@ body {
   background: linear-gradient(135deg, rgba(30, 58, 138, 0.35), rgba(15, 23, 42, 0.6));
 }
 
+.escala-surface .escala-day-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.escala-surface .escala-day-card--tracked {
+  transform: translateY(-1px);
+}
+
+.escala-surface .escala-day-card--selected {
+  transform: translateY(-1px) scale(1.01);
+}
+
+.escala-surface .escala-entry-pill {
+  line-height: 1.15;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+}
+
+.escala-surface .escala-entry-pill--active {
+  transform: translateY(-1px);
+}
+
+.escala-surface .escala-entry-pill--muted {
+  filter: saturate(0.7);
+}
+
+.escala-kpi-badge {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.escala-kpi-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
 .atendimento-surface .glass-card {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.14);
