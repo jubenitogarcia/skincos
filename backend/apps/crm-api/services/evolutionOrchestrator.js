@@ -167,6 +167,10 @@ function normalizeRemoteJid(remoteJid) {
   if (!remoteJid) return ''
   const value = String(remoteJid).trim()
   if (!value) return ''
+  if (value.includes('@g.us') || value.includes('@broadcast')) return value
+  const localPart = value.includes('@') ? value.split('@')[0] : value
+  const normalizedLocal = localPart.split(':')[0].replace(/\D/g, '')
+  if (normalizedLocal) return `${normalizedLocal}@s.whatsapp.net`
   if (value.includes('@')) return value
   const digits = value.replace(/\D/g, '')
   if (digits) return `${digits}@s.whatsapp.net`
