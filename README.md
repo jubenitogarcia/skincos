@@ -19,9 +19,14 @@ Plataforma interna (local) para automações e operações da clínica.
 - Overrides úteis (frontend local): `VITE_LOCAL_AUTH_ROLE`, `VITE_LOCAL_AUTH_EMAIL`, `VITE_LOCAL_AUTH_NAME`.
 - Em Pages Functions local (`npm run dev:pages`), o bypass também é ativo para `requireCrmUser` em `localhost`.
 - No CRM API local (`backend/apps/crm-api/server.js`), o stub de sessão dev fica ativo por padrão fora de produção; para exigir login real localmente, rode com `NO_AUTH=false`.
-- Escala em local (Pages): padrão em `frontend/.dev.vars` é leitura de dados reais (`LOCAL_ESCALA_MOCK=false`, `ESCALA_API_TARGET=https://escala-api.skincos.com.br`) com escrita sombra local (`LOCAL_ESCALA_SHADOW_WRITES=true`).
+- Escala em local (`npm run dev`, `./frontend/restart_crm.sh` e `npm run dev:pages`): padrão em `frontend/.dev.vars` é leitura de dados reais (`LOCAL_ESCALA_MOCK=false`, `ESCALA_API_TARGET=https://escala-api.skincos.com.br`) com escrita sombra local (`LOCAL_ESCALA_SHADOW_WRITES=true`).
 - Efeito da escrita sombra: o CRM local confirma CRUD e reflete as mudanças localmente, mas **não grava no banco online**.
 - Para isso, configure `ESCALA_ACTOR_HMAC_KEY` real em `frontend/.dev.vars`; sem essa chave, as leituras reais da Escala retornam erro de autenticação.
+- A sombra local da Escala agora persiste entre reinícios em `frontend/.local/escala-shadow.json` (ignorado pelo git). Para desligar isso: `LOCAL_ESCALA_SHADOW_PERSIST=false`.
+- Diagnóstico local da Escala:
+  - `GET /api/escala/_proxy-status` mostra se o modo ativo é `local-mock`, `upstream` ou `upstream+local-shadow`.
+  - `GET /api/escala/_local-shadow` lista as operações locais persistidas.
+  - `DELETE /api/escala/_local-shadow` limpa a sombra local e força o CRM a voltar ao estado puro do upstream.
 
 ## Módulo Ponto (face + PIN)
 - Backend (CRM API): expõe endpoints em `/api/ponto/*` e persiste em `backend/var/core/` (ignorado do git).

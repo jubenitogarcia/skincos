@@ -8,6 +8,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
+    "postinstall": "node ./scripts/patch-http-proxy-util-extend.mjs",
     "install:workspace": "pnpm -r install",
     "list": "pnpm -r list --depth 0",
     "why": "pnpm -r why"

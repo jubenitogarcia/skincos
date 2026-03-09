@@ -24,43 +24,57 @@ function normalizeApiError(res: Response, json: any, text: string) {
   return `HTTP ${res.status}`
 }
 
+function normalizeFetchError(error: unknown) {
+  const detail = String((error as any)?.message || error || '').trim()
+  const suffix = detail ? ` ${detail}` : ''
+  return `Falha de conexão com a Escala.${suffix} Verifique /api/escala/_proxy-status.`
+}
+
 async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
   const url = `${ESCALA_API_BASE}${path}`
-  const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
-  const text = await res.text()
-  const json = parseJsonResponse(text)
-  const contentType = String(res.headers.get('content-type') || '').toLowerCase()
-  const likelyJson = contentType.includes('application/json')
-  if (!res.ok || json?.ok === false) {
-    return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+  try {
+    const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
+    const text = await res.text()
+    const json = parseJsonResponse(text)
+    const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+    const likelyJson = contentType.includes('application/json')
+    if (!res.ok || json?.ok === false) {
+      return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+    }
+    if (!json || typeof json !== 'object') {
+      const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
+      return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
+    }
+    return json as ApiResponse<T>
+  } catch (error) {
+    return { ok: false, error: normalizeFetchError(error) } as ApiResponse<T>
   }
-  if (!json || typeof json !== 'object') {
-    const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
-    return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
-  }
-  return json as ApiResponse<T>
 }
 
 async function apiWrite<T>(path: string, method: string, body?: any): Promise<ApiResponse<T>> {
   const url = `${ESCALA_API_BASE}${path}`
-  const res = await fetch(url, {
-    method,
-    credentials: 'include',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const text = await res.text()
-  const json = parseJsonResponse(text)
-  const contentType = String(res.headers.get('content-type') || '').toLowerCase()
-  const likelyJson = contentType.includes('application/json')
-  if (!res.ok || json?.ok === false) {
-    return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+  try {
+    const res = await fetch(url, {
+      method,
+      credentials: 'include',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    const text = await res.text()
+    const json = parseJsonResponse(text)
+    const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+    const likelyJson = contentType.includes('application/json')
+    if (!res.ok || json?.ok === false) {
+      return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+    }
+    if (!json || typeof json !== 'object') {
+      const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
+      return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
+    }
+    return json as ApiResponse<T>
+  } catch (error) {
+    return { ok: false, error: normalizeFetchError(error) } as ApiResponse<T>
   }
-  if (!json || typeof json !== 'object') {
-    const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
-    return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
-  }
-  return json as ApiResponse<T>
 }
 
 export async function fetchEscalaOverview() {

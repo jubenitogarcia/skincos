@@ -62,4 +62,107 @@ test.describe('insumos', () => {
     expect(counts.authMe).toBeLessThanOrEqual(3)
     expect(counts.insumosAuthMe).toBeLessThanOrEqual(3)
   })
+
+  test('stops insumos background traffic after leaving the module', async ({ page }) => {
+    let backgroundRequests = 0
+
+    await page.route('**/api/insumos/**', async (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (!path.startsWith('/api/insumos/health') && !path.startsWith('/api/insumos/auth/me')) {
+        backgroundRequests += 1
+      }
+
+      if (path.startsWith('/api/insumos/health')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: true,
+            service: 'insumos',
+            runtime: 'e2e',
+            storage: 'd1',
+            dbConfigured: true,
+            unidades: ['novo-hamburgo']
+          })
+        })
+        return
+      }
+
+      if (path.startsWith('/api/insumos/auth/me')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            user: { username: 'e2e', role: 'GESTOR', allowedUnits: ['novo-hamburgo'] },
+            csrfToken: 'e2e'
+          })
+        })
+        return
+      }
+
+      if (path.startsWith('/api/insumos/analytics/overview')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { summary: {} } })
+        })
+        return
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [], resumo: { total: 0 } })
+      })
+    })
+
+    await page.route('**/api/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: ['novo-hamburgo'] } })
+      })
+    })
+
+    await page.route('**/api/wa-orchestrator/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          provider: 'evolution',
+          totalChannels: 1,
+          availableChannels: 0,
+          freeInstances: 0,
+          connectedInstances: 1,
+          errorInstances: 0,
+          startingInstances: 0,
+          channels: [{ channel: 1, status: 'connected', name: 'Canal 1' }]
+        })
+      })
+    })
+
+    await page.route('**/api/wa-orchestrator/channels/*/conversations**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, conversations: [] })
+      })
+    })
+
+    await page.goto('/?insumos=1')
+
+    const insumosNav = page.getByRole('button', { name: 'Insumos', exact: true })
+    await expect(insumosNav).toBeVisible({ timeout: 30000 })
+    await insumosNav.click()
+    await page.waitForTimeout(2000)
+    expect(backgroundRequests).toBeGreaterThan(0)
+
+    const snapshot = backgroundRequests
+    await page.getByRole('button', { name: 'Atendimento', exact: true }).click()
+    await page.waitForTimeout(2500)
+
+    expect(backgroundRequests).toBe(snapshot)
+  })
 })

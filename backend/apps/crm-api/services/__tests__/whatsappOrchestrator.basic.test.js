@@ -1,14 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import test from 'node:test'
+import assert from 'node:assert/strict'
 import { whatsappOrchestrator } from '../whatsappOrchestrator.js'
 
-describe('whatsappOrchestrator basic', () => {
-    it('maps channels to ports', () => {
-        expect(whatsappOrchestrator.channelToPort(1)).toBe(3001)
-        expect(whatsappOrchestrator.channelToPort(9)).toBe(3009)
-    })
+test('whatsappOrchestrator maps channels to ports', () => {
+    assert.equal(whatsappOrchestrator.channelToPort(1), 3001)
+    assert.equal(whatsappOrchestrator.channelToPort(9), 3009)
+})
 
-    it('returns all channels/ports arrays', () => {
-        expect(whatsappOrchestrator.getAllChannels()).toHaveLength(9)
-        expect(whatsappOrchestrator.getAllPorts()).toHaveLength(9)
-    })
+test('whatsappOrchestrator returns all channels and ports arrays', () => {
+    assert.equal(whatsappOrchestrator.getAllChannels().length, 9)
+    assert.equal(whatsappOrchestrator.getAllPorts().length, 9)
 })

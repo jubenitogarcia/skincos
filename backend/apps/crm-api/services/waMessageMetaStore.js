@@ -9,6 +9,7 @@ const VAR_DIR = process.env.VAR_DIR || path.join(BACKEND_ROOT, 'var')
 const DEFAULT_FILE = process.env.WA_MESSAGE_META_FILE || path.join(VAR_DIR, 'core', 'wa_message_meta.json')
 
 const EMOJI_PATTERN = /[\p{Extended_Pictographic}\u200d\ufe0f]/u
+const MESSAGE_FLAGS = new Set(['favorite', 'pinned', 'reported'])
 
 function normalizeRemoteJid(remoteJid) {
   const value = String(remoteJid || '').trim()
@@ -161,12 +162,43 @@ export class WaMessageMetaStore {
     return this.listReactions(channel, remoteJid, messageId, actorKey)
   }
 
+  getFlags(channel, remoteJid, messageId) {
+    const record = this.getRecord(channel, remoteJid, messageId)
+    return {
+      favorite: Boolean(record?.favorite),
+      pinned: Boolean(record?.pinned),
+      reported: Boolean(record?.reported),
+      deleted: Boolean(record?.deleted)
+    }
+  }
+
+  toggleFlag(channel, remoteJid, messageId, fieldRaw) {
+    const field = String(fieldRaw || '').trim().toLowerCase()
+    if (!MESSAGE_FLAGS.has(field)) throw new Error('FLAG_INVALID')
+    const { key, record } = this.getOrCreateRecord(channel, remoteJid, messageId)
+    if (!key || !record) throw new Error('MESSAGE_ID_REQUIRED')
+    record[field] = !Boolean(record[field])
+    record.updatedAt = new Date().toISOString()
+    this.schedulePersist()
+    return this.getFlags(channel, remoteJid, messageId)
+  }
+
+  markDeleted(channel, remoteJid, messageId, deleted = true) {
+    const { key, record } = this.getOrCreateRecord(channel, remoteJid, messageId)
+    if (!key || !record) throw new Error('MESSAGE_ID_REQUIRED')
+    record.deleted = Boolean(deleted)
+    record.updatedAt = new Date().toISOString()
+    this.schedulePersist()
+    return this.getFlags(channel, remoteJid, messageId)
+  }
+
   decorateMessages(channel, remoteJid, items, actor, buildMediaProxyUrl) {
     if (!Array.isArray(items)) return []
     return items.map((item) => {
       const messageId = String(item?.id || '').trim()
       if (!messageId) return item
       const record = this.getRecord(channel, remoteJid, messageId)
+      if (record?.deleted) return null
       const runtimeMedia = item?.mediaUrl
         ? {
             type: String(item?.mediaType || item?.type || 'unknown').toLowerCase(),
@@ -187,12 +219,15 @@ export class WaMessageMetaStore {
         : undefined
       return {
         ...item,
+        favorite: Boolean(record?.favorite),
+        pinned: Boolean(record?.pinned),
+        reported: Boolean(record?.reported),
         replyTo: record?.replyTo || undefined,
         reactions,
         media: media || undefined,
         mediaProxyUrl
       }
-    })
+    }).filter(Boolean)
   }
 
   findMedia(channel, remoteJid, messageId) {
