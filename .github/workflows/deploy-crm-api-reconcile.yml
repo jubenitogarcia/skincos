@@ -34,9 +34,8 @@ jobs:
             exit 0
           fi
           if [[ -z "${HOST:-}" || -z "${USER:-}" || -z "${KEY:-}" || -z "${APP_DIR:-}" || -z "${COMMAND:-}" ]]; then
-            echo "CRM API deploy not configured; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::CRM API deploy enabled, but missing one or more required settings: CRM_API_SSH_HOST, CRM_API_SSH_USER, CRM_API_SSH_KEY, CRM_API_APP_DIR, CRM_API_DEPLOY_COMMAND."
+            exit 1
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
@@ -102,4 +101,3 @@ jobs:
         with:
           key: crm-api-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/crm_api_deployed_sha.txt
-
