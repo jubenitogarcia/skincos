@@ -1,4 +1,4 @@
-name: Sync CRM Pages secret (Escala)
+name: Sync Escala auth secret (Pages + Worker)
 
 on:
   schedule:
@@ -23,26 +23,25 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${TOKEN:-}" || -z "${ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare secrets missing; cannot sync."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Cloudflare secrets missing (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID)."
+            exit 1
           fi
           if [[ -z "${ESCALA_ACTOR_HMAC_KEY:-}" ]]; then
-            echo "Missing GitHub secret ESCALA_ACTOR_HMAC_KEY; cannot sync."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Missing GitHub secret ESCALA_ACTOR_HMAC_KEY."
+            exit 1
           fi
           echo "project=${PROJECT:-skincos}" >> "$GITHUB_OUTPUT"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
+      - name: Checkout (for worker wrangler config)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/checkout@v4
+
       - name: Sync Pages secret (Escala) by environment
-        if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -55,8 +54,64 @@ jobs:
             echo "Synced ESCALA_ACTOR_HMAC_KEY for env=$env_name"
           done
 
+      - name: Cleanup duplicate production secret binding (Escala target)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+        run: |
+          set -euo pipefail
+          # ESCALA_API_TARGET is defined in frontend/wrangler.toml for production.
+          # Keep dashboard free of duplicate secret bindings for this key.
+          npx --yes wrangler@4 pages secret delete ESCALA_API_TARGET --project-name "$PROJECT" --env production >/dev/null || true
+          echo "Ensured no duplicate secret binding for ESCALA_API_TARGET in production."
+
+      - name: Sync Worker secret (Escala API) by environment
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml >/dev/null
+          echo "Synced ESCALA_ACTOR_HMAC_KEY for worker env=production"
+          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml --env staging >/dev/null
+          echo "Synced ESCALA_ACTOR_HMAC_KEY for worker env=staging"
+
+      - name: Verify Pages env var presence (Escala)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+        run: |
+          set -euo pipefail
+          curl -sS \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT}" \
+            > pages_project.json
+          python - <<'PY'
+          import json
+          with open("pages_project.json", "r", encoding="utf-8") as f:
+            payload = json.load(f)
+          if not payload.get("success"):
+            raise SystemExit(f"Cloudflare API returned success=false: {payload.get('errors') or payload}")
+          cfg = ((payload.get("result") or {}).get("deployment_configs") or {})
+          prod = ((cfg.get("production") or {}).get("env_vars") or {})
+          prev = ((cfg.get("preview") or {}).get("env_vars") or {})
+          missing = []
+          if "ESCALA_ACTOR_HMAC_KEY" not in prod:
+            missing.append("production")
+          if "ESCALA_ACTOR_HMAC_KEY" not in prev:
+            missing.append("preview")
+          if missing:
+            raise SystemExit(f"Escala env vars ausentes em: {', '.join(missing)}")
+          print("ESCALA_ACTOR_HMAC_KEY presente em production/preview.")
+          PY
+
       - name: Force redeploy CRM Pages (apply escala secret)
-        if: ${{ steps.guard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/github-script@v7
         with:
           script: |
