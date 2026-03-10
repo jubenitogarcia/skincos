@@ -207,6 +207,15 @@ async function runLocalRecoveryRepoSync({ sha = '', autoStash = true } = {}) {
         if (!isStepSuccessful(verifyShaStep)) {
             return { success: false, error: 'RECOVERY_SYNC_SHA_NOT_FOUND', repoDirty, steps }
         }
+        const verifyOnBranchStep = await pushStep(
+            'verify-sha-on-branch',
+            'git',
+            ['-C', repoDir, 'merge-base', '--is-ancestor', sha, `${remote}/${branch}`],
+            15_000
+        )
+        if (!isStepSuccessful(verifyOnBranchStep)) {
+            return { success: false, error: 'RECOVERY_SYNC_SHA_NOT_IN_TARGET_BRANCH', repoDirty, steps }
+        }
         targetRef = sha
     }
 
