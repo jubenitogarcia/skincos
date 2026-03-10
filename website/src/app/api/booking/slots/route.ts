@@ -3,6 +3,7 @@ import { getBookingDb, nowMs, addMinutes, isValidDateKey, isValidTimeKey, toSaoP
 import { getAgendaDb } from "@/lib/agendaDb";
 import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
+import { fetchEscalaDaySchedule, normalizePersonKey } from "@/lib/escalaDb";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,19 @@ function buildDaySlots(unitSlug: string, dateKey: string, durationMinutes: numbe
     return slots;
 }
 
+function buildUnavailableSlots(params: { date: string; durationMinutes: number; daySlots: Array<{ time: string }>; reason: string }) {
+    return params.daySlots.map((slot) => {
+        const startAtMs = Date.parse(toSaoPauloIso(params.date, slot.time));
+        return {
+            time: slot.time,
+            startAtMs,
+            endAtMs: addMinutes(startAtMs, params.durationMinutes),
+            available: false,
+            reason: params.reason,
+        };
+    });
+}
+
 async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: string) {
     // Best-effort: mark pending approvals as expired after confirm_by.
     const row = await db
@@ -132,15 +146,44 @@ export async function GET(req: Request) {
 
     const db = await getBookingDb();
     const wantsAnyDoctor = doctorSlug === "any";
-    const unitDoctorsResult = wantsAnyDoctor ? await getUnitDoctorsResult(unitSlug) : null;
-    if (wantsAnyDoctor && unitDoctorsResult && !unitDoctorsResult.ok) {
+    const unitDoctorsResult = await getUnitDoctorsResult(unitSlug);
+    if (wantsAnyDoctor && !unitDoctorsResult.ok) {
         return json({ ok: false, error: "doctors_unavailable" }, { status: 503 });
     }
 
-    const unitDoctors = wantsAnyDoctor ? unitDoctorsResult!.doctors : [];
-    const doctorSlugs = wantsAnyDoctor ? unitDoctors.map((d) => d.slug) : [doctorSlug];
+    const unitDoctors = unitDoctorsResult.ok ? unitDoctorsResult.doctors : [];
+    const knownDoctor = !wantsAnyDoctor ? unitDoctors.find((doctor) => doctor.slug === doctorSlug) ?? null : null;
+    let doctorSlugs = wantsAnyDoctor ? unitDoctors.map((doctor) => doctor.slug) : [doctorSlug];
     if (wantsAnyDoctor && doctorSlugs.length === 0) {
         return json({ ok: false, error: "no_doctors_for_unit" }, { status: 400 });
+    }
+
+    const daySchedule = await fetchEscalaDaySchedule(unitSlug, date);
+    if (daySchedule?.closed) {
+        const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "closed_day" });
+        return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
+    }
+
+    if (daySchedule) {
+        const scheduledNameKeys = new Set(daySchedule.professionalNames.map((name) => normalizePersonKey(name)));
+        if (scheduledNameKeys.size === 0) {
+            const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "doctor_off" });
+            return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
+        }
+
+        if (wantsAnyDoctor) {
+            doctorSlugs = unitDoctors
+                .filter((doctor) => scheduledNameKeys.has(normalizePersonKey(doctor.name)))
+                .map((doctor) => doctor.slug);
+
+            if (doctorSlugs.length === 0) {
+                const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "doctor_off" });
+                return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
+            }
+        } else if (knownDoctor && !scheduledNameKeys.has(normalizePersonKey(knownDoctor.name))) {
+            const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "doctor_off" });
+            return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
+        }
     }
 
     const cacheKey = `${unitSlug}|${date}`;

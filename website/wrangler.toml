@@ -21,3 +21,8 @@ binding = "ASSETS"
 binding = "BOOKING_DB"
 database_name = "espacofacial-booking"
 database_id = "9765b1fb-11a4-462c-9657-8a438c755725" # criado via: wrangler d1 create espacofacial-booking
+
+[[d1_databases]]
+binding = "SKINCOS_ESCALA_DB"
+database_name = "skincos-escala"
+database_id = "594fef1b-5597-476e-86f9-59920f284215"

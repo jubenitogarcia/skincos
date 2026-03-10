@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { doctorSlugFromTeamMember } from "@/lib/doctorSlug";
+import { fetchEscalaProfessionals, unitLabelFromEscalaUnitSlug } from "@/lib/escalaDb";
 
 type TeamMember = {
     name: string;
@@ -318,9 +319,7 @@ function normalizeRoles(value: string): string[] {
 export { doctorSlugFromTeamMember };
 
 export function unitLabelFromBookingUnitSlug(unitSlug: string): string | null {
-    if (unitSlug === "barrashoppingsul") return "BarraShoppingSul";
-    if (unitSlug === "novo-hamburgo" || unitSlug === "novohamburgo") return "Novo Hamburgo";
-    return null;
+    return unitLabelFromEscalaUnitSlug(unitSlug);
 }
 
 export async function fetchActiveInjectorsResult(): Promise<InjectorsResult> {
@@ -330,6 +329,36 @@ export async function fetchActiveInjectorsResult(): Promise<InjectorsResult> {
 
     inflightInjectorsLoad = (async () => {
     try {
+        // Prefer CRM escala D1 when bound to the website worker.
+        const escalaProfessionals = await fetchEscalaProfessionals(null);
+        if (escalaProfessionals) {
+            const members = escalaProfessionals
+                .map((row) => {
+                    const roleRaw = (row.role ?? "").trim();
+                    const roles = normalizeRoles(roleRaw);
+                    const isInjector = roles.length ? roles.some((r) => r.toLowerCase() === "injetor") : true;
+                    if (!isInjector) return null;
+
+                    const instagramHandle = normalizeInstagramHandle(row.instagram ?? "");
+                    const instagramUrl = instagramHandle ? `https://www.instagram.com/${instagramHandle}/` : null;
+
+                    return {
+                        name: row.name,
+                        nickname: row.nickname,
+                        units: row.units,
+                        role: roles.length ? roles.join(", ") : roleRaw,
+                        roles,
+                        instagramHandle,
+                        instagramUrl,
+                    } satisfies TeamMember;
+                })
+                .filter((member): member is TeamMember => !!member);
+
+            members.sort((a, b) => (a.nickname ?? a.name).localeCompare(b.nickname ?? b.name));
+
+            return { ok: true, members };
+        }
+
         const env = getEnv();
         const serviceAccountJson = (env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON ?? env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
         const sheetId = (env.GOOGLE_SHEETS_SHEET_ID ?? SHEET_ID).trim();
