@@ -34,8 +34,19 @@
 - Webhook manual: `POST /api/wa-orchestrator/channels/:channel/webhook`
 - SSE: `GET /api/wa-orchestrator/events`
 - Proxy status: `GET /api/wa-orchestrator/_proxy-status`
+- Recovery local (restart + sync opcional): `POST /api/wa-orchestrator/local/recovery/restart`
 - Harmonia inbox: `GET /api/harmonia/conversations?unitSlug=<slug>`
 - Patch de conversa: `POST /api/harmonia/conversations/:id/patch`
+
+Exemplo de payload para recovery com sync de código:
+```json
+{
+  "mode": "stack",
+  "syncRepo": true,
+  "syncSha": "<sha>",
+  "syncAutoStash": true
+}
+```
 
 ## Diagnóstico de falhas
 ### Webhook 401

@@ -69,3 +69,9 @@ Modo `ssh`:
 Modo `http_restart`:
 - `vars.CRM_API_RESTART_URL` (ex.: `https://cs-api.skincos.com.br/api/wa-orchestrator/local/recovery/restart`)
 - `secrets.CRM_API_BASIC_AUTH` (valor `user:password`; o workflow envia em `Authorization: Basic ...`)
+- O workflow envia payload com:
+  - `mode=stack`
+  - `sha=<commit do deploy>`
+  - `syncRepo=true` (sincroniza repo local antes do restart)
+  - `syncSha=<commit do deploy>` (alvo do `git reset --hard`)
+  - `syncAutoStash=true` (se houver mudanças locais, faz stash automático antes da sincronização)
