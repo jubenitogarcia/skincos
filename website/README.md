@@ -58,7 +58,9 @@ npm run deploy
 
 ## Agendamento (MVP) — Cloudflare D1
 
-O fluxo de agendamento em `/agendamento` persiste pedidos no **Cloudflare D1** via binding `BOOKING_DB`.
+O fluxo de agendamento em `/agendamento` usa dois bindings **Cloudflare D1**:
+- `BOOKING_DB` para pedidos/reservas.
+- `SKINCOS_ESCALA_DB` para equipe/escala (fonte CRM unificada para doutores e dias de atendimento).
 
 Setup (produção/preview):
 - Veja o guia: `docs/booking/SETUP_CLOUDFLARE_D1.md`

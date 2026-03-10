@@ -4,6 +4,7 @@ import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
 import { getAgendaDb } from "@/lib/agendaDb";
 import { sendBookingNotifications } from "@/lib/bookingNotifications";
+import { fetchEscalaDaySchedule, normalizePersonKey } from "@/lib/escalaDb";
 
 export const dynamic = "force-dynamic";
 
@@ -338,28 +339,52 @@ export async function POST(request: Request) {
         }
     }
 
+    const doctorsResult = await getUnitDoctorsResult(unitSlug);
+    if (!doctorsResult.ok) {
+        return json({ ok: false, error: "doctors_unavailable" }, { status: 503 });
+    }
+    const doctors = doctorsResult.doctors;
+    if (doctors.length === 0) {
+        return json({ ok: false, error: "no_doctors_for_unit" }, { status: 400 });
+    }
+
+    const selectedDoctor = wantsAnyDoctor ? null : doctors.find((doctor) => doctor.slug === doctorSlug) ?? null;
+    if (!wantsAnyDoctor && !selectedDoctor) {
+        return json({ ok: false, error: "invalid_doctor" }, { status: 400 });
+    }
+
+    const daySchedule = await fetchEscalaDaySchedule(unitSlug, date);
+    let doctorsAvailableBySchedule = doctors;
+    if (daySchedule) {
+        if (daySchedule.closed) {
+            return json({ ok: false, error: "no_availability" }, { status: 409 });
+        }
+
+        const scheduledNameKeys = new Set(daySchedule.professionalNames.map((name) => normalizePersonKey(name)));
+        doctorsAvailableBySchedule = doctors.filter((doctor) => scheduledNameKeys.has(normalizePersonKey(doctor.name)));
+
+        if (!wantsAnyDoctor && selectedDoctor && !scheduledNameKeys.has(normalizePersonKey(selectedDoctor.name))) {
+            return json({ ok: false, error: "no_availability" }, { status: 409 });
+        }
+        if (wantsAnyDoctor && doctorsAvailableBySchedule.length === 0) {
+            return json({ ok: false, error: "no_availability" }, { status: 409 });
+        }
+    }
+
     const db = await getBookingDb();
 
     // If the user has no preference, pick a free doctor for that unit+slot.
     let effectiveDoctorSlug = doctorSlug;
-    let safeDoctorName = clampText(doctorName || doctorSlug, 120);
+    let safeDoctorName = clampText(selectedDoctor?.name || doctorName || doctorSlug, 120);
     if (wantsAnyDoctor) {
-        const doctorsResult = await getUnitDoctorsResult(unitSlug);
-        if (!doctorsResult.ok) {
-            return json({ ok: false, error: "doctors_unavailable" }, { status: 503 });
-        }
+        const doctorsForSelection = daySchedule ? doctorsAvailableBySchedule : doctors;
 
-        const doctors = doctorsResult.doctors;
-        if (doctors.length === 0) {
-            return json({ ok: false, error: "no_doctors_for_unit" }, { status: 400 });
-        }
-
-        const placeholders = doctors.map(() => "?").join(", ");
+        const placeholders = doctorsForSelection.map(() => "?").join(", ");
         const overlapsRes = await db
             .prepare(
                 `SELECT id, doctor_slug, status, confirm_by_ms, start_at_ms, end_at_ms FROM booking_requests WHERE unit_slug = ? AND doctor_slug IN (${placeholders}) AND start_at_ms < ? AND end_at_ms > ?`,
             )
-            .bind(unitSlug, ...doctors.map((d) => d.slug), endAtMs, startAtMs)
+            .bind(unitSlug, ...doctorsForSelection.map((doctor) => doctor.slug), endAtMs, startAtMs)
             .all<{ id: string; doctor_slug: string; status: string; confirm_by_ms: number; start_at_ms: number; end_at_ms: number }>();
 
         await expireStaleOverlaps(db, overlapsRes.results);
@@ -382,7 +407,7 @@ export async function POST(request: Request) {
             activeByDoctor.set(slug, cur);
         }
 
-        const pick = doctors.find((d) => !activeByDoctor.has(d.slug)) ?? null;
+        const pick = doctorsForSelection.find((doctor) => !activeByDoctor.has(doctor.slug)) ?? null;
         if (!pick) {
             const anyPending = Array.from(activeByDoctor.values()).some((v) => v.hasPending);
             return json({ ok: false, error: anyPending ? "slot_in_review" : "no_availability" }, { status: 409 });
