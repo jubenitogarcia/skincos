@@ -7,6 +7,7 @@
   - `npm run quality:check`
 - Smoke isolado (rotas críticas + agenda obrigatório):
   - `npm run smoke:strict`
+  - (equivale a `SMOKE_REQUIRE_AGENDA=1 node scripts/smoke.mjs`)
 - Auditoria 360 (design/ui/ux/seo/perf/a11y):
   - `npm run audit:360`
 
