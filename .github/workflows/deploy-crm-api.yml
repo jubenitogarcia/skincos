@@ -21,11 +21,14 @@ jobs:
         id: guard
         env:
           ENABLE: ${{ vars.ENABLE_CRM_API_DEPLOY }}
+          MODE: ${{ vars.CRM_API_DEPLOY_MODE }}
           HOST: ${{ secrets.CRM_API_SSH_HOST }}
           USER: ${{ secrets.CRM_API_SSH_USER }}
           KEY: ${{ secrets.CRM_API_SSH_KEY }}
           APP_DIR: ${{ vars.CRM_API_APP_DIR }}
           COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
+          RESTART_URL: ${{ vars.CRM_API_RESTART_URL }}
+          BASIC_AUTH: ${{ secrets.CRM_API_BASIC_AUTH }}
         run: |
           set -euo pipefail
           if [[ "${ENABLE:-}" != "true" ]]; then
@@ -33,14 +36,26 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ -z "${HOST:-}" || -z "${USER:-}" || -z "${KEY:-}" || -z "${APP_DIR:-}" || -z "${COMMAND:-}" ]]; then
-            echo "::error::CRM API deploy enabled, but missing one or more required settings: CRM_API_SSH_HOST, CRM_API_SSH_USER, CRM_API_SSH_KEY, CRM_API_APP_DIR, CRM_API_DEPLOY_COMMAND."
+          MODE_NORM="$(printf '%s' "${MODE:-ssh}" | tr '[:upper:]' '[:lower:]')"
+          echo "mode=${MODE_NORM}" >> "$GITHUB_OUTPUT"
+          if [[ "${MODE_NORM}" == "ssh" ]]; then
+            if [[ -z "${HOST:-}" || -z "${USER:-}" || -z "${KEY:-}" || -z "${APP_DIR:-}" || -z "${COMMAND:-}" ]]; then
+              echo "::error::CRM API deploy mode=ssh, but missing one or more required settings: CRM_API_SSH_HOST, CRM_API_SSH_USER, CRM_API_SSH_KEY, CRM_API_APP_DIR, CRM_API_DEPLOY_COMMAND."
+              exit 1
+            fi
+          elif [[ "${MODE_NORM}" == "http_restart" ]]; then
+            if [[ -z "${RESTART_URL:-}" || -z "${BASIC_AUTH:-}" ]]; then
+              echo "::error::CRM API deploy mode=http_restart, but missing CRM_API_RESTART_URL or CRM_API_BASIC_AUTH."
+              exit 1
+            fi
+          else
+            echo "::error::Unsupported CRM_API_DEPLOY_MODE='${MODE_NORM}'. Use 'ssh' or 'http_restart'."
             exit 1
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Deploy via SSH
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.mode == 'ssh' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.CRM_API_SSH_HOST }}
@@ -57,3 +72,24 @@ jobs:
           CRM_API_APP_DIR: ${{ vars.CRM_API_APP_DIR }}
           CRM_API_DEPLOY_COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
           GITHUB_SHA: ${{ github.sha }}
+
+      - name: Deploy via HTTP restart
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.mode == 'http_restart' }}
+        env:
+          RESTART_URL: ${{ vars.CRM_API_RESTART_URL }}
+          BASIC_AUTH: ${{ secrets.CRM_API_BASIC_AUTH }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          AUTH_HEADER="$(printf '%s' "${BASIC_AUTH}" | base64)"
+          payload="$(cat <<JSON
+          {"mode":"stack","reason":"github-actions-deploy-crm-api","sha":"${GITHUB_SHA}"}
+          JSON
+          )"
+          response="$(curl -fsS --retry 3 --retry-delay 2 --retry-connrefused \
+            -X POST "${RESTART_URL}" \
+            -H "authorization: Basic ${AUTH_HEADER}" \
+            -H "content-type: application/json" \
+            --data "${payload}")"
+          echo "${response}"
+          python3 -c 'import json,sys; data=json.loads(sys.stdin.read()); ok=bool(data.get("success")); sys.exit(0 if ok else 1)' <<<"${response}"
