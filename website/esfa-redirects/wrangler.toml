@@ -1,0 +1,7 @@
+name = "esfa-redirects"
+main = "src/index.ts"
+compatibility_date = "2026-01-11"
+
+# Routes for this worker are managed in the Cloudflare Dashboard.
+# Keeping them out of this config avoids deploy failures when the API token
+# lacks zone route-edit permissions.

@@ -6,12 +6,22 @@ Plataforma interna (local) para automações e operações da clínica.
 - Backend: `backend/` (apps, automations, libs, tools, scripts)
 - Frontend (CRM/UI): `frontend/`
   - Meta Ads (migrado): API em `backend/apps/meta-ads` e modulo UI no CRM
+- Website público (Next.js): `website/`
+  - Fluxo de agendamento, APIs de booking e deploy Cloudflare/OpenNext
 
 ## Como rodar (local)
 - Stack principal (recomendado): `./backend/scripts/dev.sh watch`
 - CRM (frontend + API): `./frontend/restart_crm.sh --watch-full`
+- Website público: `npm run website:dev` (porta padrão do Next: `http://localhost:3000`)
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
  - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
+
+### Website público (migrado para este repositório)
+- Instalar dependências do website: `npm run website:install`
+- Rodar typecheck: `npm run website:typecheck`
+- Build de produção: `npm run website:build`
+- Deploy Cloudflare/OpenNext: `npm run website:deploy`
+- O código legado do site agora está sob `website/` e deve ser mantido aqui para evoluções futuras.
 
 ### Auth local (sem login manual)
 - Em `localhost`, o frontend ativa bypass de auth por padrão para testes (`/api/auth/me` e `/api/insumos/auth/me` retornam usuário dev).
