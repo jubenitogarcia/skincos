@@ -40,7 +40,7 @@ function formatMonthLabelHeader(value: string) {
     const month = Number(value)
     if (!month) return value
     const date = new Date(2000, month - 1, 1)
-    let label = date.toLocaleDateString('pt-BR', { month: 'long' })
+    const label = date.toLocaleDateString('pt-BR', { month: 'long' })
     return label.charAt(0).toUpperCase() + label.slice(1)
 }
 

@@ -4,7 +4,7 @@
 Create a shared conversion layer for high-intent pages (`/`, `/agendamento`, `/unidades`, `/doutores`) so experiments can move faster without visual drift.
 
 ## Tokens
-Defined in [src/styles/globals.css](/Users/jubenitogarcia/.codex/worktrees/a692/website/src/styles/globals.css):
+Defined in `src/styles/globals.css`:
 
 - `--ds-surface-main`
 - `--ds-surface-soft`
@@ -16,12 +16,12 @@ Defined in [src/styles/globals.css](/Users/jubenitogarcia/.codex/worktrees/a692/
 ## Shared UI patterns
 
 ### `ConversionIntentRail`
-Component: [src/components/ConversionIntentRail.tsx](/Users/jubenitogarcia/.codex/worktrees/a692/website/src/components/ConversionIntentRail.tsx)
+Component: `src/components/ConversionIntentRail.tsx`
 
 Use for intent-first decision blocks with one clear CTA per card.
 
 ### Decision Cards
-Styles: `.decisionCard*` in [src/styles/globals.css](/Users/jubenitogarcia/.codex/worktrees/a692/website/src/styles/globals.css)
+Styles: `.decisionCard*` in `src/styles/globals.css`
 
 Use for local evidence, authority support, and pathway explanation.
 

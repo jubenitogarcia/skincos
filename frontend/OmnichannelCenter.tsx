@@ -1353,7 +1353,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     let nextValue = false
     patchMessageById(normalizedId, (item) => {
       previousValue = Boolean(item?.[field])
-      nextValue = !Boolean(item?.[field])
+      nextValue = !previousValue
       return { ...item, [field]: nextValue }
     })
     try {
@@ -2557,21 +2557,21 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
 
     if (action === 'archive') {
-      updateConversationRecord(conv, (current) => ({ ...current, archived: !Boolean(current?.archived || current?.isArchived) }))
+      updateConversationRecord(conv, (current) => ({ ...current, archived: !(current?.archived || current?.isArchived) }))
       closeConversationActionMenu()
       toast.success('Status de arquivamento atualizado.')
       return
     }
 
     if (action === 'mute') {
-      updateConversationRecord(conv, (current) => ({ ...current, muted: !Boolean(current?.muted || current?.isMuted) }))
+      updateConversationRecord(conv, (current) => ({ ...current, muted: !(current?.muted || current?.isMuted) }))
       closeConversationActionMenu()
       toast.success('Status de silenciamento atualizado.')
       return
     }
 
     if (action === 'lock') {
-      updateConversationRecord(conv, (current) => ({ ...current, locked: !Boolean(current?.locked || current?.isLocked) }))
+      updateConversationRecord(conv, (current) => ({ ...current, locked: !(current?.locked || current?.isLocked) }))
       closeConversationActionMenu()
       toast.success('Status de bloqueio visual atualizado.')
       return
@@ -2580,9 +2580,9 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     if (action === 'favorite') {
       updateConversationRecord(conv, (current) => ({
         ...current,
-        isFavorite: !Boolean(current?.isFavorite || current?.favorite || current?.starred),
-        favorite: !Boolean(current?.isFavorite || current?.favorite || current?.starred),
-        starred: !Boolean(current?.isFavorite || current?.favorite || current?.starred)
+        isFavorite: !(current?.isFavorite || current?.favorite || current?.starred),
+        favorite: !(current?.isFavorite || current?.favorite || current?.starred),
+        starred: !(current?.isFavorite || current?.favorite || current?.starred)
       }))
       closeConversationActionMenu()
       toast.success('Favorito atualizado.')
@@ -2610,7 +2610,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
 
     if (action === 'block') {
-      updateConversationRecord(conv, (current) => ({ ...current, blocked: !Boolean(current?.blocked) }))
+      updateConversationRecord(conv, (current) => ({ ...current, blocked: !current?.blocked }))
       closeConversationActionMenu()
       toast.success(`Status de bloqueio de ${displayName} atualizado.`)
       return
