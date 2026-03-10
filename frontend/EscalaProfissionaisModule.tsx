@@ -63,7 +63,7 @@ function formatMonthName(value: string) {
   const month = Number(value)
   if (!month) return value
   const date = new Date(2000, month - 1, 1)
-  let label = date.toLocaleDateString('pt-BR', { month: 'long' })
+  const label = date.toLocaleDateString('pt-BR', { month: 'long' })
   return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
@@ -833,7 +833,7 @@ export function EscalaProfissionaisModule() {
                               </button>
                             ) : null}
                           </div>
-                        ) : !!displayEntryNames.length ? (
+                        ) : displayEntryNames.length ? (
                           <div className="flex flex-wrap gap-1">
                           {displayEntryNames.map((name) => {
                             const isActiveSelection = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name === selectedProfessional
