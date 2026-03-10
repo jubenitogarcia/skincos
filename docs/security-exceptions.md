@@ -29,3 +29,14 @@ Last review: 2026-03-10
   - `.github/security/pip-audit-path-exceptions.csv`
   - `.github/security/pip-audit-vuln-exceptions.csv`
 - **Enforcement**: expired exceptions fail CI in `.github/workflows/security-secrets-audit.yml`.
+
+### pip-audit dependency resolution (crawl4ai vendor requirements)
+
+- **Status**: Temporarily active with expiry control.
+- **Scope**:
+  - `backend/apps/automations/sprinta/v2/vendor/crawl4ai/requirements.txt`
+- **Reason**: `pip-audit` resolves this vendor requirements file in an isolated env and attempts to build `lxml` from source; GitHub hosted runners currently do not provide the required `libxml2/libxslt` development packages for that build.
+- **Policy source of truth**:
+  - `.github/security/pip-audit-path-exceptions.csv`
+  - `.github/security/pip-audit-vuln-exceptions.csv`
+- **Enforcement**: expired exceptions fail CI in `.github/workflows/security-secrets-audit.yml`.
