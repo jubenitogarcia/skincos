@@ -33,7 +33,7 @@ ensure_dev_var() {
   fi
 }
 
-ensure_dev_var "LOCAL_AUTH_BYPASS" "true"
+ensure_dev_var "LOCAL_AUTH_BYPASS" "false"
 ensure_dev_var "LOCAL_AUTH_ROLE" "GESTOR"
 ensure_dev_var "LOCAL_AUTH_EMAIL" "dev@local.test"
 ensure_dev_var "LOCAL_AUTH_NAME" "Dev Local"

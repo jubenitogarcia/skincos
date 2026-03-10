@@ -239,7 +239,7 @@
   "settings": {
     "timezone": "America/Sao_Paulo"
   },
-  "active": false,
+  "active": true,
   "versionId": "1",
   "description": "No-show/cancelado → reativação com respeito a opt-out."
 }

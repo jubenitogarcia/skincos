@@ -76,7 +76,7 @@ const WA_LOCAL_RECOVERY_ENABLED = String(
     process.env.WA_LOCAL_RECOVERY_ENABLED || (process.platform === 'darwin' ? 'true' : 'false')
 ).toLowerCase() === 'true'
 const WA_LOCAL_RECOVERY_SCRIPT = String(
-    process.env.WA_LOCAL_RECOVERY_SCRIPT || '/Users/jubenitogarcia/Automation/n8n/scripts/ensure-whatsapp-stack.sh'
+    process.env.WA_LOCAL_RECOVERY_SCRIPT || path.join(REPO_ROOT, 'scripts', 'ensure-whatsapp-stack.sh')
 ).trim()
 const WA_LOCAL_RECOVERY_TIMEOUT_MS = Math.max(
     15_000,
@@ -550,8 +550,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 // When running locally with `NO_AUTH=true`, provide a minimal cookie-based session.
 // -------------------------------------------------------------
 const NODE_ENV_NAME = String(process.env.NODE_ENV || '').toLowerCase()
-const NO_AUTH_RAW = String(process.env.NO_AUTH ?? '').trim().toLowerCase()
-const DEV_AUTH_ENABLED = NODE_ENV_NAME !== 'production' && NO_AUTH_RAW !== 'false'
+const isTruthyEnv = (value) => {
+    const raw = String(value ?? '').trim().toLowerCase()
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
+}
+const NO_AUTH_ENABLED = isTruthyEnv(process.env.NO_AUTH)
+const DEV_AUTH_ENABLED = NODE_ENV_NAME !== 'production' && NO_AUTH_ENABLED
 let devAuthRequireAdmin = null
 if (DEV_AUTH_ENABLED) {
     const DEV_AUTH_COOKIE = 'skincos_dev_session'
@@ -1016,7 +1020,7 @@ app.use('/api/meta-ads', createProxyMiddleware({
 // Cloudflare target (default production). Override for local testing.
 const isLocalEnv = String(process.env.NODE_ENV || '').toLowerCase() !== 'production'
 const INSUMOS_API_TARGET = process.env.INSUMOS_API_TARGET || (isLocalEnv ? 'http://127.0.0.1:8787' : 'https://api.skincos.com.br')
-const LOCAL_INSUMOS_AUTH_STUB = isLocalEnv && NO_AUTH_RAW !== 'false'
+const LOCAL_INSUMOS_AUTH_STUB = isLocalEnv && NO_AUTH_ENABLED
 const FORCE_LOCAL_INSUMOS_AUTH_STUB = String(process.env.LOCAL_INSUMOS_AUTH_STUB_FORCE || '').trim() === '1'
 
 function isLocalSafeMode() {
@@ -1375,7 +1379,7 @@ if (DEV_AUTH_ENABLED) {
 // -------------------------------------------------------------
 const LOCAL_STUB_PAGES_APIS =
     (String(process.env.NODE_ENV || '').toLowerCase() === 'development') ||
-    (String(process.env.NO_AUTH || '').toLowerCase() === 'true')
+    NO_AUTH_ENABLED
 
 if (LOCAL_STUB_PAGES_APIS) {
     // Instagram integration (Pages Functions in prod).
@@ -1468,7 +1472,7 @@ app.use((req, res, next) => {
 // Supports EventSource via query param ?auth=BASE64(user:pass)
 // -------------------------------------------------------------
 const BASIC_AUTH = process.env.CRM_BASIC_AUTH || ''
-const LOCAL_NO_AUTH = String(process.env.CRM_LOCAL_NO_AUTH || '').trim().toLowerCase()
+const LOCAL_NO_AUTH_ENABLED = isTruthyEnv(process.env.CRM_LOCAL_NO_AUTH)
 let basicAuthUser = null, basicAuthPass = null
 if (BASIC_AUTH && BASIC_AUTH.includes(':')) {
     const [u, p] = BASIC_AUTH.split(':'); basicAuthUser = u; basicAuthPass = p
@@ -1494,7 +1498,7 @@ app.use((req, res, next) => {
     // Allow local dev without auth (default enabled)
     const host = String(req.hostname || '').toLowerCase()
     const isLocalHost = host === 'localhost' || host === '127.0.0.1'
-    if (isLocalHost && LOCAL_NO_AUTH !== 'false') return next()
+    if (isLocalHost && LOCAL_NO_AUTH_ENABLED) return next()
 
     // Always allow preflight OPTIONS and health checks
     if (req.method === 'OPTIONS' || req.path.startsWith('/health')) {
@@ -5775,7 +5779,7 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
                 })
             }
             coreStep = await runCommandWithTimeout('bash', [WA_LOCAL_RECOVERY_SCRIPT], {
-                cwd: '/Users/jubenitogarcia/Automation/n8n',
+                cwd: path.join(REPO_ROOT, 'n8n'),
                 timeoutMs: WA_LOCAL_RECOVERY_TIMEOUT_MS
             })
             steps.push({ phase: 'stack-restart', ...coreStep })

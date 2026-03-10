@@ -450,7 +450,7 @@
   "settings": {
     "timezone": "America/Sao_Paulo"
   },
-  "active": false,
+  "active": true,
   "versionId": "1",
   "description": "Proposta de horários e criação de evento no Google Calendar."
 }

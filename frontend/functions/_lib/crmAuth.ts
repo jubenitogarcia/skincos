@@ -23,6 +23,14 @@ function normalizeRole(value: unknown): string {
   return raw
 }
 
+function parseBoolean(value: unknown): boolean | null {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (!raw) return null
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false
+  return null
+}
+
 function isLocalHostname(hostname: string): boolean {
   const host = String(hostname || '').trim().toLowerCase()
   return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
@@ -54,7 +62,8 @@ export function isLocalDevAuthBypassEnabled(context: any): boolean {
     env.CRM_LOCAL_NO_AUTH ??
     env.DEV_AUTH_BYPASS ??
     ''
-  const toggle = String(rawToggle).trim().toLowerCase()
+  const toggle = parseBoolean(rawToggle)
+  if (toggle !== true) return false
   const requestUrl = String(context?.request?.url || '')
   if (!requestUrl) return false
   let localHost = false
@@ -70,16 +79,13 @@ export function isLocalDevAuthBypassEnabled(context: any): boolean {
   const cookieToggle =
     parseCookieValue(cookieHeader, 'crm.localAuth') ||
     parseCookieValue(cookieHeader, 'crm_local_auth')
-  const cookieNormalized = String(cookieToggle || '').trim().toLowerCase()
-  if (cookieNormalized === 'false' || cookieNormalized === '0' || cookieNormalized === 'no' || cookieNormalized === 'off') {
+  const cookieBypass = parseBoolean(cookieToggle)
+  if (cookieBypass === false) {
     return false
   }
-  if (cookieNormalized === 'true' || cookieNormalized === '1' || cookieNormalized === 'yes' || cookieNormalized === 'on') {
+  if (cookieBypass === true) {
     return true
   }
-
-  if (toggle === 'false' || toggle === '0' || toggle === 'no') return false
-  if (toggle === 'true' || toggle === '1' || toggle === 'yes') return true
 
   return true
 }

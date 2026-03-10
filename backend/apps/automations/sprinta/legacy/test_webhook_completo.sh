@@ -15,8 +15,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Variáveis
-NGROK_URL="https://eustolia-manistic-understandably.ngrok-free.dev"
-WEBHOOK_SECRET="Sp@rinta2025!Seg0r@nca#XYZ789"
+NGROK_URL="${NGROK_URL:-https://eustolia-manistic-understandably.ngrok-free.dev}"
+WEBHOOK_SECRET="${SPRINTA_WEBHOOK_SECRET:-}"
+
+if [[ -z "${WEBHOOK_SECRET}" ]]; then
+    echo -e "${RED}❌ Variável SPRINTA_WEBHOOK_SECRET não configurada${NC}"
+    exit 1
+fi
 
 # ========================================
 # 1. VERIFICAR SE WEBHOOK SERVER ESTÁ RODANDO

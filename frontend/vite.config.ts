@@ -78,7 +78,7 @@ const apiProxyTarget =
   'http://localhost:8099'
 
 const localAuthBypassEnabled =
-  parseBooleanEnv(envValue('VITE_LOCAL_AUTH_BYPASS', 'LOCAL_AUTH_BYPASS')) ?? true
+  parseBooleanEnv(envValue('VITE_LOCAL_AUTH_BYPASS', 'LOCAL_AUTH_BYPASS')) ?? false
 const localAuthRole = (() => {
   const raw = String(envValue('VITE_LOCAL_AUTH_ROLE', 'LOCAL_AUTH_ROLE') || 'GESTOR').trim().toUpperCase()
   if (raw === 'ADMIN') return 'GESTOR'

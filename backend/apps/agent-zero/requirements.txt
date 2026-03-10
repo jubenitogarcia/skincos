@@ -55,7 +55,7 @@ google-auth>=2.0.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.0.0
-protobuf==6.33.4
+protobuf==6.33.5
 requests>=2.32.4
 urllib3>=1.26.0
 Pillow>=9.0.0

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+N8N_ROOT="${N8N_ROOT:-$REPO_ROOT/n8n}"
+if [[ ! -d "$N8N_ROOT" && -d "$HOME/Automation/n8n" ]]; then
+  N8N_ROOT="$HOME/Automation/n8n"
+fi
+
 UID_VALUE="$(id -u)"
 WATCHDOG_LABEL="com.skincos.whatsapp-watchdog"
 NETWORK_FALLBACK_LABEL="com.skincos.network-fallback"
@@ -9,7 +16,11 @@ TUNNEL_LABEL="com.skincos.cloudflared.cs"
 EVOLUTION_LABEL="com.skincos.evolution-api"
 CRM_LABEL="com.skincos.crm-api"
 LEGACY_LABELS=("com.n8n.automation" "com.skincos.cloudflared.wa" "com.skincos.keepawake")
-N8N_ENV_FILE="/Users/jubenitogarcia/Automation/n8n/.env"
+N8N_ENV_FILE="${N8N_ENV_FILE:-$N8N_ROOT/.env}"
+ENSURE_STACK_SCRIPT="${ENSURE_STACK_SCRIPT:-$N8N_ROOT/scripts/ensure-whatsapp-stack.sh}"
+SETUP_KEEPAWAKE_SCRIPT="$SCRIPT_DIR/setup-mac-awake-service.sh"
+SETUP_NETWORK_FALLBACK_SCRIPT="$SCRIPT_DIR/setup-network-fallback-service.sh"
+NETWORK_FALLBACK_DAEMON_SCRIPT="$SCRIPT_DIR/network-fallback-daemon.sh"
 
 bootstrap_if_missing() {
   local label="$1"
@@ -96,22 +107,22 @@ apply_network_defaults() {
   upsert_env_if_missing "NETWORK_FALLBACK_PRIMARY_PASSWORD" ""
 }
 
-chmod +x /Users/jubenitogarcia/Automation/n8n/scripts/ensure-whatsapp-stack.sh
-chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh
-chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/setup-network-fallback-service.sh
-chmod +x /Users/jubenitogarcia/Automation/skincos/scripts/network-fallback-daemon.sh
+[[ -f "$ENSURE_STACK_SCRIPT" ]] && chmod +x "$ENSURE_STACK_SCRIPT"
+chmod +x "$SETUP_KEEPAWAKE_SCRIPT"
+chmod +x "$SETUP_NETWORK_FALLBACK_SCRIPT"
+chmod +x "$NETWORK_FALLBACK_DAEMON_SCRIPT"
 
 apply_power_defaults
 apply_network_defaults
-bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh >/dev/null 2>&1
+bash "$SETUP_KEEPAWAKE_SCRIPT" >/dev/null 2>&1
 if ! launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" >/dev/null 2>&1; then
   echo "[setup] keepawake agent não carregou na primeira tentativa; retry com logs."
-  bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh
+  bash "$SETUP_KEEPAWAKE_SCRIPT"
 fi
-bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-network-fallback-service.sh >/dev/null 2>&1
+bash "$SETUP_NETWORK_FALLBACK_SCRIPT" >/dev/null 2>&1
 if ! launchctl print "gui/$UID_VALUE/$NETWORK_FALLBACK_LABEL" >/dev/null 2>&1; then
   echo "[setup] network fallback não carregou na primeira tentativa; retry com logs."
-  bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-network-fallback-service.sh
+  bash "$SETUP_NETWORK_FALLBACK_SCRIPT"
 fi
 
 bootstrap_if_missing "$N8N_LABEL" "$HOME/Library/LaunchAgents/com.jubenito.n8n-evolution.plist"
@@ -140,7 +151,7 @@ done
 
 if ! launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" >/dev/null 2>&1; then
   echo "[setup] keepawake agent ausente após reload; reativando."
-  bash /Users/jubenitogarcia/Automation/skincos/scripts/setup-mac-awake-service.sh >/dev/null 2>&1 || true
+  bash "$SETUP_KEEPAWAKE_SCRIPT" >/dev/null 2>&1 || true
 fi
 
 echo "[setup] concluído."

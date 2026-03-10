@@ -2127,31 +2127,6 @@ app.get('/chats', async (req, res) => {
     }
 });
 
-// Alias compatível para adaptadores que tentam /v1/conversations
-app.get('/v1/conversations', async (req, res) => {
-    try {
-        if (!isClientReady) {
-            return res.status(200).json({ success: false, chats: [], total: 0, reason: 'not-ready' });
-        }
-        const chats = await client.getChats();
-        const chatsList = chats.slice(0, 50).map(chat => ({
-            id: chat?.id?._serialized,
-            name: chat?.name || 'Chat',
-            isGroup: !!chat?.isGroup,
-            unreadCount: Number(chat?.unreadCount || 0),
-            lastMessage: chat?.lastMessage ? {
-                body: String(chat.lastMessage.body || '').slice(0, 200),
-                timestamp: chat.lastMessage.timestamp,
-                from: chat.lastMessage.from
-            } : null
-        }));
-        return res.json({ success: true, chats: chatsList, total: chats.length });
-    } catch (error) {
-        console.error('❌ Erro em /v1/conversations:', error);
-        return res.status(200).json({ success: false, chats: [], total: 0, reason: 'exception', error: String(error?.message || error) });
-    }
-});
-
 // Obter informações do usuário
 app.get('/info', async (req, res) => {
     try {

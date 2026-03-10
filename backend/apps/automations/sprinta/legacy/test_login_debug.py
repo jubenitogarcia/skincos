@@ -5,6 +5,7 @@ Este script APENAS testa o fluxo de login, permitindo visualizar o processo comp
 
 from sprinta_automation import create_driver, login, check_if_logged_in
 import time
+import os
 
 def test_login_visual():
     """Testa o login com visualização completa."""
@@ -28,8 +29,12 @@ def test_login_visual():
 
         if not is_logged_in:
             # Credenciais
-            username = "novohamburgo@espacofacial.com.br"
-            password = "*NEv6cVYfdmR3J"
+            username = os.getenv("SPRINTA_LOGIN_USER", "")
+            password = os.getenv("SPRINTA_LOGIN_PASSWORD", "")
+            if not username or not password:
+                raise RuntimeError(
+                    "Configure SPRINTA_LOGIN_USER e SPRINTA_LOGIN_PASSWORD no ambiente antes de executar."
+                )
 
             print("⏸️  Iniciando login em 3 segundos...")
             time.sleep(3)

@@ -1,0 +1,3 @@
+# requirements_path,expires_on,reason
+backend/apps/agent-zero/requirements.txt,2026-06-30,openai-whisper dependency resolution currently fails pip-audit build metadata
+backend/apps/agent-zero/requirements.unified.txt,2026-06-30,openai-whisper dependency resolution currently fails pip-audit build metadata

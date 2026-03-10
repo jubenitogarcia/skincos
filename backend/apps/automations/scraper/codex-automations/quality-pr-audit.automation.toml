@@ -2,7 +2,7 @@ version = 1
 id = "quality-pr-audit"
 name = "Quality PR Audit"
 prompt = "Executar a auditoria completa de qualidade do site com npm run quality:pr, consolidar os resultados de performance, acessibilidade, SEO, links, UX snapshots e score geral, e retornar um resumo com regressões, severidade e próximos passos acionáveis com links para os artefatos."
-status = "PAUSED"
+status = "ACTIVE"
 rrule = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=9;BYMINUTE=0"
 execution_environment = "local"
 cwds = ["/Users/jubenitogarcia/Automation/skincos/website"]

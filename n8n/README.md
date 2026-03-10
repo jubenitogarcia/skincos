@@ -3,8 +3,8 @@
 Este módulo adiciona workflows n8n + schema Postgres para triagem, agendamento e reativação de leads via WhatsApp (Evolution API).
 
 ## Estrutura
-- Workflows n8n: `/Users/jubenitogarcia/Automation/skincos/n8n/workflows`
-- Migrations Postgres: `/Users/jubenitogarcia/Automation/skincos/db/migrations/20260217_wa_n8n.sql`
+- Workflows n8n: `n8n/workflows`
+- Migrations Postgres: `db/migrations/20260217_wa_n8n.sql`
 
 ## Variáveis de ambiente (não commitar segredos)
 - `EVOLUTION_BASE_URL=`
@@ -20,7 +20,7 @@ Google Calendar (OAuth2):
 - `GOOGLE_CALENDAR_ID_*` (a definir)
 
 ## Variáveis adicionais do módulo (n8n)
-Copie `/Users/jubenitogarcia/Automation/skincos/n8n/.env.example` para seu ambiente do n8n e ajuste:
+Copie `n8n/.env.example` para seu ambiente do n8n e ajuste:
 - `N8N_DEFAULT_UNIT_SLUG`
 - `N8N_DEFAULT_UNIT_NAME`
 - `N8N_UNIT_NAME_MAP`
@@ -87,13 +87,13 @@ Obs.: o parser também aceita payload “flat” (sem `body.data`) para testes l
 No n8n, importe cada JSON (1 workflow por arquivo) no editor.
 
 ## Tabelas
-Criar via migrations em `/Users/jubenitogarcia/Automation/skincos/db/migrations`.
+Criar via migrations em `db/migrations`.
 
 ## Setup rápido
 1. Rodar migration:
 
 ```bash
-psql "$DATABASE_URL" -f /Users/jubenitogarcia/Automation/skincos/db/migrations/20260217_wa_n8n.sql
+psql "$DATABASE_URL" -f db/migrations/20260217_wa_n8n.sql
 ```
 
 2. Importar workflows no n8n:
@@ -106,11 +106,11 @@ psql "$DATABASE_URL" -f /Users/jubenitogarcia/Automation/skincos/db/migrations/2
 4. Ajustar env vars no n8n.
 
 ## Teste mínimo
-1) Disparar `POST` no webhook com `/Users/jubenitogarcia/Automation/skincos/n8n/sample_payloads/evolution_inbound_message.json`
+1) Disparar `POST` no webhook com `n8n/sample_payloads/evolution_inbound_message.json`
 ```bash
 curl -X POST http://localhost:5678/webhook-test/wa/inbound/evolution \
   -H 'Content-Type: application/json' \
-  -d @/Users/jubenitogarcia/Automation/skincos/n8n/sample_payloads/evolution_inbound_message.json
+  -d @n8n/sample_payloads/evolution_inbound_message.json
 ```
 
 Verifique:
@@ -157,4 +157,4 @@ Ajuste `end_at` para o passado e verifique `no_show` + `reactivation_sent`.
 - Todos os envs são configuráveis no n8n. Não hardcode segredos.
 - Eventos são registrados **antes** de envio de mensagens, mudanças de status e criação de agendamento.
 - Handoff humano usa `N8N_HANDOFF_NOTIFY_NUMBER` (WhatsApp interno). Ajuste conforme sua operação.
-- KPIs mínimos (SQL) em `/Users/jubenitogarcia/Automation/skincos/n8n/kpis.sql`.
+- KPIs mínimos (SQL) em `n8n/kpis.sql`.
