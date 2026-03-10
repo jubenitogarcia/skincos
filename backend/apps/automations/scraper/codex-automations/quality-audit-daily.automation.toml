@@ -1,0 +1,10 @@
+version = 1
+id = "quality-audit-daily"
+name = "Quality Audit Daily 360"
+prompt = "Executar npm run audit:360:ci no projeto skincos/website, consolidar scorecard de qualidade, segurança, SEO, UX, UI, acessibilidade, performance e visual regression, e retornar resumo acionável com regressões, severidade e próximos passos priorizados com links para os artefatos em reports/quality/<timestamp>-audit360."
+status = "PAUSED"
+rrule = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=9;BYMINUTE=0"
+execution_environment = "local"
+cwds = ["/Users/jubenitogarcia/Automation/skincos/website"]
+created_at = 1772655197233
+updated_at = 1772988034619

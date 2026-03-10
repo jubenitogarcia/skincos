@@ -1,0 +1,10 @@
+version = 1
+id = "agenda-delta-00"
+name = "Agenda"
+prompt = "Rodar delta de agendamentos para dias remanescentes do mês em todas as unidades. Execute: HEADLESS=1 EF_INDEX_REMAINING_MONTH=1 EF_UNITS='BarraShoppingSul,Novo Hamburgo' EF_AGENDA_SYNC_URL='https://espacofacial.com/api/agenda/sync' ./run_agenda_delta_all_units.sh. O token de sync deve vir do ambiente (EF_AGENDA_SYNC_TOKEN), carregado automaticamente de ~/.config/espacofacial/agenda_sync.env quando existir, sem hardcode no comando. Para cada unidade, se existir report/*/agendamentos_espacofacial_mudancas.json, reporte ADICIONADOS e REMOVIDOS e se houve exportação de agendamentos_espacofacial_delta.csv. Crie um item de inbox com o resumo. Se a execução concluir sem erro/bloqueio, após o inbox item adicione ::archive-thread{} para arquivar automaticamente a run."
+status = "PAUSED"
+rrule = "FREQ=HOURLY;INTERVAL=1;BYMINUTE=0;BYDAY=SU,MO,TU,WE,TH,FR,SA"
+execution_environment = "local"
+cwds = ["/Users/jubenitogarcia/Automation/skincos/backend/apps/automations/scraper"]
+created_at = 1772486581968
+updated_at = 1772988040475
