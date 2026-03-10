@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 220" role="img" aria-label="Espaço Facial">
+  <g transform="translate(20,40)">
+    <g fill="#ffffff" transform="translate(0,10) scale(1.0)">
+      <rect x="0" y="0" width="200" height="22" rx="2" />
+      <rect x="0" y="54" width="200" height="22" rx="2" />
+      <rect x="0" y="54" width="22" height="86" rx="2" />
+      <rect x="118" y="108" width="82" height="22" rx="2" />
+    </g>
+
+    <g transform="translate(240,0)">
+      <text x="0" y="78" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="78" font-weight="500" fill="rgba(255,255,255,0.75)">Espaço</text>
+      <text x="292" y="78" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="78" font-weight="900" fill="#ffffff">Facial</text>
+      <text x="302" y="132" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" font-size="28" letter-spacing="3" fill="rgba(255,255,255,0.65)">Harmonização facial</text>
+    </g>
+  </g>
+</svg>

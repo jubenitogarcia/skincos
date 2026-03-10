@@ -1,0 +1,9 @@
+name = "esfa-redirects"
+main = "worker.ts"
+compatibility_date = "2026-01-11"
+workers_dev = false
+
+routes = [
+	{ pattern = "esfa.co/*", zone_name = "esfa.co" },
+	{ pattern = "www.esfa.co/*", zone_name = "esfa.co" },
+]

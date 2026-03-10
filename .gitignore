@@ -86,6 +86,8 @@ sdist/
 # Cloudflare Workers source (keep committed even though "lib/" is ignored globally)
 !backend/apps/insumos/src/lib/
 !backend/apps/insumos/src/lib/**
+!website/src/lib/
+!website/src/lib/**
 # Local runtime state (do not commit)
 backend/var/
 # Legacy/compat (avoid using; prefer backend/var/)

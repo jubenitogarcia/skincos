@@ -1,0 +1,57 @@
+{
+  "name": "espacofacial-open",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "next lint",
+    "smoke": "node scripts/smoke.mjs",
+    "quality:pr": "npm run audit:360:ci",
+    "quality:check": "npm run lint && npm run typecheck && npm run test:agenda && npm run build && npm run smoke",
+    "quality:ci": "npm ci && npm run quality:check",
+    "test:agenda": "tsx --test tests/agendaDb.test.ts",
+    "audit:360": "node scripts/audit360.mjs",
+    "audit:360:ci": "npm ci && npm run audit:360",
+    "cf:security": "node scripts/cloudflare-sync-security.mjs",
+    "tail": "wrangler tail espacofacial-site --format pretty --sampling-rate 0.25",
+    "tail:json": "wrangler tail espacofacial-site --format json",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "deploy:esfa": "wrangler deploy -c workers/esfa-redirector/wrangler.toml"
+  },
+  "dependencies": {
+    "@svg-maps/brazil": "^2.0.0",
+    "next": "^15.5.10",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.0",
+    "@opennextjs/cloudflare": "^1.15.1",
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "cheerio": "^1.1.2",
+    "eslint": "8.57.0",
+    "eslint-config-next": "^15.5.10",
+    "lighthouse": "^13.0.3",
+    "pixelmatch": "^7.1.0",
+    "playwright": "^1.56.1",
+    "pngjs": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "5.5.4",
+    "wrangler": "^4.60.0"
+  },
+  "overrides": {
+    "@next/eslint-plugin-next": {
+      "glob": "10.5.0"
+    },
+    "wrangler": {
+      "undici": "7.18.2"
+    }
+  }
+}

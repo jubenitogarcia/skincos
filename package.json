@@ -1,4 +1,11 @@
 {
+  "scripts": {
+    "website:install": "npm --prefix website ci",
+    "website:dev": "npm --prefix website run dev",
+    "website:build": "npm --prefix website run build",
+    "website:typecheck": "npm --prefix website run build && npm --prefix website run typecheck",
+    "website:deploy": "npm --prefix website run deploy"
+  },
   "devDependencies": {
     "semver": "^7.7.3"
   }
