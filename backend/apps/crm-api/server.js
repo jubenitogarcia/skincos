@@ -36,8 +36,8 @@ import axios from 'axios'
 // Base directory resolution (compatível com ESM)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // server.js lives in: <repo>/backend/apps/crm-api/server.js
-// so repo root is 4 levels up from __dirname (<repo>/backend/apps/crm-api).
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..')
+// so repo root is 3 levels up from __dirname (<repo>/backend/apps/crm-api -> <repo>).
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
 const BACKEND_ROOT = path.join(REPO_ROOT, 'backend')
 function resolveCrmUiDir() {
     const env = String(process.env.CRM_UI_DIR || '').trim()
@@ -82,6 +82,12 @@ const WA_LOCAL_RECOVERY_TIMEOUT_MS = Math.max(
     15_000,
     Number.parseInt(String(process.env.WA_LOCAL_RECOVERY_TIMEOUT_MS || '90000'), 10) || 90_000
 )
+const WA_LOCAL_RECOVERY_SYNC_REMOTE = String(process.env.WA_LOCAL_RECOVERY_SYNC_REMOTE || 'origin').trim() || 'origin'
+const WA_LOCAL_RECOVERY_SYNC_BRANCH = String(process.env.WA_LOCAL_RECOVERY_SYNC_BRANCH || 'main').trim() || 'main'
+const WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS = Math.max(
+    15_000,
+    Number.parseInt(String(process.env.WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS || '120000'), 10) || 120_000
+)
 const LOCAL_EVOLUTION_LAUNCHD_LABEL = String(
     process.env.LOCAL_EVOLUTION_LAUNCHD_LABEL || 'com.skincos.evolution-api'
 ).trim()
@@ -122,6 +128,111 @@ function truncateText(value, max = 3000) {
     const text = String(value || '')
     if (text.length <= max) return text
     return `${text.slice(0, max)}\n...[truncated]`
+}
+
+function normalizeBoolean(value, defaultValue = false) {
+    if (value === undefined || value === null) return Boolean(defaultValue)
+    const normalized = String(value).trim().toLowerCase()
+    if (!normalized) return Boolean(defaultValue)
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+    return Boolean(defaultValue)
+}
+
+function parseRecoverySyncSha(value) {
+    const text = String(value || '').trim()
+    if (!text) return { sha: '', invalid: false }
+    if (!/^[0-9a-f]{7,40}$/i.test(text)) return { sha: '', invalid: true }
+    return { sha: text.toLowerCase(), invalid: false }
+}
+
+function isStepSuccessful(step) {
+    if (!step) return false
+    if (step.timedOut) return false
+    if (typeof step.code === 'number' && step.code !== 0) return false
+    return true
+}
+
+async function runLocalRecoveryRepoSync({ sha = '', autoStash = true } = {}) {
+    const repoDir = REPO_ROOT
+    const remote = WA_LOCAL_RECOVERY_SYNC_REMOTE
+    const branch = WA_LOCAL_RECOVERY_SYNC_BRANCH
+    const timeoutMs = WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS
+    const steps = []
+
+    const pushStep = async (name, command, args, stepTimeoutMs = timeoutMs) => {
+        const step = await runCommandWithTimeout(command, args, { timeoutMs: stepTimeoutMs })
+        steps.push({ name, ...step })
+        return step
+    }
+
+    const insideRepo = await pushStep('repo-check', 'git', ['-C', repoDir, 'rev-parse', '--is-inside-work-tree'], 12_000)
+    if (!isStepSuccessful(insideRepo)) {
+        return { success: false, error: 'RECOVERY_SYNC_REPO_INVALID', steps }
+    }
+
+    const statusStep = await pushStep('status', 'git', ['-C', repoDir, 'status', '--porcelain'], 15_000)
+    if (!isStepSuccessful(statusStep)) {
+        return { success: false, error: 'RECOVERY_SYNC_STATUS_FAILED', steps }
+    }
+
+    const repoDirty = String(statusStep.stdout || '').trim().length > 0
+    if (repoDirty) {
+        if (!autoStash) {
+            return { success: false, error: 'RECOVERY_SYNC_REPO_DIRTY', repoDirty, steps }
+        }
+        const stashLabel = `wa-recovery-autostash-${new Date().toISOString()}`
+        const stashStep = await pushStep('stash', 'git', ['-C', repoDir, 'stash', 'push', '--include-untracked', '--message', stashLabel], 45_000)
+        if (!isStepSuccessful(stashStep)) {
+            return { success: false, error: 'RECOVERY_SYNC_STASH_FAILED', repoDirty, steps }
+        }
+    }
+
+    const fetchStep = await pushStep('fetch', 'git', ['-C', repoDir, 'fetch', remote, '--prune'], timeoutMs)
+    if (!isStepSuccessful(fetchStep)) {
+        return { success: false, error: 'RECOVERY_SYNC_FETCH_FAILED', repoDirty, steps }
+    }
+
+    let checkoutStep = await pushStep('checkout', 'git', ['-C', repoDir, 'checkout', branch], 30_000)
+    if (!isStepSuccessful(checkoutStep)) {
+        checkoutStep = await pushStep('checkout-create', 'git', ['-C', repoDir, 'checkout', '-B', branch, `${remote}/${branch}`], 30_000)
+        if (!isStepSuccessful(checkoutStep)) {
+            return { success: false, error: 'RECOVERY_SYNC_CHECKOUT_FAILED', repoDirty, steps }
+        }
+    }
+
+    let targetRef = `${remote}/${branch}`
+    if (sha) {
+        const verifyShaStep = await pushStep('verify-sha', 'git', ['-C', repoDir, 'cat-file', '-e', `${sha}^{commit}`], 15_000)
+        if (!isStepSuccessful(verifyShaStep)) {
+            return { success: false, error: 'RECOVERY_SYNC_SHA_NOT_FOUND', repoDirty, steps }
+        }
+        const verifyOnBranchStep = await pushStep(
+            'verify-sha-on-branch',
+            'git',
+            ['-C', repoDir, 'merge-base', '--is-ancestor', sha, `${remote}/${branch}`],
+            15_000
+        )
+        if (!isStepSuccessful(verifyOnBranchStep)) {
+            return { success: false, error: 'RECOVERY_SYNC_SHA_NOT_IN_TARGET_BRANCH', repoDirty, steps }
+        }
+        targetRef = sha
+    }
+
+    const resetStep = await pushStep('reset', 'git', ['-C', repoDir, 'reset', '--hard', targetRef], timeoutMs)
+    if (!isStepSuccessful(resetStep)) {
+        return { success: false, error: 'RECOVERY_SYNC_RESET_FAILED', repoDirty, steps }
+    }
+
+    const headStep = await pushStep('head', 'git', ['-C', repoDir, 'rev-parse', 'HEAD'], 10_000)
+    const appliedSha = isStepSuccessful(headStep) ? String(headStep.stdout || '').trim() : ''
+    return {
+        success: true,
+        repoDirty,
+        targetRef,
+        appliedSha,
+        steps
+    }
 }
 
 function runCommandWithTimeout(command, args = [], options = {}) {
@@ -5612,13 +5723,49 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
                 allowed: ['evolution', 'stack']
             })
         }
+        const syncRepo = mode === 'stack' && normalizeBoolean(req.body?.syncRepo, false)
+        const syncAutoStash = normalizeBoolean(req.body?.syncAutoStash, true)
+        const parsedSyncSha = parseRecoverySyncSha(req.body?.syncSha || req.body?.sha)
+        if (syncRepo && parsedSyncSha.invalid) {
+            return res.status(400).json({
+                success: false,
+                error: 'INVALID_RECOVERY_SYNC_SHA',
+                hint: 'Provide a valid git commit SHA (7-40 hex chars).'
+            })
+        }
 
         const uid = Number(process.getuid?.() || os.userInfo().uid || 0)
         const launchdTarget = `gui/${uid}/${LOCAL_EVOLUTION_LAUNCHD_LABEL}`
 
         const steps = []
+        let syncSummary = null
         let coreStep = null
         if (mode === 'stack') {
+            if (syncRepo) {
+                const syncResult = await runLocalRecoveryRepoSync({
+                    sha: parsedSyncSha.sha,
+                    autoStash: syncAutoStash
+                })
+                syncSummary = {
+                    success: Boolean(syncResult.success),
+                    repoDirty: Boolean(syncResult.repoDirty),
+                    targetRef: syncResult.targetRef || null,
+                    appliedSha: syncResult.appliedSha || null,
+                    error: syncResult.error || null
+                }
+                for (const syncStep of Array.isArray(syncResult.steps) ? syncResult.steps : []) {
+                    steps.push({ phase: 'repo-sync', ...syncStep })
+                }
+                if (!syncResult.success) {
+                    return res.status(500).json({
+                        success: false,
+                        mode,
+                        error: syncResult.error || 'RECOVERY_SYNC_FAILED',
+                        sync: syncSummary,
+                        steps
+                    })
+                }
+            }
             const exists = fsSync.existsSync(WA_LOCAL_RECOVERY_SCRIPT)
             if (!exists) {
                 return res.status(500).json({
@@ -5631,15 +5778,15 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
                 cwd: '/Users/jubenitogarcia/Automation/n8n',
                 timeoutMs: WA_LOCAL_RECOVERY_TIMEOUT_MS
             })
-            steps.push(coreStep)
+            steps.push({ phase: 'stack-restart', ...coreStep })
         } else {
-            steps.push(await runCommandWithTimeout('launchctl', ['stop', launchdTarget], {
+            steps.push({ phase: 'evolution-restart', ...(await runCommandWithTimeout('launchctl', ['stop', launchdTarget], {
                 timeoutMs: 8_000
-            }))
+            })) })
             coreStep = await runCommandWithTimeout('launchctl', ['kickstart', '-k', launchdTarget], {
                 timeoutMs: 20_000
             })
-            steps.push(coreStep)
+            steps.push({ phase: 'evolution-restart', ...coreStep })
         }
 
         let status = null
@@ -5663,6 +5810,7 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
         return res.status(responseStatus).json({
             success: !hasFailure,
             mode,
+            sync: syncSummary,
             steps,
             status: status ? {
                 providerOnline: Boolean(status.providerOnline),

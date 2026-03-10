@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           AUTH_HEADER="$(printf '%s' "${BASIC_AUTH}" | base64)"
           payload="$(cat <<JSON
-          {"mode":"stack","reason":"github-actions-deploy-crm-api","sha":"${GITHUB_SHA}"}
+          {"mode":"stack","reason":"github-actions-deploy-crm-api","sha":"${GITHUB_SHA}","syncRepo":true,"syncSha":"${GITHUB_SHA}","syncAutoStash":true}
           JSON
           )"
           response="$(curl -fsS --retry 3 --retry-delay 2 --retry-connrefused \
