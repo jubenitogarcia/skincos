@@ -1,0 +1,19 @@
+# Copie para .dev.vars (não commitar) para usar em preview local via Wrangler/OpenNext
+
+# Opcional: links assinados para confirmar/recusar via WhatsApp/webhook (recomendado)
+BOOKING_DECISION_SECRET=
+
+# Opcional: webhook para automação (ex.: seu serviço que envia WhatsApp)
+BOOKING_WEBHOOK_URL=
+BOOKING_WEBHOOK_SECRET=
+
+# Opcional: token de autenticação da agenda (usado em /api/agenda e smoke estrito)
+AGENDA_SYNC_TOKEN=
+# Opcional: override dedicado do smoke (se vazio, usa AGENDA_SYNC_TOKEN)
+SMOKE_AGENDA_TOKEN=
+
+# Opcional: Cloudflare Turnstile (anti-bot) para o formulário de agendamento
+# - Site key: public (vai para o bundle)
+NEXT_PUBLIC_TURNSTILE_SITE_KEY=
+# - Secret key: server-side (configure como Worker secret em produção)
+TURNSTILE_SECRET_KEY=

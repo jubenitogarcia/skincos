@@ -1,0 +1,52 @@
+name: Sync Website Cloudflare Security
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: website-cf-security
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Guard Cloudflare security sync secrets
+        id: guard
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare API token not configured; skipping website security sync."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm ci
+
+      - name: Sync Cloudflare security settings
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run cf:security
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE_NAME: espacofacial.com

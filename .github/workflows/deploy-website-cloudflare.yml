@@ -1,0 +1,134 @@
+name: Deploy Website to Cloudflare
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/deploy-website-cloudflare.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-website-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      AGENDA_SYNC_TOKEN: ${{ secrets.AGENDA_SYNC_TOKEN }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+      TITAN_SMTP_HOST: ${{ secrets.TITAN_SMTP_HOST }}
+      TITAN_SMTP_PORT: ${{ secrets.TITAN_SMTP_PORT }}
+      TITAN_SMTP_USER_BARRA: ${{ secrets.TITAN_SMTP_USER_BARRA }}
+      TITAN_SMTP_PASS_BARRA: ${{ secrets.TITAN_SMTP_PASS_BARRA }}
+      TITAN_SMTP_USER_NH: ${{ secrets.TITAN_SMTP_USER_NH }}
+      TITAN_SMTP_PASS_NH: ${{ secrets.TITAN_SMTP_PASS_NH }}
+
+    steps:
+      - name: Guard Cloudflare deploy secrets
+        id: guard
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] || [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare deploy secrets not configured; skipping website deploy."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Upgrade npm
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: |
+          npm i -g npm@11.6.0
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm ci
+
+      - name: Typecheck
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run typecheck
+
+      - name: Lint
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run lint
+
+      - name: Sync worker secrets (optional)
+        if: ${{ steps.guard.outputs.skip != 'true' && (env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '') }}
+        continue-on-error: true
+        working-directory: website
+        run: |
+          put_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -n "${value}" ]; then
+              printf "%s" "${value}" | npx wrangler secret put "${name}" --name espacofacial-site
+            fi
+          }
+
+          put_secret "AGENDA_SYNC_TOKEN" "${AGENDA_SYNC_TOKEN}"
+          put_secret "TURNSTILE_SECRET_KEY" "${TURNSTILE_SECRET_KEY}"
+          put_secret "TITAN_SMTP_HOST" "${TITAN_SMTP_HOST}"
+          put_secret "TITAN_SMTP_PORT" "${TITAN_SMTP_PORT}"
+          put_secret "TITAN_SMTP_USER_BARRA" "${TITAN_SMTP_USER_BARRA}"
+          put_secret "TITAN_SMTP_PASS_BARRA" "${TITAN_SMTP_PASS_BARRA}"
+          put_secret "TITAN_SMTP_USER_NH" "${TITAN_SMTP_USER_NH}"
+          put_secret "TITAN_SMTP_PASS_NH" "${TITAN_SMTP_PASS_NH}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy website (OpenNext -> Workers)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+          NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+
+      - name: Sync Cloudflare security settings (optional)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        continue-on-error: true
+        working-directory: website
+        run: npm run cf:security
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE_NAME: espacofacial.com
+
+      - name: Deploy redirects worker (esfa.co)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run deploy:esfa
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Smoke test production
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run smoke
+        env:
+          SMOKE_AGENDA_TOKEN: ${{ secrets.AGENDA_SYNC_TOKEN }}
+          SMOKE_BASE_URL: https://espacofacial.com

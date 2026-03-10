@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# OpenNext build output
+.open-next/
+
+# Wrangler local state
+.wrangler/
+
+# editor
+.vscode/
+
+# TS incremental
+*.tsbuildinfo
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+
+# quality artifacts
+reports/quality/*
+!reports/quality/baseline/
+!reports/quality/baseline/**
+.lighthouseci/
+
+# Local secrets (never commit)
+sinuous-network-461317-v9-ca697f79402e.json
+sound-responder-431121-u2-62b269ef9f38.json

@@ -1,0 +1,23 @@
+name = "espacofacial-site"
+main = ".open-next/worker.js"
+compatibility_date = "2026-01-11"
+compatibility_flags = ["nodejs_compat"]
+
+workers_dev = true
+
+routes = [
+	{ pattern = "espacofacial.com/*", zone_name = "espacofacial.com" },
+	{ pattern = "www.espacofacial.com/*", zone_name = "espacofacial.com" },
+]
+
+[vars]
+NEXT_PUBLIC_SITE_URL = "https://espacofacial.com"
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "BOOKING_DB"
+database_name = "espacofacial-booking"
+database_id = "9765b1fb-11a4-462c-9657-8a438c755725" # criado via: wrangler d1 create espacofacial-booking
