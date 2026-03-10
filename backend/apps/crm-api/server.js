@@ -36,8 +36,8 @@ import axios from 'axios'
 // Base directory resolution (compatível com ESM)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // server.js lives in: <repo>/backend/apps/crm-api/server.js
-// so repo root is 4 levels up from __dirname (<repo>/backend/apps/crm-api).
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..')
+// so repo root is 3 levels up from __dirname (<repo>/backend/apps/crm-api -> <repo>).
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
 const BACKEND_ROOT = path.join(REPO_ROOT, 'backend')
 function resolveCrmUiDir() {
     const env = String(process.env.CRM_UI_DIR || '').trim()
