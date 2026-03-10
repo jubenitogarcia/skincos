@@ -77,10 +77,15 @@ jobs:
         continue-on-error: true
         working-directory: website
         run: |
+          is_placeholder() {
+            local value="$1"
+            [ "${value}" = "__KEEP_EXISTING__" ]
+          }
+
           put_secret() {
             local name="$1"
             local value="$2"
-            if [ -n "${value}" ]; then
+            if [ -n "${value}" ] && ! is_placeholder "${value}"; then
               printf "%s" "${value}" | npx wrangler secret put "${name}" --name espacofacial-site
             fi
           }
