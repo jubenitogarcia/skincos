@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EVOLUTION_ENV="/Users/jubenitogarcia/Automation/n8n/evolution-api/.env"
-N8N_ENV="/Users/jubenitogarcia/Automation/n8n/.env"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+N8N_ROOT="${N8N_ROOT:-$REPO_ROOT/n8n}"
+if [[ ! -d "$N8N_ROOT" && -d "$HOME/Automation/n8n" ]]; then
+  N8N_ROOT="$HOME/Automation/n8n"
+fi
+
+EVOLUTION_ENV="${EVOLUTION_ENV:-$N8N_ROOT/evolution-api/.env}"
+N8N_ENV="${N8N_ENV:-$N8N_ROOT/.env}"
 API_KEY="$(grep -E '^AUTHENTICATION_API_KEY=' "$EVOLUTION_ENV" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
 
 if [[ -f "$N8N_ENV" ]]; then
@@ -13,7 +20,7 @@ if [[ -f "$N8N_ENV" ]]; then
 fi
 
 NETWORK_FALLBACK_PROBE_URL="${NETWORK_FALLBACK_PROBE_URL:-https://cp.cloudflare.com/generate_204}"
-NETWORK_FALLBACK_STATE="/Users/jubenitogarcia/Automation/n8n/health/network-fallback.state"
+NETWORK_FALLBACK_STATE="${NETWORK_FALLBACK_STATE:-$N8N_ROOT/health/network-fallback.state}"
 
 detect_wifi_interface() {
   /usr/sbin/networksetup -listallhardwareports 2>/dev/null \
@@ -79,7 +86,7 @@ if launchctl print "gui/$UID_VALUE/com.skincos.keepawake.agent" 2>/dev/null | gr
 else
   echo "keepawake service: inativo"
 fi
-PID_FILE="/Users/jubenitogarcia/Automation/n8n/health/keepawake-caffeinate.pid"
+PID_FILE="${KEEPAWAKE_PID_FILE:-$N8N_ROOT/health/keepawake-caffeinate.pid}"
 ASSERTION_ACTIVE="false"
 if [[ -f "$PID_FILE" ]]; then
   PID_VALUE="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -110,7 +117,7 @@ if [[ -n "${ALERT_WEBHOOK_URL:-}" ]] || [[ -n "${ALERT_EMAIL_TO:-}" ]]; then
   echo "Política: delay inicial=${ALERT_INITIAL_DELAY_SEC:-300}s, lembrete=${ALERT_REMINDER_INTERVAL_SEC:-3600}s, recovery=${ALERT_SEND_RECOVERY:-false}"
   echo "           silêncio=${ALERT_QUIET_START_HOUR:-23}-${ALERT_QUIET_END_HOUR:-7}, limite diário=${ALERT_MAX_REMINDERS_PER_DAY:-6}"
 else
-  echo "Canal de alerta NÃO configurado (use ALERT_WEBHOOK_URL ou SMTP + ALERT_EMAIL_TO no /Users/jubenitogarcia/Automation/n8n/.env)."
+  echo "Canal de alerta NÃO configurado (use ALERT_WEBHOOK_URL ou SMTP + ALERT_EMAIL_TO em \$N8N_ENV)."
 fi
 
 echo

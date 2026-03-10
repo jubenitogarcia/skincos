@@ -1,0 +1,2 @@
+# Dev-only tooling (optional)
+ruff>=0.7.0

@@ -53,23 +53,36 @@ jobs:
               return;
             }
 
+            const decisionLog = [];
             for (const pr of recent) {
               const prNumber = String(pr.number);
               const titleNeedle = `PR #${prNumber}`;
+              const mergeSha = String(pr.merge_commit_sha || "");
               core.info(`Evaluating merged PR #${prNumber} (${pr.head?.ref || "?"})`);
               for (const wf of workflows) {
                 const runsResp = await github.rest.actions.listWorkflowRuns({
                   owner,
                   repo,
                   workflow_id: wf.id,
-                  per_page: 50,
+                  per_page: 100,
                 });
                 const hasRun = runsResp.data.workflow_runs.some((run) => {
                   const title = String(run.display_title || "");
-                  return title.includes(titleNeedle);
+                  const headSha = String(run.head_sha || "");
+                  const event = String(run.event || "");
+                  const eligibleEvent =
+                    event === "pull_request_target" ||
+                    event === "workflow_dispatch" ||
+                    event === "workflow_call";
+                  if (!eligibleEvent) return false;
+                  if (title.includes(titleNeedle)) return true;
+                  if (mergeSha && headSha === mergeSha) return true;
+                  return false;
                 });
                 if (hasRun) {
-                  core.info(`- ${wf.label}: already has run for ${titleNeedle}`);
+                  const msg = `- ${wf.label}: already has run for ${titleNeedle} (sha=${mergeSha || "unknown"})`;
+                  core.info(msg);
+                  decisionLog.push(`PR #${prNumber} | ${wf.label} | skip | existing run found`);
                   continue;
                 }
                 core.warning(`- ${wf.label}: missing run for ${titleNeedle}; dispatching fallback`);
@@ -80,5 +93,10 @@ jobs:
                   ref: "main",
                   inputs: { pr_number: prNumber },
                 });
+                decisionLog.push(`PR #${prNumber} | ${wf.label} | dispatched | fallback triggered`);
               }
+            }
+
+            if (decisionLog.length) {
+              core.notice("after-automerge fallback decisions:\\n" + decisionLog.join("\\n"));
             }

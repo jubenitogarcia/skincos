@@ -419,9 +419,16 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     try { actor = JSON.parse(actorJson) } catch { actor = null }
     if (!actor || typeof actor !== 'object') return { ok: false, code: 'ACTOR_INVALID' }
 
-    const isDev =
-      String(process.env.NODE_ENV || '').toLowerCase() === 'development' ||
-      String(process.env.NO_AUTH || '').toLowerCase() === 'true'
+    const isTruthyEnv = (value) => {
+      const raw = String(value || '').trim().toLowerCase()
+      return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
+    }
+    const isLocalHost = (() => {
+      const host = String(req?.hostname || req?.headers?.host || '').toLowerCase().split(':')[0]
+      return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+    })()
+    const localBypass = isLocalHost && (isTruthyEnv(process.env.NO_AUTH) || isTruthyEnv(process.env.CRM_LOCAL_NO_AUTH))
+    const isDev = localBypass
     const sigRequired = !isDev || !!actorHmacKey
     if (sigRequired) {
       if (!actorHmacKey) return { ok: false, code: 'ACTOR_KEY_MISSING' }
@@ -437,10 +444,14 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   }
 
   function tryDevSessionUser(req) {
-    const isDev =
-      String(process.env.NODE_ENV || '').toLowerCase() === 'development' ||
-      String(process.env.NO_AUTH || '').toLowerCase() === 'true'
-    if (!isDev) return null
+    const isTruthyEnv = (value) => {
+      const raw = String(value || '').trim().toLowerCase()
+      return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
+    }
+    const host = String(req?.hostname || req?.headers?.host || '').toLowerCase().split(':')[0]
+    const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+    const localBypass = isLocalHost && (isTruthyEnv(process.env.NO_AUTH) || isTruthyEnv(process.env.CRM_LOCAL_NO_AUTH))
+    if (!localBypass) return null
 
     const cookieHeader = String(req.headers?.cookie || '')
     if (!cookieHeader) return null

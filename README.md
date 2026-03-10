@@ -24,11 +24,12 @@ Plataforma interna (local) para automações e operações da clínica.
 - O código legado do site agora está sob `website/` e deve ser mantido aqui para evoluções futuras.
 
 ### Auth local (sem login manual)
-- Em `localhost`, o frontend ativa bypass de auth por padrão para testes (`/api/auth/me` e `/api/insumos/auth/me` retornam usuário dev).
-- Para desligar bypass no frontend local: `VITE_LOCAL_AUTH_BYPASS=false npm run dev`.
+- Em `localhost`, o bypass de auth **só é ativado com flag explícita** (`LOCAL_AUTH_BYPASS=true` ou `VITE_LOCAL_AUTH_BYPASS=true`).
+- Para habilitar bypass no frontend local: `VITE_LOCAL_AUTH_BYPASS=true npm run dev`.
 - Overrides úteis (frontend local): `VITE_LOCAL_AUTH_ROLE`, `VITE_LOCAL_AUTH_EMAIL`, `VITE_LOCAL_AUTH_NAME`.
-- Em Pages Functions local (`npm run dev:pages`), o bypass também é ativo para `requireCrmUser` em `localhost`.
-- No CRM API local (`backend/apps/crm-api/server.js`), o stub de sessão dev fica ativo por padrão fora de produção; para exigir login real localmente, rode com `NO_AUTH=false`.
+- Em Pages Functions local (`npm run dev:pages`), `requireCrmUser` só faz bypass em `localhost` quando a flag acima estiver ativa.
+- No CRM API local (`backend/apps/crm-api/server.js`), o stub de sessão dev exige `NO_AUTH=true` (não é mais default).
+- O bypass de Basic Auth local no CRM API exige `CRM_LOCAL_NO_AUTH=true` (somente localhost).
 - Escala em local (`npm run dev`, `./frontend/restart_crm.sh` e `npm run dev:pages`): padrão em `frontend/.dev.vars` é leitura de dados reais (`LOCAL_ESCALA_MOCK=false`, `ESCALA_API_TARGET=https://escala-api.skincos.com.br`) com escrita sombra local (`LOCAL_ESCALA_SHADOW_WRITES=true`).
 - Efeito da escrita sombra: o CRM local confirma CRUD e reflete as mudanças localmente, mas **não grava no banco online**.
 - Para isso, configure `ESCALA_ACTOR_HMAC_KEY` real em `frontend/.dev.vars`; sem essa chave, as leituras reais da Escala retornam erro de autenticação.

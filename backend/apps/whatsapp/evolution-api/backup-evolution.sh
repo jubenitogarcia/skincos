@@ -5,12 +5,14 @@
 
 set -euo pipefail
 
-BACKUP_DIR="/Users/jubenitogarcia/Automation/n8n/evolution-api/backup"
-PG_BIN="/opt/homebrew/opt/postgresql@16/bin"
-DB_NAME="evolution"
-DB_USER="evolutionuser"
-DB_HOST="localhost"
-DB_PORT="5432"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKUP_DIR="${BACKUP_DIR:-$SCRIPT_DIR/backup}"
+PG_BIN="${PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
+DB_NAME="${DB_NAME:-evolution}"
+DB_USER="${DB_USER:-evolutionuser}"
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
+DB_PASSWORD="${DB_PASSWORD:-${PGPASSWORD:-}}"
 RETENTION_DAYS=30  # Manter backups por 30 dias
 RETENTION_WEEKLY=12  # Manter backups semanais por 12 semanas
 
@@ -31,15 +33,21 @@ create_backup() {
     log "Iniciando backup $type para $backup_file"
 
     # Executar pg_dump
-    PGPASSWORD=password "$PG_BIN/pg_dump" \
-        -h "$DB_HOST" \
-        -p "$DB_PORT" \
-        -U "$DB_USER" \
-        -d "$DB_NAME" \
-        --verbose \
-        --no-owner \
-        --no-privileges \
-        > "$backup_file"
+    local -a dump_cmd=(
+        "$PG_BIN/pg_dump"
+        -h "$DB_HOST"
+        -p "$DB_PORT"
+        -U "$DB_USER"
+        -d "$DB_NAME"
+        --verbose
+        --no-owner
+        --no-privileges
+    )
+    if [[ -n "$DB_PASSWORD" ]]; then
+        PGPASSWORD="$DB_PASSWORD" "${dump_cmd[@]}" > "$backup_file"
+    else
+        "${dump_cmd[@]}" > "$backup_file"
+    fi
 
     # Comprimir backup
     gzip "$backup_file"

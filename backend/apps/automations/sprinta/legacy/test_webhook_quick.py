@@ -7,11 +7,17 @@ Envia um único teste para o webhook local.
 
 from sprinta_automation import send_wix_webhook
 from datetime import datetime
+import os
 
 # Configurações
-WEBHOOK_URL = "http://localhost:5678/webhook/sprinta"
-WEBHOOK_USER = "novohamburgo@espacofacial.com.br"
-WEBHOOK_PASSWORD = "tavpyw-gehgeP-7fytfy"
+WEBHOOK_URL = os.getenv("SPRINTA_WEBHOOK_URL", "http://localhost:5678/webhook/sprinta")
+WEBHOOK_USER = os.getenv("SPRINTA_WEBHOOK_USER", "")
+WEBHOOK_PASSWORD = os.getenv("SPRINTA_WEBHOOK_PASSWORD", "")
+
+if not WEBHOOK_USER or not WEBHOOK_PASSWORD:
+    raise RuntimeError(
+        "Configure SPRINTA_WEBHOOK_USER e SPRINTA_WEBHOOK_PASSWORD no ambiente antes de executar."
+    )
 
 print("\n" + "╔═══════════════════════════════════════════════════════════════╗")
 print("║           🚀 TESTE RÁPIDO - WEBHOOK LOCAL                    ║")

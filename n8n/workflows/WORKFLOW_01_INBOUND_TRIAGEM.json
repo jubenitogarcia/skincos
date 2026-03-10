@@ -1152,7 +1152,7 @@
   "settings": {
     "timezone": "America/Sao_Paulo"
   },
-  "active": false,
+  "active": true,
   "versionId": "1",
   "description": "Inbound Evolution → Postgres. Idempotência, opt-out, triagem, handoff e encaminhamento para agendamento."
 }

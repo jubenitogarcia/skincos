@@ -8,6 +8,10 @@ import connectPg from "connect-pg-simple";
 import { storage } from "./storage.js";
 
 // Environment variables validation will be done in setupAuth() to prevent server crashes
+const isTruthyEnv = (value) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+};
 
 const getOidcConfig = memoize(
   async () => {
@@ -75,8 +79,8 @@ async function upsertUser(claims) {
 
 export async function setupAuth(app) {
   const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-  const NO_AUTH_REQUESTED = process.env.NO_AUTH === 'true';
-  const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
+  const NO_AUTH_REQUESTED = isTruthyEnv(process.env.NO_AUTH);
+  const LOCALHOST_DEV_AUTH_FALLBACK = isTruthyEnv(process.env.CRM_LOCAL_NO_AUTH);
 
   try {
     // ===== PRODUCTION SAFETY CHECK =====
@@ -90,9 +94,9 @@ export async function setupAuth(app) {
 
     // ===== NO_AUTH MODE FOR DEVELOPMENT ONLY =====
     // Skip all authentication setup if NO_AUTH mode is enabled AND not in production
-    if (!IS_PRODUCTION && (NO_AUTH_REQUESTED || IS_DEVELOPMENT)) {
+    if (!IS_PRODUCTION && NO_AUTH_REQUESTED) {
       console.log('🔓 NO_AUTH MODE ENABLED - Setting up mock authentication for development');
-      console.log('🔓 To re-enable real auth, set NO_AUTH=false or NODE_ENV=production');
+      console.log('🔓 To re-enable real auth, set NO_AUTH=false');
       
       // NO_AUTH MODE: Set up memory-based session (no database dependency)
       app.use(getSession(true));
@@ -216,8 +220,15 @@ export async function setupAuth(app) {
         return res.redirect(`https://${publicDomain}/api/login`);
       }
       
-      // Fallback for localhost development without OAuth
+      // Fallback for localhost development without OAuth, explicit opt-in only.
       if (req.hostname === 'localhost' || req.hostname === '0.0.0.0') {
+        if (!LOCALHOST_DEV_AUTH_FALLBACK) {
+          return res.status(401).json({
+            error: 'LOCAL_AUTH_FALLBACK_DISABLED',
+            hint: 'Set CRM_LOCAL_NO_AUTH=true only for local development, or use a configured OAuth domain.'
+          });
+        }
+
         console.log(`🔐 Localhost detected - using mock authentication for development`);
         
         // Create a mock authenticated session for development
@@ -319,12 +330,11 @@ export const isAuthenticated = async (req, res, next) => {
   // ===== PRODUCTION SAFETY CHECK =====
   // NO_AUTH is NEVER allowed in production, regardless of NO_AUTH setting
   const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-  const NO_AUTH_REQUESTED = process.env.NO_AUTH === 'true';
-  const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
+  const NO_AUTH_REQUESTED = isTruthyEnv(process.env.NO_AUTH);
   
   // ===== NO_AUTH MODE FOR DEVELOPMENT ONLY =====
   // Skip all authentication checks if NO_AUTH mode is enabled AND not in production
-  if (!IS_PRODUCTION && (NO_AUTH_REQUESTED || IS_DEVELOPMENT)) {
+  if (!IS_PRODUCTION && NO_AUTH_REQUESTED) {
     console.log('🔓 NO_AUTH MODE - Bypassing authentication middleware');
     return next();
   }

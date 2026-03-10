@@ -22,46 +22,27 @@ jobs:
       pull-requests: read
 
     steps:
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Resolve PR context
         id: pr
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = (() => {
-              const n = context.payload?.pull_request?.number;
-              if (n) return n;
-              const input = context.payload?.inputs?.pr_number;
-              const parsed = Number(String(input || '').trim());
-              if (!Number.isFinite(parsed) || parsed <= 0) {
-                core.warning(`Invalid or missing workflow_dispatch input pr_number: ${input}`);
-                return null;
-              }
-              return parsed;
-            })();
-
-            if (!prNumber) {
-              core.setOutput('eligible', 'false');
-              return;
-            }
-
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+            const resolvePr = require('./.github/scripts/resolve_after_automerge_pr.cjs');
+            await resolvePr({
+              github,
+              context,
+              core,
+              options: {
+                baseRef: 'main',
+                headPrefix: 'codex/',
+                requiredAuthor: 'jubenitogarcia',
+              },
             });
-
-            const eligible =
-              pr.merged === true &&
-              pr.base?.ref === 'main' &&
-              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
-              String(pr.head?.ref || '').startsWith('codex/') &&
-              pr.user?.login === 'jubenitogarcia';
-
-            core.info(`PR #${prNumber} merged=${pr.merged} base=${pr.base?.ref} head=${pr.head?.ref} eligible=${eligible}`);
-
-            core.setOutput('pr_number', String(prNumber));
-            core.setOutput('merge_commit_sha', pr.merge_commit_sha || '');
-            core.setOutput('eligible', eligible ? 'true' : 'false');
 
       - name: Detect CRM API changes
         if: ${{ steps.pr.outputs.eligible == 'true' }}
@@ -69,22 +50,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: Number('${{ steps.pr.outputs.pr_number }}'),
-              per_page: 100,
+            const detectChanges = require('./.github/scripts/detect_pr_file_changes.cjs');
+            await detectChanges({
+              github,
+              context,
+              core,
+              options: {
+                prNumber: '${{ steps.pr.outputs.pr_number }}',
+                outputName: 'crm_api_changed',
+                prefixes: ['backend/apps/crm-api/'],
+                exact: [
+                  'backend/pnpm-lock.yaml',
+                  'backend/pnpm-workspace.yaml',
+                  '.github/workflows/deploy-crm-api.yml',
+                ],
+              },
             });
-            const changed = files.some((f) => {
-              const p = String(f.filename || '');
-              return (
-                p.startsWith('backend/apps/crm-api/') ||
-                p === 'backend/pnpm-lock.yaml' ||
-                p === 'backend/pnpm-workspace.yaml' ||
-                p === '.github/workflows/deploy-crm-api.yml'
-              );
-            });
-            core.setOutput('crm_api_changed', changed ? 'true' : 'false');
 
       - name: Guard CRM API deploy secrets
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' }}
@@ -124,8 +105,22 @@ jobs:
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
+      - name: Restore deploy cache (skip if already deployed)
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          key: crm-api-after-automerge-deploy-${{ steps.pr.outputs.merge_commit_sha }}
+          path: deploy-state/crm_api_after_automerge_sha.txt
+
+      - name: Skip (already deployed)
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Already deployed merge sha=${{ steps.pr.outputs.merge_commit_sha }}; skipping."
+
       - name: Deploy via SSH (merge commit)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.mode == 'ssh' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && steps.guard.outputs.mode == 'ssh' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.CRM_API_SSH_HOST }}
@@ -144,7 +139,7 @@ jobs:
           GITHUB_SHA: ${{ steps.pr.outputs.merge_commit_sha }}
 
       - name: Deploy via HTTP restart (merge commit)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.guard.outputs.mode == 'http_restart' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && steps.guard.outputs.mode == 'http_restart' }}
         env:
           RESTART_URL: ${{ vars.CRM_API_RESTART_URL }}
           BASIC_AUTH: ${{ secrets.CRM_API_BASIC_AUTH }}
@@ -163,3 +158,17 @@ jobs:
             --data "${payload}")"
           echo "${response}"
           python3 -c 'import json,sys; data=json.loads(sys.stdin.read()); ok=bool(data.get("success")); sys.exit(0 if ok else 1)' <<<"${response}"
+
+      - name: Mark deployed SHA
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
+        run: |
+          set -euo pipefail
+          mkdir -p deploy-state
+          echo "${{ steps.pr.outputs.merge_commit_sha }}" > deploy-state/crm_api_after_automerge_sha.txt
+
+      - name: Save deploy cache
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.crm_api_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
+        uses: actions/cache/save@v4
+        with:
+          key: crm-api-after-automerge-deploy-${{ steps.pr.outputs.merge_commit_sha }}
+          path: deploy-state/crm_api_after_automerge_sha.txt

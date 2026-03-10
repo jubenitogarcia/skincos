@@ -33,7 +33,7 @@ export function WhatsAppN8nModule({ embedded = false }: { embedded?: boolean } =
             <div><strong>03</strong> Lembretes + Follow-ups</div>
             <div><strong>04</strong> No-show + Reativação</div>
             <div className="pt-2 text-xs text-blue-100/60">
-              Local: <code>/Users/jubenitogarcia/Automation/skincos/n8n/workflows</code>
+              Local: <code>n8n/workflows</code>
             </div>
           </CardContent>
         </Card>
@@ -60,7 +60,7 @@ export function WhatsAppN8nModule({ embedded = false }: { embedded?: boolean } =
           <div>1) Rodar migration SQL em Postgres</div>
           <div>2) Importar JSONs no n8n</div>
           <div>3) Criar credenciais: Postgres + Google Calendar</div>
-          <div>4) Ajustar envs em <code>/Users/jubenitogarcia/Automation/skincos/n8n/.env.example</code></div>
+          <div>4) Ajustar envs em <code>n8n/.env.example</code></div>
         </CardContent>
       </Card>
 
@@ -72,7 +72,7 @@ export function WhatsAppN8nModule({ embedded = false }: { embedded?: boolean } =
           <pre className="whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-xs">
 {`curl -X POST http://localhost:5678/webhook-test/wa/inbound/evolution \\
   -H 'Content-Type: application/json' \\
-  -d @/Users/jubenitogarcia/Automation/skincos/n8n/sample_payloads/evolution_inbound_message.json`}
+  -d @n8n/sample_payloads/evolution_inbound_message.json`}
           </pre>
         </CardContent>
       </Card>

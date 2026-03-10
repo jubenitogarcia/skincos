@@ -1,78 +1,124 @@
-# Automação Espaço Facial
+# scraper
 
-Este projeto realiza a automação do processo de coleta de dados de vendas do sistema Espaço Facial e a atualização automática de uma planilha do Google Sheets.
+Runner único via ações do Codex (sem menu).
 
-## Funcionalidades
-- Login automatizado no sistema Espaço Facial
-- Coleta de dados de vendas por unidade (Barra Shopping Sul, Novo Hamburgo, Rio de Janeiro)
-- Atualização automática de valores em uma planilha Google Sheets
-- Interface interativa com menu guiado
-- Diagnóstico do sistema e validação de configurações
-- Sistema de logging robusto
-- Suporte a múltiplos modos de execução (interativo, direto, diagnóstico)
+## Estrutura do projeto
 
-## Estrutura do Projeto
-- `main.py`: Script principal da automação
-- `config.local.json`: Configurações do sistema (ignorado), credenciais e mapeamento de dados
-- `requirements.txt`: Dependências Python necessárias
-- `run.sh`: Script shell para facilitar a execução, setup e diagnóstico
+- Exports (CSV/XLSX): `report/`
+- Logs + artefatos de debug (HTML/PNG): `debug/`
+- Perfil do Chrome (sessão/cookies): `chrome_profile/`
+- Documentação e notas: `docs/`
 
-## Pré-requisitos
-- Python 3.8+
-- Google Service Account com acesso à planilha
-- Chrome instalado no sistema
+## Como rodar
 
-## Instalação
-1. Clone este repositório e acesse o diretório do projeto.
-2. Execute o script `run.sh` para configurar o ambiente virtual e instalar as dependências:
-   ```sh
-   ./run.sh
-   ```
-3. Configure o arquivo `config.local.json` (ou exporte `SCRAPER_CONFIG` apontando para um arquivo externo).
-   - Template versionado: `backend/config/templates/modules/scraper/config.example.json`
-   - Arquivo local (ignorado): `backend/var/scraper/config.local.json` (via symlink `backend/apps/automations/scraper/config.local.json`)
+1) Criar/ativar venv e instalar deps:
 
-## Uso
-### Execução via Shell Script
-- Executar todas as unidades:
-  ```sh
-  ./run.sh all
-  ```
-- Executar unidade específica (exemplo: Barra Shopping Sul):
-  ```sh
-  ./run.sh bss
-  ```
-- Diagnóstico do sistema:
-  ```sh
-  ./run.sh diagnose
-  ```
-- Configurar credenciais:
-  ```sh
-  ./run.sh configure
-  ```
+- `python3 -m venv .venv`
+- `./.venv/bin/pip install -r requirements.lock`
 
-### Execução via Python
-- Modo interativo:
-  ```sh
-  python main.py
-  ```
-- Execução direta:
-  ```sh
-  python main.py --mode run --unit bss --headless
-  ```
-- Diagnóstico:
-  ```sh
-  python main.py --mode diagnose
-  ```
+2) Rodar direto:
 
-## Configuração
-O arquivo `config.local.json` armazena as credenciais do sistema Espaço Facial, dados da conta de serviço Google e mapeamento das células da planilha. Utilize a opção de configuração interativa para preencher corretamente.
+- `./.venv/bin/python run_scraper.py` (exige `EF_MODE`)
 
-No monorepo, recomenda-se usar `config.local.json` (ignorado pelo git) e manter um template em `config.example.json`.
+## Configuração (env vars)
 
-## Segurança
-- **Nunca compartilhe seu `config.local.json` publicamente**, pois contém credenciais sensíveis.
-- O arquivo `.gitignore` já está configurado para evitar o versionamento de arquivos sensíveis e temporários.
+- `EF_LOGIN_EMAIL` / `EF_LOGIN_PASSWORD` (opcional; se não tiver, o runner pergunta)
+- `EF_UNIT_NAME` (opcional; se não tiver, o runner pergunta)
+- `EF_UNIT_OPTIONS` (opcional, lista separada por vírgula para o menu)
+- `EF_OUTPUT_DIR` (default: `./report`)
+- `EF_DEBUG_DIR` (default: `./debug`)
+- `EF_LOG_DIR` (default: `./debug`)
+- `EF_CHROME_USER_DATA_DIR` (default: `./chrome_profile` quando sessão persistente estiver ativa)
+- `HEADLESS` (`1`/`0`)
+- `EF_MODE` (`agenda`, `caixa`, `recorder`, `selftest`, `booking_api`)
+- `EF_DRY_RUN` (`1`/`0`)
+- `EF_DEBUG_RETENTION_DAYS` (default: `7`)
+- `EF_DATE_RANGE_MODE` (`prev_month`)
+- `EF_RECORDER_PURGE` (`1`/`0`)
+- `EF_AGENDA_SYNC_URL` (endpoint de sync, ex.: `https://espacofacial.com/api/agenda/sync`)
+- `EF_AGENDA_SYNC_TOKEN` (Bearer token do endpoint de sync)
+- `EF_BOOKING_API_HOST` (default: `127.0.0.1`)
+- `EF_BOOKING_API_PORT` (default: `8765`)
+- `EF_BOOKING_API_TOKEN` (Bearer token para o endpoint local de reservas)
+- `EF_BOOKING_WEBHOOK_SECRET` (segredo aceito no header `x-booking-webhook-secret`; compatível com o website)
+- `EF_BOOKING_ENV_FILE` (opcional; default `./secrets/booking_api.env` no modo `booking_api`)
 
-## Licença
-Uso interno. Consulte o responsável pelo projeto para mais informações.
+## API de reservas
+
+Suba o listener local:
+
+- `EF_MODE=booking_api ./.venv/bin/python run_scraper.py`
+
+No modo `booking_api`, o runner carrega automaticamente `./secrets/booking_api.env` (ou `EF_BOOKING_ENV_FILE` se definido), sem sobrescrever variáveis já exportadas no shell.
+
+Health check:
+
+- `curl http://127.0.0.1:8765/healthz`
+
+Criar job de reserva:
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/agenda/book \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $EF_BOOKING_API_TOKEN" \
+  -d '{
+    "unit": "BarraShoppingSul",
+    "clientName": "Maria Silva",
+    "appointmentDate": "2026-03-08",
+    "timeRange": "13:00 - 13:30",
+    "serviceName": "Revisão",
+    "professionalName": "Gabriela Menegat",
+    "notes": "Lead vindo do site"
+  }'
+```
+
+Webhook compatível com o website (`booking.created`):
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/agenda/book \
+  -H "Content-Type: application/json" \
+  -H "x-booking-webhook-secret: $EF_BOOKING_WEBHOOK_SECRET" \
+  -d '{
+    "event": "booking.created",
+    "dryRun": true,
+    "booking": {
+      "unitSlug": "barrashoppingsul",
+      "doctorName": "Gabriela Menegat",
+      "durationMinutes": 30,
+      "service": { "id": "avaliacao", "name": "Avaliação" },
+      "startAtMs": 1772971200000,
+      "endAtMs": 1772973000000,
+      "patientName": "Maria Silva",
+      "whatsapp": "51999999999",
+      "cpf": "12345678900",
+      "notes": "Lead vindo do site"
+    }
+  }'
+```
+
+Consultar status do job:
+
+- `curl http://127.0.0.1:8765/api/agenda/book/<job_id>`
+
+Você pode criar um `.env` (não commitado) neste diretório. Use como base o `.env.example`.
+
+## Google Sheets (Caixa)
+
+- Coloque o service account em `secrets/ef_service_account.json` (já está no `.gitignore`).
+
+## Self-test
+
+- Diretamente: `./.venv/bin/python selftest.py` (ou `EF_MODE=selftest`)
+
+Ele testa imports, export CSV/XLSX e se o Chrome abre a tela de login (sem logar). Por padrão, os arquivos de teste vão para `debug/` (mantém `report/` só para exports finais).
+
+## Rotação do token de sync
+
+- `./scripts/rotate_agenda_sync_token.sh`
+
+O script gera um token novo, atualiza `~/.config/espacofacial/agenda_sync.env`, atualiza `AGENDA_SYNC_TOKEN` em `website/.env.local`, publica a secret no Worker Cloudflare (`espacofacial-site`) e valida o endpoint de sync.
+
+## Desenvolvimento (opcional)
+
+- `./.venv/bin/pip install -r requirements-dev.txt`
+- `./.venv/bin/ruff check .`

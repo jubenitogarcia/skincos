@@ -1,9 +1,12 @@
 #!/bin/bash
+set -euo pipefail
 
 # Script para iniciar o Evolution API
 # Carrega as variáveis de ambiente e inicia o serviço
 
-cd /Users/jubenitogarcia/Automation/n8n/evolution-api
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EVOLUTION_API_DIR="${EVOLUTION_API_DIR:-$SCRIPT_DIR}"
+cd "$EVOLUTION_API_DIR"
 
 # Node dedicado para o evolution-api (Node 20 via nvm)
 NVM_DIR="$HOME/.nvm"
@@ -25,7 +28,10 @@ if [ ! -f .env ]; then
 fi
 
 # Carrega as variáveis de ambiente do arquivo .env
-export $(cat .env | grep -v '^#' | grep -v '^$' | xargs)
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
 
 # Verifica se as dependências estão instaladas
 if [ ! -d "node_modules" ]; then

@@ -1,0 +1,4 @@
+# filename,test_id,expires_on,reason
+backend/apps/agent-zero/apps/agent_zero_core/python/helpers/files.py,B103,2026-06-30,Upstream agent-zero core uses chmod 0777 in helper utility; pending upstream hardening
+backend/apps/agent-zero/apps/agent_zero_core/python/helpers/knowledge_import.py,B324,2026-06-30,Upstream agent-zero helper uses md5 for content fingerprinting; pending upstream replacement
+backend/apps/agent-zero/apps/agent_zero_core/python/helpers/shell_ssh.py,B507,2026-06-30,Upstream helper auto-adds SSH host key; pending strict host key validation

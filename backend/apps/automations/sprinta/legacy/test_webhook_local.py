@@ -7,14 +7,22 @@ Testa o envio para o webhook localhost:5678 com autenticação Basic Auth.
 
 from sprinta_automation import send_wix_webhook
 from datetime import datetime
+import os
 
 # Configurações do webhook local
-WEBHOOK_URL = "http://localhost:5678/webhook/sprinta"
-WEBHOOK_USER = "novohamburgo@espacofacial.com.br"
-WEBHOOK_PASSWORD = "tavpyw-gehgeP-7fytfy"
+WEBHOOK_URL = os.getenv("SPRINTA_WEBHOOK_URL", "http://localhost:5678/webhook/sprinta")
+WEBHOOK_USER = os.getenv("SPRINTA_WEBHOOK_USER", "")
+WEBHOOK_PASSWORD = os.getenv("SPRINTA_WEBHOOK_PASSWORD", "")
+
+def ensure_webhook_credentials():
+    if not WEBHOOK_USER or not WEBHOOK_PASSWORD:
+        raise RuntimeError(
+            "Configure SPRINTA_WEBHOOK_USER e SPRINTA_WEBHOOK_PASSWORD no ambiente antes de executar."
+        )
 
 def test_webhook_local_completo():
     """Testa webhook local com payload completo (12 campos)."""
+    ensure_webhook_credentials()
 
     print("\n" + "="*70)
     print("🧪 TESTE: Webhook Local com Payload Completo")
@@ -75,6 +83,7 @@ def test_webhook_local_completo():
 
 def test_webhook_local_falha():
     """Testa webhook local com falha (success: false)."""
+    ensure_webhook_credentials()
 
     print("\n" + "="*70)
     print("🧪 TESTE: Webhook Local - Inscrição com Falha")

@@ -22,46 +22,27 @@ jobs:
       pull-requests: read
 
     steps:
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Resolve PR context
         id: pr
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = (() => {
-              const n = context.payload?.pull_request?.number;
-              if (n) return n;
-              const input = context.payload?.inputs?.pr_number;
-              const parsed = Number(String(input || '').trim());
-              if (!Number.isFinite(parsed) || parsed <= 0) {
-                core.warning(`Invalid or missing workflow_dispatch input pr_number: ${input}`);
-                return null;
-              }
-              return parsed;
-            })();
-
-            if (!prNumber) {
-              core.setOutput('eligible', 'false');
-              return;
-            }
-
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+            const resolvePr = require('./.github/scripts/resolve_after_automerge_pr.cjs');
+            await resolvePr({
+              github,
+              context,
+              core,
+              options: {
+                baseRef: 'main',
+                headPrefix: 'codex/',
+                requiredAuthor: 'jubenitogarcia',
+              },
             });
-
-            const eligible =
-              pr.merged === true &&
-              pr.base?.ref === 'main' &&
-              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
-              String(pr.head?.ref || '').startsWith('codex/') &&
-              pr.user?.login === 'jubenitogarcia';
-
-            core.info(`PR #${prNumber} merged=${pr.merged} base=${pr.base?.ref} head=${pr.head?.ref} eligible=${eligible}`);
-
-            core.setOutput('pr_number', String(prNumber));
-            core.setOutput('merge_commit_sha', pr.merge_commit_sha || '');
-            core.setOutput('eligible', eligible ? 'true' : 'false');
 
       - name: Detect worker changes
         if: ${{ steps.pr.outputs.eligible == 'true' }}
@@ -69,26 +50,28 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: Number('${{ steps.pr.outputs.pr_number }}'),
-              per_page: 100,
+            const detectChanges = require('./.github/scripts/detect_pr_file_changes.cjs');
+            await detectChanges({
+              github,
+              context,
+              core,
+              options: {
+                prNumber: '${{ steps.pr.outputs.pr_number }}',
+                outputName: 'workers_changed',
+                prefixes: [
+                  'backend/apps/api/',
+                  'backend/apps/insumos/',
+                ],
+                exact: [
+                  'backend/scripts/cloudflare-workers.sh',
+                  'backend/pnpm-lock.yaml',
+                  'backend/pnpm-workspace.yaml',
+                  '.github/workflows/deploy-insumos-worker.yml',
+                  '.github/workflows/deploy-workers-after-automerge.yml',
+                  '.github/workflows/deploy-workers-reconcile.yml',
+                ],
+              },
             });
-            const changed = files.some((f) => {
-              const name = String(f.filename || '');
-              return (
-                name.startsWith('backend/apps/api/') ||
-                name.startsWith('backend/apps/insumos/') ||
-                name === 'backend/scripts/cloudflare-workers.sh' ||
-                name === 'backend/pnpm-lock.yaml' ||
-                name === 'backend/pnpm-workspace.yaml' ||
-                name === '.github/workflows/deploy-insumos-worker.yml' ||
-                name === '.github/workflows/deploy-workers-after-automerge.yml' ||
-                name === '.github/workflows/deploy-workers-reconcile.yml'
-              );
-            });
-            core.setOutput('workers_changed', changed ? 'true' : 'false');
 
       - name: Guard Cloudflare deploy secrets
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' }}
@@ -105,30 +88,44 @@ jobs:
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout merge commit
+      - name: Restore deploy cache (skip if already deployed)
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          key: workers-after-automerge-deploy-${{ steps.pr.outputs.merge_commit_sha }}
+          path: deploy-state/workers_after_automerge_sha.txt
+
+      - name: Skip (already deployed)
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Already deployed merge sha=${{ steps.pr.outputs.merge_commit_sha }}; skipping."
+
+      - name: Checkout merge commit
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.merge_commit_sha }}
 
       - name: Setup Node
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Setup pnpm (corepack)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install backend workspace deps
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
         run: pnpm -C backend install --frozen-lockfile
 
       - name: Deploy Workers (deploy-all)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -137,55 +134,28 @@ jobs:
           bash backend/scripts/cloudflare-workers.sh deploy-all
 
       - name: Smoke check Ponto (production)
-        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
         env:
           BASE_URL: https://crm.skincos.com.br
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json, os, sys, time, urllib.request
+          .github/scripts/ponto_smoke.py \
+            --attempts 5 \
+            --sleep-seconds 6 \
+            --user-agent "Mozilla/5.0 (compatible; PontoAfterAutomergeSmoke/1.0)"
 
-          base = os.environ.get("BASE_URL", "").rstrip("/")
-          if not base:
-            raise SystemExit("BASE_URL not set")
+      - name: Mark deployed SHA
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
+        run: |
+          set -euo pipefail
+          mkdir -p deploy-state
+          echo "${{ steps.pr.outputs.merge_commit_sha }}" > deploy-state/workers_after_automerge_sha.txt
 
-          def fetch_json(path: str):
-            url = f"{base}{path}"
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; PontoAfterAutomergeSmoke/1.0)"}
-            cid = os.environ.get("CF_ACCESS_CLIENT_ID", "").strip()
-            csec = os.environ.get("CF_ACCESS_CLIENT_SECRET", "").strip()
-            if cid and csec:
-              headers["CF-Access-Client-Id"] = cid
-              headers["CF-Access-Client-Secret"] = csec
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-              return json.loads(resp.read().decode("utf-8", "ignore"))
-
-          def check():
-            proxy = fetch_json("/api/ponto/_proxy-status")
-            if not proxy.get("ok"):
-              raise SystemExit(f"proxy-status ok=false: {proxy}")
-            if not proxy.get("targetConfigured"):
-              raise SystemExit(f"proxy-status targetConfigured=false: {proxy}")
-            if not proxy.get("adminTokenConfigured"):
-              raise SystemExit(f"proxy-status adminTokenConfigured=false: {proxy}")
-            health = fetch_json("/api/ponto/health")
-            if not health.get("ok"):
-              raise SystemExit(f"health ok=false: {health}")
-            if not health.get("cryptoTemplates"):
-              raise SystemExit(f"health cryptoTemplates=false: {health}")
-            return True
-
-          for i in range(1, 6):
-            try:
-              check()
-              print("Ponto after-automerge smoke OK")
-              sys.exit(0)
-            except Exception as exc:
-              print(f"Attempt {i} failed: {exc}")
-              if i >= 5:
-                raise
-              time.sleep(6)
-          PY
+      - name: Save deploy cache
+        if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
+        uses: actions/cache/save@v4
+        with:
+          key: workers-after-automerge-deploy-${{ steps.pr.outputs.merge_commit_sha }}
+          path: deploy-state/workers_after_automerge_sha.txt

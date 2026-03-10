@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# macOS Finder-friendly launcher (double-click). Also works in terminal.
+cd "$(dirname "$0")"
+
+if [ -x "./.venv/bin/python" ]; then
+  PY="./.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="python3"
+elif command -v python >/dev/null 2>&1; then
+  PY="python"
+else
+  echo "ERROR: Python not found. Install Python 3 and try again." >&2
+  read -r -n 1 -s -p "Pressione qualquer tecla para fechar..."
+  echo
+  exit 127
+fi
+
+"$PY" "run_scraper.py" "$@"
+status=$?
+
+echo
+read -r -n 1 -s -p "Pressione qualquer tecla para fechar..."
+echo
+exit $status
