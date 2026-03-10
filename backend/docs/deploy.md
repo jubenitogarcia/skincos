@@ -56,9 +56,16 @@ Workflow de deploy (opcional):
 
 Requer:
 - `vars.ENABLE_CRM_API_DEPLOY=true`
+- `vars.CRM_API_DEPLOY_MODE` (`ssh` ou `http_restart`; default `ssh`)
+
+Modo `ssh`:
 - `secrets.CRM_API_SSH_HOST`
 - `secrets.CRM_API_SSH_USER`
 - `secrets.CRM_API_SSH_KEY`
 - (opcional) `secrets.CRM_API_SSH_PORT`
 - `vars.CRM_API_APP_DIR` (diretório do repo no servidor)
 - `vars.CRM_API_DEPLOY_COMMAND` (ex.: `pm2 reload crm-api` ou `systemctl restart crm-api`)
+
+Modo `http_restart`:
+- `vars.CRM_API_RESTART_URL` (ex.: `https://cs-api.skincos.com.br/api/wa-orchestrator/local/recovery/restart`)
+- `secrets.CRM_API_BASIC_AUTH` (valor `user:password`; o workflow envia em `Authorization: Basic ...`)
