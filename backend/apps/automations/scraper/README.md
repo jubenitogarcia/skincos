@@ -41,12 +41,15 @@ Runner único via ações do Codex (sem menu).
 - `EF_BOOKING_API_PORT` (default: `8765`)
 - `EF_BOOKING_API_TOKEN` (Bearer token para o endpoint local de reservas)
 - `EF_BOOKING_WEBHOOK_SECRET` (segredo aceito no header `x-booking-webhook-secret`; compatível com o website)
+- `EF_BOOKING_ENV_FILE` (opcional; default `./secrets/booking_api.env` no modo `booking_api`)
 
 ## API de reservas
 
 Suba o listener local:
 
 - `EF_MODE=booking_api ./.venv/bin/python run_scraper.py`
+
+No modo `booking_api`, o runner carrega automaticamente `./secrets/booking_api.env` (ou `EF_BOOKING_ENV_FILE` se definido), sem sobrescrever variáveis já exportadas no shell.
 
 Health check:
 

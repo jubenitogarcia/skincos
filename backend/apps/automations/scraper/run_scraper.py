@@ -94,11 +94,9 @@ def _load_env() -> None:
         load_dotenv(dotenv_path=env_path)
 
 
-def _load_login_env_file() -> None:
-    """Load login credentials from a user-level env file when present."""
+def _load_simple_env_file(path: Path, *, allowed_keys: set[str] | None = None) -> None:
+    """Load KEY=VALUE pairs from env files without overriding existing vars."""
 
-    raw = os.getenv("EF_LOGIN_ENV_FILE", "").strip()
-    path = Path(raw).expanduser() if raw else Path("~/.config/espacofacial/login.env").expanduser()
     if not path.exists():
         return
 
@@ -107,14 +105,42 @@ def _load_login_env_file() -> None:
             item = line.strip()
             if not item or item.startswith("#") or "=" not in item:
                 continue
+            if item.startswith("export "):
+                item = item[len("export ") :].strip()
             key, value = item.split("=", 1)
             key = key.strip()
-            if key not in {"EF_LOGIN_EMAIL", "EF_LOGIN_PASSWORD"}:
+            if allowed_keys is not None and key not in allowed_keys:
                 continue
             value = value.strip().strip('"').strip("'")
             os.environ.setdefault(key, value)
     except Exception:
         return
+
+
+def _load_login_env_file() -> None:
+    """Load login credentials from a user-level env file when present."""
+
+    raw = os.getenv("EF_LOGIN_ENV_FILE", "").strip()
+    path = Path(raw).expanduser() if raw else Path("~/.config/espacofacial/login.env").expanduser()
+    _load_simple_env_file(path, allowed_keys={"EF_LOGIN_EMAIL", "EF_LOGIN_PASSWORD"})
+
+
+def _load_booking_env_file() -> None:
+    """Load booking API runtime vars from secrets/booking_api.env when present."""
+
+    raw = os.getenv("EF_BOOKING_ENV_FILE", "").strip()
+    path = Path(raw).expanduser() if raw else (PROJECT_DIR / "secrets" / "booking_api.env")
+    _load_simple_env_file(
+        path,
+        allowed_keys={
+            "EF_BOOKING_API_HOST",
+            "EF_BOOKING_API_PORT",
+            "EF_BOOKING_API_TOKEN",
+            "EF_BOOKING_WEBHOOK_SECRET",
+            "EF_MODE",
+            "HEADLESS",
+        },
+    )
 
 
 def _prompt_yes_no(prompt: str, default: bool) -> bool:
@@ -1338,6 +1364,10 @@ def _run_selftest(headless: bool, output_dir: Path) -> int:
 def main() -> int:
     _load_env()
 
+    pre_mode = os.getenv("EF_MODE", "").strip().lower()
+    if pre_mode in {"booking_api", "agenda_booking_api", "reserve_api"}:
+        _load_booking_env_file()
+
     print("=== scraper (Runner) ===")
 
     # Exports go into report/ by default, but can be overridden via EF_OUTPUT_DIR.
@@ -1417,6 +1447,7 @@ def main() -> int:
     if mode in {"booking_api", "agenda_booking_api", "reserve_api"}:
         from espacofacial.booking_server import run_booking_server
 
+        _load_booking_env_file()
         email, password = _get_credentials(persist_session=persist_session)
         _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
         rc = run_booking_server()
@@ -1483,6 +1514,7 @@ def main() -> int:
         if choice == "6":
             from espacofacial.booking_server import run_booking_server
 
+            _load_booking_env_file()
             email, password = _get_credentials(persist_session=persist_session)
             _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
             rc = run_booking_server()
