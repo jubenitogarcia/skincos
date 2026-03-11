@@ -3,9 +3,15 @@ from __future__ import annotations
 import unittest
 
 from espacofacial.booking import BookingRequest
+from espacofacial.appointments import parse_duration_minutes_from_time_text
 
 
 class BookingRequestTests(unittest.TestCase):
+    def test_extracts_duration_from_time_range(self) -> None:
+        self.assertEqual(parse_duration_minutes_from_time_text("13:00 - 13:30"), 30)
+        self.assertEqual(parse_duration_minutes_from_time_text("17:40 - 18:00"), 20)
+        self.assertIsNone(parse_duration_minutes_from_time_text("18:00"))
+
     def test_parses_portuguese_payload(self) -> None:
         request = BookingRequest.from_payload(
             {

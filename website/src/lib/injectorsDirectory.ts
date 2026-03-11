@@ -464,8 +464,8 @@ export async function fetchActiveInjectors(): Promise<TeamMember[]> {
 }
 
 export async function getUnitDoctorsResult(unitSlug: string): Promise<
-    | { ok: true; doctors: Array<{ slug: string; name: string }> }
-    | { ok: false; doctors: Array<{ slug: string; name: string }>; error: InjectorsDirectoryError }
+    | { ok: true; doctors: Array<{ slug: string; name: string; instagramHandle: string | null }> }
+    | { ok: false; doctors: Array<{ slug: string; name: string; instagramHandle: string | null }>; error: InjectorsDirectoryError }
 > {
     const label = unitLabelFromBookingUnitSlug(unitSlug);
     if (!label) return { ok: true, doctors: [] };
@@ -475,12 +475,12 @@ export async function getUnitDoctorsResult(unitSlug: string): Promise<
 
     const doctors = membersResult.members
         .filter((m) => m.units.map((u) => u.toLowerCase()).includes(label.toLowerCase()))
-        .map((m) => ({ slug: doctorSlugFromTeamMember(m), name: m.name }));
+        .map((m) => ({ slug: doctorSlugFromTeamMember(m), name: m.name, instagramHandle: m.instagramHandle ?? null }));
 
     return { ok: true, doctors };
 }
 
-export async function getUnitDoctors(unitSlug: string): Promise<Array<{ slug: string; name: string }>> {
+export async function getUnitDoctors(unitSlug: string): Promise<Array<{ slug: string; name: string; instagramHandle: string | null }>> {
     const result = await getUnitDoctorsResult(unitSlug);
     return result.doctors;
 }

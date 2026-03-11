@@ -140,6 +140,27 @@ def _extract_event_info(title_text: str, time_text: str) -> dict[str, str]:
     }
 
 
+def parse_duration_minutes_from_time_text(time_text: str) -> int | None:
+    text = (time_text or "").strip()
+    if not text:
+        return None
+
+    matches = re.findall(r"\b(\d{1,2}:\d{2})\b", text)
+    if len(matches) < 2:
+        return None
+
+    try:
+        start = datetime.strptime(matches[0], "%H:%M")
+        end = datetime.strptime(matches[1], "%H:%M")
+    except ValueError:
+        return None
+
+    delta_minutes = int((end - start).total_seconds() // 60)
+    if delta_minutes <= 0 or delta_minutes > 24 * 60:
+        return None
+    return delta_minutes
+
+
 def _safe_outer_html(element) -> str:
     try:
         html = element.get_attribute("outerHTML") or ""
@@ -696,6 +717,8 @@ def scrape_complete(
 
             base = _extract_event_info(title_text, time_text)
             base["Data"] = _extract_event_date(driver, event)
+            duration_min = parse_duration_minutes_from_time_text(time_text)
+            base["Duração Min"] = str(duration_min) if duration_min else ""
             base.setdefault("Telefone", "")
             base.setdefault("CPF", "")
             base.setdefault("Por onde nos conheceu", "")
@@ -750,6 +773,9 @@ def scrape_complete(
                     base["Data"] = str(details["Data"])
                 if details.get("Horário"):
                     base["Horário"] = str(details["Horário"])
+                    details_duration_min = parse_duration_minutes_from_time_text(base["Horário"])
+                    if details_duration_min:
+                        base["Duração Min"] = str(details_duration_min)
             except Exception:
                 missing_modal_count += 1
             finally:
@@ -866,6 +892,7 @@ def save(rows: list[dict[str, str]], *, output_dir: Path, prefix: str) -> tuple[
         "Cliente",
         "Tipo de Agendamento",
         "Profissional",
+        "Duração Min",
         "Telefone",
         "CPF",
         "Por onde nos conheceu",

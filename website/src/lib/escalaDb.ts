@@ -74,6 +74,45 @@ export function normalizePersonKey(value: string): string {
         .replace(/[^a-z0-9]+/g, "");
 }
 
+const PERSON_IGNORED_TOKENS = new Set(["dr", "dra", "doutor", "doutora", "de", "da", "do", "dos", "das"]);
+
+export function tokenizePersonName(value: string): string[] {
+    return String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .filter((token) => !PERSON_IGNORED_TOKENS.has(token));
+}
+
+export function personNameMatches(left: string, right: string): boolean {
+    const leftKey = normalizePersonKey(left);
+    const rightKey = normalizePersonKey(right);
+    if (!leftKey || !rightKey) return false;
+    if (leftKey === rightKey) return true;
+
+    const leftTokens = tokenizePersonName(left);
+    const rightTokens = tokenizePersonName(right);
+    if (!leftTokens.length || !rightTokens.length) return false;
+
+    if (leftTokens.join("") === rightTokens.join("")) return true;
+
+    const [shorter, longer] = leftTokens.length <= rightTokens.length ? [leftTokens, rightTokens] : [rightTokens, leftTokens];
+    if (shorter[0] !== longer[0]) return false;
+    if (shorter[shorter.length - 1] !== longer[longer.length - 1]) return false;
+
+    let shorterIndex = 0;
+    for (const token of longer) {
+        if (token === shorter[shorterIndex]) shorterIndex += 1;
+        if (shorterIndex >= shorter.length) return true;
+    }
+
+    return false;
+}
+
 export function unitLabelFromEscalaUnitSlug(unitSlug: string): string | null {
     const key = normalizeUnitKey(unitSlug);
     if (!key) return null;

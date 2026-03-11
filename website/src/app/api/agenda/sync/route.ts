@@ -44,6 +44,10 @@ type Payload = {
     schema_version?: number | string;
 };
 
+const UNKNOWN_CLIENT = "[agenda-sync]";
+const UNKNOWN_TYPE = "[desconhecido]";
+const UNKNOWN_PROFESSIONAL = "[desconhecido]";
+
 function json(data: unknown, init?: ResponseInit) {
     return NextResponse.json(data, init);
 }
@@ -120,11 +124,11 @@ export async function POST(request: Request) {
     for (const item of added) {
         const dateKey = parseDateKey(item.data ?? "");
         const timeKey = parseTimeKey(item.horario ?? "");
-        const client = normalizeOneLine(item.cliente ?? "");
-        const tipo = normalizeOneLine(item.tipo ?? "");
-        const profissional = normalizeOneLine(item.profissional ?? "");
+        const client = normalizeOneLine(item.cliente ?? "") || UNKNOWN_CLIENT;
+        const tipo = normalizeOneLine(item.tipo ?? "") || UNKNOWN_TYPE;
+        const profissional = normalizeOneLine(item.profissional ?? "") || UNKNOWN_PROFESSIONAL;
         const durationMin = parseDurationMin(item.duration_min);
-        if (!dateKey || !timeKey || !client || !tipo || !profissional) {
+        if (!dateKey || !timeKey) {
             addedSkipped += 1;
             continue;
         }
