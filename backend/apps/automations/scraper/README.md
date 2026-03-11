@@ -34,7 +34,8 @@ Runner único via ações do Codex (sem menu).
 - `EF_DRY_RUN` (`1`/`0`)
 - `EF_DEBUG_RETENTION_DAYS` (default: `7`)
 - `EF_DATE_RANGE_MODE` (`prev_month`)
-- `EF_INDEX_FUTURE_DAYS` (opcional; limita agenda/index para janela móvel, ex.: `28`)
+- `EF_INDEX_WEEK_WINDOW_WEEKS` (opcional; limita agenda/index para a semana atual + próximas semanas, ex.: `4` para totalizar 28 dias a partir do início da semana atual)
+- `EF_INDEX_FUTURE_DAYS` (opcional; limita agenda/index para janela móvel a partir de hoje, ex.: `28`)
 - `EF_RECORDER_PURGE` (`1`/`0`)
 - `EF_AGENDA_SYNC_URL` (endpoint de sync, ex.: `https://espacofacial.com/api/agenda/sync`)
 - `EF_AGENDA_SYNC_TOKEN` (Bearer token do endpoint de sync)
@@ -121,9 +122,9 @@ O script gera um token novo, atualiza `~/.config/espacofacial/agenda_sync.env`, 
 
 ## Backfill completo da agenda sincronizada
 
-- `HEADLESS=1 EF_INDEX_FUTURE_DAYS=28 EF_UNITS='BarraShoppingSul,Novo Hamburgo' EF_AGENDA_SYNC_URL='https://espacofacial.com/api/agenda/sync' ./run_agenda_full_sync_all_units.sh`
+- `HEADLESS=1 EF_INDEX_WEEK_WINDOW_WEEKS=4 EF_UNITS='BarraShoppingSul,Novo Hamburgo' EF_AGENDA_SYNC_URL='https://espacofacial.com/api/agenda/sync' ./run_agenda_full_sync_all_units.sh`
 
-Esse fluxo faz scrape completo por unidade e publica todos os agendamentos como `added`, útil para repovoar `agenda_appointments` com `duration_min`.
+Esse fluxo faz scrape completo por unidade e publica todos os agendamentos como `added`, útil para repovoar `agenda_appointments` com `duration_min`. Com `EF_INDEX_WEEK_WINDOW_WEEKS=4`, a janela coberta é a semana atual mais as próximas 3 semanas.
 
 ## Desenvolvimento (opcional)
 

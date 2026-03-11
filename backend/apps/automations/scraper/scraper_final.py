@@ -91,7 +91,25 @@ def _filter_date_window(rows: list[dict[str, str]], *, start_date: date, end_dat
     return out
 
 
+def _start_of_week(day: date) -> date:
+    return day - timedelta(days=day.weekday())
+
+
 def _resolve_date_filter(today: date) -> tuple[Callable[[list[dict[str, str]]], list[dict[str, str]]] | None, str | None]:
+    week_window_raw = os.getenv("EF_INDEX_WEEK_WINDOW_WEEKS", "").strip()
+    if week_window_raw:
+        try:
+            week_window = int(week_window_raw)
+        except ValueError:
+            week_window = 0
+        if week_window > 0:
+            start_date = _start_of_week(today)
+            end_date = start_date + timedelta(days=week_window * 7 - 1)
+            return (
+                lambda rows: _filter_date_window(rows, start_date=start_date, end_date=end_date),
+                f"current week + next {max(week_window - 1, 0)} weeks",
+            )
+
     future_days_raw = os.getenv("EF_INDEX_FUTURE_DAYS", "").strip()
     if future_days_raw:
         try:
