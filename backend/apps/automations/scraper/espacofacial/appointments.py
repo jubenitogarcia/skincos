@@ -132,10 +132,54 @@ def navigate_to_reception(driver: WebDriver, reception_url: str, *, timeout_seco
 
 def _extract_event_info(title_text: str, time_text: str) -> dict[str, str]:
     parts = [p.strip() for p in title_text.split(" - ")]
+    appointment_type_keys = {
+        "avaliacao",
+        "compra antecipada",
+        "procedimento",
+        "revisao",
+        "retorno",
+        "consulta",
+    }
+
+    def _normalize_key(value: str) -> str:
+        raw = (value or "").strip().lower()
+        if not raw:
+            return ""
+        no_accents = "".join(ch for ch in unicodedata.normalize("NFD", raw) if unicodedata.category(ch) != "Mn")
+        return re.sub(r"\s+", " ", no_accents).strip()
+
+    def _is_appointment_type(value: str) -> bool:
+        return _normalize_key(value) in appointment_type_keys
+
+    cliente = parts[0] if len(parts) > 0 else ""
+    tipo = ""
+    profissional = ""
+
+    if len(parts) == 2:
+        second = parts[1]
+        if _is_appointment_type(second):
+            tipo = second
+        else:
+            profissional = second
+    elif len(parts) >= 3:
+        second = parts[1]
+        third = parts[2]
+        second_is_type = _is_appointment_type(second)
+        third_is_type = _is_appointment_type(third)
+        if second_is_type and not third_is_type:
+            tipo = second
+            profissional = third
+        elif third_is_type and not second_is_type:
+            tipo = third
+            profissional = second
+        else:
+            tipo = second
+            profissional = third
+
     return {
-        "Cliente": parts[0] if len(parts) > 0 else "",
-        "Tipo de Agendamento": parts[1] if len(parts) > 1 else "",
-        "Profissional": parts[2] if len(parts) > 2 else "",
+        "Cliente": cliente,
+        "Tipo de Agendamento": tipo,
+        "Profissional": profissional,
         "Horário": time_text.strip(),
     }
 
@@ -385,6 +429,58 @@ def _extract_multiselect_value_from_container(container) -> str:
     return ""
 
 
+def _extract_value_by_label(modal, *, labels: list[str], prefer_multiselect: bool = False, allow_input: bool = True) -> str:
+    for label in labels:
+        container = _find_field_container_by_label(modal, label)
+        if container is None:
+            continue
+        candidates = []
+        if prefer_multiselect:
+            candidates.append(_extract_multiselect_value_from_container(container))
+            if allow_input:
+                candidates.append(_extract_input_value_from_container(container))
+        else:
+            if allow_input:
+                candidates.append(_extract_input_value_from_container(container))
+            candidates.append(_extract_multiselect_value_from_container(container))
+        for candidate in candidates:
+            cleaned = _clean_placeholder(candidate)
+            if cleaned:
+                return cleaned
+    return ""
+
+
+def _collapse_repeated_phrase(value: str) -> str:
+    text = _normalize_spaces(value or "")
+    if not text:
+        return ""
+    parts = text.split(" ")
+    if len(parts) >= 2 and len(parts) % 2 == 0:
+        half = len(parts) // 2
+        if parts[:half] == parts[half:]:
+            return " ".join(parts[:half])
+    return text
+
+
+def _looks_like_internal_id(value: str) -> bool:
+    text = _normalize_spaces(value or "")
+    return bool(re.fullmatch(r"\d{10,14}", text))
+
+
+def _is_invalid_field_value(value: str, *, blocked_labels: list[str] | None = None) -> bool:
+    text = _normalize_spaces(value or "")
+    if not text:
+        return True
+    low = text.lower().strip(":")
+    if blocked_labels:
+        blocked = {b.lower().strip(":") for b in blocked_labels if b}
+        if low in blocked:
+            return True
+    if _looks_like_internal_id(text):
+        return True
+    return False
+
+
 def _find_first_text(modal, *, xpaths: list[str]) -> str:
     for xp in xpaths:
         try:
@@ -452,6 +548,27 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
         text = modal.text or ""
 
         # --- Extra fields seen in Recorder (WW modal): Telefone(WhatsApp), CPF, Origem, Serviço ---
+        details["Cliente"] = _extract_value_by_label(modal, labels=["Buscar cliente cadastrado"], prefer_multiselect=True, allow_input=False)
+        if not details["Cliente"]:
+            details["Cliente"] = _extract_value_by_label(
+                modal,
+                labels=["Nome do cliente", "Nome de cliente", "Cliente"],
+                prefer_multiselect=False,
+                allow_input=True,
+            )
+        details["Profissional"] = _extract_value_by_label(
+            modal,
+            labels=["Injetor", "Profissional"],
+            prefer_multiselect=True,
+            allow_input=True,
+        )
+        details["Tipo de Agendamento"] = _extract_value_by_label(
+            modal,
+            labels=["Tipo de Agendamento"],
+            prefer_multiselect=True,
+            allow_input=False,
+        )
+
         try:
             c = _find_field_container_by_label(modal, "WhatsApp do cliente")
             if c is not None:
@@ -487,34 +604,40 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
             pass
 
         # Prefer structured fields when present.
-        details["Cliente"] = _find_first_text(
-            modal,
-            xpaths=[
-                './/p[contains(., "Cliente")]/strong',
-                './/*[contains(normalize-space(.), "Cliente")]/strong',
-            ],
-        )
-        details["Profissional"] = _find_first_text(
-            modal,
-            xpaths=[
-                './/p[contains(., "Profissional")]/strong',
-                './/*[contains(normalize-space(.), "Profissional")]/strong',
-            ],
-        )
-        details["Telefone"] = _find_first_text(
-            modal,
-            xpaths=[
-                './/p[contains(., "Telefone")]/strong',
-                './/*[contains(normalize-space(.), "Telefone")]/strong',
-            ],
-        )
-        details["Tipo de Agendamento"] = _find_first_text(
-            modal,
-            xpaths=[
-                './/p[contains(., "Tipo de Agendamento")]/strong',
-                './/*[contains(normalize-space(.), "Tipo de Agendamento")]/strong',
-            ],
-        )
+        if not details["Cliente"]:
+            details["Cliente"] = _find_first_text(
+                modal,
+                xpaths=[
+                    './/p[contains(., "Cliente")]/strong',
+                    './/*[contains(normalize-space(.), "Cliente")]/strong',
+                ],
+            )
+        if not details["Profissional"]:
+            details["Profissional"] = _find_first_text(
+                modal,
+                xpaths=[
+                    './/p[contains(., "Injetor")]/strong',
+                    './/*[contains(normalize-space(.), "Injetor")]/strong',
+                    './/p[contains(., "Profissional")]/strong',
+                    './/*[contains(normalize-space(.), "Profissional")]/strong',
+                ],
+            )
+        if not details["Telefone"]:
+            details["Telefone"] = _find_first_text(
+                modal,
+                xpaths=[
+                    './/p[contains(., "Telefone")]/strong',
+                    './/*[contains(normalize-space(.), "Telefone")]/strong',
+                ],
+            )
+        if not details["Tipo de Agendamento"]:
+            details["Tipo de Agendamento"] = _find_first_text(
+                modal,
+                xpaths=[
+                    './/p[contains(., "Tipo de Agendamento")]/strong',
+                    './/*[contains(normalize-space(.), "Tipo de Agendamento")]/strong',
+                ],
+            )
         dt_text = _find_first_text(
             modal,
             xpaths=[
@@ -583,6 +706,20 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
                 labels=["Serviço a realizar", "Selecione o serviço", "Serviços"],
             )
         details["Serviço a realizar"] = _clean_placeholder(details.get("Serviço a realizar", ""))
+        if not details["Profissional"]:
+            by_text_prof = _clean_placeholder(_find_value_by_label_in_text(text, labels=["Injetor", "Profissional"]))
+            if not _is_invalid_field_value(
+                by_text_prof,
+                blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Status", "Origem do cliente"],
+            ):
+                details["Profissional"] = by_text_prof
+        if not details["Tipo de Agendamento"]:
+            by_text_type = _clean_placeholder(_find_value_by_label_in_text(text, labels=["Tipo de Agendamento"]))
+            if not _is_invalid_field_value(
+                by_text_type,
+                blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Status", "Origem do cliente"],
+            ):
+                details["Tipo de Agendamento"] = by_text_type
         if not details["Observações"]:
             lines = text.split("\n")
             for idx, line in enumerate(lines):
@@ -592,7 +729,11 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
                         details["Observações"] = obs2[:200]
                     break
 
-        details["Status"] = _extract_status(text)
+        if not details["Status"]:
+            details["Status"] = _extract_value_by_label(modal, labels=["Status"], prefer_multiselect=True, allow_input=False)
+        if not details["Status"]:
+            details["Status"] = _extract_status(text)
+        details["Status"] = _collapse_repeated_phrase(details["Status"])
     except Exception:
         return details
 
