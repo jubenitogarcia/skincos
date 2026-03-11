@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
+from unittest.mock import patch
 
 from espacofacial.booking import BookingRequest
 from espacofacial.appointments import parse_duration_minutes_from_time_text
+from scraper_final import _resolve_date_filter
 
 
 class BookingRequestTests(unittest.TestCase):
@@ -90,6 +93,21 @@ class BookingRequestTests(unittest.TestCase):
         )
         self.assertEqual(request.procedure_name, "Procedimento")
         self.assertEqual(request.service_name, "Toxina botulínica")
+
+    def test_week_window_uses_current_week_plus_next_three(self) -> None:
+        rows = [
+            {"Data": "09/03/2026"},
+            {"Data": "10/03/2026"},
+            {"Data": "15/03/2026"},
+            {"Data": "05/04/2026"},
+            {"Data": "06/04/2026"},
+        ]
+        with patch.dict("os.environ", {"EF_INDEX_WEEK_WINDOW_WEEKS": "4"}, clear=False):
+            fn, label = _resolve_date_filter(date(2026, 3, 11))
+        self.assertIsNotNone(fn)
+        self.assertEqual(label, "current week + next 3 weeks")
+        filtered = fn(rows) if fn else []
+        self.assertEqual([row["Data"] for row in filtered], ["09/03/2026", "10/03/2026", "15/03/2026", "05/04/2026"])
 
 
 if __name__ == "__main__":
