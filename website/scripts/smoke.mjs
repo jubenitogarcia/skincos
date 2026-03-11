@@ -97,7 +97,7 @@ async function run() {
     }
     {
         const unit = "barrashoppingsul";
-        const doctor = "smoke";
+        const doctor = "any";
         const service = "botox";
         const durationMinutes = 30;
         const url = `/api/booking/slots?unit=${encodeURIComponent(unit)}&doctor=${encodeURIComponent(doctor)}&service=${encodeURIComponent(service)}&durationMinutes=${durationMinutes}&date=${encodeURIComponent(tomorrowKey)}`;

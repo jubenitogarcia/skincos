@@ -3,11 +3,12 @@ import { getBookingDb, nowMs, addMinutes, isValidDateKey, isValidTimeKey, toSaoP
 import { getAgendaDb } from "@/lib/agendaDb";
 import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
-import { fetchEscalaDaySchedule, normalizePersonKey } from "@/lib/escalaDb";
+import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
+import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 
 export const dynamic = "force-dynamic";
 
-type AgendaRange = { start: number; end: number };
+type AgendaRange = { start: number; end: number; professionalName: string | null };
 type AgendaCacheEntry = { expiresAtMs: number; ranges: AgendaRange[]; count: number };
 
 const agendaCache = new Map<string, AgendaCacheEntry>();
@@ -85,6 +86,12 @@ function buildUnavailableSlots(params: { date: string; durationMinutes: number; 
     });
 }
 
+function normalizeAgendaProfessionalName(value: string | null | undefined): string | null {
+    const raw = (value ?? "").toString().trim();
+    if (!raw || raw.startsWith("[")) return null;
+    return raw;
+}
+
 async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: string) {
     // Best-effort: mark pending approvals as expired after confirm_by.
     const row = await db
@@ -152,10 +159,14 @@ export async function GET(req: Request) {
     }
 
     const unitDoctors = unitDoctorsResult.ok ? unitDoctorsResult.doctors : [];
-    const knownDoctor = !wantsAnyDoctor ? unitDoctors.find((doctor) => doctor.slug === doctorSlug) ?? null : null;
-    let doctorSlugs = wantsAnyDoctor ? unitDoctors.map((doctor) => doctor.slug) : [doctorSlug];
+    const knownDoctor = !wantsAnyDoctor ? unitDoctors.find((doctor) => doctorSlugMatchesQuery(doctorSlug, doctor)) ?? null : null;
+    const resolvedDoctorSlug = knownDoctor?.slug ?? doctorSlug;
+    let doctorSlugs = wantsAnyDoctor ? unitDoctors.map((doctor) => doctor.slug) : knownDoctor ? [knownDoctor.slug] : [doctorSlug];
     if (wantsAnyDoctor && doctorSlugs.length === 0) {
         return json({ ok: false, error: "no_doctors_for_unit" }, { status: 400 });
+    }
+    if (!wantsAnyDoctor && !knownDoctor) {
+        return json({ ok: false, error: "invalid_doctor" }, { status: 400 });
     }
 
     const daySchedule = await fetchEscalaDaySchedule(unitSlug, date);
@@ -165,22 +176,21 @@ export async function GET(req: Request) {
     }
 
     if (daySchedule) {
-        const scheduledNameKeys = new Set(daySchedule.professionalNames.map((name) => normalizePersonKey(name)));
-        if (scheduledNameKeys.size === 0) {
+        if (daySchedule.professionalNames.length === 0) {
             const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "doctor_off" });
             return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
         }
 
         if (wantsAnyDoctor) {
             doctorSlugs = unitDoctors
-                .filter((doctor) => scheduledNameKeys.has(normalizePersonKey(doctor.name)))
+                .filter((doctor) => daySchedule.professionalNames.some((name) => personNameMatches(name, doctor.name)))
                 .map((doctor) => doctor.slug);
 
             if (doctorSlugs.length === 0) {
                 const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "doctor_off" });
                 return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
             }
-        } else if (knownDoctor && !scheduledNameKeys.has(normalizePersonKey(knownDoctor.name))) {
+        } else if (knownDoctor && !daySchedule.professionalNames.some((name) => personNameMatches(name, knownDoctor.name))) {
             const slots = buildUnavailableSlots({ date, durationMinutes, daySlots, reason: "doctor_off" });
             return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
         }
@@ -200,12 +210,12 @@ export async function GET(req: Request) {
         const agendaDb = await getAgendaDb();
         const agendaRows = await agendaDb
             .prepare(
-                `SELECT time_key, duration_min
+                `SELECT time_key, duration_min, profissional
                  FROM agenda_appointments
                  WHERE unit_slug = ? AND date_key = ? AND removed_at_ms IS NULL`,
             )
             .bind(unitSlug, date)
-            .all<{ time_key: string; duration_min: number | null }>();
+            .all<{ time_key: string; duration_min: number | null; profissional: string | null }>();
         agendaRanges = [];
         for (const row of agendaRows.results ?? []) {
             const time = (row.time_key ?? "").toString().trim();
@@ -215,7 +225,11 @@ export async function GET(req: Request) {
             if (!Number.isFinite(startMs)) continue;
             const durationMin = Number(row.duration_min ?? 0);
             const durationMs = Number.isFinite(durationMin) && durationMin > 0 ? durationMin * 60_000 : 1;
-            agendaRanges.push({ start: startMs, end: startMs + durationMs });
+            agendaRanges.push({
+                start: startMs,
+                end: startMs + durationMs,
+                professionalName: normalizeAgendaProfessionalName(row.profissional),
+            });
         }
         agendaRowsCount = agendaRows.results?.length ?? 0;
         agendaCache.set(cacheKey, {
@@ -272,6 +286,15 @@ export async function GET(req: Request) {
     }
 
     let agendaBlockedCount = 0;
+    const overlapsAgendaForDoctor = (slug: string, startMs: number, endMs: number) => {
+        const doctorName = unitDoctors.find((doctor) => doctor.slug === slug)?.name ?? null;
+        return agendaRanges.some(
+            (r) =>
+                r.start < endMs &&
+                r.end > startMs &&
+                (r.professionalName === null || (doctorName !== null && personNameMatches(r.professionalName, doctorName))),
+        );
+    };
     const out = daySlots.map((s) => {
         const time = s.time;
         if (!isValidTimeKey(time)) {
@@ -290,7 +313,7 @@ export async function GET(req: Request) {
             return { time, startAtMs: startMs, endAtMs: endMs, available: false, reason: "past" };
         }
 
-        if (agendaRanges.some((r) => r.start < endMs && r.end > startMs)) {
+        if (!wantsAnyDoctor && overlapsAgendaForDoctor(resolvedDoctorSlug, startMs, endMs)) {
             agendaBlockedCount += 1;
             return { time, available: false, reason: "agenda" };
         }
@@ -306,22 +329,26 @@ export async function GET(req: Request) {
         } else {
             let hasPending = false;
             let hasConfirmed = false;
+            let hasAgendaConflict = false;
             let anyFree = false;
 
             for (const slug of doctorSlugs) {
+                const agendaOverlap = overlapsAgendaForDoctor(slug, startMs, endMs);
                 const ranges = byDoctor.get(slug) ?? [];
                 const overlap = ranges.some((e) => e.start < endMs && e.end > startMs);
-                if (!overlap) {
+                if (!agendaOverlap && !overlap) {
                     anyFree = true;
                     break;
                 }
+                if (agendaOverlap) hasAgendaConflict = true;
                 if (ranges.some((e) => e.start < endMs && e.end > startMs && e.isConfirmed)) hasConfirmed = true;
                 if (ranges.some((e) => e.start < endMs && e.end > startMs && !e.isConfirmed)) hasPending = true;
             }
 
             if (!anyFree) {
                 available = false;
-                reason = hasPending ? "in_review" : hasConfirmed ? "booked" : "booked";
+                reason = hasPending ? "in_review" : hasConfirmed ? "booked" : hasAgendaConflict ? "agenda" : "booked";
+                if (reason === "agenda") agendaBlockedCount += 1;
             }
         }
 

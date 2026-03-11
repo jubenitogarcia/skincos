@@ -14,8 +14,9 @@ import email.utils
 import urllib.request
 import urllib.error
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Callable
 
 from selenium.webdriver.common.by import By
 
@@ -76,6 +77,41 @@ def _filter_remaining_month(rows: list[dict[str, str]], *, today: date) -> list[
             continue
         out.append(row)
     return out
+
+
+def _filter_date_window(rows: list[dict[str, str]], *, start_date: date, end_date: date) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for row in rows:
+        d = _parse_ddmmyyyy(row.get("Data", ""))
+        if d is None:
+            continue
+        if d < start_date or d > end_date:
+            continue
+        out.append(row)
+    return out
+
+
+def _resolve_date_filter(today: date) -> tuple[Callable[[list[dict[str, str]]], list[dict[str, str]]] | None, str | None]:
+    future_days_raw = os.getenv("EF_INDEX_FUTURE_DAYS", "").strip()
+    if future_days_raw:
+        try:
+            future_days = int(future_days_raw)
+        except ValueError:
+            future_days = 0
+        if future_days > 0:
+            end_date = today + timedelta(days=future_days - 1)
+            return (
+                lambda rows: _filter_date_window(rows, start_date=today, end_date=end_date),
+                f"rolling {future_days} days",
+            )
+
+    if _env_truthy("EF_INDEX_REMAINING_MONTH"):
+        return (
+            lambda rows: _filter_remaining_month(rows, today=today),
+            "remaining month",
+        )
+
+    return None, None
 
 
 def _count_signatures(rows: list[dict[str, str]]) -> Counter[str]:
@@ -140,6 +176,7 @@ def _write_changes_report(
                     "Mudança": "ADICIONADO",
                     "Data": r.get("Data", ""),
                     "Horário": r.get("Horário", ""),
+                    "Duração Min": r.get("Duração Min", ""),
                     "Cliente": r.get("Cliente", ""),
                     "Tipo de Agendamento": r.get("Tipo de Agendamento", ""),
                     "Profissional": r.get("Profissional", ""),
@@ -153,6 +190,7 @@ def _write_changes_report(
                     "Mudança": "REMOVIDO",
                     "Data": r.get("Data", ""),
                     "Horário": r.get("Horário", ""),
+                    "Duração Min": r.get("Duração Min", ""),
                     "Cliente": r.get("Cliente", ""),
                     "Tipo de Agendamento": r.get("Tipo de Agendamento", ""),
                     "Profissional": r.get("Profissional", ""),
@@ -165,7 +203,7 @@ def _write_changes_report(
     with csv_path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(
             fh,
-            fieldnames=["Mudança", "Data", "Horário", "Cliente", "Tipo de Agendamento", "Profissional"],
+            fieldnames=["Mudança", "Data", "Horário", "Duração Min", "Cliente", "Tipo de Agendamento", "Profissional"],
         )
         writer.writeheader()
         writer.writerows(report_rows)
@@ -207,6 +245,7 @@ def _post_agenda_sync(
             item = {
                 "data": row.get("Data", ""),
                 "horario": row.get("Horário", "") or row.get("Horario", ""),
+                "duration_min": row.get("Duração Min", "") or row.get("Duracao Min", ""),
                 "cliente": row.get("Cliente", ""),
                 "tipo": row.get("Tipo de Agendamento", ""),
                 "profissional": row.get("Profissional", ""),
@@ -220,6 +259,12 @@ def _post_agenda_sync(
 
     payload["added"] = added
     payload["removed"] = removed
+    return _post_agenda_sync_payload(payload=payload, endpoint=endpoint, token=token)
+
+
+def _post_agenda_sync_payload(*, payload: dict[str, object], endpoint: str, token: str) -> bool:
+    if not endpoint:
+        return False
 
     def _retry_after_seconds(err: urllib.error.HTTPError) -> int | None:
         header = ""
@@ -291,6 +336,44 @@ def _post_agenda_sync(
 
     log(f"ERROR: agenda sync failed: {last_error}")
     return False
+
+
+def _post_agenda_full_sync(
+    *,
+    unit_name: str,
+    rows: list[dict[str, str]],
+    endpoint: str,
+    token: str,
+) -> bool:
+    added: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        added.append(
+            {
+                "data": row.get("Data", ""),
+                "horario": row.get("Horário", "") or row.get("Horario", ""),
+                "duration_min": row.get("Duração Min", "") or row.get("Duracao Min", ""),
+                "cliente": row.get("Cliente", ""),
+                "tipo": row.get("Tipo de Agendamento", ""),
+                "profissional": row.get("Profissional", ""),
+                "telefone": row.get("Telefone", ""),
+                "cpf": row.get("CPF", ""),
+                "servico": row.get("Serviço a realizar", "") or row.get("Servico a realizar", ""),
+                "observacoes": row.get("Observações", "") or row.get("Observacoes", ""),
+                "status": row.get("Status", ""),
+                "source": "scraper_full",
+            }
+        )
+
+    payload: dict[str, object] = {
+        "unit": unit_name,
+        "runId": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "schema_version": 1,
+        "added": added,
+        "removed": [],
+    }
+    return _post_agenda_sync_payload(payload=payload, endpoint=endpoint, token=token)
 
 
 def _load_index_rows(path: Path) -> list[dict[str, str]]:
@@ -439,8 +522,8 @@ def main(mode: str = "full") -> bool:
         signature_mode = os.getenv("EF_INDEX_SIGNATURE_MODE", "dt").strip().lower()
         include_title = not _signature_mode_is_dt(signature_mode)
         dry_run = os.getenv("EF_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "y", "sim"}
-        filter_remaining = _env_truthy("EF_INDEX_REMAINING_MONTH")
         today = datetime.now().date()
+        date_filter, date_filter_label = _resolve_date_filter(today)
 
         if mode_norm == "index":
             rows_index = _run_with_scrape_retries(
@@ -450,10 +533,10 @@ def main(mode: str = "full") -> bool:
                 cfg=cfg,
                 creds=creds,
             )
-            if filter_remaining:
+            if date_filter is not None:
                 before = len(rows_index)
-                rows_index = _filter_remaining_month(rows_index, today=today)
-                log(f"Index filter (remaining month): {before} -> {len(rows_index)}")
+                rows_index = date_filter(rows_index)
+                log(f"Index filter ({date_filter_label}): {before} -> {len(rows_index)}")
             if dry_run:
                 log("DRY-RUN: skipping export files")
                 log(f"DRY-RUN: extracted rows = {len(rows_index)}")
@@ -478,14 +561,14 @@ def main(mode: str = "full") -> bool:
                 cfg=cfg,
                 creds=creds,
             )
-            if filter_remaining:
+            if date_filter is not None:
                 before = len(rows_index)
-                rows_index = _filter_remaining_month(rows_index, today=today)
-                log(f"Index filter (remaining month): {before} -> {len(rows_index)}")
+                rows_index = date_filter(rows_index)
+                log(f"Index filter ({date_filter_label}): {before} -> {len(rows_index)}")
             new_counts = _count_signatures(rows_index)
             old_rows = _load_index_rows(index_csv)
-            if filter_remaining:
-                old_rows = _filter_remaining_month(old_rows, today=today)
+            if date_filter is not None:
+                old_rows = date_filter(old_rows)
             old_counts = _load_index_signatures(old_rows, signature_mode=signature_mode)
 
             added = new_counts - old_counts
@@ -573,6 +656,14 @@ def main(mode: str = "full") -> bool:
             log("ERROR: No appointments extracted")
             return False
 
+        if date_filter is not None:
+            before = len(rows)
+            rows = date_filter(rows)
+            log(f"Full filter ({date_filter_label}): {before} -> {len(rows)}")
+        if not rows:
+            log("ERROR: No appointments extracted after date filter")
+            return False
+
         if dry_run:
             log("DRY-RUN: skipping export files")
             log(f"DRY-RUN: extracted rows = {len(rows)}")
@@ -581,6 +672,18 @@ def main(mode: str = "full") -> bool:
         csv_path, xlsx_path = save(rows, output_dir=cfg.output_dir, prefix=FULL_PREFIX)
         log(f"✓ Saved CSV: {csv_path}")
         log(f"✓ Saved Excel: {xlsx_path}")
+        endpoint = os.getenv("EF_AGENDA_SYNC_URL", "").strip()
+        token = os.getenv("EF_AGENDA_SYNC_TOKEN", "").strip()
+        if endpoint and _env_truthy("EF_AGENDA_SYNC_FULL"):
+            if _post_agenda_full_sync(
+                unit_name=cfg.unit_name,
+                rows=rows,
+                endpoint=endpoint,
+                token=token,
+            ):
+                log("✓ Agenda full sync posted")
+            else:
+                log("WARNING: agenda full sync failed")
         return True
     except Exception as e:
         log_exception("ERROR: Unexpected failure", e)

@@ -4,9 +4,12 @@ import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
 import { getAgendaDb } from "@/lib/agendaDb";
 import { sendBookingNotifications } from "@/lib/bookingNotifications";
-import { fetchEscalaDaySchedule, normalizePersonKey } from "@/lib/escalaDb";
+import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
+import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 
 export const dynamic = "force-dynamic";
+
+type AgendaRange = { start: number; end: number; professionalName: string | null };
 
 type Payload = {
     unitSlug?: string;
@@ -54,6 +57,12 @@ function clientIp(request: Request): string | null {
     const xff = (request.headers.get("x-forwarded-for") ?? "").trim();
     if (xff) return xff.split(",")[0]?.trim() || null;
     return null;
+}
+
+function normalizeAgendaProfessionalName(value: string | null | undefined): string | null {
+    const raw = (value ?? "").toString().trim();
+    if (!raw || raw.startsWith("[")) return null;
+    return raw;
 }
 
 async function verifyTurnstile(params: { secret: string; token: string; ip: string | null }): Promise<{ ok: boolean }> {
@@ -150,17 +159,18 @@ async function upsertCustomer(
     return id;
 }
 
-async function hasAgendaConflict(params: { unitSlug: string; date: string; startAtMs: number; endAtMs: number }): Promise<boolean> {
+async function listAgendaRanges(params: { unitSlug: string; date: string }): Promise<AgendaRange[]> {
     const agendaDb = await getAgendaDb();
     const agendaRows = await agendaDb
         .prepare(
-            `SELECT time_key, duration_min
+            `SELECT time_key, duration_min, profissional
              FROM agenda_appointments
              WHERE unit_slug = ? AND date_key = ? AND removed_at_ms IS NULL`,
         )
         .bind(params.unitSlug, params.date)
-        .all<{ time_key: string; duration_min: number | null }>();
+        .all<{ time_key: string; duration_min: number | null; profissional: string | null }>();
 
+    const agendaRanges: AgendaRange[] = [];
     for (const row of agendaRows.results ?? []) {
         const timeKey = (row.time_key ?? "").toString().trim();
         if (!isValidTimeKey(timeKey)) continue;
@@ -170,14 +180,28 @@ async function hasAgendaConflict(params: { unitSlug: string; date: string; start
 
         const durationMin = Number(row.duration_min ?? 0);
         const agendaDurationMs = Number.isFinite(durationMin) && durationMin > 0 ? durationMin * 60_000 : 1;
-        const agendaEndMs = agendaStartMs + agendaDurationMs;
-
-        if (agendaStartMs < params.endAtMs && agendaEndMs > params.startAtMs) {
-            return true;
-        }
+        agendaRanges.push({
+            start: agendaStartMs,
+            end: agendaStartMs + agendaDurationMs,
+            professionalName: normalizeAgendaProfessionalName(row.profissional),
+        });
     }
 
-    return false;
+    return agendaRanges;
+}
+
+function hasAgendaConflictForDoctor(params: {
+    agendaRanges: AgendaRange[];
+    startAtMs: number;
+    endAtMs: number;
+    doctorNameKey: string | null;
+}): boolean {
+    return params.agendaRanges.some(
+        (range) =>
+            range.start < params.endAtMs &&
+            range.end > params.startAtMs &&
+            (range.professionalName === null || (params.doctorNameKey !== null && personNameMatches(range.professionalName, params.doctorNameKey))),
+    );
 }
 
 export async function POST(request: Request) {
@@ -347,8 +371,9 @@ export async function POST(request: Request) {
     if (doctors.length === 0) {
         return json({ ok: false, error: "no_doctors_for_unit" }, { status: 400 });
     }
+    const doctorNameKeyBySlug = new Map(doctors.map((doctor) => [doctor.slug, doctor.name]));
 
-    const selectedDoctor = wantsAnyDoctor ? null : doctors.find((doctor) => doctor.slug === doctorSlug) ?? null;
+    const selectedDoctor = wantsAnyDoctor ? null : doctors.find((doctor) => doctorSlugMatchesQuery(doctorSlug, doctor)) ?? null;
     if (!wantsAnyDoctor && !selectedDoctor) {
         return json({ ok: false, error: "invalid_doctor" }, { status: 400 });
     }
@@ -360,16 +385,17 @@ export async function POST(request: Request) {
             return json({ ok: false, error: "no_availability" }, { status: 409 });
         }
 
-        const scheduledNameKeys = new Set(daySchedule.professionalNames.map((name) => normalizePersonKey(name)));
-        doctorsAvailableBySchedule = doctors.filter((doctor) => scheduledNameKeys.has(normalizePersonKey(doctor.name)));
+        doctorsAvailableBySchedule = doctors.filter((doctor) => daySchedule.professionalNames.some((name) => personNameMatches(name, doctor.name)));
 
-        if (!wantsAnyDoctor && selectedDoctor && !scheduledNameKeys.has(normalizePersonKey(selectedDoctor.name))) {
+        if (!wantsAnyDoctor && selectedDoctor && !daySchedule.professionalNames.some((name) => personNameMatches(name, selectedDoctor.name))) {
             return json({ ok: false, error: "no_availability" }, { status: 409 });
         }
         if (wantsAnyDoctor && doctorsAvailableBySchedule.length === 0) {
             return json({ ok: false, error: "no_availability" }, { status: 409 });
         }
     }
+
+    const agendaRanges = await listAgendaRanges({ unitSlug, date });
 
     const db = await getBookingDb();
 
@@ -407,7 +433,11 @@ export async function POST(request: Request) {
             activeByDoctor.set(slug, cur);
         }
 
-        const pick = doctorsForSelection.find((doctor) => !activeByDoctor.has(doctor.slug)) ?? null;
+        const pick = doctorsForSelection.find((doctor) => {
+            if (activeByDoctor.has(doctor.slug)) return false;
+            const doctorNameKey = doctorNameKeyBySlug.get(doctor.slug) ?? null;
+            return !hasAgendaConflictForDoctor({ agendaRanges, startAtMs, endAtMs, doctorNameKey });
+        }) ?? null;
         if (!pick) {
             const anyPending = Array.from(activeByDoctor.values()).some((v) => v.hasPending);
             return json({ ok: false, error: anyPending ? "slot_in_review" : "no_availability" }, { status: 409 });
@@ -417,7 +447,8 @@ export async function POST(request: Request) {
         safeDoctorName = clampText(pick.name, 120);
     }
 
-    const blockedByAgenda = await hasAgendaConflict({ unitSlug, date, startAtMs, endAtMs });
+    const effectiveDoctorNameKey = wantsAnyDoctor ? doctorNameKeyBySlug.get(effectiveDoctorSlug) ?? null : selectedDoctor ? selectedDoctor.name : null;
+    const blockedByAgenda = hasAgendaConflictForDoctor({ agendaRanges, startAtMs, endAtMs, doctorNameKey: effectiveDoctorNameKey });
     if (blockedByAgenda) {
         return json({ ok: false, error: "no_availability" }, { status: 409 });
     }

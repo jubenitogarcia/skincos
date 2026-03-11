@@ -8,7 +8,7 @@ import { services, type Service } from "@/data/services";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { useTeamDirectory } from "@/hooks/useTeamDirectory";
 import { clearBookingDraft, persistBookingDraft, readBookingDraft, type BookingDraftState } from "@/lib/bookingDraft";
-import { doctorSlugFromTeamMember, normalizeDoctorSlug } from "@/lib/doctorSlug";
+import { doctorSlugFromTeamMember, doctorSlugMatchesQuery, normalizeDoctorSlug } from "@/lib/doctorSlug";
 import { trackBookingFunnelStep, trackBookingRequestSubmitted, trackDoctorInstagramClick } from "@/lib/leadTracking";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
 import DoctorInstagramModal, { InstagramIcon, type DoctorInstagramProfile } from "@/components/DoctorInstagramModal";
@@ -473,9 +473,10 @@ export default function BookingFlow() {
         }
 
         const match = doctorsForUnit.find((d) => {
-            if (normalizeDoctorSlug(d.slug) === doctorQuery) return true;
-            if (normalizeDoctorSlug(d.handle ?? "") === doctorQuery) return true;
-            return normalizeDoctorSlug(d.name) === doctorQuery;
+            return doctorSlugMatchesQuery(doctorQuery, {
+                name: d.name,
+                instagramHandle: d.handle ?? null,
+            });
         });
 
         if (!match) return;
