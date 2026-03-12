@@ -92,6 +92,12 @@ function normalizeAgendaProfessionalName(value: string | null | undefined): stri
     return raw;
 }
 
+function shouldIgnoreAgendaProfessional(params: { dayScheduleLoaded: boolean; professionalNamesCount: number }): boolean {
+    // Business rule: when CRM escala indicates a single doctor for the unit/day,
+    // every occupied slot from scraper must block that day regardless of "profissional".
+    return params.dayScheduleLoaded && params.professionalNamesCount === 1;
+}
+
 async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: string) {
     // Best-effort: mark pending approvals as expired after confirm_by.
     const row = await db
@@ -195,6 +201,10 @@ export async function GET(req: Request) {
             return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
         }
     }
+    const ignoreAgendaProfessionalField = shouldIgnoreAgendaProfessional({
+        dayScheduleLoaded: !!daySchedule,
+        professionalNamesCount: daySchedule?.professionalNames.length ?? 0,
+    });
 
     const cacheKey = `${unitSlug}|${date}`;
     const cached = agendaCache.get(cacheKey);
@@ -287,6 +297,9 @@ export async function GET(req: Request) {
 
     let agendaBlockedCount = 0;
     const overlapsAgendaForDoctor = (slug: string, startMs: number, endMs: number) => {
+        if (ignoreAgendaProfessionalField) {
+            return agendaRanges.some((r) => r.start < endMs && r.end > startMs);
+        }
         const doctorName = unitDoctors.find((doctor) => doctor.slug === slug)?.name ?? null;
         return agendaRanges.some(
             (r) =>
