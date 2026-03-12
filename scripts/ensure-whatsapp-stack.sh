@@ -15,6 +15,7 @@ KICKSTART_LABELS=(
   "com.skincos.crm-api"
   "com.jubenito.n8n-evolution"
   "com.skincos.cloudflared.cs"
+  "com.skincos.cloudflared.orb"
 )
 
 for label in "${KICKSTART_LABELS[@]}"; do
@@ -26,6 +27,8 @@ done
 if command -v curl >/dev/null 2>&1; then
   curl -fsS -m 6 "http://127.0.0.1:${CRM_API_PORT:-8099}/health" >/dev/null 2>&1 || true
   curl -fsS -m 6 "http://127.0.0.1:${EVOLUTION_PORT:-8080}/" >/dev/null 2>&1 || true
+  curl -fsS -m 6 "http://127.0.0.1:${N8N_PORT:-5678}/healthz" >/dev/null 2>&1 || true
+  curl -fsS -m 8 "https://orb.skincos.com.br/healthz" >/dev/null 2>&1 || true
 fi
 
 echo "[ensure-whatsapp-stack] recovery checks completed (${REPO_ROOT})."

@@ -74,4 +74,5 @@ Modo `http_restart`:
   - `sha=<commit do deploy>`
   - `syncRepo=true` (sincroniza repo local antes do restart)
   - `syncSha=<commit do deploy>` (alvo do `git reset --hard`)
-  - `syncAutoStash=true` (se houver mudanças locais, faz stash automático antes da sincronização)
+  - `syncAutoStash=false` (não faz stash automático por padrão)
+  - Se precisar permitir auto-stash explicitamente, defina `WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH=true` no ambiente do CRM API.

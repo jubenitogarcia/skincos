@@ -23,9 +23,12 @@ Workflow: `.github/workflows/uptime-slo.yml`
 
 Variáveis (repo → Settings → Variables → Actions):
 - `OBS_HEALTHCHECK_URLS` (CSV)  
-  Ex.: `https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health`
+  Ex.: `https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health,https://orb.skincos.com.br/healthz`
 - `OBS_LATENCY_MS` (default: `800`)
 - `OBS_TIMEOUT_SEC` (default: `10`)
+
+Secrets (repo → Settings → Secrets and variables → Actions):
+- `OBS_ALERT_WEBHOOK_URL` (opcional) para receber alerta push quando o workflow falhar.
 
 O workflow falha quando qualquer endpoint retornar status não-2xx ou ultrapassar o `OBS_LATENCY_MS`.
 
