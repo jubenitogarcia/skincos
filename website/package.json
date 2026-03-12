@@ -9,7 +9,7 @@
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
     "lint": "next lint",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
     "smoke:strict": "SMOKE_REQUIRE_AGENDA=1 node scripts/smoke.mjs",
     "quality:pr": "npm run audit:360:ci",
