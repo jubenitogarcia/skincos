@@ -196,7 +196,11 @@ function hasAgendaConflictForDoctor(params: {
     startAtMs: number;
     endAtMs: number;
     doctorNameKey: string | null;
+    ignoreAgendaProfessionalField: boolean;
 }): boolean {
+    if (params.ignoreAgendaProfessionalField) {
+        return params.agendaRanges.some((range) => range.start < params.endAtMs && range.end > params.startAtMs);
+    }
     return params.agendaRanges.some(
         (range) =>
             range.start < params.endAtMs &&
@@ -404,6 +408,7 @@ export async function POST(request: Request) {
             return json({ ok: false, error: "no_availability" }, { status: 409 });
         }
     }
+    const ignoreAgendaProfessionalField = !!daySchedule && daySchedule.professionalNames.length === 1;
 
     const agendaRanges = await listAgendaRanges({ unitSlug, date });
 
@@ -446,7 +451,13 @@ export async function POST(request: Request) {
         const pick = doctorsForSelection.find((doctor) => {
             if (activeByDoctor.has(doctor.slug)) return false;
             const doctorNameKey = doctorNameKeyBySlug.get(doctor.slug) ?? null;
-            return !hasAgendaConflictForDoctor({ agendaRanges, startAtMs, endAtMs, doctorNameKey });
+            return !hasAgendaConflictForDoctor({
+                agendaRanges,
+                startAtMs,
+                endAtMs,
+                doctorNameKey,
+                ignoreAgendaProfessionalField,
+            });
         }) ?? null;
         if (!pick) {
             const anyPending = Array.from(activeByDoctor.values()).some((v) => v.hasPending);
@@ -458,7 +469,13 @@ export async function POST(request: Request) {
     }
 
     const effectiveDoctorNameKey = wantsAnyDoctor ? doctorNameKeyBySlug.get(effectiveDoctorSlug) ?? null : selectedDoctor ? selectedDoctor.name : null;
-    const blockedByAgenda = hasAgendaConflictForDoctor({ agendaRanges, startAtMs, endAtMs, doctorNameKey: effectiveDoctorNameKey });
+    const blockedByAgenda = hasAgendaConflictForDoctor({
+        agendaRanges,
+        startAtMs,
+        endAtMs,
+        doctorNameKey: effectiveDoctorNameKey,
+        ignoreAgendaProfessionalField,
+    });
     if (blockedByAgenda) {
         return json({ ok: false, error: "no_availability" }, { status: 409 });
     }
