@@ -8,6 +8,7 @@ from espacofacial.booking import BookingRequest
 from espacofacial.appointments import (
     _collapse_repeated_phrase,
     _extract_event_info,
+    _find_value_by_label_in_text,
     _is_invalid_field_value,
     parse_duration_minutes_from_time_text,
 )
@@ -46,7 +47,21 @@ class BookingRequestTests(unittest.TestCase):
     def test_invalid_field_value_rejects_internal_id_and_labels(self) -> None:
         self.assertTrue(_is_invalid_field_value("1773348000000"))
         self.assertTrue(_is_invalid_field_value("Tipo de Agendamento", blocked_labels=["Tipo de Agendamento"]))
+        self.assertTrue(_is_invalid_field_value("Injetor Marina Pereira Lima", blocked_labels=["Injetor"]))
         self.assertFalse(_is_invalid_field_value("Avaliação", blocked_labels=["Tipo de Agendamento"]))
+
+    def test_find_value_by_label_in_text_supports_same_line_without_colon(self) -> None:
+        text = "\n".join(
+            [
+                "Nome do cliente Bianca Vicente de Camargo",
+                "Tipo do agendamento Avaliação",
+                "Injetor Marina Pereira Lima",
+            ]
+        )
+        self.assertEqual(
+            _find_value_by_label_in_text(text, labels=["Tipo de Agendamento", "Tipo de agendamento", "Tipo do agendamento"]),
+            "Avaliação",
+        )
 
     def test_parses_portuguese_payload(self) -> None:
         request = BookingRequest.from_payload(

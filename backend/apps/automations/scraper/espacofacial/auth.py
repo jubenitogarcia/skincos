@@ -61,6 +61,11 @@ def get_log_file_path() -> Optional[Path]:
 def _append_to_file(line: str) -> None:
     if _LOG_FILE_PATH is None:
         return
+    try:
+        with _LOG_FILE_PATH.open("a", encoding="utf-8") as f:
+            f.write(line.rstrip("\n") + "\n")
+    except Exception:
+        return
 
 
 def _append_to_json(payload: dict) -> None:
@@ -69,11 +74,6 @@ def _append_to_json(payload: dict) -> None:
     try:
         with _LOG_JSON_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        return
-    try:
-        with _LOG_FILE_PATH.open("a", encoding="utf-8") as f:
-            f.write(line.rstrip("\n") + "\n")
     except Exception:
         return
 
