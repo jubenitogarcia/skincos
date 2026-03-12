@@ -76,3 +76,4 @@ Modo `http_restart`:
   - `syncSha=<commit do deploy>` (alvo do `git reset --hard`)
   - `syncAutoStash=false` (não faz stash automático por padrão)
   - Se precisar permitir auto-stash explicitamente, defina `WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH=true` no ambiente do CRM API.
+  - Se o workspace local estiver sujo e `syncAutoStash=false`, o endpoint retorna `RECOVERY_SYNC_REPO_DIRTY` (`HTTP 409`) e os workflows marcam como `skip` (sem salvar cache de deploy), para tentar novamente depois sem sobrescrever mudanças locais.
