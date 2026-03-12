@@ -566,8 +566,13 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
             modal,
             labels=["Tipo de Agendamento"],
             prefer_multiselect=True,
-            allow_input=False,
+            allow_input=True,
         )
+        if _is_invalid_field_value(
+            details["Tipo de Agendamento"],
+            blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Status", "Origem do cliente"],
+        ):
+            details["Tipo de Agendamento"] = ""
 
         try:
             c = _find_field_container_by_label(modal, "WhatsApp do cliente")
