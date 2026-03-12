@@ -8,7 +8,7 @@ import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 
 export const dynamic = "force-dynamic";
 
-type AgendaRange = { start: number; end: number; professionalName: string | null };
+type AgendaRange = { start: number; end: number };
 type AgendaCacheEntry = { expiresAtMs: number; ranges: AgendaRange[]; count: number };
 
 const agendaCache = new Map<string, AgendaCacheEntry>();
@@ -86,18 +86,6 @@ function buildUnavailableSlots(params: { date: string; durationMinutes: number; 
     });
 }
 
-function normalizeAgendaProfessionalName(value: string | null | undefined): string | null {
-    const raw = (value ?? "").toString().trim();
-    if (!raw || raw.startsWith("[")) return null;
-    return raw;
-}
-
-function shouldIgnoreAgendaProfessional(params: { dayScheduleLoaded: boolean; professionalNamesCount: number }): boolean {
-    // Business rule: when CRM escala indicates a single doctor for the unit/day,
-    // every occupied slot from scraper must block that day regardless of "profissional".
-    return params.dayScheduleLoaded && params.professionalNamesCount === 1;
-}
-
 async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: string) {
     // Best-effort: mark pending approvals as expired after confirm_by.
     const row = await db
@@ -166,7 +154,6 @@ export async function GET(req: Request) {
 
     const unitDoctors = unitDoctorsResult.ok ? unitDoctorsResult.doctors : [];
     const knownDoctor = !wantsAnyDoctor ? unitDoctors.find((doctor) => doctorSlugMatchesQuery(doctorSlug, doctor)) ?? null : null;
-    const resolvedDoctorSlug = knownDoctor?.slug ?? doctorSlug;
     let doctorSlugs = wantsAnyDoctor ? unitDoctors.map((doctor) => doctor.slug) : knownDoctor ? [knownDoctor.slug] : [doctorSlug];
     if (wantsAnyDoctor && doctorSlugs.length === 0) {
         return json({ ok: false, error: "no_doctors_for_unit" }, { status: 400 });
@@ -201,11 +188,6 @@ export async function GET(req: Request) {
             return json({ ok: true, unitSlug, doctorSlug, serviceId, durationMinutes, date, slots }, { status: 200 });
         }
     }
-    const ignoreAgendaProfessionalField = shouldIgnoreAgendaProfessional({
-        dayScheduleLoaded: !!daySchedule,
-        professionalNamesCount: daySchedule?.professionalNames.length ?? 0,
-    });
-
     const cacheKey = `${unitSlug}|${date}`;
     const cached = agendaCache.get(cacheKey);
     const nowTs = Date.now();
@@ -238,7 +220,6 @@ export async function GET(req: Request) {
             agendaRanges.push({
                 start: startMs,
                 end: startMs + durationMs,
-                professionalName: normalizeAgendaProfessionalName(row.profissional),
             });
         }
         agendaRowsCount = agendaRows.results?.length ?? 0;
@@ -296,17 +277,9 @@ export async function GET(req: Request) {
     }
 
     let agendaBlockedCount = 0;
-    const overlapsAgendaForDoctor = (slug: string, startMs: number, endMs: number) => {
-        if (ignoreAgendaProfessionalField) {
-            return agendaRanges.some((r) => r.start < endMs && r.end > startMs);
-        }
-        const doctorName = unitDoctors.find((doctor) => doctor.slug === slug)?.name ?? null;
-        return agendaRanges.some(
-            (r) =>
-                r.start < endMs &&
-                r.end > startMs &&
-                (r.professionalName === null || (doctorName !== null && personNameMatches(r.professionalName, doctorName))),
-        );
+    const overlapsAgendaForDoctor = (startMs: number, endMs: number) => {
+        // Business rule: agenda slots from scraper block by unit+day+time regardless of "profissional".
+        return agendaRanges.some((r) => r.start < endMs && r.end > startMs);
     };
     const out = daySlots.map((s) => {
         const time = s.time;
@@ -326,7 +299,7 @@ export async function GET(req: Request) {
             return { time, startAtMs: startMs, endAtMs: endMs, available: false, reason: "past" };
         }
 
-        if (!wantsAnyDoctor && overlapsAgendaForDoctor(resolvedDoctorSlug, startMs, endMs)) {
+        if (!wantsAnyDoctor && overlapsAgendaForDoctor(startMs, endMs)) {
             agendaBlockedCount += 1;
             return { time, available: false, reason: "agenda" };
         }
@@ -346,7 +319,7 @@ export async function GET(req: Request) {
             let anyFree = false;
 
             for (const slug of doctorSlugs) {
-                const agendaOverlap = overlapsAgendaForDoctor(slug, startMs, endMs);
+                const agendaOverlap = overlapsAgendaForDoctor(startMs, endMs);
                 const ranges = byDoctor.get(slug) ?? [];
                 const overlap = ranges.some((e) => e.start < endMs && e.end > startMs);
                 if (!agendaOverlap && !overlap) {
