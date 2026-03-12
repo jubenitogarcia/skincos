@@ -5,7 +5,7 @@ import unicodedata
 import time
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from collections import Counter
 
@@ -112,6 +112,165 @@ def _extract_event_date(driver: WebDriver, event) -> str:
         return dt.strftime("%d/%m/%Y")
     except Exception:
         return ""
+
+
+def _is_truthy_env(name: str) -> bool:
+    return (os.getenv(name, "").strip().lower()) in {"1", "true", "yes", "on", "y", "sim", "s"}
+
+
+def _calendar_visible_date_bounds(driver: WebDriver) -> tuple[str, str, bool]:
+    try:
+        bounds = driver.execute_script(
+            """
+            const root =
+              document.querySelector('.fc-view-harness .fc-view') ||
+              document.querySelector('.fc-view-harness') ||
+              document;
+            const nodes = Array.from(
+              root.querySelectorAll(
+                '.fc-col-header-cell[data-date], .fc-timegrid-col[data-date], .fc-daygrid-day[data-date]'
+              )
+            );
+            const visibleNodes = nodes.filter((el) => {
+              const style = window.getComputedStyle(el);
+              if (style.display === 'none' || style.visibility === 'hidden') return false;
+              if (el.offsetParent !== null) return true;
+              return style.position === 'fixed';
+            });
+            const source = visibleNodes.length ? visibleNodes : nodes;
+            const dates = source
+              .map((el) => (el.getAttribute('data-date') || '').trim())
+              .filter((v) => /^\\d{4}-\\d{2}-\\d{2}$/.test(v))
+              .sort();
+            if (!dates.length) return { min: '', max: '', has: false };
+            return { min: dates[0], max: dates[dates.length - 1], has: true };
+            """
+        ) or {"min": "", "max": "", "has": False}
+        return (
+            str(bounds.get("min") or "").strip(),
+            str(bounds.get("max") or "").strip(),
+            bool(bounds.get("has")),
+        )
+    except Exception:
+        return "", "", False
+
+
+def _click_calendar_nav(driver: WebDriver, direction: str) -> bool:
+    selector = ".fc-next-button" if direction == "next" else ".fc-prev-button"
+    try:
+        clicked = driver.execute_script(
+            """
+            const selector = arguments[0];
+            const button = document.querySelector(selector);
+            if (!button) return false;
+            button.click();
+            return true;
+            """,
+            selector,
+        )
+        return bool(clicked)
+    except Exception:
+        return False
+
+
+def _wait_for_calendar_bounds_change(driver: WebDriver, *, before_min: str, before_max: str, timeout_seconds: float = 5.0) -> None:
+    deadline = time.time() + max(timeout_seconds, 0.5)
+    while time.time() < deadline:
+        cur_min, cur_max, has_dates = _calendar_visible_date_bounds(driver)
+        if has_dates and (cur_min != before_min or cur_max != before_max):
+            break
+        time.sleep(0.2)
+
+
+def _start_of_week(day: date) -> date:
+    return day - timedelta(days=day.weekday())
+
+
+def _last_day_of_month(day: date) -> date:
+    pivot = day.replace(day=28) + timedelta(days=4)
+    return pivot.replace(day=1) - timedelta(days=1)
+
+
+def _resolve_collection_window(today: date) -> tuple[date, date] | None:
+    week_window_raw = os.getenv("EF_INDEX_WEEK_WINDOW_WEEKS", "").strip()
+    if week_window_raw:
+        try:
+            week_window = int(week_window_raw)
+        except ValueError:
+            week_window = 0
+        if week_window > 0:
+            start_date = _start_of_week(today)
+            end_date = start_date + timedelta(days=week_window * 7 - 1)
+            return start_date, end_date
+
+    future_days_raw = os.getenv("EF_INDEX_FUTURE_DAYS", "").strip()
+    if future_days_raw:
+        try:
+            future_days = int(future_days_raw)
+        except ValueError:
+            future_days = 0
+        if future_days > 0:
+            start_date = today
+            end_date = today + timedelta(days=future_days - 1)
+            return start_date, end_date
+
+    if _is_truthy_env("EF_INDEX_REMAINING_MONTH"):
+        return today, _last_day_of_month(today)
+
+    return None
+
+
+def _collect_across_calendar_window(driver: WebDriver, collect_current_view) -> list[dict[str, str]]:
+    today = datetime.now().date()
+    window = _resolve_collection_window(today)
+    if window is None:
+        return collect_current_view()
+
+    start_date, end_date = window
+    start_iso = start_date.strftime("%Y-%m-%d")
+    end_iso = end_date.strftime("%Y-%m-%d")
+    max_pages = max(int(os.getenv("EF_CALENDAR_MAX_PAGES", "12")), 1)
+    log(f"Calendar collection window: {start_iso} -> {end_iso} (max_pages={max_pages})")
+
+    # Align calendar near the start date of the requested window.
+    for _ in range(max_pages):
+        min_date, max_date, has_dates = _calendar_visible_date_bounds(driver)
+        if not has_dates:
+            log("Calendar bounds unavailable during alignment; collecting current view only.")
+            break
+        if min_date <= start_iso <= max_date:
+            break
+        direction = "next" if start_iso > max_date else "prev"
+        if not _click_calendar_nav(driver, direction):
+            log(f"Calendar nav '{direction}' unavailable during alignment.")
+            break
+        _wait_for_calendar_bounds_change(driver, before_min=min_date, before_max=max_date)
+
+    rows: list[dict[str, str]] = []
+    visited_bounds: set[tuple[str, str]] = set()
+    for _ in range(max_pages):
+        min_date, max_date, has_dates = _calendar_visible_date_bounds(driver)
+        if has_dates:
+            bounds = (min_date, max_date)
+            if bounds in visited_bounds:
+                log(f"Calendar bounds repeated ({min_date}..{max_date}); stopping pagination.")
+                break
+            visited_bounds.add(bounds)
+            log(f"Collecting calendar page with bounds {min_date}..{max_date}")
+        else:
+            log("Collecting calendar page without visible bounds")
+
+        rows.extend(collect_current_view())
+
+        if has_dates and max_date >= end_iso:
+            log(f"Reached window end at {max_date}; stopping pagination.")
+            break
+        if not _click_calendar_nav(driver, "next"):
+            log("Calendar nav 'next' unavailable; stopping pagination.")
+            break
+        _wait_for_calendar_bounds_change(driver, before_min=min_date, before_max=max_date)
+
+    return rows
 
 
 def navigate_to_reception(driver: WebDriver, reception_url: str, *, timeout_seconds: int = 20) -> bool:
@@ -944,7 +1103,7 @@ def _close_modal(driver: WebDriver) -> None:
         return
 
 
-def scrape_complete(
+def _scrape_complete_current_view(
     driver: WebDriver,
     *,
     target_signatures: Counter[str] | None = None,
@@ -1070,7 +1229,45 @@ def scrape_complete(
     return rows
 
 
-def scrape_index(
+def scrape_complete(
+    driver: WebDriver,
+    *,
+    target_signatures: Counter[str] | None = None,
+    signature_mode: str = "dt_title",
+) -> list[dict[str, str]]:
+    seen_keys: set[str] = set()
+
+    def collect_current_view() -> list[dict[str, str]]:
+        return _scrape_complete_current_view(
+            driver,
+            target_signatures=target_signatures,
+            signature_mode=signature_mode,
+        )
+
+    rows_all = _collect_across_calendar_window(driver, collect_current_view)
+    deduped: list[dict[str, str]] = []
+    for row in rows_all:
+        key = "||".join(
+            [
+                (row.get("Data") or "").strip(),
+                (row.get("Horário") or "").strip(),
+                (row.get("Cliente") or "").strip(),
+                (row.get("Tipo de Agendamento") or "").strip(),
+                (row.get("Profissional") or "").strip(),
+            ]
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(row)
+
+        if target_signatures is not None and all(count <= 0 for count in target_signatures.values()):
+            break
+
+    return deduped
+
+
+def _scrape_index_current_view(
     driver: WebDriver,
     *,
     signature_mode: str = "dt_title",
@@ -1141,6 +1338,34 @@ def scrape_index(
         log(f"NOTE: {error_count} events failed to parse; see log file for details.")
 
     return rows
+
+
+def scrape_index(
+    driver: WebDriver,
+    *,
+    signature_mode: str = "dt_title",
+) -> list[dict[str, str]]:
+    rows_all = _collect_across_calendar_window(
+        driver,
+        lambda: _scrape_index_current_view(driver, signature_mode=signature_mode),
+    )
+    seen_keys: set[str] = set()
+    deduped: list[dict[str, str]] = []
+    for row in rows_all:
+        key = (row.get("Assinatura") or "").strip()
+        if not key:
+            key = "||".join(
+                [
+                    (row.get("Data") or "").strip(),
+                    (row.get("Horário") or "").strip(),
+                    (row.get("Título") or "").strip(),
+                ]
+            )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(row)
+    return deduped
 
 
 def scrape_full(driver: WebDriver) -> list[dict[str, str]]:

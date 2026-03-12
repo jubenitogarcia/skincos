@@ -10,6 +10,7 @@ import sys
 import csv
 import json
 import time
+import re
 import email.utils
 import urllib.request
 import urllib.error
@@ -30,6 +31,7 @@ from espacofacial.auth import (
 from espacofacial.appointments import (
     build_event_signature,
     navigate_to_reception,
+    parse_duration_minutes_from_time_text,
     save,
     save_index,
     scrape_complete,
@@ -63,6 +65,68 @@ def _parse_ddmmyyyy(value: str) -> date | None:
         return datetime.strptime(raw, "%d/%m/%Y").date()
     except Exception:
         return None
+
+
+def _normalize_sync_time(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    match = re.search(r"\b(\d{1,2}):(\d{2})\b", raw)
+    if not match:
+        return ""
+    hh = int(match.group(1))
+    mm = int(match.group(2))
+    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+        return ""
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _row_sync_key(row: dict[str, str]) -> tuple[str, str] | None:
+    d = (row.get("Data") or "").strip()
+    t = _normalize_sync_time(row.get("Horário", ""))
+    if not d or not t:
+        return None
+    return d, t
+
+
+def _build_rows_from_index_signatures(
+    *,
+    rows_index: list[dict[str, str]],
+    signatures: Counter[str],
+    signature_mode: str,
+) -> list[dict[str, str]]:
+    grouped = _group_rows_by_signature(rows_index, signature_mode=signature_mode)
+    rows: list[dict[str, str]] = []
+
+    for sig, count in signatures.items():
+        for src in _pull_rows(grouped, sig, count):
+            if not src:
+                continue
+            date_value = (src.get("Data") or "").strip()
+            time_raw = (src.get("Horário") or "").strip()
+            time_norm = _normalize_sync_time(time_raw)
+            if not date_value or not time_norm:
+                continue
+            title = (src.get("Título") or "").strip()
+            duration_min = parse_duration_minutes_from_time_text(time_raw)
+            rows.append(
+                {
+                    "Data": date_value,
+                    "Horário": time_norm,
+                    "Cliente": title or "[agenda-index]",
+                    "Tipo de Agendamento": "",
+                    "Profissional": "",
+                    "Duração Min": str(duration_min) if duration_min else "",
+                    "Telefone": "",
+                    "CPF": "",
+                    "Por onde nos conheceu": "",
+                    "Serviço a realizar": "",
+                    "Observações": "",
+                    "Status": "",
+                }
+            )
+
+    return rows
 
 
 def _filter_remaining_month(rows: list[dict[str, str]], *, today: date) -> list[dict[str, str]]:
@@ -259,11 +323,18 @@ def _post_agenda_sync(
         for row in rows:
             if not isinstance(row, dict):
                 continue
+            time_norm = _normalize_sync_time(row.get("Horário", "") or row.get("Horario", ""))
+            if not time_norm:
+                continue
+            duration_min = row.get("Duração Min", "") or row.get("Duracao Min", "")
+            if not duration_min:
+                parsed_duration = parse_duration_minutes_from_time_text(row.get("Horário", "") or row.get("Horario", ""))
+                duration_min = str(parsed_duration) if parsed_duration else ""
             change = (row.get("Mudança") or row.get("Mudanca") or "").strip().upper()
             item = {
                 "data": row.get("Data", ""),
-                "horario": row.get("Horário", "") or row.get("Horario", ""),
-                "duration_min": row.get("Duração Min", "") or row.get("Duracao Min", ""),
+                "horario": time_norm,
+                "duration_min": duration_min,
                 "cliente": row.get("Cliente", ""),
                 "tipo": row.get("Tipo de Agendamento", ""),
                 "profissional": row.get("Profissional", ""),
@@ -367,11 +438,18 @@ def _post_agenda_full_sync(
     for row in rows:
         if not isinstance(row, dict):
             continue
+        time_norm = _normalize_sync_time(row.get("Horário", "") or row.get("Horario", ""))
+        if not time_norm:
+            continue
+        duration_min = row.get("Duração Min", "") or row.get("Duracao Min", "")
+        if not duration_min:
+            parsed_duration = parse_duration_minutes_from_time_text(row.get("Horário", "") or row.get("Horario", ""))
+            duration_min = str(parsed_duration) if parsed_duration else ""
         added.append(
             {
                 "data": row.get("Data", ""),
-                "horario": row.get("Horário", "") or row.get("Horario", ""),
-                "duration_min": row.get("Duração Min", "") or row.get("Duracao Min", ""),
+                "horario": time_norm,
+                "duration_min": duration_min,
                 "cliente": row.get("Cliente", ""),
                 "tipo": row.get("Tipo de Agendamento", ""),
                 "profissional": row.get("Profissional", ""),
@@ -611,21 +689,15 @@ def main(mode: str = "full") -> bool:
                 log("No changes detected; skipping full export.")
                 return True
 
-            rows_delta: list[dict[str, str]] = []
+            rows_delta: list[dict[str, str]] = _build_rows_from_index_signatures(
+                rows_index=rows_index,
+                signatures=Counter(added),
+                signature_mode=signature_mode,
+            )
+
             if added_total > 0:
-                rows_delta = _run_with_scrape_retries(
-                    "scrape_complete(delta)",
-                    lambda: scrape_complete(
-                        driver,
-                        target_signatures=Counter(added),
-                        signature_mode=signature_mode,
-                    ),
-                    driver=driver,
-                    cfg=cfg,
-                    creds=creds,
-                )
                 if not rows_delta:
-                    log("ERROR: No matching appointments extracted for delta export.")
+                    log("ERROR: No matching index rows extracted for delta export.")
                     return False
 
                 csv_path, xlsx_path = save(rows_delta, output_dir=cfg.output_dir, prefix=DELTA_PREFIX)
@@ -663,21 +735,60 @@ def main(mode: str = "full") -> bool:
                     log("WARNING: agenda sync failed")
             return True
 
-        rows = _run_with_scrape_retries(
-            "scrape_complete(full)",
-            lambda: scrape_complete(driver),
-            driver=driver,
-            cfg=cfg,
-            creds=creds,
-        )
-        if not rows:
-            log("ERROR: No appointments extracted")
-            return False
+        index_rows_for_sync: list[dict[str, str]] = []
+        try:
+            index_rows_for_sync = _run_with_scrape_retries(
+                "scrape_index(preflight_coverage)",
+                lambda: scrape_index(driver, signature_mode=signature_mode),
+                driver=driver,
+                cfg=cfg,
+                creds=creds,
+            )
+            if date_filter is not None:
+                before = len(index_rows_for_sync)
+                index_rows_for_sync = date_filter(index_rows_for_sync)
+                log(f"Index filter ({date_filter_label}): {before} -> {len(index_rows_for_sync)}")
+        except Exception as e:
+            log(f"WARNING: preflight index scrape failed ({type(e).__name__}: {e})")
+
+        rows: list[dict[str, str]] = []
+        try:
+            rows = _run_with_scrape_retries(
+                "scrape_complete(full)",
+                lambda: scrape_complete(driver),
+                driver=driver,
+                cfg=cfg,
+                creds=creds,
+            )
+        except Exception as e:
+            log(f"WARNING: complete scrape failed ({type(e).__name__}: {e}); continuing with index fallback.")
 
         if date_filter is not None:
             before = len(rows)
             rows = date_filter(rows)
             log(f"Full filter ({date_filter_label}): {before} -> {len(rows)}")
+
+        # Ensure sync coverage from index rows, even when complete extraction misses events.
+
+        if index_rows_for_sync:
+            index_signatures = _count_signatures(index_rows_for_sync)
+            index_rows_minimal = _build_rows_from_index_signatures(
+                rows_index=index_rows_for_sync,
+                signatures=index_signatures,
+                signature_mode=signature_mode,
+            )
+            existing_keys = {key for key in (_row_sync_key(r) for r in rows) if key is not None}
+            added_from_index = 0
+            for row in index_rows_minimal:
+                key = _row_sync_key(row)
+                if key is None or key in existing_keys:
+                    continue
+                rows.append(row)
+                existing_keys.add(key)
+                added_from_index += 1
+            if added_from_index:
+                log(f"Added {added_from_index} index fallback rows for full sync coverage.")
+
         if not rows:
             log("ERROR: No appointments extracted after date filter")
             return False
