@@ -6022,10 +6022,15 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
                     steps.push({ phase: 'repo-sync', ...syncStep })
                 }
                 if (!syncResult.success) {
-                    return res.status(500).json({
+                    const syncError = syncResult.error || 'RECOVERY_SYNC_FAILED'
+                    const syncStatus = syncError === 'RECOVERY_SYNC_REPO_DIRTY' ? 409 : 500
+                    return res.status(syncStatus).json({
                         success: false,
                         mode,
-                        error: syncResult.error || 'RECOVERY_SYNC_FAILED',
+                        error: syncError,
+                        hint: syncError === 'RECOVERY_SYNC_REPO_DIRTY'
+                            ? 'Workspace has uncommitted changes; retry after workspace is clean or allow auto-stash explicitly.'
+                            : undefined,
                         sync: syncSummary,
                         steps
                     })

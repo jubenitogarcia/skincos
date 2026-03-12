@@ -104,6 +104,7 @@ jobs:
           GITHUB_SHA: ${{ steps.sha.outputs.sha }}
 
       - name: Deploy via HTTP restart (main SHA)
+        id: http_restart
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && steps.guard.outputs.mode == 'http_restart' }}
         env:
           RESTART_URL: ${{ vars.CRM_API_RESTART_URL }}
@@ -116,23 +117,47 @@ jobs:
           {"mode":"stack","reason":"github-actions-reconcile-crm-api","sha":"${GITHUB_SHA}","syncRepo":true,"syncSha":"${GITHUB_SHA}","syncAutoStash":false}
           JSON
           )"
-          response="$(curl -fsS --retry 3 --retry-delay 2 --retry-connrefused \
+          response_file="$(mktemp)"
+          http_code="$(curl -sS --retry 3 --retry-delay 2 --retry-connrefused \
+            -o "${response_file}" \
+            -w "%{http_code}" \
             -X POST "${RESTART_URL}" \
             -H "authorization: Basic ${AUTH_HEADER}" \
             -H "content-type: application/json" \
             --data "${payload}")"
+          response="$(cat "${response_file}")"
+          rm -f "${response_file}"
           echo "${response}"
-          python3 -c 'import json,sys; data=json.loads(sys.stdin.read()); ok=bool(data.get("success")); sys.exit(0 if ok else 1)' <<<"${response}"
+          decision="$(python3 -c 'import json,sys; d=json.loads((sys.stdin.read() or "{}").strip() or "{}"); e=str(d.get("error") or "").strip(); print("DEPLOYED" if d.get("success") else ("SKIP_DIRTY" if e == "RECOVERY_SYNC_REPO_DIRTY" else f"FAIL:{e or \"UNKNOWN_ERROR\"}"))' <<<"${response}")"
+          case "${decision}" in
+            DEPLOYED)
+              echo "deployed=true" >> "$GITHUB_OUTPUT"
+              ;;
+            SKIP_DIRTY)
+              echo "::warning::CRM API reconcile skipped repo sync because workspace is dirty (http=${http_code}); retry will continue automatically."
+              echo "deployed=false" >> "$GITHUB_OUTPUT"
+              ;;
+            FAIL:*)
+              echo "::error::CRM API reconcile http_restart failed (http=${http_code}, reason=${decision#FAIL:})."
+              echo "deployed=false" >> "$GITHUB_OUTPUT"
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected deploy decision '${decision}' (http=${http_code})."
+              echo "deployed=false" >> "$GITHUB_OUTPUT"
+              exit 1
+              ;;
+          esac
 
       - name: Mark deployed SHA
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() && (steps.guard.outputs.mode == 'ssh' || steps.http_restart.outputs.deployed == 'true') }}
         run: |
           set -euo pipefail
           mkdir -p deploy-state
           echo "${{ steps.sha.outputs.sha }}" > deploy-state/crm_api_deployed_sha.txt
 
       - name: Save deploy cache
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() && (steps.guard.outputs.mode == 'ssh' || steps.http_restart.outputs.deployed == 'true') }}
         uses: actions/cache/save@v4
         with:
           key: crm-api-deploy-${{ steps.sha.outputs.sha }}

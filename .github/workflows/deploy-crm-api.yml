@@ -86,10 +86,30 @@ jobs:
           {"mode":"stack","reason":"github-actions-deploy-crm-api","sha":"${GITHUB_SHA}","syncRepo":true,"syncSha":"${GITHUB_SHA}","syncAutoStash":false}
           JSON
           )"
-          response="$(curl -fsS --retry 3 --retry-delay 2 --retry-connrefused \
+          response_file="$(mktemp)"
+          http_code="$(curl -sS --retry 3 --retry-delay 2 --retry-connrefused \
+            -o "${response_file}" \
+            -w "%{http_code}" \
             -X POST "${RESTART_URL}" \
             -H "authorization: Basic ${AUTH_HEADER}" \
             -H "content-type: application/json" \
             --data "${payload}")"
+          response="$(cat "${response_file}")"
+          rm -f "${response_file}"
           echo "${response}"
-          python3 -c 'import json,sys; data=json.loads(sys.stdin.read()); ok=bool(data.get("success")); sys.exit(0 if ok else 1)' <<<"${response}"
+          decision="$(python3 -c 'import json,sys; d=json.loads((sys.stdin.read() or "{}").strip() or "{}"); e=str(d.get("error") or "").strip(); print("DEPLOYED" if d.get("success") else ("SKIP_DIRTY" if e == "RECOVERY_SYNC_REPO_DIRTY" else f"FAIL:{e or \"UNKNOWN_ERROR\"}"))' <<<"${response}")"
+          case "${decision}" in
+            DEPLOYED)
+              ;;
+            SKIP_DIRTY)
+              echo "::warning::CRM API http_restart skipped deploy sync because workspace is dirty (http=${http_code}); retry when workspace is clean."
+              ;;
+            FAIL:*)
+              echo "::error::CRM API http_restart failed (http=${http_code}, reason=${decision#FAIL:})."
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected deploy decision '${decision}' (http=${http_code})."
+              exit 1
+              ;;
+          esac
