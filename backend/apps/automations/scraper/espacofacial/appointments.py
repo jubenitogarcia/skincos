@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 import time
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -312,8 +313,9 @@ def build_event_signature(
 def _find_value_by_label_in_text(text: str, *, labels: list[str]) -> str:
     """Best-effort label/value extraction from modal text.
 
-    Works for layouts where the label is on one line and the value is on the same
-    line (after a colon) or on the next line.
+    Works for layouts where the label is on one line and the value is:
+    - on the same line (with or without ":" / "-"), or
+    - on the next line.
     """
 
     lines = [_normalize_spaces(l) for l in (text or "").split("\n")]
@@ -328,7 +330,21 @@ def _find_value_by_label_in_text(text: str, *, labels: list[str]) -> str:
         for lab, lab_low in zip(labels, labels_low):
             if lab_low not in low:
                 continue
-            # Same-line value: "Label: value"
+            # Same-line value variants:
+            # - "Label: value"
+            # - "Label - value"
+            # - "Label value"
+            stripped = _normalize_spaces(
+                re.sub(
+                    rf"^\s*{re.escape(lab)}\s*[:\-]?\s*",
+                    "",
+                    line,
+                    flags=re.IGNORECASE,
+                )
+            )
+            if stripped and stripped.lower() not in ignore_values and stripped.lower() != low:
+                return stripped
+
             if ":" in line:
                 after = _normalize_spaces(line.split(":", 1)[1])
                 if after and after.lower() not in ignore_values:
@@ -366,20 +382,46 @@ def _clean_placeholder(value: str) -> str:
 def _find_field_container_by_label(modal, label: str):
     """Locate a field container by visible label inside the modal."""
 
-    xps = [
-        f'.//*[self::h2 or self::p or self::label or self::span][contains(normalize-space(.), "{label}")]',
-    ]
-    for xp in xps:
-        try:
-            el = modal.find_element(By.XPATH, xp)
-            # Walk up a bit to find a container that likely holds an input/select.
+    upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ"
+    lower = "abcdefghijklmnopqrstuvwxyzàáâãäåçèéêëìíîïñòóôõöùúûüý"
+    label_low = (label or "").strip().lower()
+    if not label_low:
+        return None
+
+    xp = (
+        './/*[self::h2 or self::p or self::label or self::span]'
+        f'[contains(translate(normalize-space(.), "{upper}", "{lower}"), "{label_low}")]'
+    )
+    try:
+        label_nodes = modal.find_elements(By.XPATH, xp)
+    except Exception:
+        return None
+
+    if not label_nodes:
+        return None
+
+    control_probe = './/input | .//textarea | .//*[contains(@class, "multiselect")]'
+    for el in label_nodes:
+        candidate_paths = [
+            ".",
+            "./parent::div[1]",
+            "./parent::div[1]/parent::div[1]",
+            "./parent::div[1]/following-sibling::div[1]",
+            "./parent::div[1]/following-sibling::div[.//input or .//textarea or .//*[contains(@class, 'multiselect')]][1]",
+        ]
+        for cpath in candidate_paths:
             try:
-                return el.find_element(By.XPATH, "./ancestor::div[1]")
+                container = el.find_element(By.XPATH, cpath)
             except Exception:
-                return el
-        except Exception:
-            continue
-    return None
+                continue
+            try:
+                if container.find_elements(By.XPATH, control_probe):
+                    return container
+            except Exception:
+                continue
+
+    # Last resort: return the first visible label node.
+    return label_nodes[0]
 
 
 def _extract_input_value_from_container(container) -> str:
@@ -474,11 +516,23 @@ def _is_invalid_field_value(value: str, *, blocked_labels: list[str] | None = No
     low = text.lower().strip(":")
     if blocked_labels:
         blocked = {b.lower().strip(":") for b in blocked_labels if b}
-        if low in blocked:
-            return True
+        for b in blocked:
+            if low == b or low.startswith(f"{b} ") or low.startswith(f"{b}:") or low.startswith(f"{b}-"):
+                return True
     if _looks_like_internal_id(text):
         return True
     return False
+
+
+def _env_truthy(name: str) -> bool:
+    return (os.getenv(name, "").strip().lower()) in {"1", "true", "yes", "on"}
+
+
+def _truncate(text: str, *, limit: int = 1600) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= limit:
+        return raw
+    return raw[:limit] + "..."
 
 
 def _find_first_text(modal, *, xpaths: list[str]) -> str:
@@ -564,13 +618,13 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
         )
         details["Tipo de Agendamento"] = _extract_value_by_label(
             modal,
-            labels=["Tipo de Agendamento"],
+            labels=["Tipo de Agendamento", "Tipo de agendamento", "Tipo do agendamento"],
             prefer_multiselect=True,
             allow_input=True,
         )
         if _is_invalid_field_value(
             details["Tipo de Agendamento"],
-            blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Status", "Origem do cliente"],
+            blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Tipo do agendamento", "Status", "Origem do cliente"],
         ):
             details["Tipo de Agendamento"] = ""
 
@@ -719,10 +773,15 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
             ):
                 details["Profissional"] = by_text_prof
         if not details["Tipo de Agendamento"]:
-            by_text_type = _clean_placeholder(_find_value_by_label_in_text(text, labels=["Tipo de Agendamento"]))
+            by_text_type = _clean_placeholder(
+                _find_value_by_label_in_text(
+                    text,
+                    labels=["Tipo de Agendamento", "Tipo de agendamento", "Tipo do agendamento"],
+                )
+            )
             if not _is_invalid_field_value(
                 by_text_type,
-                blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Status", "Origem do cliente"],
+                blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Tipo do agendamento", "Status", "Origem do cliente"],
             ):
                 details["Tipo de Agendamento"] = by_text_type
         if not details["Observações"]:
@@ -739,6 +798,71 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
         if not details["Status"]:
             details["Status"] = _extract_status(text)
         details["Status"] = _collapse_repeated_phrase(details["Status"])
+        details["Profissional"] = _collapse_repeated_phrase(details["Profissional"])
+        details["Tipo de Agendamento"] = _collapse_repeated_phrase(details["Tipo de Agendamento"])
+        details["Por onde nos conheceu"] = _collapse_repeated_phrase(details["Por onde nos conheceu"])
+
+        # Defensive rule: when type accidentally mirrors injector, trust the explicit
+        # "Tipo ..." text labels instead of keeping a likely wrong value.
+        if details["Tipo de Agendamento"] and details["Profissional"]:
+            if _normalize_signature_text(details["Tipo de Agendamento"]) == _normalize_signature_text(details["Profissional"]):
+                details["Tipo de Agendamento"] = ""
+                by_text_type = _clean_placeholder(
+                    _find_value_by_label_in_text(
+                        text,
+                        labels=["Tipo de Agendamento", "Tipo de agendamento", "Tipo do agendamento"],
+                    )
+                )
+                if (
+                    by_text_type
+                    and not _is_invalid_field_value(
+                        by_text_type,
+                        blocked_labels=[
+                            "Injetor",
+                            "Profissional",
+                            "Tipo de Agendamento",
+                            "Tipo do agendamento",
+                            "Status",
+                            "Origem do cliente",
+                        ],
+                    )
+                    and _normalize_signature_text(by_text_type) != _normalize_signature_text(details["Profissional"])
+                ):
+                    details["Tipo de Agendamento"] = by_text_type
+
+        type_equals_professional = (
+            bool(details.get("Tipo de Agendamento"))
+            and bool(details.get("Profissional"))
+            and _normalize_signature_text(details["Tipo de Agendamento"]) == _normalize_signature_text(details["Profissional"])
+        )
+        if _env_truthy("EF_DEBUG_MODAL_DUMP") and (not details["Tipo de Agendamento"] or type_equals_professional):
+            client_filter = (os.getenv("EF_DEBUG_MODAL_CLIENT_CONTAINS", "") or "").strip().lower()
+            haystack = f'{details.get("Cliente", "")} {text}'.lower()
+            if not client_filter or client_filter in haystack:
+                reason = "missing" if not details["Tipo de Agendamento"] else "equals_professional"
+                log_file_only(
+                    "DEBUG modal type issue (%s) | Cliente=%r | Profissional=%r | Tipo=%r | Status=%r"
+                    % (
+                        reason,
+                        details.get("Cliente", ""),
+                        details.get("Profissional", ""),
+                        details.get("Tipo de Agendamento", ""),
+                        details.get("Status", ""),
+                    )
+                )
+                tipo_lines = [ln.strip() for ln in text.split("\n") if "tipo" in ln.lower()]
+                for ln in tipo_lines[:8]:
+                    log_file_only("DEBUG line(tipo): " + _truncate(ln, limit=300))
+
+                tipo_container = _find_field_container_by_label(modal, "Tipo de Agendamento")
+                if tipo_container is None:
+                    tipo_container = _find_field_container_by_label(modal, "Tipo de agendamento")
+                if tipo_container is not None:
+                    log_file_only("DEBUG tipo container html: " + _truncate(_safe_outer_html(tipo_container)))
+                    log_file_only("DEBUG tipo multiselect: " + _truncate(_extract_multiselect_value_from_container(tipo_container), limit=300))
+                    log_file_only("DEBUG tipo input: " + _truncate(_extract_input_value_from_container(tipo_container), limit=300))
+                else:
+                    log_file_only("DEBUG tipo container not found")
     except Exception:
         return details
 
