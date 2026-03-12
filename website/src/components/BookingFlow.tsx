@@ -53,6 +53,7 @@ type DoctorSelection = { slug: string; name: string; handle: string | null };
 
 const ANY_DOCTOR: DoctorSelection = { slug: "any", name: "Sem Preferência", handle: null };
 const OTHER_SERVICE: Service = { id: "any", name: "Outro", subtitle: "Outro procedimento ou combinação" };
+const BOOKING_WINDOW_WEEKS = 4;
 
 function isOkResponse(value: unknown): value is { ok: true } {
     return !!value && typeof value === "object" && (value as { ok?: unknown }).ok === true;
@@ -506,7 +507,7 @@ export default function BookingFlow() {
     const upcomingWeeks = useMemo(() => {
         const out: string[][] = [];
         const base = startOfCurrentWeek(new Date());
-        for (let weekIndex = 0; weekIndex < 8; weekIndex += 1) {
+        for (let weekIndex = 0; weekIndex < BOOKING_WINDOW_WEEKS; weekIndex += 1) {
             const week: string[] = [];
             for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
                 const d = new Date(base);
