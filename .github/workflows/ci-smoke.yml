@@ -38,6 +38,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Website lint
+        working-directory: website
+        run: npm run lint
+
+      - name: Website tests
+        working-directory: website
+        run: npm run test
+
+      - name: Website build
+        working-directory: website
+        run: npm run build
 
       - name: Install backend workspace deps (pnpm)
         if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}

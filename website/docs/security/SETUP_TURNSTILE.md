@@ -34,5 +34,7 @@ Veja `.dev.vars.example`.
 ## Comportamento
 
 - Se `NEXT_PUBLIC_TURNSTILE_SITE_KEY` não existir: o widget não aparece.
-- Se `TURNSTILE_SECRET_KEY` não existir: o backend não valida (não bloqueia).
-
+- Produção é **fail-closed por padrão**: se `TURNSTILE_SECRET_KEY` não existir, `POST /api/booking/request` retorna `turnstile_unavailable` (503).
+- Em ambientes não-produtivos você pode controlar via `BOOKING_REQUIRE_TURNSTILE`:
+  - `true/1` força validação.
+  - `false/0` permite execução sem bloqueio quando necessário para desenvolvimento.

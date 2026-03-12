@@ -2,6 +2,12 @@
 
 # Opcional: links assinados para confirmar/recusar via WhatsApp/webhook (recomendado)
 BOOKING_DECISION_SECRET=
+# Opcional: token assinado para polling de status do agendamento (fallback: BOOKING_DECISION_SECRET)
+BOOKING_STATUS_SECRET=
+# Opcional: segredo para lock server-side da roleta /cadastro
+CADASTRO_WHEEL_SECRET=
+# Opcional: janela de lock da roleta em horas (default: 24, máximo: 168)
+CADASTRO_WHEEL_LOCK_HOURS=
 
 # Opcional: webhook para automação (ex.: seu serviço que envia WhatsApp)
 BOOKING_WEBHOOK_URL=
@@ -17,3 +23,5 @@ SMOKE_AGENDA_TOKEN=
 NEXT_PUBLIC_TURNSTILE_SITE_KEY=
 # - Secret key: server-side (configure como Worker secret em produção)
 TURNSTILE_SECRET_KEY=
+# Opcional: controle explícito do fail-closed do Turnstile
+BOOKING_REQUIRE_TURNSTILE=

@@ -28,7 +28,7 @@ type SlotsPayload = {
 type NotificationResult = { ok: boolean; status: string; provider?: string; error?: string };
 
 type RequestResponse =
-    | { ok: true; id: string; status: string; confirmByMs: number; startAtMs: number; endAtMs: number; unitSlug: string; doctorSlug: string; doctorName: string; service: { id: string; name: string }; notifications?: { email: NotificationResult; whatsapp: NotificationResult } }
+    | { ok: true; id: string; status: string; confirmByMs: number; startAtMs: number; endAtMs: number; unitSlug: string; doctorSlug: string; doctorName: string; service: { id: string; name: string }; statusToken?: string | null; statusTokenExpMs?: number; notifications?: { email: NotificationResult; whatsapp: NotificationResult } }
     | { ok: false; error: string; message?: string };
 
 type BookingStatus = {
@@ -311,7 +311,7 @@ export default function BookingFlow() {
     const [activeInstagram, setActiveInstagram] = useState<DoctorInstagramProfile | null>(null);
     const [dateAvailability, setDateAvailability] = useState<Record<string, boolean>>({});
 
-    const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; notifications?: { email: NotificationResult; whatsapp: NotificationResult } } | null>(null);
+    const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult } } | null>(null);
     const [status, setStatus] = useState<BookingStatus | null>(null);
     const draftToRestoreRef = useRef<BookingDraftState | null>(null);
     const draftAppliedRef = useRef(false);
@@ -724,11 +724,21 @@ export default function BookingFlow() {
                     setSubmitError("Falha na verificação anti-robô. Recarregue a página e tente novamente.");
                     return;
                 }
+                if (err === "turnstile_unavailable") {
+                    setSubmitError("Verificação anti-robô indisponível no momento. Tente novamente em instantes.");
+                    return;
+                }
                 setSubmitError("Não foi possível enviar seu pedido. Tente novamente.");
                 return;
             }
 
-            setSubmitted({ id: json.id, status: json.status, confirmByMs: json.confirmByMs, notifications: json.notifications });
+            setSubmitted({
+                id: json.id,
+                status: json.status,
+                confirmByMs: json.confirmByMs,
+                statusToken: json.statusToken ?? null,
+                notifications: json.notifications,
+            });
             trackBookingRequestSubmitted({
                 bookingId: json.id,
                 unitSlug,
@@ -751,12 +761,18 @@ export default function BookingFlow() {
     useEffect(() => {
         if (!submitted) return;
         const bookingId = submitted.id;
+        const statusToken = submitted.statusToken;
+        if (typeof statusToken !== "string" || statusToken.length === 0) return;
+        const safeStatusToken: string = statusToken;
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
 
         async function tick() {
             try {
-                const res = await fetch(`/api/booking/status?id=${encodeURIComponent(bookingId)}`, { cache: "no-store" });
+                const res = await fetch(
+                    `/api/booking/status?id=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(safeStatusToken)}`,
+                    { cache: "no-store" },
+                );
                 const json = (await res.json().catch(() => null)) as StatusResponse | null;
                 if (cancelled) return;
                 if (res.ok && json && isOkResponse(json)) {

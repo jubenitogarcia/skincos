@@ -7,8 +7,8 @@ Este repositório inclui um script versionado para manter configurações de seg
 
 ## Como roda
 
-- Manual/agenda: workflow `Sync Cloudflare Security` (`.github/workflows/sync-cloudflare-security.yml`)
-- Também roda no deploy (best-effort) após `npm run deploy` (`.github/workflows/deploy-cloudflare.yml`)
+- Manual/agenda: workflow `Sync Website Cloudflare Security` (`.github/workflows/sync-website-cloudflare-security.yml`)
+- Também roda no deploy após `npm run deploy` (`.github/workflows/deploy-website-cloudflare.yml`)
 
 ## Requisitos
 
@@ -27,7 +27,11 @@ Local:
 CF_ZONE_NAME=espacofacial.com npm run cf:security
 ```
 
+Validação de drift:
+```bash
+CF_ZONE_NAME=espacofacial.com npm run cf:security:check
+```
+
 ## Observação
 
-O step de sync no deploy usa `continue-on-error: true` para não quebrar a publicação caso o token/permissões não suportem alguma configuração.
-
+O deploy valida o estado final com `cf:security:check`; falha de segurança deve bloquear publicação.

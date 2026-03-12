@@ -6,6 +6,7 @@ import { getAgendaDb } from "@/lib/agendaDb";
 import { sendBookingNotifications } from "@/lib/bookingNotifications";
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
+import { issueBookingStatusToken } from "@/lib/bookingSecurity";
 
 export const dynamic = "force-dynamic";
 
@@ -353,6 +354,15 @@ export async function POST(request: Request) {
 
     // Optional Cloudflare Turnstile verification (recommended for production).
     const turnstileSecret = (process.env.TURNSTILE_SECRET_KEY ?? "").trim();
+    const requireTurnstileRaw = (process.env.BOOKING_REQUIRE_TURNSTILE ?? "").trim().toLowerCase();
+    const requireTurnstile =
+        requireTurnstileRaw === "1" ||
+        requireTurnstileRaw === "true" ||
+        requireTurnstileRaw === "yes" ||
+        (requireTurnstileRaw === "" && process.env.NODE_ENV === "production");
+    if (requireTurnstile && !turnstileSecret) {
+        return json({ ok: false, error: "turnstile_unavailable" }, { status: 503 });
+    }
     if (turnstileSecret) {
         if (!turnstileToken) {
             return json({ ok: false, error: "turnstile_failed" }, { status: 403 });
@@ -507,33 +517,6 @@ export async function POST(request: Request) {
         // Best-effort: avoid blocking booking if customer upsert fails.
     }
 
-    // Optional: notify external automation via webhook (WhatsApp integration etc.)
-    void tryPostWebhook({
-        event: "booking.created",
-        booking: {
-            id,
-            status,
-            unitSlug,
-            doctorSlug: effectiveDoctorSlug,
-            doctorName: safeDoctorName,
-            durationMinutes,
-            includes: body.includes ?? null,
-            service: { id: service.id, name: service.name },
-            selectedServices: selectedProcedures.map((item) => ({ id: item.id, name: item.name })),
-            startAtMs,
-            endAtMs,
-            confirmByMs,
-            patientName,
-            email,
-            whatsapp,
-            cpf,
-            address,
-            customerId,
-            notes,
-        },
-        decisionLinks,
-    });
-
     try {
         await db
             .prepare(
@@ -577,6 +560,44 @@ export async function POST(request: Request) {
             })
             : { email: { ok: false, status: "skipped", error: "not_confirmed" }, whatsapp: { ok: false, status: "skipped", error: "not_confirmed" } };
 
+    // Optional: notify external automation via webhook (WhatsApp integration etc.)
+    await tryPostWebhook({
+        event: "booking.created",
+        booking: {
+            id,
+            status,
+            unitSlug,
+            doctorSlug: effectiveDoctorSlug,
+            doctorName: safeDoctorName,
+            durationMinutes,
+            includes: body.includes ?? null,
+            service: { id: service.id, name: service.name },
+            selectedServices: selectedProcedures.map((item) => ({ id: item.id, name: item.name })),
+            startAtMs,
+            endAtMs,
+            confirmByMs,
+            patientName,
+            email,
+            whatsapp,
+            cpf,
+            address,
+            customerId,
+            notes,
+        },
+        decisionLinks,
+    });
+
+    const statusTokenExpMs = addMinutes(confirmByMs, 120);
+    const statusSecret = (process.env.BOOKING_STATUS_SECRET ?? process.env.BOOKING_DECISION_SECRET ?? "").trim();
+    let statusToken: string | null = null;
+    if (statusSecret) {
+        try {
+            statusToken = await issueBookingStatusToken({ secret: statusSecret, id, expMs: statusTokenExpMs });
+        } catch {
+            statusToken = null;
+        }
+    }
+
     return json(
         {
             ok: true,
@@ -591,6 +612,8 @@ export async function POST(request: Request) {
             startAtMs,
             endAtMs,
             decisionLinks,
+            statusToken,
+            statusTokenExpMs,
             notifications,
         },
         { status: 200 },
