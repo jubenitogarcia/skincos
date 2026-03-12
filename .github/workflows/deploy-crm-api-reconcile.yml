@@ -128,7 +128,14 @@ jobs:
           response="$(cat "${response_file}")"
           rm -f "${response_file}"
           echo "${response}"
-          decision="$(python3 -c 'import json,sys; d=json.loads((sys.stdin.read() or "{}").strip() or "{}"); e=str(d.get("error") or "").strip(); print("DEPLOYED" if d.get("success") else ("SKIP_DIRTY" if e == "RECOVERY_SYNC_REPO_DIRTY" else f"FAIL:{e or \"UNKNOWN_ERROR\"}"))' <<<"${response}")"
+          if ! decision="$(jq -r '
+            if (.success == true) then "DEPLOYED"
+            elif ((.error // "") == "RECOVERY_SYNC_REPO_DIRTY") then "SKIP_DIRTY"
+            else "FAIL:\((.error // "UNKNOWN_ERROR"))"
+            end
+          ' <<<"${response}" 2>/dev/null)"; then
+            decision="FAIL:INVALID_JSON"
+          fi
           case "${decision}" in
             DEPLOYED)
               echo "deployed=true" >> "$GITHUB_OUTPUT"
