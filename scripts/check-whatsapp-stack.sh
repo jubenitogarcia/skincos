@@ -68,10 +68,11 @@ if [[ -n "$API_KEY" ]]; then
   curl -fsS -m 8 -H "apikey: $API_KEY" https://wa.skincos.com.br/instance/fetchInstances >/dev/null \
     && echo "wa.skincos.com.br: OK" || echo "wa.skincos.com.br: FAIL"
 fi
+curl -fsS -m 8 https://orb.skincos.com.br/healthz || echo "orb.skincos.com.br/healthz: FAIL"
 
 echo
 echo "== launchd =="
-launchctl list | grep -E "com.jubenito.n8n-evolution|com.skincos.cloudflared.cs|com.skincos.whatsapp-watchdog" || true
+launchctl list | grep -E "com.jubenito.n8n-evolution|com.skincos.cloudflared.cs|com.skincos.cloudflared.orb|com.skincos.whatsapp-watchdog" || true
 launchctl list | grep -E "com.skincos.evolution-api" || true
 launchctl list | grep -E "com.skincos.crm-api" || true
 launchctl list | grep -E "com.skincos.keepawake.agent" || true

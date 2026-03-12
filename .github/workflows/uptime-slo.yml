@@ -12,12 +12,13 @@ jobs:
       OBS_HEALTHCHECK_URLS: ${{ vars.OBS_HEALTHCHECK_URLS }}
       OBS_LATENCY_MS: ${{ vars.OBS_LATENCY_MS }}
       OBS_TIMEOUT_SEC: ${{ vars.OBS_TIMEOUT_SEC }}
+      OBS_ALERT_WEBHOOK_URL: ${{ secrets.OBS_ALERT_WEBHOOK_URL }}
     steps:
       - name: Health checks
         shell: bash
         run: |
           set -euo pipefail
-          urls="${OBS_HEALTHCHECK_URLS:-https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health}"
+          urls="${OBS_HEALTHCHECK_URLS:-https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health,https://orb.skincos.com.br/healthz}"
           max_ms="${OBS_LATENCY_MS:-800}"
           timeout_sec="${OBS_TIMEOUT_SEC:-10}"
           IFS=',' read -ra list <<< "$urls"
@@ -44,3 +45,19 @@ jobs:
             echo "FAILED health checks: $failures"
             exit 1
           fi
+
+      - name: Notify webhook on failure
+        if: failure() && env.OBS_ALERT_WEBHOOK_URL != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(jq -n \
+            --arg wf "${{ github.workflow }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg ref "${{ github.ref_name }}" \
+            '{text: ("[SLO][FAIL] " + $wf + " em " + $repo + " (" + $ref + "). Run: " + $run_url)}')
+          curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$OBS_ALERT_WEBHOOK_URL"

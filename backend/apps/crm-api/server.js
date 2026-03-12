@@ -88,6 +88,9 @@ const WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS = Math.max(
     15_000,
     Number.parseInt(String(process.env.WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS || '120000'), 10) || 120_000
 )
+const WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH = String(
+    process.env.WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH || 'false'
+).toLowerCase() === 'true'
 const LOCAL_EVOLUTION_LAUNCHD_LABEL = String(
     process.env.LOCAL_EVOLUTION_LAUNCHD_LABEL || 'com.skincos.evolution-api'
 ).trim()
@@ -3755,10 +3758,14 @@ const USE_EVOLUTION_ORCHESTRATOR = WA_ORCHESTRATOR_PROVIDER === 'evolution'
 const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
 const WA_BOOTSTRAP_SYNC_FILE = process.env.WA_BOOTSTRAP_SYNC_FILE || path.join(CORE_STATE_DIR, 'wa_bootstrap_sync.v1.json')
 const WA_CONTACT_DIRECTORY_FILE = process.env.WA_CONTACT_DIRECTORY_FILE || path.join(CORE_STATE_DIR, 'wa_contact_directory.v1.json')
+const WA_CHANNEL_OWNERS_FILE = process.env.WA_CHANNEL_OWNERS_FILE || path.join(CORE_STATE_DIR, 'wa_channel_owners.v1.json')
+const WA_CHANNEL_OWNER_ENFORCED = String(process.env.WA_CHANNEL_OWNER_ENFORCED || 'true').trim().toLowerCase() !== 'false'
 let waBootstrapSyncState = { channels: {} }
 let waContactDirectory = { channels: {} }
+let waChannelOwnersState = { channels: {} }
 let waBootstrapPersistTimer = null
 let waContactDirectoryPersistTimer = null
+let waChannelOwnersPersistTimer = null
 const waBootstrapSyncTasks = new Map()
 
 // Legacy compatibility - remove port 3002 reservation
@@ -4579,7 +4586,8 @@ function resolveWebhookHeaders() {
 
 function resolveMessageActor(req) {
     const session = typeof devAuthSessionResolver === 'function' ? devAuthSessionResolver(req) : null
-    const user = session?.user || {}
+    if (req?.waActor?.key) return String(req.waActor.key)
+    const user = req?.crmUser || session?.user || {}
     const email = String(user?.email || req.get('x-user-email') || '').trim().toLowerCase()
     const username = String(user?.username || req.get('x-user-name') || '').trim().toLowerCase()
     const role = String(user?.role || req.get('x-user-role') || '').trim().toLowerCase()
@@ -4673,14 +4681,35 @@ function recordWebhookFailure(kind, req, error) {
     }
 }
 
+function resolveWaEventChannel(payload) {
+    const rawChannel = Number.parseInt(String(payload?.channel ?? payload?.data?.channel ?? ''), 10)
+    if (Number.isInteger(rawChannel) && rawChannel >= 1 && rawChannel <= 9) return rawChannel
+    const parsed = parseEvolutionChannelFromInstanceName(payload?.instance || payload?.data?.instance)
+    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 9) return parsed
+    return null
+}
+
 function broadcastWaEvent(payload) {
     const data = `data: ${JSON.stringify(payload)}\n\n`
-    waEventClients.forEach((res) => {
+    const eventChannel = resolveWaEventChannel(payload)
+    waEventClients.forEach((client) => {
+        const target = client?.res || client
+        const actorKey = String(client?.actorKey || '').trim()
+        if (!target) {
+            waEventClients.delete(client)
+            return
+        }
+        if (eventChannel && WA_CHANNEL_OWNER_ENFORCED) {
+            const owner = getWaChannelOwner(eventChannel)
+            if (owner?.ownerKey && owner.ownerKey !== actorKey) {
+                return
+            }
+        }
         try {
-            res.write(data)
+            target.write(data)
         } catch {
-            try { res.end() } catch { /* ignore */ }
-            waEventClients.delete(res)
+            try { target.end() } catch { /* ignore */ }
+            waEventClients.delete(client)
         }
     })
 }
@@ -5111,6 +5140,142 @@ async function persistWaContactDirectoryNow() {
 function schedulePersistWaContactDirectory() {
     if (waContactDirectoryPersistTimer) clearTimeout(waContactDirectoryPersistTimer)
     waContactDirectoryPersistTimer = setTimeout(() => { void persistWaContactDirectoryNow() }, 1000).unref?.()
+}
+
+async function loadWaChannelOwnersState() {
+    try {
+        const raw = await fs.readFile(WA_CHANNEL_OWNERS_FILE, 'utf-8')
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object' && parsed.channels && typeof parsed.channels === 'object') {
+            waChannelOwnersState = parsed
+        }
+    } catch { /* ignore */ }
+}
+
+async function persistWaChannelOwnersNow() {
+    try {
+        await fs.writeFile(WA_CHANNEL_OWNERS_FILE, JSON.stringify(waChannelOwnersState, null, 2))
+    } catch (error) {
+        console.error('[WA_CHANNEL_OWNERS] Persist failed', error?.message || String(error))
+    }
+}
+
+function schedulePersistWaChannelOwners() {
+    if (waChannelOwnersPersistTimer) clearTimeout(waChannelOwnersPersistTimer)
+    waChannelOwnersPersistTimer = setTimeout(() => { void persistWaChannelOwnersNow() }, 600).unref?.()
+}
+
+function resolveWaActorFromUser(user) {
+    if (!user || typeof user !== 'object') return null
+    const normalized = normalizeCrmUser(user)
+    const id = String(normalized?.id || '').trim()
+    const email = String(normalized?.email || '').trim().toLowerCase()
+    const username = String(normalized?.username || '').trim().toLowerCase()
+    const key = id ? `id:${id}` : email ? `email:${email}` : username ? `user:${username}` : ''
+    if (!key) return null
+    const displayName = String(
+        normalized?.displayName ||
+        normalized?.name ||
+        normalized?.username ||
+        normalized?.email ||
+        normalized?.id ||
+        ''
+    ).trim() || key
+    return {
+        key,
+        id: id || null,
+        email: email || null,
+        username: username || null,
+        displayName
+    }
+}
+
+function getWaChannelOwner(channel) {
+    const key = String(channel)
+    const owner = waChannelOwnersState?.channels?.[key]
+    if (!owner || typeof owner !== 'object') return null
+    const ownerKey = String(owner.ownerKey || '').trim()
+    if (!ownerKey) return null
+    return {
+        ownerKey,
+        displayName: String(owner.displayName || '').trim() || ownerKey,
+        userId: String(owner.userId || '').trim() || null,
+        email: String(owner.email || '').trim().toLowerCase() || null,
+        username: String(owner.username || '').trim().toLowerCase() || null,
+        connectedAt: String(owner.connectedAt || '').trim() || null,
+        updatedAt: String(owner.updatedAt || '').trim() || null
+    }
+}
+
+function setWaChannelOwner(channel, actor, { connectedAt = null } = {}) {
+    if (!actor?.key) return null
+    const key = String(channel)
+    if (!waChannelOwnersState.channels || typeof waChannelOwnersState.channels !== 'object') {
+        waChannelOwnersState.channels = {}
+    }
+    const nowIso = new Date().toISOString()
+    const previous = waChannelOwnersState.channels[key] || {}
+    const next = {
+        ownerKey: actor.key,
+        displayName: actor.displayName || previous.displayName || actor.key,
+        userId: actor.id || null,
+        email: actor.email || null,
+        username: actor.username || null,
+        connectedAt: connectedAt || previous.connectedAt || nowIso,
+        updatedAt: nowIso
+    }
+    waChannelOwnersState.channels[key] = next
+    schedulePersistWaChannelOwners()
+    return next
+}
+
+function clearWaChannelOwner(channel, reason = '') {
+    const key = String(channel)
+    if (!waChannelOwnersState.channels || typeof waChannelOwnersState.channels !== 'object') return false
+    if (!waChannelOwnersState.channels[key]) return false
+    delete waChannelOwnersState.channels[key]
+    schedulePersistWaChannelOwners()
+    if (reason) {
+        console.info('[WA_CHANNEL_OWNERS] Owner cleared', { channel, reason })
+    }
+    return true
+}
+
+function isWaChannelIdleStatus(status) {
+    const value = String(status || '').trim().toLowerCase()
+    return value === 'free' || value === 'available' || value === 'stopped' || value === 'disconnected' || value === 'idle'
+}
+
+function canWaActorAccessChannel(actor, channel) {
+    if (!WA_CHANNEL_OWNER_ENFORCED) return true
+    const owner = getWaChannelOwner(channel)
+    if (!owner?.ownerKey) return true
+    if (!actor?.key) return false
+    return owner.ownerKey === actor.key
+}
+
+function scopeWaChannelsForActor(channels, actor) {
+    const out = []
+    for (const channelItem of Array.isArray(channels) ? channels : []) {
+        const channel = Number(channelItem?.channel || 0)
+        if (!Number.isInteger(channel) || channel < 1 || channel > 9) continue
+        const statusLabel = String(channelItem?.status || '').toLowerCase()
+        const owner = getWaChannelOwner(channel)
+
+        if (owner?.ownerKey && isWaChannelIdleStatus(statusLabel)) {
+            clearWaChannelOwner(channel, 'channel idle')
+        }
+
+        if (!owner?.ownerKey || !WA_CHANNEL_OWNER_ENFORCED) {
+            out.push(channelItem)
+            continue
+        }
+        if (actor?.key && owner.ownerKey === actor.key) {
+            out.push(channelItem)
+            continue
+        }
+    }
+    return out
 }
 
 function ensureWaBootstrapChannelState(channel) {
@@ -5620,6 +5785,7 @@ function maybeAutoBootstrapSync(status) {
 
 await loadWaBootstrapSyncState()
 await loadWaContactDirectory()
+await loadWaChannelOwnersState()
 for (const [channel, state] of Object.entries(waBootstrapSyncState.channels || {})) {
     if (state?.running) {
         markWaBootstrapStateInterrupted(
@@ -5641,24 +5807,101 @@ function normalizeEvolutionTimestamp(value) {
     return new Date().toISOString()
 }
 
+function waUnauthorizedResponse(res) {
+    return res.status(401).json({
+        success: false,
+        error: 'UNAUTHORIZED',
+        hint: 'Faça login no CRM para continuar.'
+    })
+}
+
+function getWaActorFromReq(req) {
+    if (req?.waActor?.key) return req.waActor
+    const actor = resolveWaActorFromUser(req?.crmUser || null)
+    if (actor?.key) req.waActor = actor
+    return actor
+}
+
+function ensureWaChannelOwnership(req, res, channel) {
+    if (!WA_CHANNEL_OWNER_ENFORCED) return true
+    const actor = getWaActorFromReq(req)
+    if (!actor?.key) {
+        waUnauthorizedResponse(res)
+        return false
+    }
+    const owner = getWaChannelOwner(channel)
+    if (!owner?.ownerKey) return true
+    if (owner.ownerKey === actor.key) return true
+    res.status(403).json({
+        success: false,
+        error: 'CHANNEL_FORBIDDEN',
+        channel,
+        hint: 'Este canal do WhatsApp está vinculado a outro usuário do CRM.'
+    })
+    return false
+}
+
+function isWaOrchestratorPublicPath(pathname) {
+    const path = String(pathname || '').trim().toLowerCase()
+    return path === '/webhook' || path.startsWith('/webhook/') || path === '/local/recovery/restart' || path.startsWith('/local/recovery/restart/')
+}
+
+app.use('/api/wa-orchestrator', async (req, res, next) => {
+    if (isWaOrchestratorPublicPath(req.path)) return next()
+    req.crmUser = req.crmUser || await resolveCrmUser(req).catch(() => null)
+    req.waActor = resolveWaActorFromUser(req.crmUser || null)
+    if (WA_CHANNEL_OWNER_ENFORCED && !req.waActor?.key) {
+        return waUnauthorizedResponse(res)
+    }
+    return next()
+})
+
+app.use('/api/wa-orchestrator/channels/:channel', (req, res, next) => {
+    if (String(req.path || '').trim() === '/start') return next()
+    const channel = Number.parseInt(String(req.params.channel || ''), 10)
+    if (!Number.isInteger(channel) || channel < 1 || channel > 9) {
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid channel. Must be between 1 and 9.'
+        })
+    }
+    if (!ensureWaChannelOwnership(req, res, channel)) return
+    return next()
+})
+
 // Get orchestrator status and all channels - enhanced with detailed information
 app.get('/api/wa-orchestrator/status', async (req, res) => {
     try {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const status = await evolutionOrchestrator.getStatus()
             maybeAutoBootstrapSync(status)
+            const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+            const connectedInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
+            const freeInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'free').length
+            const errorInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'error').length
+            const startingInstances = scopedChannels.filter((item) => {
+                const value = String(item?.status || '').toLowerCase()
+                return value === 'starting' || value === 'qr_pending'
+            }).length
             const bootstrapSync = Object.fromEntries(
-                (status.channels || []).map((item) => [String(item.channel), summarizeWaBootstrapSync(item.channel)])
+                scopedChannels.map((item) => [String(item.channel), summarizeWaBootstrapSync(item.channel)])
             )
             return res.json({
                 success: true,
                 provider: 'evolution',
                 ...status,
+                channels: scopedChannels,
+                totalChannels: scopedChannels.length,
+                availableChannels: freeInstances,
+                freeInstances,
+                connectedInstances,
+                errorInstances,
+                startingInstances,
                 bootstrapSync,
                 sseClients: waEventClients.size,
                 webhookMetrics: waWebhookMetrics,
-                availableChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
-                freeChannelsList: status.channels.filter((c) => c.status === 'free').map((c) => c.channel),
+                availableChannelsList: scopedChannels.filter((c) => c.status === 'free').map((c) => c.channel),
+                freeChannelsList: scopedChannels.filter((c) => c.status === 'free').map((c) => c.channel),
                 recoverySuggestions: null,
                 endpoints: {
                     channels: '/api/wa-orchestrator/channels',
@@ -5674,6 +5917,14 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
         }
 
         const status = whatsappOrchestrator.getStatus()
+        const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+        const connectedInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
+        const freeInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'free').length
+        const errorInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'error').length
+        const startingInstances = scopedChannels.filter((item) => {
+            const value = String(item?.status || '').toLowerCase()
+            return value === 'starting' || value === 'qr_pending'
+        }).length
         const availableChannels = whatsappOrchestrator.getAvailableChannels()
         const freeChannels = whatsappOrchestrator.getFreeChannels()
         const recoverySuggestions = whatsappOrchestrator.getRecoverySuggestions()
@@ -5682,10 +5933,17 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
             success: true,
             provider: 'legacy',
             ...status,
+            channels: scopedChannels,
+            totalChannels: scopedChannels.length,
+            availableChannels: freeInstances,
+            freeInstances,
+            connectedInstances,
+            errorInstances,
+            startingInstances,
             sseClients: waEventClients.size,
             webhookMetrics: waWebhookMetrics,
-            availableChannelsList: availableChannels,
-            freeChannelsList: freeChannels,
+            availableChannelsList: availableChannels.filter((channel) => canWaActorAccessChannel(req.waActor, channel)),
+            freeChannelsList: freeChannels.filter((channel) => canWaActorAccessChannel(req.waActor, channel)),
             recoverySuggestions: recoverySuggestions,
             endpoints: {
                 channels: '/api/wa-orchestrator/channels',
@@ -5728,7 +5986,8 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
             })
         }
         const syncRepo = mode === 'stack' && normalizeBoolean(req.body?.syncRepo, false)
-        const syncAutoStash = normalizeBoolean(req.body?.syncAutoStash, true)
+        const requestedSyncAutoStash = normalizeBoolean(req.body?.syncAutoStash, false)
+        const syncAutoStash = Boolean(syncRepo && requestedSyncAutoStash && WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH)
         const parsedSyncSha = parseRecoverySyncSha(req.body?.syncSha || req.body?.sha)
         if (syncRepo && parsedSyncSha.invalid) {
             return res.status(400).json({
@@ -5755,6 +6014,8 @@ app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
                     repoDirty: Boolean(syncResult.repoDirty),
                     targetRef: syncResult.targetRef || null,
                     appliedSha: syncResult.appliedSha || null,
+                    autoStashRequested: requestedSyncAutoStash,
+                    autoStashApplied: syncAutoStash,
                     error: syncResult.error || null
                 }
                 for (const syncStep of Array.isArray(syncResult.steps) ? syncResult.steps : []) {
@@ -5907,31 +6168,36 @@ app.post('/api/wa-orchestrator/channels/:channel/bootstrap-sync', async (req, re
 
 // SSE events for evolution updates
 app.get('/api/wa-orchestrator/events', (req, res) => {
+    const actor = getWaActorFromReq(req)
+    if (WA_CHANNEL_OWNER_ENFORCED && !actor?.key) {
+        return waUnauthorizedResponse(res)
+    }
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
     res.flushHeaders?.()
     res.write(`data: ${JSON.stringify({ type: 'connected', ts: new Date().toISOString() })}\n\n`)
-    waEventClients.add(res)
+    const eventClient = { res, actorKey: String(actor?.key || '').trim() || null }
+    waEventClients.add(eventClient)
     console.info('[WA_ORCHESTRATOR] SSE connected', { clients: waEventClients.size })
 
     const heartbeat = setInterval(() => {
         if (res.destroyed) {
             clearInterval(heartbeat)
-            waEventClients.delete(res)
+            waEventClients.delete(eventClient)
             return
         }
         try {
             res.write(`data: ${JSON.stringify({ type: 'heartbeat', ts: new Date().toISOString() })}\n\n`)
         } catch {
             clearInterval(heartbeat)
-            waEventClients.delete(res)
+            waEventClients.delete(eventClient)
         }
     }, 25000)
 
     req.on('close', () => {
         clearInterval(heartbeat)
-        waEventClients.delete(res)
+        waEventClients.delete(eventClient)
         console.info('[WA_ORCHESTRATOR] SSE disconnected', { clients: waEventClients.size })
     })
 })
@@ -6520,6 +6786,7 @@ app.get('/api/wa-orchestrator/media', async (req, res) => {
         if (isNaN(channel) || channel < 1 || channel > 9 || !remoteJid || !messageId) {
             return res.status(400).json({ success: false, error: 'channel, remoteJid and messageId are required' })
         }
+        if (!ensureWaChannelOwnership(req, res, channel)) return
 
         let media = waMessageMetaStore.findMedia(channel, remoteJid, messageId)
         let matchedRecord = null
@@ -6683,15 +6950,29 @@ app.post('/api/wa-orchestrator/channels/:channel/webhook', async (req, res) => {
     }
 })
 
+app.use('/api/wa-orchestrator/instances', (req, res, next) => {
+    if (!WA_CHANNEL_OWNER_ENFORCED) return next()
+    const path = String(req.path || '').trim()
+    const isListRead = (req.method || 'GET').toUpperCase() === 'GET' && (path === '' || path === '/')
+    if (isListRead) return next()
+    return res.status(403).json({
+        success: false,
+        error: 'INSTANCES_ENDPOINT_DISABLED',
+        hint: 'Use os endpoints /api/wa-orchestrator/channels/* com isolamento por usuário.'
+    })
+})
+
 // List all instances
 app.get('/api/wa-orchestrator/instances', async (req, res) => {
     try {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const status = await evolutionOrchestrator.getStatus()
-            return res.json({ success: true, instances: status.channels })
+            const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+            return res.json({ success: true, instances: scopedChannels })
         }
         const status = whatsappOrchestrator.getStatus()
-        res.json({ success: true, instances: status.instances })
+        const scopedInstances = scopeWaChannelsForActor(status.instances, req.waActor)
+        res.json({ success: true, instances: scopedInstances })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
     }
@@ -6949,29 +7230,53 @@ app.put('/api/wa-orchestrator/instances/:port/metadata', async (req, res) => {
 // Get a free port (for quick allocation) - enhanced with channel information
 app.get('/api/wa-orchestrator/free-port', async (req, res) => {
     try {
-        const port = whatsappOrchestrator.getFreePort()
-        if (port) {
-            const channel = channelForPort(port)
-            res.json({
-                success: true,
-                port,
-                channel,
-                message: `Channel ${channel} (port ${port}) is available`
-            })
-        } else {
-            const status = whatsappOrchestrator.getStatus()
-            res.status(409).json({
+        if (USE_EVOLUTION_ORCHESTRATOR) {
+            const status = await evolutionOrchestrator.getStatus()
+            const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+            const free = scopedChannels.find((item) => String(item?.status || '').toLowerCase() === 'free')
+            if (free) {
+                return res.json({
+                    success: true,
+                    port: free.port || 3001,
+                    channel: free.channel,
+                    message: `Channel ${free.channel} is available`
+                })
+            }
+            return res.status(409).json({
                 success: false,
                 error: 'No free ports available',
                 status: {
-                    totalChannels: status.totalChannels,
-                    availableChannels: status.availableChannels,
-                    freeInstances: status.freeInstances,
-                    connectedInstances: status.connectedInstances,
-                    errorInstances: status.errorInstances
+                    totalChannels: scopedChannels.length,
+                    availableChannels: scopedChannels.filter((item) => item.status === 'free').length,
+                    freeInstances: scopedChannels.filter((item) => item.status === 'free').length,
+                    connectedInstances: scopedChannels.filter((item) => item.status === 'connected').length,
+                    errorInstances: scopedChannels.filter((item) => item.status === 'error').length
                 }
             })
         }
+
+        const status = whatsappOrchestrator.getStatus()
+        const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+        const free = scopedChannels.find((item) => String(item?.status || '').toLowerCase() === 'free')
+        if (free) {
+            return res.json({
+                success: true,
+                port: free.port || 3001,
+                channel: free.channel,
+                message: `Channel ${free.channel} is available`
+            })
+        }
+        return res.status(409).json({
+            success: false,
+            error: 'No free ports available',
+            status: {
+                totalChannels: scopedChannels.length,
+                availableChannels: scopedChannels.filter((item) => item.status === 'free').length,
+                freeInstances: scopedChannels.filter((item) => item.status === 'free').length,
+                connectedInstances: scopedChannels.filter((item) => item.status === 'connected').length,
+                errorInstances: scopedChannels.filter((item) => item.status === 'error').length
+            }
+        })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
     }
@@ -6988,19 +7293,27 @@ app.get('/api/wa-orchestrator/channels', async (req, res) => {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             maybeAutoBootstrapSync(status)
         }
+        const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+        const freeChannels = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'free').map((item) => item.channel)
+        const connectedCount = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
+        const errorCount = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'error').length
+        const startingCount = scopedChannels.filter((item) => {
+            const current = String(item?.status || '').toLowerCase()
+            return current === 'starting' || current === 'qr_pending'
+        }).length
         res.json({
             success: true,
-            channels: status.channels,
+            channels: scopedChannels,
             bootstrapSync: USE_EVOLUTION_ORCHESTRATOR
-                ? Object.fromEntries((status.channels || []).map((item) => [String(item.channel), summarizeWaBootstrapSync(item.channel)]))
+                ? Object.fromEntries(scopedChannels.map((item) => [String(item.channel), summarizeWaBootstrapSync(item.channel)]))
                 : null,
             summary: {
-                totalChannels: status.totalChannels,
-                availableChannels: status.availableChannels,
-                freeInstances: status.freeInstances,
-                connectedInstances: status.connectedInstances,
-                errorInstances: status.errorInstances,
-                startingInstances: status.startingInstances
+                totalChannels: scopedChannels.length,
+                availableChannels: freeChannels.length,
+                freeInstances: freeChannels.length,
+                connectedInstances: connectedCount,
+                errorInstances: errorCount,
+                startingInstances: startingCount
             }
         })
     } catch (error) {
@@ -7013,6 +7326,7 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
     try {
         const channel = parseInt(req.params.channel)
         const { name } = req.body || {}
+        const actor = getWaActorFromReq(req)
 
         // Validate channel range
         if (isNaN(channel) || channel < 1 || channel > 9) {
@@ -7022,8 +7336,33 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
             })
         }
 
+        const currentOwner = getWaChannelOwner(channel)
+        if (WA_CHANNEL_OWNER_ENFORCED && currentOwner?.ownerKey && currentOwner.ownerKey !== actor?.key) {
+            let statusLabel = ''
+            try {
+                if (USE_EVOLUTION_ORCHESTRATOR) {
+                    const current = await evolutionOrchestrator.getChannelStatus(channel).catch(() => null)
+                    statusLabel = String(current?.status || '').toLowerCase()
+                } else {
+                    const current = await whatsappOrchestrator.getInstanceStatus(portForChannel(channel)).catch(() => null)
+                    statusLabel = String(current?.status || '').toLowerCase()
+                }
+            } catch { /* ignore */ }
+            if (isWaChannelIdleStatus(statusLabel)) {
+                clearWaChannelOwner(channel, 'channel idle before start')
+            } else {
+                return res.status(403).json({
+                    success: false,
+                    error: 'CHANNEL_FORBIDDEN',
+                    channel,
+                    hint: 'Este canal do WhatsApp está vinculado a outro usuário do CRM.'
+                })
+            }
+        }
+
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const result = await evolutionOrchestrator.startChannel(channel, name)
+            setWaChannelOwner(channel, actor)
             if (DEBUG_QR) {
                 const qrValue = typeof result?.qr === 'string' ? result.qr : ''
                 console.log('[WA_QR_DEBUG] route:start_result', {
@@ -7064,6 +7403,7 @@ app.post('/api/wa-orchestrator/channels/:channel/start', async (req, res) => {
         const result = await whatsappOrchestrator.startInstance(port, { name })
 
         if (result.success) {
+            setWaChannelOwner(channel, actor)
             res.json({
                 success: true,
                 instance: result.instance,
@@ -7238,6 +7578,7 @@ app.post('/api/wa-orchestrator/channels/:channel/stop', async (req, res) => {
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
             await evolutionOrchestrator.stopChannel(channel)
+            clearWaChannelOwner(channel, 'channel stopped')
             return sendResponse(200, {
                 success: true,
                 channel,
@@ -7250,6 +7591,7 @@ app.post('/api/wa-orchestrator/channels/:channel/stop', async (req, res) => {
         const result = await whatsappOrchestrator.stopInstance(port)
 
         if (result.success) {
+            clearWaChannelOwner(channel, 'channel stopped')
             sendResponse(200, {
                 success: true,
                 channel: result.channel || channel,
@@ -7295,6 +7637,7 @@ app.post('/api/wa-orchestrator/channels/:channel/restart', async (req, res) => {
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
             await evolutionOrchestrator.restartChannel(channel)
+            setWaChannelOwner(channel, getWaActorFromReq(req))
             return sendResponse(200, {
                 success: true,
                 instance: null,
@@ -7308,6 +7651,7 @@ app.post('/api/wa-orchestrator/channels/:channel/restart', async (req, res) => {
         const result = await whatsappOrchestrator.restartInstance(port)
 
         if (result.success) {
+            setWaChannelOwner(channel, getWaActorFromReq(req))
             sendResponse(200, {
                 success: true,
                 instance: result.instance,
@@ -7383,7 +7727,8 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
     try {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const status = await evolutionOrchestrator.getStatus()
-            const free = status.channels.find((c) => c.status === 'free')
+            const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
+            const free = scopedChannels.find((c) => c.status === 'free')
             if (free) {
                 return res.json({
                     success: true,
@@ -7396,17 +7741,17 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
                 success: false,
                 error: 'No available channels',
                 status: {
-                    totalChannels: status.totalChannels,
-                    availableChannels: status.availableChannels,
-                    freeInstances: status.freeInstances,
-                    connectedInstances: status.connectedInstances,
-                    errorInstances: status.errorInstances
+                    totalChannels: scopedChannels.length,
+                    availableChannels: scopedChannels.filter((c) => c.status === 'free').length,
+                    freeInstances: scopedChannels.filter((c) => c.status === 'free').length,
+                    connectedInstances: scopedChannels.filter((c) => c.status === 'connected').length,
+                    errorInstances: scopedChannels.filter((c) => c.status === 'error').length
                 }
             })
         }
 
         const channel = whatsappOrchestrator.getNextAvailableChannel()
-        if (channel) {
+        if (channel && canWaActorAccessChannel(req.waActor, channel)) {
             const port = portForChannel(channel)
             res.json({
                 success: true,
@@ -7416,15 +7761,16 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
             })
         } else {
             const status = whatsappOrchestrator.getStatus()
+            const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
             res.status(409).json({
                 success: false,
                 error: 'No available channels',
                 status: {
-                    totalChannels: status.totalChannels,
-                    availableChannels: status.availableChannels,
-                    freeInstances: status.freeInstances,
-                    connectedInstances: status.connectedInstances,
-                    errorInstances: status.errorInstances
+                    totalChannels: scopedChannels.length,
+                    availableChannels: scopedChannels.filter((item) => item.status === 'free').length,
+                    freeInstances: scopedChannels.filter((item) => item.status === 'free').length,
+                    connectedInstances: scopedChannels.filter((item) => item.status === 'connected').length,
+                    errorInstances: scopedChannels.filter((item) => item.status === 'error').length
                 }
             })
         }

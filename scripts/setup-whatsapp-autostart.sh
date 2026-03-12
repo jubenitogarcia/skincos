@@ -13,6 +13,7 @@ WATCHDOG_LABEL="com.skincos.whatsapp-watchdog"
 NETWORK_FALLBACK_LABEL="com.skincos.network-fallback"
 N8N_LABEL="com.jubenito.n8n-evolution"
 TUNNEL_LABEL="com.skincos.cloudflared.cs"
+ORB_TUNNEL_LABEL="com.skincos.cloudflared.orb"
 EVOLUTION_LABEL="com.skincos.evolution-api"
 CRM_LABEL="com.skincos.crm-api"
 LEGACY_LABELS=("com.n8n.automation" "com.skincos.cloudflared.wa" "com.skincos.keepawake")
@@ -21,6 +22,8 @@ ENSURE_STACK_SCRIPT="${ENSURE_STACK_SCRIPT:-$N8N_ROOT/scripts/ensure-whatsapp-st
 SETUP_KEEPAWAKE_SCRIPT="$SCRIPT_DIR/setup-mac-awake-service.sh"
 SETUP_NETWORK_FALLBACK_SCRIPT="$SCRIPT_DIR/setup-network-fallback-service.sh"
 NETWORK_FALLBACK_DAEMON_SCRIPT="$SCRIPT_DIR/network-fallback-daemon.sh"
+ORB_TUNNEL_PLIST="$HOME/Library/LaunchAgents/com.skincos.cloudflared.orb.plist"
+ORB_TUNNEL_CONFIG="${ORB_TUNNEL_CONFIG:-$HOME/.cloudflared/orb-config.yml}"
 
 bootstrap_if_missing() {
   local label="$1"
@@ -51,6 +54,47 @@ disable_legacy() {
     echo "[setup] desativando legado: $label"
     launchctl bootout "gui/$UID_VALUE/$label" || true
   fi
+}
+
+ensure_orb_tunnel_plist() {
+  if [[ -f "$ORB_TUNNEL_PLIST" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$ORB_TUNNEL_CONFIG" ]]; then
+    echo "[setup] orb config não encontrado: $ORB_TUNNEL_CONFIG"
+    return 1
+  fi
+
+  cat >"$ORB_TUNNEL_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${ORB_TUNNEL_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/cloudflared</string>
+    <string>tunnel</string>
+    <string>--config</string>
+    <string>${ORB_TUNNEL_CONFIG}</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>$HOME/.cloudflared/orb.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/.cloudflared/orb.launchd.err.log</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$ORB_TUNNEL_PLIST" >/dev/null
+  echo "[setup] plist criado: $ORB_TUNNEL_PLIST"
 }
 
 upsert_env() {
@@ -125,8 +169,11 @@ if ! launchctl print "gui/$UID_VALUE/$NETWORK_FALLBACK_LABEL" >/dev/null 2>&1; t
   bash "$SETUP_NETWORK_FALLBACK_SCRIPT"
 fi
 
+ensure_orb_tunnel_plist || true
+
 bootstrap_if_missing "$N8N_LABEL" "$HOME/Library/LaunchAgents/com.jubenito.n8n-evolution.plist"
 bootstrap_if_missing "$TUNNEL_LABEL" "$HOME/Library/LaunchAgents/com.skincos.cloudflared.cs.plist"
+bootstrap_if_missing "$ORB_TUNNEL_LABEL" "$ORB_TUNNEL_PLIST"
 bootstrap_if_missing "$EVOLUTION_LABEL" "$HOME/Library/LaunchAgents/com.skincos.evolution-api.plist"
 bootstrap_if_missing "$CRM_LABEL" "$HOME/Library/LaunchAgents/com.skincos.crm-api.plist"
 bootstrap_if_missing "$WATCHDOG_LABEL" "$HOME/Library/LaunchAgents/com.skincos.whatsapp-watchdog.plist"
@@ -140,6 +187,7 @@ fi
 
 kickstart_job "$N8N_LABEL"
 kickstart_job "$TUNNEL_LABEL"
+kickstart_job "$ORB_TUNNEL_LABEL"
 kickstart_job "$EVOLUTION_LABEL"
 kickstart_job "$CRM_LABEL"
 kickstart_job "$WATCHDOG_LABEL"
