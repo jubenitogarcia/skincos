@@ -970,6 +970,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const waEventsRefreshTimerRef = useRef<number | null>(null)
   const waConversationRefreshTimerRef = useRef<number | null>(null)
   const [waStatusOpen, setWaStatusOpen] = useState(false)
+  const [connectedChannelAction, setConnectedChannelAction] = useState<Record<number, 'refresh' | 'disconnect' | undefined>>({})
   const [igStatusOpen, setIgStatusOpen] = useState(false)
   const [igDialogOpen, setIgDialogOpen] = useState(false)
   const [igOauthStatus, setIgOauthStatus] = useState<{ configured: boolean; missing?: string[] } | null>(null)
@@ -2887,6 +2888,78 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     await startChannel(next.channel)
   }, [resolveNextWhatsAppChannel, startChannel])
 
+  const markConnectedChannelAction = useCallback((channel: number, action?: 'refresh' | 'disconnect') => {
+    setConnectedChannelAction((prev) => {
+      const next = { ...prev }
+      if (!action) {
+        delete next[channel]
+      } else {
+        next[channel] = action
+      }
+      return next
+    })
+  }, [])
+
+  const refreshConnectedChannel = useCallback(async (channel: number) => {
+    markConnectedChannelAction(channel, 'refresh')
+    try {
+      const response = await fetch(`/api/wa-orchestrator/channels/${channel}/restart`, {
+        method: 'POST',
+        headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({})
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok || !result?.success) {
+        throw new Error(String(result?.error || `Falha ao refrescar canal ${channel}`))
+      }
+      toast.success(`Canal ${channel} refrescado.`)
+      if (qrDialogChannelRef.current === channel) {
+        void pollChannelQR(channel)
+      }
+      await loadStatus()
+      await loadConversations()
+    } catch (error: any) {
+      toast.error(String(error?.message || `Falha ao refrescar canal ${channel}`))
+    } finally {
+      markConnectedChannelAction(channel)
+    }
+  }, [loadConversations, loadStatus, markConnectedChannelAction, pollChannelQR])
+
+  const disconnectConnectedChannel = useCallback(async (channel: number) => {
+    markConnectedChannelAction(channel, 'disconnect')
+    try {
+      const response = await fetch(`/api/wa-orchestrator/channels/${channel}/stop`, {
+        method: 'POST',
+        headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({})
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok || !result?.success) {
+        throw new Error(String(result?.error || `Falha ao desconectar canal ${channel}`))
+      }
+      stopQrPolling(channel)
+      setChannelQR((prev) => {
+        const next = new Map(prev)
+        next.delete(channel)
+        return next
+      })
+      if (qrDialogChannelRef.current === channel) {
+        setQrDialogChannel(null)
+      }
+      if (selectedConversation?.platform === 'whatsapp' && Number(selectedConversation?.channel) === channel) {
+        setSelectedConversation(null)
+        setMessages([])
+      }
+      toast.success(`Canal ${channel} desconectado.`)
+      await loadStatus()
+      await loadConversations()
+    } catch (error: any) {
+      toast.error(String(error?.message || `Falha ao desconectar canal ${channel}`))
+    } finally {
+      markConnectedChannelAction(channel)
+    }
+  }, [loadConversations, loadStatus, markConnectedChannelAction, selectedConversation, stopQrPolling])
+
   const createTicket = () => {
     if (newTicket.subject && newTicket.customer && newTicket.customerEmail) {
       const ticket: SupportTicket = {
@@ -4569,6 +4642,40 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                   <div className="flex-1">
                     Canal {instance.channel}
                     {instance.metadata?.phoneNumber ? ` • ${instance.metadata.phoneNumber}` : ''}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => refreshConnectedChannel(instance.channel)}
+                      disabled={Boolean(connectedChannelAction[instance.channel])}
+                    >
+                      {connectedChannelAction[instance.channel] === 'refresh' ? (
+                        <>
+                          <CircleNotch className="mr-1 h-3.5 w-3.5 animate-spin" />
+                          Refrescando...
+                        </>
+                      ) : (
+                        'Refrescar'
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px] border-red-300/40 text-red-200 hover:bg-red-500/20"
+                      onClick={() => disconnectConnectedChannel(instance.channel)}
+                      disabled={Boolean(connectedChannelAction[instance.channel])}
+                    >
+                      {connectedChannelAction[instance.channel] === 'disconnect' ? (
+                        <>
+                          <CircleNotch className="mr-1 h-3.5 w-3.5 animate-spin" />
+                          Desconectando...
+                        </>
+                      ) : (
+                        'Desconectar'
+                      )}
+                    </Button>
                   </div>
                 </div>
               ))}
