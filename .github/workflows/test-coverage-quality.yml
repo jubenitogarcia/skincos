@@ -21,6 +21,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
+            website/package-lock.json
 
       - name: Frontend install
         if: ${{ hashFiles('frontend/package-lock.json') != '' }}
@@ -35,6 +36,20 @@ jobs:
           set -euxo pipefail
           cd frontend
           npm run test:coverage --if-present
+
+      - name: Website install
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        run: |
+          set -euxo pipefail
+          cd website
+          npm ci
+
+      - name: Website tests
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        run: |
+          set -euxo pipefail
+          cd website
+          npm run test
 
       - name: Setup pnpm (for backend workspace)
         if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}

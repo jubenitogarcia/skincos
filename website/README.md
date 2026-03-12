@@ -143,8 +143,20 @@ Checklist mensal recomendado:
 - Secrets no GitHub Actions:
   - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (publica)
   - `TURNSTILE_SECRET_KEY` (privada)
+  - (opcional) `BOOKING_REQUIRE_TURNSTILE` (`1/true` para forçar em qualquer ambiente)
+
+### Lock de prêmio da roleta (/cadastro)
+- Segredos/config:
+  - `CADASTRO_WHEEL_SECRET` (recomendado; fallback para `BOOKING_STATUS_SECRET` e `BOOKING_DECISION_SECRET`)
+  - `CADASTRO_WHEEL_LOCK_HOURS` (opcional; default `24`, máximo `168`)
+- Comportamento:
+  - O prêmio é assinado no servidor e persistido em cookie HttpOnly, evitando novo sorteio após refresh/reentrada dentro da janela de lock.
+- Deploy:
+  - Defina `CADASTRO_WHEEL_SECRET` em `GitHub Actions secrets`; o workflow de deploy sincroniza automaticamente no Worker.
 
 ### Sync de regras de segurança (WAF/rate limit)
 - Guia: `docs/security/SETUP_CLOUDFLARE_SECURITY_SYNC.md`
 - Workflow:
-  - `Sync Cloudflare Security` (manual + agendado)
+  - `Sync Website Cloudflare Security` (manual + agendado)
+- Verificação:
+  - `npm run cf:security:check` valida drift de regras no Cloudflare.

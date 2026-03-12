@@ -74,3 +74,56 @@ export async function verifyBookingDecision(params: {
 
     return constantTimeEqual(params.sig, expected);
 }
+
+export async function signBookingStatus(params: {
+    secret: string;
+    id: string;
+    expMs: number;
+}): Promise<string> {
+    const msg = ["v1", "status", params.id, String(params.expMs)].join("|");
+    return hmacSha256(params.secret, msg);
+}
+
+export async function issueBookingStatusToken(params: {
+    secret: string;
+    id: string;
+    expMs: number;
+}): Promise<string> {
+    const sig = await signBookingStatus(params);
+    return `${params.expMs}.${sig}`;
+}
+
+export async function verifyBookingStatusToken(params: {
+    secret: string;
+    id: string;
+    token: string;
+    nowMs?: number;
+}): Promise<{ ok: true } | { ok: false; error: "invalid_token" | "expired" }> {
+    const parts = params.token.split(".");
+    if (parts.length !== 2) {
+        return { ok: false, error: "invalid_token" };
+    }
+
+    const [expRaw, sig] = parts;
+    const expMs = Number(expRaw);
+    if (!Number.isFinite(expMs) || expMs <= 0 || !sig) {
+        return { ok: false, error: "invalid_token" };
+    }
+
+    const now = Number.isFinite(params.nowMs) ? Number(params.nowMs) : Date.now();
+    if (now > expMs) {
+        return { ok: false, error: "expired" };
+    }
+
+    const expected = await signBookingStatus({
+        secret: params.secret,
+        id: params.id,
+        expMs,
+    });
+
+    if (!constantTimeEqual(sig, expected)) {
+        return { ok: false, error: "invalid_token" };
+    }
+
+    return { ok: true };
+}

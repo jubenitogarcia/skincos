@@ -84,7 +84,7 @@ async function run() {
     const agendaTo = (process.env.SMOKE_AGENDA_TO ?? tomorrowKey).trim();
 
     // Core pages
-    for (const path of ["/", "/unidades", "/doutores", "/sobre", "/termos", "/privacidade", "/agendamento"]) {
+    for (const path of ["/", "/unidades", "/doutores", "/sobre", "/termos", "/privacidade", "/agendamento", "/cadastro"]) {
         const res = await fetchHead(path, { redirect: "follow" });
         assert(res.status === 200, `${path} expected 200, got ${res.status}`);
     }
@@ -168,6 +168,12 @@ async function run() {
         assert(res.status === 200, `/ expected 200, got ${res.status}`);
         assert(text.includes('href="/#sobre-nos"'), `Home HTML should include header link to /#sobre-nos`);
         assert(text.includes('aria-label="Instagram"'), `Home HTML should include Instagram button (aria-label)`);
+    }
+
+    {
+        const { res, text } = await fetchText("/cadastro");
+        assert(res.status === 200, `/cadastro expected 200, got ${res.status}`);
+        assert(/Roda da beleza|roleta/i.test(text), `/cadastro should contain wheel experience markers`);
     }
 
     console.log("OK: smoke checks passed");

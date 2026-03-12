@@ -12,6 +12,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
         { url: `${siteUrl}/barrashoppingsul`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
         { url: `${siteUrl}/novohamburgo`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
         { url: `${siteUrl}/agendamento`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
+        { url: `${siteUrl}/cadastro`, lastModified: now, changeFrequency: "weekly", priority: 0.85 },
         { url: `${siteUrl}/unidades`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
         { url: `${siteUrl}/doutores`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
         { url: `${siteUrl}/sobre`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },

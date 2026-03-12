@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, nowMs } from "@/lib/bookingDb";
 import { getServiceById } from "@/data/services";
+import { verifyBookingStatusToken } from "@/lib/bookingSecurity";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +13,17 @@ type BookingStatusRow = {
     start_at_ms: number;
     end_at_ms: number;
     status: string;
-    patient_name: string;
-    whatsapp: string;
-    notes: string | null;
-    created_at_ms: number;
     confirm_by_ms: number;
-    decided_at_ms: number | null;
-    decided_by: string | null;
-    decision_note: string | null;
-    override_conflict: number | null;
 };
 
-function json(data: unknown, init?: ResponseInit) {
-    return NextResponse.json(data, init);
+function json(data: unknown, init?: ResponseInit, noStore = false) {
+    const response = NextResponse.json(data, init);
+    if (noStore) {
+        response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+        response.headers.set("Pragma", "no-cache");
+        response.headers.set("Expires", "0");
+    }
+    return response;
 }
 
 async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: string) {
@@ -53,18 +52,35 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const id = (url.searchParams.get("id") ?? "").trim();
     if (!id) return json({ ok: false, error: "missing_id" }, { status: 400 });
+    const token = (url.searchParams.get("token") ?? "").trim();
+    if (!token) return json({ ok: false, error: "missing_token" }, { status: 400 });
+
+    const secret = (process.env.BOOKING_STATUS_SECRET ?? process.env.BOOKING_DECISION_SECRET ?? "").trim();
+    if (!secret) {
+        return json({ ok: false, error: "status_unavailable" }, { status: 503 }, true);
+    }
+
+    const verification = await verifyBookingStatusToken({
+        secret,
+        id,
+        token,
+        nowMs: nowMs(),
+    });
+    if (!verification.ok) {
+        return json({ ok: false, error: verification.error }, { status: 403 }, true);
+    }
 
     const db = await getBookingDb();
     await expireIfNeeded(db, id);
 
     const row = await db
         .prepare(
-            "SELECT id, unit_slug, doctor_slug, service_id, start_at_ms, end_at_ms, status, patient_name, whatsapp, notes, created_at_ms, confirm_by_ms, decided_at_ms, decided_by, decision_note, override_conflict FROM booking_requests WHERE id = ?",
+            "SELECT id, unit_slug, doctor_slug, service_id, start_at_ms, end_at_ms, status, confirm_by_ms FROM booking_requests WHERE id = ?",
         )
         .bind(id)
         .first<BookingStatusRow>();
 
-    if (!row) return json({ ok: false, error: "not_found" }, { status: 404 });
+    if (!row) return json({ ok: false, error: "not_found" }, { status: 404 }, true);
 
     const service = getServiceById((row.service_id ?? "").toString());
     const durationMinutes = Math.max(0, Math.round((Number(row.end_at_ms) - Number(row.start_at_ms)) / 60_000));
@@ -79,5 +95,6 @@ export async function GET(req: Request) {
             },
         },
         { status: 200 },
+        true,
     );
 }

@@ -11,8 +11,9 @@ Objetivo: bloquear push direto em `main` e exigir PR com checks verdes.
 - Require status checks to pass before merging
   - `CI Smoke (Assert)` (obrigatório)
   - `Central E2E Smoke` (obrigatório)
-  - (recomendado) `Lint, Format & Static Analysis`
-  - (recomendado) `Security Secrets Audit`
+  - `JS/TS Checks (workspace)` (obrigatório)
+  - `Dependency Audit (JS/TS)` (obrigatório)
+  - `Scan for secrets (Gitleaks)` (obrigatório)
 - Require branches to be up to date before merging: `true`
 - Restrict who can push to matching branches: `true`
 - Do not allow bypassing the above settings: `true` (enforce_admins)

@@ -50,3 +50,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_NAME: espacofacial.com
+
+      - name: Verify Cloudflare security settings
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run cf:security:check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE_NAME: espacofacial.com
