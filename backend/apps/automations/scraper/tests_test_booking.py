@@ -5,7 +5,12 @@ from datetime import date
 from unittest.mock import patch
 
 from espacofacial.booking import BookingRequest
-from espacofacial.appointments import parse_duration_minutes_from_time_text
+from espacofacial.appointments import (
+    _collapse_repeated_phrase,
+    _extract_event_info,
+    _is_invalid_field_value,
+    parse_duration_minutes_from_time_text,
+)
 from scraper_final import _resolve_date_filter
 
 
@@ -14,6 +19,34 @@ class BookingRequestTests(unittest.TestCase):
         self.assertEqual(parse_duration_minutes_from_time_text("13:00 - 13:30"), 30)
         self.assertEqual(parse_duration_minutes_from_time_text("17:40 - 18:00"), 20)
         self.assertIsNone(parse_duration_minutes_from_time_text("18:00"))
+
+    def test_extract_event_info_two_parts_maps_second_to_injector_when_not_type(self) -> None:
+        row = _extract_event_info("Letícia Marques Kovalski - Viviane Mondin", "17:40 - 18:00")
+        self.assertEqual(row["Cliente"], "Letícia Marques Kovalski")
+        self.assertEqual(row["Tipo de Agendamento"], "")
+        self.assertEqual(row["Profissional"], "Viviane Mondin")
+
+    def test_extract_event_info_two_parts_maps_second_to_type_when_known_type(self) -> None:
+        row = _extract_event_info("Bianca Vicente de Camargo - Avaliação", "10:00 - 10:30")
+        self.assertEqual(row["Cliente"], "Bianca Vicente de Camargo")
+        self.assertEqual(row["Tipo de Agendamento"], "Avaliação")
+        self.assertEqual(row["Profissional"], "")
+
+    def test_extract_event_info_three_parts_accepts_type_professional_swap(self) -> None:
+        row = _extract_event_info("Bianca Vicente de Camargo - Marina Pereira Lima - Avaliação", "10:00 - 10:30")
+        self.assertEqual(row["Cliente"], "Bianca Vicente de Camargo")
+        self.assertEqual(row["Tipo de Agendamento"], "Avaliação")
+        self.assertEqual(row["Profissional"], "Marina Pereira Lima")
+
+    def test_collapse_repeated_phrase(self) -> None:
+        self.assertEqual(_collapse_repeated_phrase("Agendado Agendado"), "Agendado")
+        self.assertEqual(_collapse_repeated_phrase("Confirmado Confirmado"), "Confirmado")
+        self.assertEqual(_collapse_repeated_phrase("Atendido"), "Atendido")
+
+    def test_invalid_field_value_rejects_internal_id_and_labels(self) -> None:
+        self.assertTrue(_is_invalid_field_value("1773348000000"))
+        self.assertTrue(_is_invalid_field_value("Tipo de Agendamento", blocked_labels=["Tipo de Agendamento"]))
+        self.assertFalse(_is_invalid_field_value("Avaliação", blocked_labels=["Tipo de Agendamento"]))
 
     def test_parses_portuguese_payload(self) -> None:
         request = BookingRequest.from_payload(
