@@ -464,12 +464,131 @@ def _post_agenda_full_sync(
 
     payload: dict[str, object] = {
         "unit": unit_name,
-        "runId": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "schema_version": 1,
-        "added": added,
         "removed": [],
     }
-    return _post_agenda_sync_payload(payload=payload, endpoint=endpoint, token=token)
+    if not added:
+        payload["runId"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        payload["added"] = []
+        return _post_agenda_sync_payload(payload=payload, endpoint=endpoint, token=token)
+
+    batch_size_raw = os.getenv("EF_AGENDA_SYNC_BATCH_SIZE", "").strip()
+    try:
+        batch_size = max(int(batch_size_raw), 1) if batch_size_raw else 100
+    except ValueError:
+        batch_size = 100
+
+    run_id_base = datetime.now().strftime("%Y%m%d_%H%M%S")
+    total_batches = (len(added) + batch_size - 1) // batch_size
+    for index in range(total_batches):
+        start = index * batch_size
+        end = min(start + batch_size, len(added))
+        batch = added[start:end]
+        batch_payload = dict(payload)
+        batch_payload["runId"] = f"{run_id_base}_part{index + 1}of{total_batches}"
+        batch_payload["added"] = batch
+        log(
+            f"Posting agenda full sync batch {index + 1}/{total_batches} "
+            f"for {unit_name} ({len(batch)} rows)"
+        )
+        if not _post_agenda_sync_payload(payload=batch_payload, endpoint=endpoint, token=token):
+            return False
+
+    return True
+
+
+def _unit_slug_for_agenda_api(unit_name: str) -> str:
+    raw = (unit_name or "").strip().lower()
+    if raw in {"barra shopping sul", "barrashoppingsul", "barra-shopping-sul"}:
+        return "barrashoppingsul"
+    if raw in {"novo hamburgo", "novohamburgo", "novo-hamburgo"}:
+        return "novo-hamburgo"
+    return raw.replace(" ", "-")
+
+
+def _date_key_from_row_date(value: str) -> str:
+    parsed = _parse_ddmmyyyy(value)
+    if parsed is None:
+        return ""
+    return parsed.strftime("%Y-%m-%d")
+
+
+def _fetch_agenda_api_rows(*, unit_slug: str, date_from: str, date_to: str, endpoint: str, token: str) -> list[dict[str, object]]:
+    agenda_endpoint = endpoint.rstrip("/")
+    if agenda_endpoint.endswith("/sync"):
+        agenda_endpoint = agenda_endpoint[:-5]
+    if not agenda_endpoint.endswith("/agenda"):
+        agenda_endpoint = f"{agenda_endpoint}/agenda"
+
+    rows: list[dict[str, object]] = []
+    page = 1
+    page_size = 500
+    timeout = int(os.getenv("EF_AGENDA_SYNC_TIMEOUT", "45"))
+    while True:
+        url = (
+            f"{agenda_endpoint}?unit_slug={unit_slug}&date_from={date_from}"
+            f"&date_to={date_to}&page={page}&page_size={page_size}"
+        )
+        headers = {
+            "user-agent": "agenda-sync-audit/1.0",
+        }
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        page_rows = payload.get("appointments")
+        if not isinstance(page_rows, list):
+            break
+        rows.extend(r for r in page_rows if isinstance(r, dict))
+        if not payload.get("has_more"):
+            break
+        page += 1
+    return rows
+
+
+def _audit_full_sync_rows(*, unit_name: str, rows: list[dict[str, str]], endpoint: str, token: str) -> bool:
+    sync_keys: set[tuple[str, str]] = set()
+    for row in rows:
+        date_key = _date_key_from_row_date(row.get("Data", ""))
+        time_key = _normalize_sync_time(row.get("Horário", "") or row.get("Horario", ""))
+        if not date_key or not time_key:
+            continue
+        sync_keys.add((date_key, time_key))
+    if not sync_keys:
+        log("Agenda audit skipped: no sync keys extracted from rows.")
+        return True
+
+    date_keys = sorted({_date_key_from_row_date(row.get("Data", "")) for row in rows if _date_key_from_row_date(row.get("Data", ""))})
+    if not date_keys:
+        log("Agenda audit skipped: no valid dates extracted from rows.")
+        return True
+
+    unit_slug = _unit_slug_for_agenda_api(unit_name)
+    remote_rows = _fetch_agenda_api_rows(
+        unit_slug=unit_slug,
+        date_from=date_keys[0],
+        date_to=date_keys[-1],
+        endpoint=endpoint,
+        token=token,
+    )
+    remote_keys = {
+        (str(row.get("date_key") or "").strip(), str(row.get("time_key") or "").strip())
+        for row in remote_rows
+        if str(row.get("date_key") or "").strip() and str(row.get("time_key") or "").strip()
+    }
+
+    missing_remote = sorted(sync_keys - remote_keys)
+    extra_remote = sorted(remote_keys - sync_keys)
+    log(
+        f"Agenda audit for {unit_name}: local_slots={len(sync_keys)} "
+        f"remote_slots={len(remote_keys)} missing_remote={len(missing_remote)} extra_remote={len(extra_remote)}"
+    )
+    if missing_remote:
+        preview = ", ".join(f"{d} {t}" for d, t in missing_remote[:10])
+        log(f"WARNING: agenda audit missing remote slots for {unit_name}: {preview}")
+        return False
+    return True
 
 
 def _load_index_rows(path: Path) -> list[dict[str, str]]:
@@ -804,6 +923,7 @@ def main(mode: str = "full") -> bool:
         endpoint = os.getenv("EF_AGENDA_SYNC_URL", "").strip()
         token = os.getenv("EF_AGENDA_SYNC_TOKEN", "").strip()
         if endpoint and _env_truthy("EF_AGENDA_SYNC_FULL"):
+            audit_enabled = not os.getenv("EF_AGENDA_SYNC_AUDIT", "").strip().lower() in {"0", "false", "no", "n", "off"}
             if _post_agenda_full_sync(
                 unit_name=cfg.unit_name,
                 rows=rows,
@@ -811,8 +931,20 @@ def main(mode: str = "full") -> bool:
                 token=token,
             ):
                 log("✓ Agenda full sync posted")
+                if audit_enabled:
+                    if _audit_full_sync_rows(
+                        unit_name=cfg.unit_name,
+                        rows=rows,
+                        endpoint=endpoint,
+                        token=token,
+                    ):
+                        log("✓ Agenda full sync audit passed")
+                    else:
+                        log("ERROR: agenda full sync audit detected missing remote slots")
+                        return False
             else:
                 log("WARNING: agenda full sync failed")
+                return False
         return True
     except Exception as e:
         log_exception("ERROR: Unexpected failure", e)

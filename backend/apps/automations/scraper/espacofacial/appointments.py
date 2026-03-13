@@ -85,6 +85,74 @@ def _find_events(driver: WebDriver) -> tuple[str, list]:
     return xpaths[-1], []
 
 
+def _wait_for_event_render_settle(
+    driver: WebDriver,
+    *,
+    timeout_seconds: float = 10.0,
+    settle_seconds: float = 1.2,
+    poll_seconds: float = 0.25,
+) -> int:
+    """Wait until FullCalendar event nodes stop changing for a short window.
+
+    After calendar navigation, bounds usually change before all event nodes are
+    rendered. Waiting only for "any event exists" causes partial weekly reads.
+    """
+
+    deadline = time.time() + max(timeout_seconds, 0.5)
+    last_count: int | None = None
+    last_change_at = time.time()
+    saw_nonzero = False
+
+    while time.time() < deadline:
+        try:
+            count = len(_find_events(driver)[1])
+        except Exception:
+            count = 0
+
+        now = time.time()
+        if count != last_count:
+            last_count = count
+            last_change_at = now
+            if count > 0:
+                saw_nonzero = True
+        elif saw_nonzero and (now - last_change_at) >= settle_seconds:
+            return count
+
+        time.sleep(max(poll_seconds, 0.05))
+
+    return int(last_count or 0)
+
+
+def _calendar_post_nav_delay_seconds() -> float:
+    raw = os.getenv("EF_CALENDAR_POST_NAV_DELAY", "").strip()
+    if not raw:
+        return 3.5
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        return 3.5
+
+
+def _index_view_passes() -> int:
+    raw = os.getenv("EF_INDEX_VIEW_PASSES", "").strip()
+    if not raw:
+        return 3
+    try:
+        return max(int(raw), 1)
+    except ValueError:
+        return 3
+
+
+def _index_view_pass_delay_seconds() -> float:
+    raw = os.getenv("EF_INDEX_VIEW_PASS_DELAY", "").strip()
+    if not raw:
+        return 1.25
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        return 1.25
+
+
 def _extract_event_date(driver: WebDriver, event) -> str:
     """Try to infer the event date from FullCalendar DOM (returns DD/MM/YYYY or '')."""
 
@@ -260,6 +328,9 @@ def _collect_across_calendar_window(driver: WebDriver, collect_current_view) -> 
         else:
             log("Collecting calendar page without visible bounds")
 
+        delay_seconds = _calendar_post_nav_delay_seconds()
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
         rows.extend(collect_current_view())
 
         if has_dates and max_date >= end_iso:
@@ -1113,8 +1184,19 @@ def _scrape_complete_current_view(
 
     log("Scraping appointments (complete)...")
 
+    WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located(
+            (
+                By.XPATH,
+                '//*[contains(@class, "fc-view-harness") or contains(@class, "fc-daygrid") or contains(@class, "fc-scroller")]',
+            )
+        )
+    )
+    _wait_for_event_render_settle(driver)
+
     event_xpath, events = _find_events(driver)
     WebDriverWait(driver, 20).until(EC.presence_of_all_elements_located((By.XPATH, event_xpath)))
+    _wait_for_event_render_settle(driver)
     _, events = _find_events(driver)
     log(f"Found {len(events)} events")
 
@@ -1286,56 +1368,91 @@ def _scrape_index_current_view(
         )
     )
 
-    # Then give events a short window to render. If still empty, continue with zero rows.
-    try:
-        WebDriverWait(driver, 8).until(lambda d: len(_find_events(d)[1]) > 0)
-    except TimeoutException:
-        pass
+    passes = _index_view_passes()
+    pass_delay_seconds = _index_view_pass_delay_seconds()
+    rows_by_key: dict[str, dict[str, str]] = {}
+    total_missing_time_count = 0
+    total_error_count = 0
 
-    _, events = _find_events(driver)
-    log(f"Found {len(events)} events")
-    if not events:
+    for pass_index in range(1, passes + 1):
+        _wait_for_event_render_settle(driver, timeout_seconds=6.0, settle_seconds=1.0)
+
+        _, events = _find_events(driver)
+        log(f"Index pass {pass_index}/{passes}: found {len(events)} events")
+
+        pass_rows: list[dict[str, str]] = []
+        pass_missing_time_count = 0
+        pass_error_count = 0
+
+        for i, event in enumerate(events, start=1):
+            try:
+                title_elem = event.find_element(By.XPATH, './/*[contains(@class, "fc-event-title")]')
+                title_text = (title_elem.text or "").strip()
+                time_text = ""
+                try:
+                    time_elem = event.find_element(By.XPATH, './/*[contains(@class, "fc-event-time")]')
+                    time_text = (time_elem.text or "").strip()
+                except NoSuchElementException:
+                    pass_missing_time_count += 1
+                    log_file_only(
+                        "WARNING event %s: missing fc-event-time (index pass %s). title=%r event_text=%r outerHTML=%s"
+                        % (i, pass_index, title_text, (event.text or "").strip(), _safe_outer_html(event))
+                    )
+
+                date_text = _extract_event_date(driver, event)
+                signature = build_event_signature(date_text, time_text, title_text, mode=signature_mode)
+                pass_rows.append(
+                    {
+                        "Data": date_text,
+                        "Horário": time_text,
+                        "Título": title_text,
+                        "Assinatura": signature,
+                    }
+                )
+            except Exception as e:
+                pass_error_count += 1
+                log_exception(f"ERROR event {i} (index pass {pass_index})", e)
+                continue
+
+        total_missing_time_count += pass_missing_time_count
+        total_error_count += pass_error_count
+
+        added_this_pass = 0
+        for row in pass_rows:
+            signature = (row.get("Assinatura") or "").strip()
+            key = signature or "||".join(
+                [
+                    (row.get("Data") or "").strip(),
+                    (row.get("Horário") or "").strip(),
+                    (row.get("Título") or "").strip(),
+                ]
+            )
+            if not key or key in rows_by_key:
+                continue
+            rows_by_key[key] = row
+            added_this_pass += 1
+
+        if pass_missing_time_count:
+            log(f"NOTE: pass {pass_index} had {pass_missing_time_count} events without visible time.")
+        if pass_error_count:
+            log(f"NOTE: pass {pass_index} had {pass_error_count} parse errors; see log file for details.")
+
+        if pass_index >= 2 and added_this_pass == 0:
+            log(f"Index view stabilized after pass {pass_index}; no new signatures found.")
+            break
+        if pass_index < passes and pass_delay_seconds > 0:
+            time.sleep(pass_delay_seconds)
+
+    rows = list(rows_by_key.values())
+    if not rows:
         log("No events found in current calendar view (index).")
         return []
 
-    rows: list[dict[str, str]] = []
-    missing_time_count = 0
-    error_count = 0
-
-    for i, event in enumerate(events, start=1):
-        try:
-            title_elem = event.find_element(By.XPATH, './/*[contains(@class, "fc-event-title")]')
-            title_text = (title_elem.text or "").strip()
-            time_text = ""
-            try:
-                time_elem = event.find_element(By.XPATH, './/*[contains(@class, "fc-event-time")]')
-                time_text = (time_elem.text or "").strip()
-            except NoSuchElementException:
-                missing_time_count += 1
-                log_file_only(
-                    "WARNING event %s: missing fc-event-time (index). title=%r event_text=%r outerHTML=%s"
-                    % (i, title_text, (event.text or "").strip(), _safe_outer_html(event))
-                )
-
-            date_text = _extract_event_date(driver, event)
-            signature = build_event_signature(date_text, time_text, title_text, mode=signature_mode)
-            rows.append(
-                {
-                    "Data": date_text,
-                    "Horário": time_text,
-                    "Título": title_text,
-                    "Assinatura": signature,
-                }
-            )
-        except Exception as e:
-            error_count += 1
-            log_exception(f"ERROR event {i} (index)", e)
-            continue
-
-    if missing_time_count:
-        log(f"NOTE: {missing_time_count} events had no visible time; saved with empty 'Horário'.")
-    if error_count:
-        log(f"NOTE: {error_count} events failed to parse; see log file for details.")
+    log(f"Index current view total unique events: {len(rows)}")
+    if total_missing_time_count:
+        log(f"NOTE: {total_missing_time_count} index events had no visible time across all passes.")
+    if total_error_count:
+        log(f"NOTE: {total_error_count} index events failed to parse across all passes; see log file for details.")
 
     return rows
 
