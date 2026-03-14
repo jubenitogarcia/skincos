@@ -16,6 +16,7 @@ export type BookingDraftState = {
     step: BookingDraftStep;
     detailsStage: BookingDraftDetailsStage;
     patientName: string;
+    patientGender: string;
     email: string;
     whatsapp: string;
     cpf: string;
@@ -88,6 +89,7 @@ export function readBookingDraft(): BookingDraftState | null {
         step: raw.step,
         detailsStage: raw.detailsStage,
         patientName: raw.patientName,
+        patientGender: typeof (raw as { patientGender?: unknown }).patientGender === "string" ? (raw as { patientGender?: string }).patientGender ?? "" : "",
         email: raw.email,
         whatsapp: raw.whatsapp,
         cpf: raw.cpf,

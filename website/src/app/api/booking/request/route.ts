@@ -3,7 +3,7 @@ import { getBookingDb, nowMs, addMinutes, clampText, normalizePhone, normalizeEm
 import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
 import { getAgendaDb } from "@/lib/agendaDb";
-import { sendBookingNotifications } from "@/lib/bookingNotifications";
+import { sendBookingNotifications, type PatientGender } from "@/lib/bookingNotifications";
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 import { issueBookingStatusToken } from "@/lib/bookingSecurity";
@@ -23,6 +23,7 @@ type Payload = {
     date?: string; // YYYY-MM-DD
     time?: string; // HH:MM
     patientName?: string;
+    patientGender?: string;
     email?: string;
     whatsapp?: string;
     cpf?: string;
@@ -32,6 +33,14 @@ type Payload = {
     formStartedAtMs?: number;
     turnstileToken?: string | null;
 };
+
+function normalizePatientGender(raw: string): PatientGender | "" {
+    const value = sanitizeOneLine(raw).toLowerCase();
+    if (!value) return "";
+    if (value === "male" || value === "masculino" || value === "masc" || value === "m") return "male";
+    if (value === "female" || value === "feminino" || value === "fem" || value === "f") return "female";
+    return "";
+}
 
 type CfCacheStorage = {
     default?: Cache;
@@ -218,6 +227,7 @@ export async function POST(request: Request) {
     const turnstileToken = sanitizeOneLine((body.turnstileToken ?? "").toString());
 
     const patientName = clampText(sanitizeOneLine(body.patientName ?? ""), 80);
+    const patientGender = normalizePatientGender(body.patientGender ?? "");
     const email = normalizeEmail(body.email ?? "");
     const whatsapp = normalizePhone(body.whatsapp ?? "");
     const cpf = normalizeCpf(body.cpf ?? "");
@@ -244,6 +254,10 @@ export async function POST(request: Request) {
 
     if (!email) {
         return json({ ok: false, error: "invalid_email" }, { status: 400 });
+    }
+
+    if (!patientGender) {
+        return json({ ok: false, error: "invalid_gender" }, { status: 400 });
     }
 
     if (!whatsapp) {
@@ -543,14 +557,22 @@ export async function POST(request: Request) {
             ? await sendBookingNotifications({
                 id,
                 unitSlug,
-                serviceName: service.name,
+                procedureName: selectedProcedureNames.length > 0 ? selectedProcedureNames.join(", ") : service.name,
                 date,
                 time,
                 patientName,
+                patientGender,
                 email,
                 whatsapp,
+                cpf,
+                address,
+                doctorName: safeDoctorName,
             })
-            : { email: { ok: false, status: "skipped", error: "not_confirmed" }, whatsapp: { ok: false, status: "skipped", error: "not_confirmed" } };
+            : {
+                email: { ok: false, status: "skipped", error: "not_confirmed" },
+                whatsapp: { ok: false, status: "skipped", error: "not_confirmed" },
+                unitEmail: { ok: false, status: "skipped", error: "not_confirmed" },
+            };
 
     // Optional: notify external automation via webhook (WhatsApp integration etc.)
     await tryPostWebhook({
@@ -569,6 +591,7 @@ export async function POST(request: Request) {
             endAtMs,
             confirmByMs,
             patientName,
+            patientGender,
             email,
             whatsapp,
             cpf,
