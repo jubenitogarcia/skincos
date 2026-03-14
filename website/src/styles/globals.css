@@ -1571,19 +1571,11 @@ button:focus-visible {
 .bookingFlow__procedureBadgeGrid {
   display: flex;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-start;
   width: max-content;
-  min-width: 100%;
+  min-width: max-content;
   padding: 8px 0 14px;
-}
-
-.bookingFlow__procedureBadgeGrid > :first-child {
-  margin-left: 16px;
-}
-
-.bookingFlow__procedureBadgeGrid > :last-child {
-  margin-right: 16px;
 }
 
 .bookingFlow__procedureBadge {
@@ -1591,8 +1583,8 @@ button:focus-visible {
   display: grid;
   justify-items: center;
   gap: 5px;
-  width: 76px;
-  min-width: 76px;
+  width: 112px;
+  min-width: 112px;
   flex: 0 0 auto;
   padding: 0;
   border: 0;
@@ -1663,10 +1655,12 @@ button:focus-visible {
 .bookingFlow__procedureBadgeLabel {
   font-size: 12px;
   font-weight: 900;
-  line-height: 1.1;
+  line-height: 1.15;
   text-align: center;
-  text-wrap: balance;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
   width: 100%;
+  min-height: 2.3em;
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeLabel {
@@ -1860,6 +1854,13 @@ button:focus-visible {
   padding-top: 8px !important;
 }
 
+.bookingFlow__cardProcedure .bookingFlow__scrollWindow {
+  padding-left: 14px !important;
+  padding-right: 14px !important;
+  scroll-padding-left: 14px !important;
+  scroll-padding-right: 14px !important;
+}
+
 .bookingFlow__hoverZone {
   position: absolute;
   top: 8px;
@@ -1914,6 +1915,21 @@ button:focus-visible {
 
 .bookingFlow__scrollArrow--right {
   margin-right: 6px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bookingFlow__cardProcedure .bookingFlow__scrollWindow {
+    padding-left: 56px !important;
+    padding-right: 56px !important;
+    scroll-padding-left: 56px !important;
+    scroll-padding-right: 56px !important;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .bookingFlow__hoverZone {
+    display: none;
+  }
 }
 
 .bookingFlow__datetimeGrid {
