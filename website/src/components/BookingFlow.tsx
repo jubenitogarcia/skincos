@@ -28,7 +28,7 @@ type SlotsPayload = {
 type NotificationResult = { ok: boolean; status: string; provider?: string; error?: string };
 
 type RequestResponse =
-    | { ok: true; id: string; status: string; confirmByMs: number; startAtMs: number; endAtMs: number; unitSlug: string; doctorSlug: string; doctorName: string; service: { id: string; name: string }; statusToken?: string | null; statusTokenExpMs?: number; notifications?: { email: NotificationResult; whatsapp: NotificationResult } }
+    | { ok: true; id: string; status: string; confirmByMs: number; startAtMs: number; endAtMs: number; unitSlug: string; doctorSlug: string; doctorName: string; service: { id: string; name: string }; statusToken?: string | null; statusTokenExpMs?: number; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } }
     | { ok: false; error: string; message?: string };
 
 type BookingStatus = {
@@ -156,6 +156,13 @@ function formatCpf(input: string): string {
     if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
     if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+function normalizePatientGender(input: string): "female" | "male" | "" {
+    const value = (input ?? "").trim().toLowerCase();
+    if (value === "female" || value === "feminino" || value === "f") return "female";
+    if (value === "male" || value === "masculino" || value === "m") return "male";
+    return "";
 }
 
 function startOfCurrentWeek(date: Date): Date {
@@ -296,6 +303,7 @@ export default function BookingFlow() {
     const [slotsError, setSlotsError] = useState<string | null>(null);
 
     const [patientName, setPatientName] = useState("");
+    const [patientGender, setPatientGender] = useState<"female" | "male" | "">("");
     const [email, setEmail] = useState("");
     const [whatsapp, setWhatsapp] = useState("");
     const [cpf, setCpf] = useState("");
@@ -312,7 +320,7 @@ export default function BookingFlow() {
     const [activeInstagram, setActiveInstagram] = useState<DoctorInstagramProfile | null>(null);
     const [dateAvailability, setDateAvailability] = useState<Record<string, boolean>>({});
 
-    const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult } } | null>(null);
+    const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } } | null>(null);
     const [status, setStatus] = useState<BookingStatus | null>(null);
     const draftToRestoreRef = useRef<BookingDraftState | null>(null);
     const draftAppliedRef = useRef(false);
@@ -387,6 +395,7 @@ export default function BookingFlow() {
         setDateAvailability({});
         setActiveInstagram(null);
         setPatientName("");
+        setPatientGender("");
         setEmail("");
         setWhatsapp("");
         setCpf("");
@@ -419,6 +428,7 @@ export default function BookingFlow() {
         setDateTouched(Boolean(draft.dateKey));
         setTimeKey(draft.timeKey);
         setPatientName(draft.patientName);
+        setPatientGender(normalizePatientGender(draft.patientGender));
         setEmail(draft.email);
         setWhatsapp(draft.whatsapp);
         setCpf(draft.cpf);
@@ -625,6 +635,10 @@ export default function BookingFlow() {
             setSubmitError("Informe seu nome.");
             return;
         }
+        if (!patientGender) {
+            setSubmitError("Selecione o gênero.");
+            return;
+        }
         if (!emailValue || !emailSeemsValid) {
             setSubmitError("Informe um e-mail válido.");
             return;
@@ -666,6 +680,7 @@ export default function BookingFlow() {
                     date: dateKey,
                     time: timeKey,
                     patientName,
+                    patientGender,
                     email: emailValue,
                     whatsapp,
                     cpf: cpfDigits,
@@ -711,6 +726,10 @@ export default function BookingFlow() {
                 }
                 if (err === "invalid_email") {
                     setSubmitError("Informe um e-mail válido.");
+                    return;
+                }
+                if (err === "invalid_gender") {
+                    setSubmitError("Selecione o gênero.");
                     return;
                 }
                 if (err === "invalid_cpf") {
@@ -865,11 +884,13 @@ export default function BookingFlow() {
     const canAdvanceIdentity =
         !!selectedSlot &&
         !!patientName.trim() &&
+        !!patientGender &&
         emailSeemsValid &&
         whatsappSeemsValid;
     const canSubmit =
         !!selectedSlot &&
         !!patientName.trim() &&
+        !!patientGender &&
         emailSeemsValid &&
         whatsappSeemsValid &&
         cpfSeemsValid &&
@@ -954,6 +975,7 @@ export default function BookingFlow() {
                 dateKey ||
                 timeKey ||
                 patientName.trim() ||
+                patientGender ||
                 email.trim() ||
                 whatsapp.trim() ||
                 cpf.trim() ||
@@ -981,6 +1003,7 @@ export default function BookingFlow() {
             step: step === "details" ? "details" : "pick",
             detailsStage,
             patientName,
+            patientGender,
             email,
             whatsapp,
             cpf,
@@ -998,6 +1021,7 @@ export default function BookingFlow() {
         email,
         notes,
         patientName,
+        patientGender,
         primaryService?.id,
         selectedServiceIds,
         step,
@@ -1425,6 +1449,7 @@ export default function BookingFlow() {
                                     setDateTouched(false);
                                     setTimeKey(null);
                                     setPatientName("");
+                                    setPatientGender("");
                                     setEmail("");
                                     setWhatsapp("");
                                     setCpf("");
@@ -1538,6 +1563,20 @@ export default function BookingFlow() {
                                         </label>
 
                                         <label className="bookingFlow__field">
+                                            <span>Gênero</span>
+                                            <select
+                                                value={patientGender}
+                                                onChange={(e) => setPatientGender(normalizePatientGender(e.target.value))}
+                                                className="bookingFlow__input"
+                                                aria-invalid={patientGender === "" && (patientName.length > 0 || email.length > 0 || whatsapp.length > 0)}
+                                            >
+                                                <option value="">Selecione</option>
+                                                <option value="female">Feminino</option>
+                                                <option value="male">Masculino</option>
+                                            </select>
+                                        </label>
+
+                                        <label className="bookingFlow__field">
                                             <span>E-mail</span>
                                             <input
                                                 value={email}
@@ -1552,6 +1591,9 @@ export default function BookingFlow() {
                                     </div>
                                     {email.length > 0 && !emailSeemsValid ? (
                                         <div className="bookingFlow__fieldError">Informe um e-mail válido.</div>
+                                    ) : null}
+                                    {patientGender === "" && (patientName.length > 0 || email.length > 0 || whatsapp.length > 0) ? (
+                                        <div className="bookingFlow__fieldError">Selecione o gênero.</div>
                                     ) : null}
 
                                     <label className="bookingFlow__field">
