@@ -1571,7 +1571,7 @@ button:focus-visible {
 .bookingFlow__procedureBadgeGrid {
   display: flex;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-start;
   width: max-content;
   min-width: max-content;
@@ -1583,8 +1583,8 @@ button:focus-visible {
   display: grid;
   justify-items: center;
   gap: 5px;
-  width: 92px;
-  min-width: 92px;
+  width: 112px;
+  min-width: 112px;
   flex: 0 0 auto;
   padding: 0;
   border: 0;
@@ -1655,12 +1655,12 @@ button:focus-visible {
 .bookingFlow__procedureBadgeLabel {
   font-size: 12px;
   font-weight: 900;
-  line-height: 1.1;
+  line-height: 1.15;
   text-align: center;
   text-wrap: pretty;
   overflow-wrap: anywhere;
   width: 100%;
-  min-height: 2.2em;
+  min-height: 2.3em;
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeLabel {
