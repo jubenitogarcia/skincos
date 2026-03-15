@@ -1,0 +1,8 @@
+name = "skincos-obs-alert-webhook"
+main = "src/index.ts"
+compatibility_date = "2026-03-12"
+workers_dev = true
+
+[vars]
+GITHUB_OWNER = "jubenitogarcia"
+GITHUB_REPO = "skincos"

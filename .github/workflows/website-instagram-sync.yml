@@ -60,28 +60,42 @@ jobs:
             0|false|no) stories_bool="false" ;;
           esac
 
-          payload=$(cat <<JSON
-          {
-            "force": ${force_bool},
-            "includeStories": ${stories_bool},
-            "maxFeedItems": 72,
-            "concurrency": 3,
-            "source": "github_actions_schedule"
-          }
-JSON
-)
+          payload=$(printf '{"force":%s,"includeStories":%s,"maxFeedItems":72,"concurrency":3,"maxHandleRetries":2,"retryDelayMs":1200,"source":"github_actions_schedule"}' \
+            "${force_bool}" "${stories_bool}")
 
-          echo "POST ${WEBSITE_BASE_URL}/api/instagram/sync"
-          status=$(curl -sS -o response.json -w "%{http_code}" \
-            -X POST "${WEBSITE_BASE_URL}/api/instagram/sync" \
-            -H "content-type: application/json" \
-            -H "authorization: Bearer ${INSTAGRAM_SYNC_TOKEN}" \
-            --data "$payload")
+          max_http_attempts=3
+          http_success="false"
+          status="000"
+
+          for attempt in $(seq 1 "${max_http_attempts}"); do
+            echo "POST ${WEBSITE_BASE_URL}/api/instagram/sync (tentativa ${attempt}/${max_http_attempts})"
+            status=$(curl -sS -o response.json -w "%{http_code}" \
+              -X POST "${WEBSITE_BASE_URL}/api/instagram/sync" \
+              -H "content-type: application/json" \
+              -H "authorization: Bearer ${INSTAGRAM_SYNC_TOKEN}" \
+              --data "$payload" || true)
+
+            if [[ "$status" -ge 200 && "$status" -lt 300 ]] && jq -e '.ok == true' response.json >/dev/null 2>&1; then
+              http_success="true"
+              break
+            fi
+
+            if [[ "$attempt" -lt "$max_http_attempts" ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
 
           cat response.json
           echo
 
-          if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
-            echo "Sync falhou com HTTP ${status}"
+          if [[ "$http_success" != "true" ]]; then
+            echo "Sync falhou após ${max_http_attempts} tentativas (último HTTP ${status})"
+            exit 1
+          fi
+
+          failure_count=$(jq -r '.failureCount // 0' response.json)
+          if [[ "$failure_count" -gt 0 ]]; then
+            echo "Sync concluído com ${failure_count} falhas após retries internos por handle."
+            jq -c '.results[] | select(.ok != true) | {handle,error,attempts}' response.json || true
             exit 1
           fi

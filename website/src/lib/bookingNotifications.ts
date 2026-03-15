@@ -1,6 +1,8 @@
 import { units } from "@/data/units";
+import { BOOKING_CONFIRMATION_EMAIL_TEMPLATE } from "@/lib/emailTemplates/bookingConfirmationTemplate";
 
 type NotificationStatus = "sent" | "skipped" | "failed";
+export type PatientGender = "male" | "female";
 
 export type NotificationResult = {
     ok: boolean;
@@ -12,12 +14,16 @@ export type NotificationResult = {
 export type BookingNotificationPayload = {
     id: string;
     unitSlug: string;
-    serviceName: string;
+    procedureName: string;
     date: string;
     time: string;
     patientName: string;
+    patientGender: PatientGender;
     email: string;
     whatsapp: string;
+    cpf?: string;
+    address?: string;
+    doctorName?: string;
 };
 
 type SmtpConnect = (options: {
@@ -52,48 +58,6 @@ function formatDatePtBr(dateKey: string): string {
     return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
 }
 
-function buildEmailText(payload: BookingNotificationPayload) {
-    const unitLabel = unitLabelFromSlug(payload.unitSlug);
-    const dateLabel = formatDatePtBr(payload.date);
-    return [
-        `Olá, ${payload.patientName}!`,
-        "",
-        "Sua reserva foi confirmada.",
-        "",
-        `Procedimento: ${payload.serviceName}`,
-        `Data: ${dateLabel} às ${payload.time}`,
-        `Unidade: ${unitLabel}`,
-        `Protocolo: ${payload.id}`,
-        "",
-        "Se precisar alterar, responda este e-mail.",
-        "",
-        "Espaço Facial",
-    ].join("\n");
-}
-
-function buildEmailHtml(payload: BookingNotificationPayload) {
-    const unitLabel = unitLabelFromSlug(payload.unitSlug);
-    const dateLabel = formatDatePtBr(payload.date);
-    return `
-        <div style="font-family: Arial, sans-serif; color: #111; line-height: 1.5;">
-            <p>Olá, <strong>${payload.patientName}</strong>!</p>
-            <p>Sua reserva foi confirmada.</p>
-            <p><strong>Procedimento:</strong> ${payload.serviceName}<br/>
-               <strong>Data:</strong> ${dateLabel} às ${payload.time}<br/>
-               <strong>Unidade:</strong> ${unitLabel}<br/>
-               <strong>Protocolo:</strong> ${payload.id}</p>
-            <p>Se precisar alterar, responda este e-mail.</p>
-            <p>Espaço Facial</p>
-        </div>
-    `.trim();
-}
-
-function buildWhatsappMessage(payload: BookingNotificationPayload) {
-    const unitLabel = unitLabelFromSlug(payload.unitSlug);
-    const dateLabel = formatDatePtBr(payload.date);
-    return `Reserva confirmada! ${payload.patientName}, seu agendamento de ${payload.serviceName} em ${dateLabel} às ${payload.time} na ${unitLabel} foi confirmado. Protocolo ${payload.id}.`;
-}
-
 function sanitizeEmail(value: string): string {
     const email = (value ?? "").trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "";
@@ -102,6 +66,216 @@ function sanitizeEmail(value: string): string {
 
 function sanitizeHeader(value: string): string {
     return (value ?? "").replace(/[\r\n]+/g, " ").trim();
+}
+
+function escapeHtml(value: string): string {
+    return (value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function stripPhoneToDigits(value: string): string {
+    return (value ?? "").replace(/\D/g, "");
+}
+
+function formatWhatsappDisplay(value: string): string {
+    const digitsRaw = stripPhoneToDigits(value);
+    const digits = digitsRaw.startsWith("55") ? digitsRaw.slice(2) : digitsRaw;
+    const ddd = digits.slice(0, 2);
+    const prefix = digits.slice(2, 7);
+    const suffix = digits.slice(7, 11);
+    if (!ddd || !prefix || !suffix) return value || "";
+    return `+55 (${ddd}) ${prefix}-${suffix}`;
+}
+
+function parseInstagramLabel(url: string): string {
+    try {
+        const pathname = new URL(url).pathname;
+        const handle = pathname.split("/").filter(Boolean)[0] ?? "";
+        return handle ? `@${handle.replace(/^@/, "")}` : "Instagram";
+    } catch {
+        return "Instagram";
+    }
+}
+
+function parseFacebookLabel(url: string): string {
+    try {
+        const parsed = new URL(url);
+        const path = parsed.pathname.replace(/\/$/, "");
+        return `${parsed.hostname}${path}`;
+    } catch {
+        return "Facebook";
+    }
+}
+
+function resolveSiteUrl(): string {
+    const raw = (process.env.NEXT_PUBLIC_SITE_URL ?? process.env.BOOKING_SITE_URL ?? "https://espacofacial.com").trim();
+    return raw.replace(/\/$/, "");
+}
+
+function absoluteUrl(siteUrl: string, raw: string): string {
+    const value = (raw ?? "").trim();
+    if (!value) return siteUrl;
+    if (/^https?:\/\//i.test(value)) return value;
+    if (value.startsWith("/")) return `${siteUrl}${value}`;
+    return `${siteUrl}/${value}`;
+}
+
+function sanitizeUrl(value: string, fallback: string): string {
+    const raw = (value ?? "").trim();
+    if (!raw) return fallback;
+    if (/^(https?:|mailto:|tel:)/i.test(raw)) return raw;
+    return fallback;
+}
+
+function ambassadorForGender(gender: PatientGender, siteUrl: string): { name: string; imageUrl: string } {
+    const male = {
+        name: "Márcio Garcia",
+        imageUrl: absoluteUrl(
+            siteUrl,
+            process.env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL ?? "/images/email/ambassadors/marcio-garcia-u3a7227.jpg",
+        ),
+    };
+    const female = {
+        name: "Deborah Secco",
+        imageUrl: absoluteUrl(
+            siteUrl,
+            process.env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL ?? "/images/email/ambassadors/deborah-secco-20244437.jpeg",
+        ),
+    };
+    return gender === "male" ? male : female;
+}
+
+function renderTemplate(rawTemplate: string, placeholders: Record<string, string>): string {
+    return rawTemplate.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key: string) => placeholders[key] ?? "");
+}
+
+function buildCustomerEmailText(payload: BookingNotificationPayload) {
+    const unitLabel = unitLabelFromSlug(payload.unitSlug);
+    const dateLabel = formatDatePtBr(payload.date);
+    return [
+        `Olá, ${payload.patientName}!`,
+        "",
+        "Sua reserva foi confirmada.",
+        "",
+        `Procedimento: ${payload.procedureName}`,
+        `Data: ${dateLabel} às ${payload.time}`,
+        `Unidade: ${unitLabel}`,
+        `Protocolo: ${payload.id}`,
+        "",
+        "Se precisar alterar, fale com a equipe da unidade.",
+        "",
+        "Espaço Facial",
+    ].join("\n");
+}
+
+function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
+    const siteUrl = resolveSiteUrl();
+    const unit = unitFromSlug(payload.unitSlug);
+    const unitName = unit?.name ?? payload.unitSlug;
+    const unitAddress = [unit?.addressLine ?? "", unit?.state ? `- ${unit.state}` : ""].filter(Boolean).join(" ").trim() || unitName;
+
+    const instagramUrl = sanitizeUrl(unit?.instagram ?? "", `${siteUrl}/`);
+    const facebookUrl = sanitizeUrl(unit?.facebook ?? "", `${siteUrl}/`);
+    const whatsappDigits = stripPhoneToDigits(unit?.whatsappPhone ?? payload.whatsapp);
+    const whatsappUrl = sanitizeUrl(
+        whatsappDigits ? `https://api.whatsapp.com/send?phone=${whatsappDigits}` : "",
+        `${siteUrl}/`,
+    );
+
+    const teamContactUrl = sanitizeUrl(
+        unit?.contactUrl ? absoluteUrl(siteUrl, unit.contactUrl) : whatsappUrl,
+        whatsappUrl,
+    );
+    const reservationDetailsUrl = sanitizeUrl(
+        `${siteUrl}/agendamento?protocolo=${encodeURIComponent(payload.id)}#booking-flow`,
+        `${siteUrl}/agendamento`,
+    );
+
+    const ambassador = ambassadorForGender(payload.patientGender, siteUrl);
+    const logoUrl = sanitizeUrl(
+        absoluteUrl(siteUrl, process.env.BOOKING_EMAIL_LOGO_URL ?? "/logo.png"),
+        `${siteUrl}/logo.png`,
+    );
+
+    return renderTemplate(BOOKING_CONFIRMATION_EMAIL_TEMPLATE, {
+        customer_gender: payload.patientGender,
+        customer_name: escapeHtml(payload.patientName),
+        procedure_name: escapeHtml(payload.procedureName),
+        appointment_date: escapeHtml(formatDatePtBr(payload.date)),
+        appointment_time: escapeHtml(payload.time),
+        unit_name: escapeHtml(unitName),
+        reservation_code: escapeHtml(payload.id),
+        ambassador_name: escapeHtml(ambassador.name),
+        ambassador_image_url: escapeHtml(sanitizeUrl(ambassador.imageUrl, `${siteUrl}/logo.png`)),
+        logo_url: escapeHtml(logoUrl),
+        reservation_details_url: escapeHtml(reservationDetailsUrl),
+        team_contact_url: escapeHtml(teamContactUrl),
+        unit_instagram_url: escapeHtml(instagramUrl),
+        unit_instagram: escapeHtml(parseInstagramLabel(instagramUrl)),
+        unit_facebook_url: escapeHtml(facebookUrl),
+        unit_facebook: escapeHtml(parseFacebookLabel(facebookUrl)),
+        unit_whatsapp_url: escapeHtml(whatsappUrl),
+        unit_whatsapp: escapeHtml(formatWhatsappDisplay(unit?.whatsappPhone ?? payload.whatsapp)),
+        unit_address: escapeHtml(unitAddress),
+    });
+}
+
+function buildUnitEmailText(payload: BookingNotificationPayload) {
+    const unitLabel = unitLabelFromSlug(payload.unitSlug);
+    const dateLabel = formatDatePtBr(payload.date);
+    const genderLabel = payload.patientGender === "male" ? "Masculino" : "Feminino";
+
+    return [
+        "Nova reserva confirmada no site.",
+        "",
+        `Unidade: ${unitLabel}`,
+        `Protocolo: ${payload.id}`,
+        `Paciente: ${payload.patientName}`,
+        `Gênero: ${genderLabel}`,
+        `Procedimento: ${payload.procedureName}`,
+        `Data: ${dateLabel}`,
+        `Horário: ${payload.time}`,
+        `E-mail: ${payload.email}`,
+        `WhatsApp: ${payload.whatsapp}`,
+        payload.cpf ? `CPF: ${payload.cpf}` : "",
+        payload.address ? `Endereço: ${payload.address}` : "",
+        payload.doctorName ? `Profissional: ${payload.doctorName}` : "",
+    ]
+        .filter(Boolean)
+        .join("\n");
+}
+
+function buildUnitEmailHtml(payload: BookingNotificationPayload) {
+    const unitLabel = unitLabelFromSlug(payload.unitSlug);
+    const dateLabel = formatDatePtBr(payload.date);
+    const genderLabel = payload.patientGender === "male" ? "Masculino" : "Feminino";
+
+    return `
+        <div style="font-family: Arial, sans-serif; color: #111; line-height: 1.5;">
+            <h2 style="margin: 0 0 12px 0;">Nova reserva confirmada no site</h2>
+            <p style="margin: 0 0 8px 0;"><strong>Unidade:</strong> ${escapeHtml(unitLabel)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Protocolo:</strong> ${escapeHtml(payload.id)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Paciente:</strong> ${escapeHtml(payload.patientName)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Gênero:</strong> ${escapeHtml(genderLabel)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Procedimento:</strong> ${escapeHtml(payload.procedureName)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Data:</strong> ${escapeHtml(dateLabel)} às ${escapeHtml(payload.time)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>E-mail:</strong> ${escapeHtml(payload.email)}</p>
+            <p style="margin: 0 0 8px 0;"><strong>WhatsApp:</strong> ${escapeHtml(payload.whatsapp)}</p>
+            ${payload.cpf ? `<p style="margin: 0 0 8px 0;"><strong>CPF:</strong> ${escapeHtml(payload.cpf)}</p>` : ""}
+            ${payload.address ? `<p style="margin: 0 0 8px 0;"><strong>Endereço:</strong> ${escapeHtml(payload.address)}</p>` : ""}
+            ${payload.doctorName ? `<p style="margin: 0 0 8px 0;"><strong>Profissional:</strong> ${escapeHtml(payload.doctorName)}</p>` : ""}
+        </div>
+    `.trim();
+}
+
+function buildWhatsappMessage(payload: BookingNotificationPayload) {
+    const unitLabel = unitLabelFromSlug(payload.unitSlug);
+    const dateLabel = formatDatePtBr(payload.date);
+    return `Reserva confirmada! ${payload.patientName}, seu agendamento de ${payload.procedureName} em ${dateLabel} às ${payload.time} na ${unitLabel} foi confirmado. Protocolo ${payload.id}.`;
 }
 
 async function tryLoadSmtpConnect(): Promise<SmtpConnect | null> {
@@ -189,24 +363,31 @@ async function sendSmtpCommand(
     }
 }
 
-async function sendTitanEmailDirect(payload: BookingNotificationPayload): Promise<NotificationResult> {
+async function sendTitanEmailDirect(params: {
+    unitSlug: string;
+    to: string;
+    from: string;
+    subject: string;
+    text: string;
+    html: string;
+}): Promise<NotificationResult> {
     const connect = await tryLoadSmtpConnect();
     if (!connect) {
         return { ok: false, status: "skipped", error: "smtp_runtime_unavailable" };
     }
 
-    const to = sanitizeEmail(payload.email);
-    const from = sanitizeEmail(unitEmailFromSlug(payload.unitSlug) ?? "");
+    const to = sanitizeEmail(params.to);
+    const from = sanitizeEmail(params.from);
     if (!to || !from) {
         return { ok: false, status: "failed", error: "invalid_email_fields" };
     }
 
     let user = "";
     let pass = "";
-    if (payload.unitSlug === "barrashoppingsul") {
+    if (params.unitSlug === "barrashoppingsul") {
         user = sanitizeEmail(process.env.TITAN_SMTP_USER_BARRA ?? "");
         pass = (process.env.TITAN_SMTP_PASS_BARRA ?? "").trim();
-    } else if (payload.unitSlug === "novo-hamburgo") {
+    } else if (params.unitSlug === "novo-hamburgo") {
         user = sanitizeEmail(process.env.TITAN_SMTP_USER_NH ?? "");
         pass = (process.env.TITAN_SMTP_PASS_NH ?? "").trim();
     }
@@ -247,9 +428,9 @@ async function sendTitanEmailDirect(payload: BookingNotificationPayload): Promis
         const message = buildSmtpMessage({
             from,
             to,
-            subject: "Confirmação de agendamento — Espaço Facial",
-            text: buildEmailText(payload),
-            html: buildEmailHtml(payload),
+            subject: params.subject,
+            text: params.text,
+            html: params.html,
         });
         await writer.write(new TextEncoder().encode(`${message}\r\n.\r\n`));
 
@@ -292,27 +473,45 @@ async function postJson(url: string, body: unknown, headers?: Record<string, str
     }
 }
 
-export async function sendBookingEmail(payload: BookingNotificationPayload): Promise<NotificationResult> {
-    const to = payload.email;
-    const smtpResult = await sendTitanEmailDirect(payload);
+async function sendEmail(params: {
+    unitSlug: string;
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    kind: "customer_confirmation" | "unit_confirmation";
+}): Promise<NotificationResult> {
+    const to = sanitizeEmail(params.to);
+    const unitFrom = sanitizeEmail(unitEmailFromSlug(params.unitSlug) ?? "");
+    const envFrom = sanitizeEmail(process.env.BOOKING_EMAIL_FROM ?? "");
+    const from = envFrom || unitFrom;
+
+    if (!to) return { ok: false, status: "skipped", error: "missing_to" };
+
+    const smtpResult: NotificationResult = from
+        ? await sendTitanEmailDirect({
+            unitSlug: params.unitSlug,
+            to,
+            from,
+            subject: params.subject,
+            text: params.text,
+            html: params.html,
+        })
+        : { ok: false, status: "skipped", error: "missing_from" };
     if (smtpResult.ok) return smtpResult;
 
-    const envFrom = (process.env.BOOKING_EMAIL_FROM ?? "").trim();
-    const unitFrom = unitEmailFromSlug(payload.unitSlug) ?? "";
-    const from = envFrom || unitFrom;
     const resendKey = (process.env.RESEND_API_KEY ?? "").trim();
     const webhookUrl = (process.env.BOOKING_EMAIL_WEBHOOK_URL ?? "").trim();
 
-    if (!to) return { ok: false, status: "skipped", error: "missing_to" };
     if (resendKey && from) {
         const res = await postJson(
             "https://api.resend.com/emails",
             {
                 from,
                 to,
-                subject: "Confirmação de agendamento — Espaço Facial",
-                html: buildEmailHtml(payload),
-                text: buildEmailText(payload),
+                subject: params.subject,
+                html: params.html,
+                text: params.text,
             },
             { Authorization: `Bearer ${resendKey}` },
         );
@@ -328,11 +527,11 @@ export async function sendBookingEmail(payload: BookingNotificationPayload): Pro
             {
                 to,
                 from,
-                subject: "Confirmação de agendamento — Espaço Facial",
-                text: buildEmailText(payload),
-                html: buildEmailHtml(payload),
-                bookingId: payload.id,
-                unitSlug: payload.unitSlug,
+                subject: params.subject,
+                text: params.text,
+                html: params.html,
+                unitSlug: params.unitSlug,
+                kind: params.kind,
             },
             secret ? { "x-booking-webhook-secret": secret } : undefined,
         );
@@ -346,6 +545,33 @@ export async function sendBookingEmail(payload: BookingNotificationPayload): Pro
         status: "skipped",
         error: smtpResult.error === "smtp_runtime_unavailable" ? "not_configured" : smtpResult.error ?? "not_configured",
     };
+}
+
+export async function sendBookingEmail(payload: BookingNotificationPayload): Promise<NotificationResult> {
+    return sendEmail({
+        unitSlug: payload.unitSlug,
+        to: payload.email,
+        subject: "Confirmação de agendamento — Espaço Facial",
+        text: buildCustomerEmailText(payload),
+        html: buildCustomerEmailHtml(payload),
+        kind: "customer_confirmation",
+    });
+}
+
+export async function sendBookingUnitEmail(payload: BookingNotificationPayload): Promise<NotificationResult> {
+    const to = sanitizeEmail(unitEmailFromSlug(payload.unitSlug) ?? "");
+    if (!to) {
+        return { ok: false, status: "skipped", error: "missing_unit_email" };
+    }
+
+    return sendEmail({
+        unitSlug: payload.unitSlug,
+        to,
+        subject: `Nova reserva confirmada — ${unitLabelFromSlug(payload.unitSlug)}`,
+        text: buildUnitEmailText(payload),
+        html: buildUnitEmailHtml(payload),
+        kind: "unit_confirmation",
+    });
 }
 
 export async function sendBookingWhatsappPrep(payload: BookingNotificationPayload): Promise<NotificationResult> {
@@ -370,6 +596,10 @@ export async function sendBookingWhatsappPrep(payload: BookingNotificationPayloa
 }
 
 export async function sendBookingNotifications(payload: BookingNotificationPayload) {
-    const [email, whatsapp] = await Promise.all([sendBookingEmail(payload), sendBookingWhatsappPrep(payload)]);
-    return { email, whatsapp };
+    const [email, whatsapp, unitEmail] = await Promise.all([
+        sendBookingEmail(payload),
+        sendBookingWhatsappPrep(payload),
+        sendBookingUnitEmail(payload),
+    ]);
+    return { email, whatsapp, unitEmail };
 }
