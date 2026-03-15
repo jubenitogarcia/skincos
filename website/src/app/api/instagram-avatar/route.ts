@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCachedInstagramAvatarUrl } from "@/lib/instagramSync";
 
 export const dynamic = "force-dynamic";
 
@@ -207,11 +208,18 @@ export async function GET(req: Request) {
             }
         }
 
-        const profilePicUrl = await fetchInstagramProfilePic(handle);
+        const cachedAvatarUrl = await getCachedInstagramAvatarUrl(handle);
+        const profilePicUrl = cachedAvatarUrl ?? (await fetchInstagramProfilePic(handle));
         const ogImageUrl = profilePicUrl ? null : await fetchInstagramOgImage(handle);
         const primaryUrl = profilePicUrl ?? ogImageUrl;
 
-        const source = profilePicUrl ? "profile_json" : ogImageUrl ? "og_image" : "placeholder_svg";
+        const source = cachedAvatarUrl
+            ? "db_cache"
+            : profilePicUrl
+              ? "profile_json"
+              : ogImageUrl
+                ? "og_image"
+                : "placeholder_svg";
 
         const primary = primaryUrl ? await fetchImage(primaryUrl) : { ok: false, contentType: null, bytes: null };
         if (primary.ok && primary.bytes) {

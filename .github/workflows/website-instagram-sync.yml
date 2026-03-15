@@ -1,0 +1,87 @@
+name: Website Instagram Sync
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Forçar sync completo"
+        required: false
+        default: "false"
+      include_stories:
+        description: "Incluir stories"
+        required: false
+        default: "true"
+
+concurrency:
+  group: website-instagram-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      INSTAGRAM_SYNC_TOKEN: ${{ secrets.INSTAGRAM_SYNC_TOKEN }}
+      WEBSITE_BASE_URL: https://espacofacial.com
+
+    steps:
+      - name: Guard sync settings
+        id: guard
+        run: |
+          if [[ -z "${INSTAGRAM_SYNC_TOKEN:-}" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "INSTAGRAM_SYNC_TOKEN não configurado; pulando sync."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger website Instagram sync
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: |
+          set -euo pipefail
+
+          FORCE_INPUT="${{ github.event.inputs.force || 'false' }}"
+          STORIES_INPUT="${{ github.event.inputs.include_stories || 'true' }}"
+
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            FORCE_INPUT="false"
+            STORIES_INPUT="true"
+          fi
+
+          force_bool="false"
+          stories_bool="true"
+          case "${FORCE_INPUT,,}" in
+            1|true|yes) force_bool="true" ;;
+          esac
+          case "${STORIES_INPUT,,}" in
+            0|false|no) stories_bool="false" ;;
+          esac
+
+          payload=$(cat <<JSON
+          {
+            "force": ${force_bool},
+            "includeStories": ${stories_bool},
+            "maxFeedItems": 72,
+            "concurrency": 3,
+            "source": "github_actions_schedule"
+          }
+JSON
+)
+
+          echo "POST ${WEBSITE_BASE_URL}/api/instagram/sync"
+          status=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "${WEBSITE_BASE_URL}/api/instagram/sync" \
+            -H "content-type: application/json" \
+            -H "authorization: Bearer ${INSTAGRAM_SYNC_TOKEN}" \
+            --data "$payload")
+
+          cat response.json
+          echo
+
+          if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+            echo "Sync falhou com HTTP ${status}"
+            exit 1
+          fi
