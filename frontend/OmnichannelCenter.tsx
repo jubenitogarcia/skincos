@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react"
+import { createPortal } from "react-dom"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/card"
 import { Badge } from "@/badge"
 import { Button } from "@/button"
@@ -215,6 +216,34 @@ interface OrchestratorStatus {
   instances: ChannelInstance[]
   availableChannelsList: number[]
   freeChannelsList: number[]
+  bootstrapSync?: Record<string, any>
+}
+
+function normalizeChannelStatus(value: any): ChannelStatus {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return 'free'
+  if (
+    normalized === 'free' ||
+    normalized === 'available' ||
+    normalized === 'stopped' ||
+    normalized === 'disconnected' ||
+    normalized === 'idle' ||
+    normalized === 'close' ||
+    normalized === 'closed' ||
+    normalized === 'logout'
+  ) return 'free'
+  if (normalized === 'open') return 'connected'
+  if (normalized === 'connecting') return 'qr_pending'
+  if (
+    normalized === 'starting' ||
+    normalized === 'qr_pending' ||
+    normalized === 'connected' ||
+    normalized === 'error' ||
+    normalized === 'stopping'
+  ) {
+    return normalized as ChannelStatus
+  }
+  return 'error'
 }
 
 interface QRData {
@@ -504,6 +533,20 @@ type ParticipantRenderMeta = MentionRenderMeta & {
 
 type RenderFormattedTextOptions = {
   resolveMention?: (token: string) => MentionRenderMeta | null
+}
+
+function buildMessageUiAnchorKey(message: any, index: number) {
+  const messageId = String(message?.id || message?.provider_message_id || '').trim() || 'msg'
+  const timestamp = String(message?.createdAt || message?.timestamp || message?.created_at || '').trim() || 'ts'
+  const sender = String(
+    message?.senderJid ||
+    message?.senderLid ||
+    message?.senderPhone ||
+    message?.senderName ||
+    message?.direction ||
+    ''
+  ).trim() || 'sender'
+  return `${messageId}::${timestamp}::${sender}::${index}`
 }
 
 const GROUP_SENDER_PALETTE = [
@@ -942,7 +985,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const [openMessageActionMenuId, setOpenMessageActionMenuId] = useState<string | null>(null)
   const [expandedReactionMenuId, setExpandedReactionMenuId] = useState<string | null>(null)
   const [messageActionMenuLayout, setMessageActionMenuLayout] = useState<{
-    messageId: string
+    anchorKey: string
     top: number
     left: number
     maxHeight: number
@@ -961,16 +1004,20 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const [messageScrollState, setMessageScrollState] = useState({ canScrollUp: false, canScrollDown: false })
   const [scrollAffordanceZone, setScrollAffordanceZone] = useState<'top' | 'bottom' | null>(null)
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
+  const orchestratorStatusRef = useRef<OrchestratorStatus | null>(null)
   const [statusFailureCount, setStatusFailureCount] = useState(0)
   const [statusPausedUntil, setStatusPausedUntil] = useState<number | null>(null)
   const [channelQR, setChannelQR] = useState<Map<number, QRData>>(new Map())
   const [qrDialogChannel, setQrDialogChannel] = useState<number | null>(null)
+  const [waInitialSyncChannel, setWaInitialSyncChannel] = useState<number | null>(null)
+  const waInitialSyncChannelRef = useRef<number | null>(null)
   const qrPollingRef = useRef<Map<number, NodeJS.Timeout>>(new Map())
   const qrDialogChannelRef = useRef<number | null>(null)
   const waEventsRefreshTimerRef = useRef<number | null>(null)
   const waConversationRefreshTimerRef = useRef<number | null>(null)
   const [waStatusOpen, setWaStatusOpen] = useState(false)
   const [connectedChannelAction, setConnectedChannelAction] = useState<Record<number, 'refresh' | 'disconnect' | undefined>>({})
+  const [refreshAllChannelsLoading, setRefreshAllChannelsLoading] = useState(false)
   const [igStatusOpen, setIgStatusOpen] = useState(false)
   const [igDialogOpen, setIgDialogOpen] = useState(false)
   const [igOauthStatus, setIgOauthStatus] = useState<{ configured: boolean; missing?: string[] } | null>(null)
@@ -1054,7 +1101,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         : Number.isFinite(ch?.port)
           ? Math.max(1, Number(ch.port) - 3000)
           : index + 1
-      const status = (ch?.status === 'available' ? 'free' : ch?.status) || 'free'
+      const status = normalizeChannelStatus(ch?.status)
       return {
         id: ch?.id || `channel-${resolvedChannel}`,
         port: ch?.port ?? (3000 + resolvedChannel),
@@ -1079,7 +1126,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       availableChannelsList:
         payload?.availableChannelsList ?? normalizedInstances.map((c) => c.channel),
       freeChannelsList:
-        payload?.freeChannelsList ?? normalizedInstances.filter((c) => c.status === 'free').map((c) => c.channel)
+        payload?.freeChannelsList ?? normalizedInstances.filter((c) => c.status === 'free').map((c) => c.channel),
+      bootstrapSync:
+        payload?.bootstrapSync && typeof payload.bootstrapSync === 'object'
+          ? payload.bootstrapSync
+          : {}
     } satisfies OrchestratorStatus
   }, [])
 
@@ -1139,10 +1190,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
   }, [])
 
-  const loadConversations = useCallback(async () => {
-    if (!provider) return
-    if (conversationsPausedUntil && Date.now() < conversationsPausedUntil) return
-    if (provider === 'evolution' && conversationsCount === 0) {
+  const loadConversations = useCallback(async (options?: { disableCache?: boolean }) => {
+    const disableCache = Boolean(options?.disableCache)
+    if (!provider) return []
+    if (conversationsPausedUntil && Date.now() < conversationsPausedUntil) return []
+    if (!disableCache && provider === 'evolution' && conversationsCount === 0) {
       const cached = readConversationCache()
       if (cached?.length) {
         setConversations(cached)
@@ -1151,18 +1203,20 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     setLoadingConversations(conversationsCount === 0)
     try {
       if (provider === 'evolution') {
+        const archivedOnly = conversationFilter === 'archived'
+        const fetchLimit = archivedOnly ? 200 : CONVERSATION_FETCH_LIMIT
         const channels =
           orchestratorStatus?.instances
             ?.filter((instance) => instance.status === 'connected')
             .map((instance) => instance.channel) || []
         if (!channels.length) {
           setConversations([])
-          return
+          return []
         }
         const results = await Promise.all(
           channels.map(async (channel) => {
             const res = await fetch(
-              `/api/wa-orchestrator/channels/${channel}/conversations?limit=${CONVERSATION_FETCH_LIMIT}`,
+              `/api/wa-orchestrator/channels/${channel}/conversations?limit=${fetchLimit}${archivedOnly ? '&archivedOnly=1' : ''}`,
               { headers: buildCrmBasicAuthHeaders() }
             )
             const data = await res.json().catch(() => ({}))
@@ -1173,6 +1227,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         const merged = results.flat()
         setConversations(merged)
         if (merged.length) writeConversationCache(merged)
+        return merged
       } else {
         const res = await fetch('/api/conversations')
         const data = await res.json()
@@ -1180,10 +1235,12 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           const merged = data?.items || data || []
           setConversations(merged)
           if (merged?.length) writeConversationCache(merged)
+          return merged
         }
       }
       setConversationsFailureCount(0)
       setConversationsPausedUntil(null)
+      return []
     } catch {
       setConversationsFailureCount((prev) => {
         const next = prev + 1
@@ -1193,17 +1250,160 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         }
         return next
       })
+      return []
     } finally {
       setLoadingConversations(false)
     }
   }, [
     provider,
     orchestratorStatus,
+    conversationFilter,
     conversationsPausedUntil,
     conversationsCount,
     readConversationCache,
     writeConversationCache
   ])
+
+  const finishInitialWhatsAppSync = useCallback((channel: number) => {
+    if (waInitialSyncChannelRef.current !== channel) return
+    waInitialSyncChannelRef.current = null
+    setWaInitialSyncChannel(null)
+    if (qrDialogChannelRef.current === channel) {
+      setQrDialogChannel(null)
+    }
+    setWaStatusOpen(false)
+  }, [])
+
+  const runInitialWhatsAppSync = useCallback(async (channel: number) => {
+    if (!Number.isFinite(channel) || channel <= 0) return
+    if (waInitialSyncChannelRef.current === channel) return
+    waInitialSyncChannelRef.current = channel
+    setWaInitialSyncChannel(channel)
+
+    let finished = false
+    let failedReason = ''
+    const maxAttempts = 60
+    const startedAt = Date.now()
+    const baselineState = orchestratorStatusRef.current?.bootstrapSync?.[String(channel)] || null
+    const baselineStartedAt = String(baselineState?.startedAt || '')
+    const baselineFailedAt = String(baselineState?.failedAt || '')
+    const baselineCompletedAt = String(baselineState?.completedAt || '')
+    let runStartedAt = baselineState?.running ? baselineStartedAt : ''
+    let observedRun = Boolean(runStartedAt)
+
+    try {
+      await fetch(`/api/wa-orchestrator/channels/${channel}/bootstrap-sync`, {
+        method: 'POST',
+        headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ force: true, reason: 'post-qr-connect' })
+      })
+        .then(async (response) => response.json().catch(() => null))
+        .then((payload) => {
+          const syncState = payload?.state || null
+          const candidateStartedAt = String(syncState?.startedAt || '')
+          if (candidateStartedAt && candidateStartedAt !== baselineStartedAt) {
+            runStartedAt = candidateStartedAt
+            observedRun = true
+          }
+        })
+        .catch(() => null)
+    } catch {
+      // keep going; we'll still poll status + conversations
+    }
+
+    try {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await loadStatus()
+        const list = await loadConversations({ disableCache: true })
+        const items = Array.isArray(list) ? list : []
+        const hasChannelConversations = items.some((item: any) => Number(item?.channel) === channel)
+        const statusSnapshot = orchestratorStatusRef.current
+        const bootstrapState = statusSnapshot?.bootstrapSync?.[String(channel)] || null
+        const channelState = String(
+          statusSnapshot?.instances?.find((item) => Number(item?.channel) === channel)?.status || ''
+        ).toLowerCase()
+        const phase = String(bootstrapState?.progress?.phase || '').trim().toLowerCase()
+        const running = Boolean(bootstrapState?.running) || phase === 'running' || phase === 'syncing'
+        const failed = phase === 'failed' || Boolean(bootstrapState?.lastError)
+        const completed = phase === 'completed' || Boolean(bootstrapState?.completedAt)
+        const currentStartedAt = String(bootstrapState?.startedAt || '')
+        const currentFailedAt = String(bootstrapState?.failedAt || '')
+        const currentCompletedAt = String(bootstrapState?.completedAt || '')
+
+        if (!observedRun && currentStartedAt && currentStartedAt !== baselineStartedAt) {
+          observedRun = true
+          runStartedAt = currentStartedAt
+        }
+
+        if (observedRun && !runStartedAt && currentStartedAt) {
+          runStartedAt = currentStartedAt
+        }
+
+        if (failed && currentFailedAt && currentFailedAt !== baselineFailedAt) {
+          failedReason = String(bootstrapState?.lastError || '').trim() || 'Falha na sincronização inicial.'
+          finished = true
+          break
+        }
+
+        const completedThisRun =
+          observedRun &&
+          completed &&
+          currentCompletedAt &&
+          currentCompletedAt !== baselineCompletedAt &&
+          (!runStartedAt || Date.parse(currentCompletedAt) >= Date.parse(runStartedAt))
+
+        if (completedThisRun) {
+          finished = true
+          break
+        }
+
+        // If no explicit bootstrap telemetry appears, fallback only after long wait.
+        if (!observedRun && attempt >= 24 && hasChannelConversations && channelState === 'connected') {
+          finished = true
+          break
+        }
+
+        if (channelState && channelState !== 'connected' && channelState !== 'starting' && channelState !== 'qr_pending') {
+          failedReason = `Canal ${channel} saiu de conectado durante sincronização (${channelState}).`
+          finished = true
+          break
+        }
+
+        if (running) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1500))
+          continue
+        }
+
+        // Prevent premature close if backend has not yet moved bootstrap state.
+        if (!observedRun) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1500))
+          continue
+        }
+
+        if (attempt > 8 && hasChannelConversations && channelState === 'connected') {
+          finished = true
+          break
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1500))
+      }
+    } finally {
+      const elapsed = Date.now() - startedAt
+      if (elapsed < 2000) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000 - elapsed))
+      }
+      finishInitialWhatsAppSync(channel)
+    }
+
+    if (finished && !failedReason) {
+      toast.success(`WhatsApp conectado no canal ${channel}`)
+      return
+    }
+    if (failedReason) {
+      toast.error(`Canal ${channel} conectado, mas a sincronização inicial falhou: ${failedReason}`)
+      return
+    }
+    toast.message(`Canal ${channel} conectado. A sincronização inicial continuará em segundo plano.`)
+  }, [finishInitialWhatsAppSync, loadConversations, loadStatus])
 
   const loadMessages = useCallback(async (conv: any, opts?: { silent?: boolean }) => {
     if (!provider || !conv) return []
@@ -1467,11 +1667,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
   }, [messages, orchestratorStatus, selectedConversation])
 
-  const computeMessageActionMenuLayout = useCallback((messageId: string) => {
-    const normalizedId = String(messageId || '').trim()
+  const computeMessageActionMenuLayout = useCallback((anchorKey: string) => {
+    const normalizedKey = String(anchorKey || '').trim()
     const viewport = messagesViewportRef.current
-    const anchor = messageActionRootRefs.current.get(normalizedId) || null
-    if (!normalizedId || !viewport || !anchor) return null
+    const anchor = messageActionRootRefs.current.get(normalizedKey) || null
+    if (!normalizedKey || !viewport || !anchor) return null
 
     const viewportRect = viewport.getBoundingClientRect()
     const anchorRect = anchor.getBoundingClientRect()
@@ -1510,7 +1710,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     )
 
     return {
-      messageId: normalizedId,
+      anchorKey: normalizedKey,
       top,
       left,
       maxHeight: Math.max(180, Math.floor(maxHeight)),
@@ -1518,14 +1718,14 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
   }, [])
 
-  const syncMessageActionMenuLayout = useCallback((messageId: string) => {
-    const normalizedId = String(messageId || '').trim()
-    if (!normalizedId) return
-    const nextLayout = computeMessageActionMenuLayout(normalizedId)
+  const syncMessageActionMenuLayout = useCallback((anchorKey: string) => {
+    const normalizedKey = String(anchorKey || '').trim()
+    if (!normalizedKey) return
+    const nextLayout = computeMessageActionMenuLayout(normalizedKey)
     setMessageActionMenuLayout((current) => {
       if (!nextLayout) return current
       if (
-        current?.messageId === nextLayout.messageId &&
+        current?.anchorKey === nextLayout.anchorKey &&
         current.top === nextLayout.top &&
         current.left === nextLayout.left &&
         current.maxHeight === nextLayout.maxHeight &&
@@ -1537,15 +1737,15 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     })
   }, [computeMessageActionMenuLayout])
 
-  const scheduleMessageActionMenuLayout = useCallback((messageId: string) => {
-    const normalizedId = String(messageId || '').trim()
-    if (!normalizedId) return
+  const scheduleMessageActionMenuLayout = useCallback((anchorKey: string) => {
+    const normalizedKey = String(anchorKey || '').trim()
+    if (!normalizedKey) return
     if (messageActionMenuLayoutRafRef.current !== null) {
       window.cancelAnimationFrame(messageActionMenuLayoutRafRef.current)
     }
     messageActionMenuLayoutRafRef.current = window.requestAnimationFrame(() => {
       messageActionMenuLayoutRafRef.current = null
-      syncMessageActionMenuLayout(normalizedId)
+      syncMessageActionMenuLayout(normalizedKey)
     })
   }, [syncMessageActionMenuLayout])
 
@@ -1559,26 +1759,26 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     setMessageActionMenuLayout(null)
   }, [])
 
-  const toggleMessageActionMenu = useCallback((messageId: string) => {
-    const normalizedId = String(messageId || '').trim()
-    if (!normalizedId) return
+  const toggleMessageActionMenu = useCallback((anchorKey: string) => {
+    const normalizedKey = String(anchorKey || '').trim()
+    if (!normalizedKey) return
     setOpenMessageActionMenuId((current) => {
-      const nextOpen = current === normalizedId ? null : normalizedId
+      const nextOpen = current === normalizedKey ? null : normalizedKey
       setExpandedReactionMenuId((currentExpanded) => (
-        nextOpen && currentExpanded === normalizedId ? currentExpanded : null
+        nextOpen && currentExpanded === normalizedKey ? currentExpanded : null
       ))
-      setMessageActionMenuLayout(nextOpen ? computeMessageActionMenuLayout(normalizedId) : null)
+      setMessageActionMenuLayout(nextOpen ? computeMessageActionMenuLayout(normalizedKey) : null)
       return nextOpen
     })
   }, [computeMessageActionMenuLayout])
 
-  const openMessageActionMenu = useCallback((messageId: string) => {
-    const normalizedId = String(messageId || '').trim()
-    if (!normalizedId) return
+  const openMessageActionMenu = useCallback((anchorKey: string) => {
+    const normalizedKey = String(anchorKey || '').trim()
+    if (!normalizedKey) return
     setReactionPickerMessageId(null)
-    setOpenMessageActionMenuId(normalizedId)
+    setOpenMessageActionMenuId(normalizedKey)
     setExpandedReactionMenuId(null)
-    setMessageActionMenuLayout(computeMessageActionMenuLayout(normalizedId))
+    setMessageActionMenuLayout(computeMessageActionMenuLayout(normalizedKey))
   }, [computeMessageActionMenuLayout])
 
   const toggleReaction = useCallback(async (message: any, emoji: string) => {
@@ -1644,6 +1844,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     const handlePointerDown = (event: MouseEvent | TouchEvent) => {
       const target = event.target instanceof Node ? event.target : null
       if (!target) return
+      if (messageActionMenuRef.current?.contains(target)) return
       const root = (target instanceof Element ? target.closest('[data-message-action-root]') : null) as HTMLElement | null
       if (root?.dataset.messageActionRoot === openMessageActionMenuId) return
       setOpenMessageActionMenuId(null)
@@ -2094,6 +2295,14 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     qrDialogChannelRef.current = qrDialogChannel
   }, [qrDialogChannel])
 
+  useEffect(() => {
+    waInitialSyncChannelRef.current = waInitialSyncChannel
+  }, [waInitialSyncChannel])
+
+  useEffect(() => {
+    orchestratorStatusRef.current = orchestratorStatus
+  }, [orchestratorStatus])
+
   const stopQrPolling = useCallback((channel?: number | null) => {
     if (typeof channel === 'number' && Number.isFinite(channel)) {
       const timer = qrPollingRef.current.get(channel)
@@ -2114,11 +2323,9 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     const instance = orchestratorStatus.instances.find((item) => item.channel === qrDialogChannel)
     if (instance?.status === 'connected') {
       stopQrPolling(qrDialogChannel)
-      toast.success(`WhatsApp conectado no canal ${qrDialogChannel}`)
-      setQrDialogChannel(null)
-      setWaStatusOpen(false)
+      void runInitialWhatsAppSync(qrDialogChannel)
     }
-  }, [orchestratorStatus, qrDialogChannel, stopQrPolling])
+  }, [orchestratorStatus, qrDialogChannel, runInitialWhatsAppSync, stopQrPolling])
 
   useEffect(() => {
     if (selectedConversation?.platform === 'instagram') {
@@ -2458,6 +2665,40 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     setSelectedConversation((current) => (isSameConversationRecord(current, target) ? null : current))
   }, [isSameConversationRecord])
 
+  const syncConversationArchive = useCallback(async (conv: any, archive: boolean) => {
+    if (provider !== 'evolution') return
+    const remoteJid = String(conv?.conversationId || conv?.rawJid || conv?.normalizedJid || conv?.phone || '').trim()
+    if (!remoteJid) {
+      throw new Error('Conversa sem identificador para arquivamento.')
+    }
+    const channels = Array.isArray(conv?.channels)
+      ? conv.channels.map((value: any) => Number(value)).filter((value: number) => Number.isFinite(value) && value > 0)
+      : []
+    const fallbackChannel = Number(conv?.channel || 0)
+    const targetChannels = channels.length ? channels : (fallbackChannel > 0 ? [fallbackChannel] : [])
+    if (!targetChannels.length) {
+      throw new Error('Canal do WhatsApp não identificado para arquivamento.')
+    }
+
+    await Promise.all(targetChannels.map(async (channel) => {
+      const response = await fetch(
+        `/api/wa-orchestrator/channels/${channel}/conversations/${encodeURIComponent(remoteJid)}/archive`,
+        {
+          method: 'POST',
+          headers: {
+            ...buildCrmBasicAuthHeaders(),
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ archive })
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || `Falha ao ${archive ? 'arquivar' : 'desarquivar'} conversa no canal ${channel}.`)
+      }
+    }))
+  }, [provider])
+
   const computeConversationActionMenuLayout = useCallback((conversationId: string) => {
     const normalizedId = String(conversationId || '').trim()
     const viewport = conversationScrollViewportRef.current
@@ -2558,9 +2799,24 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
 
     if (action === 'archive') {
-      updateConversationRecord(conv, (current) => ({ ...current, archived: !(current?.archived || current?.isArchived) }))
+      const previousArchived = Boolean(conv?.archived || conv?.isArchived)
+      const nextArchived = !previousArchived
+      updateConversationRecord(conv, (current) => ({ ...current, archived: nextArchived, isArchived: nextArchived }))
       closeConversationActionMenu()
-      toast.success('Status de arquivamento atualizado.')
+      void (async () => {
+        try {
+          await syncConversationArchive(conv, nextArchived)
+          await loadConversations()
+          toast.success(nextArchived ? 'Conversa arquivada.' : 'Conversa desarquivada.')
+        } catch (error: any) {
+          const reason = String(error?.message || '').trim()
+          if (reason) {
+            toast.error(`Arquivamento local aplicado, mas sem sincronização com WhatsApp: ${reason}`)
+          } else {
+            toast.error('Arquivamento local aplicado, mas sem sincronização com WhatsApp.')
+          }
+        }
+      })()
       return
     }
 
@@ -2656,7 +2912,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       closeConversationActionMenu()
       toast.success('Conversa removida da lista.')
     }
-  }, [closeConversationActionMenu, isSameConversationRecord, removeConversationRecord, selectedConversation, updateConversationRecord])
+  }, [closeConversationActionMenu, isSameConversationRecord, loadConversations, removeConversationRecord, selectedConversation, syncConversationArchive, updateConversationRecord])
 
   const renderConversationListMenuItems = useCallback((conv: any) => {
     const displayName = resolveConversationDisplayName(conv)
@@ -2801,6 +3057,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       const status = String(result?.status || '').toLowerCase()
       if (status === 'connected') {
         stopQrPolling(channel)
+        void runInitialWhatsAppSync(channel)
         return
       }
       queueNextPoll(3000)
@@ -2808,7 +3065,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       console.warn('[WA_QR_DEBUG] pollChannelQR:error', { channel, error: err?.message || String(err) })
       queueNextPoll(3500)
     }
-  }, [QR_DARK, QR_LIGHT, stopQrPolling])
+  }, [QR_DARK, QR_LIGHT, runInitialWhatsAppSync, stopQrPolling])
 
   useEffect(() => {
     if (!qrDialogChannel) return
@@ -2849,9 +3106,16 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     const instances = orchestratorStatus?.instances ?? []
     const sorted = [...instances].sort((a, b) => a.channel - b.channel)
 
-    const pending = sorted.find((instance) => instance.status === 'qr_pending' || instance.status === 'starting')
-    if (pending) {
-      return { channel: pending.channel, action: 'poll' as const }
+    const activeDialogChannel = qrDialogChannelRef.current
+    if (activeDialogChannel) {
+      const activePending = sorted.find(
+        (instance) =>
+          instance.channel === activeDialogChannel &&
+          (instance.status === 'qr_pending' || instance.status === 'starting')
+      )
+      if (activePending) {
+        return { channel: activePending.channel, action: 'poll' as const }
+      }
     }
 
     const free = sorted.find((instance) => instance.status === 'free')
@@ -2867,6 +3131,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     const availableFromList = [...(orchestratorStatus?.availableChannelsList ?? [])].sort((a, b) => a - b)[0]
     if (availableFromList) {
       return { channel: availableFromList, action: 'start' as const }
+    }
+
+    const pending = sorted.find((instance) => instance.status === 'qr_pending' || instance.status === 'starting')
+    if (pending) {
+      return { channel: pending.channel, action: 'poll' as const }
     }
 
     return null
@@ -2900,7 +3169,25 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     })
   }, [])
 
-  const refreshConnectedChannel = useCallback(async (channel: number) => {
+  const refreshConnectedChannel = useCallback(async (channel: number, opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent)
+    const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+    const requestRecovery = async () => {
+      try {
+        await fetch('/api/wa-orchestrator/local/recovery/restart', {
+          method: 'POST',
+          headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            mode: 'evolution',
+            trigger: 'manual-refresh-button',
+            reason: `channel-${channel}`
+          })
+        })
+      } catch {
+        /* ignore recovery errors */
+      }
+    }
+
     markConnectedChannelAction(channel, 'refresh')
     try {
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/restart`, {
@@ -2912,18 +3199,100 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (!response.ok || !result?.success) {
         throw new Error(String(result?.error || `Falha ao refrescar canal ${channel}`))
       }
-      toast.success(`Canal ${channel} refrescado.`)
+
+      let channelStatus = ''
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const stateResponse = await fetch(`/api/wa-orchestrator/channels/${channel}`, {
+          headers: buildCrmBasicAuthHeaders()
+        })
+        const stateData = await stateResponse.json().catch(() => ({}))
+        channelStatus = String(stateData?.status || stateData?.instance?.status || '').trim().toLowerCase()
+        if (channelStatus && !['starting', 'qr_pending'].includes(channelStatus)) break
+        await sleep(1200)
+      }
+
+      let bootstrapQueued = false
+      if (provider === 'evolution') {
+        const syncResponse = await fetch(`/api/wa-orchestrator/channels/${channel}/bootstrap-sync`, {
+          method: 'POST',
+          headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            force: true,
+            reason: 'manual-refresh'
+          })
+        })
+        const syncData = await syncResponse.json().catch(() => ({}))
+        bootstrapQueued = Boolean(syncResponse.ok && syncData?.success)
+      }
+
       if (qrDialogChannelRef.current === channel) {
         void pollChannelQR(channel)
       }
+
       await loadStatus()
-      await loadConversations()
+      await loadConversations({ disableCache: true })
+
+      const selectedIsWhatsapp = selectedConversation?.platform === 'whatsapp'
+      const selectedChannels = Array.isArray(selectedConversation?.channels)
+        ? selectedConversation.channels
+        : [selectedConversation?.channel]
+      const selectedHasChannel = selectedChannels
+        .map((value: any) => Number(value))
+        .filter((value: number) => Number.isFinite(value) && value > 0)
+        .includes(channel)
+      if (selectedIsWhatsapp && selectedHasChannel && selectedConversation?.conversationId) {
+        await loadMessages(selectedConversation, { silent: true })
+      }
+
+      if (channelStatus === 'error') {
+        await requestRecovery()
+      }
+
+      if (!silent) {
+        const syncSuffix = bootstrapQueued ? ' • sync forçado' : ''
+        toast.success(`Canal ${channel} refrescado${syncSuffix}.`)
+      }
+      return true
     } catch (error: any) {
-      toast.error(String(error?.message || `Falha ao refrescar canal ${channel}`))
+      await requestRecovery()
+      await loadStatus()
+      await loadConversations({ disableCache: true })
+      if (!silent) {
+        toast.error(String(error?.message || `Falha ao refrescar canal ${channel}`))
+      }
+      return false
     } finally {
       markConnectedChannelAction(channel)
     }
-  }, [loadConversations, loadStatus, markConnectedChannelAction, pollChannelQR])
+  }, [loadConversations, loadMessages, loadStatus, markConnectedChannelAction, pollChannelQR, provider, selectedConversation])
+
+  const refreshAllConnectedChannels = useCallback(async () => {
+    const channels = (orchestratorStatus?.instances || [])
+      .filter((instance) => instance.status === 'connected')
+      .map((instance) => Number(instance.channel))
+      .filter((channel) => Number.isFinite(channel) && channel > 0)
+      .sort((a, b) => a - b)
+    if (!channels.length) {
+      toast.error('Nenhum canal conectado para refrescar.')
+      return
+    }
+
+    setRefreshAllChannelsLoading(true)
+    try {
+      const failed: number[] = []
+      for (const channel of channels) {
+        const ok = await refreshConnectedChannel(channel, { silent: true })
+        if (!ok) failed.push(channel)
+      }
+      if (failed.length) {
+        toast.error(`Falha ao refrescar canal(is): ${failed.join(', ')}`)
+        return
+      }
+      toast.success(`Refrescados ${channels.length} canal(is) com recarga completa.`)
+    } finally {
+      setRefreshAllChannelsLoading(false)
+    }
+  }, [orchestratorStatus?.instances, refreshConnectedChannel])
 
   const disconnectConnectedChannel = useCallback(async (channel: number) => {
     markConnectedChannelAction(channel, 'disconnect')
@@ -2937,6 +3306,44 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (!response.ok || !result?.success) {
         throw new Error(String(result?.error || `Falha ao desconectar canal ${channel}`))
       }
+
+      setOrchestratorStatus((prev) => {
+        if (!prev) return prev
+        const nextInstances = (prev.instances || []).map((instance) => (
+          Number(instance?.channel) === channel
+            ? {
+                ...instance,
+                status: 'free' as const,
+                metadata: {
+                  ...(instance?.metadata || {}),
+                  errorMessage: undefined
+                }
+              }
+            : instance
+        ))
+        const freeChannelsList = nextInstances
+          .filter((instance) => instance.status === 'free')
+          .map((instance) => instance.channel)
+        const connectedInstances = nextInstances.filter((instance) => instance.status === 'connected').length
+        const errorInstances = nextInstances.filter((instance) => instance.status === 'error').length
+        const startingInstances = nextInstances.filter((instance) => instance.status === 'starting' || instance.status === 'qr_pending').length
+        return {
+          ...prev,
+          instances: nextInstances,
+          availableChannels: freeChannelsList.length,
+          freeInstances: freeChannelsList.length,
+          connectedInstances,
+          errorInstances,
+          startingInstances,
+          availableChannelsList: nextInstances.map((instance) => instance.channel),
+          freeChannelsList
+        }
+      })
+
+      setConversations((prev) =>
+        (prev || []).filter((item) => Number(item?.channel || 0) !== channel)
+      )
+
       stopQrPolling(channel)
       setChannelQR((prev) => {
         const next = new Map(prev)
@@ -2946,13 +3353,32 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       if (qrDialogChannelRef.current === channel) {
         setQrDialogChannel(null)
       }
-      if (selectedConversation?.platform === 'whatsapp' && Number(selectedConversation?.channel) === channel) {
-        setSelectedConversation(null)
-        setMessages([])
+
+      if (selectedConversation?.platform === 'whatsapp') {
+        const selectedChannels = Array.isArray(selectedConversation?.channels)
+          ? selectedConversation.channels
+          : [selectedConversation?.channel]
+        const selectedChannelNumbers = selectedChannels
+          .map((value: any) => Number(value))
+          .filter((value: number) => Number.isFinite(value) && value > 0)
+        if (selectedChannelNumbers.includes(channel)) {
+          const remainingChannels = selectedChannelNumbers.filter((value) => value !== channel)
+          if (!remainingChannels.length) {
+            setSelectedConversation(null)
+            setMessages([])
+          } else {
+            setSelectedConversation((current) => current ? ({
+              ...current,
+              channel: remainingChannels[0],
+              channels: remainingChannels
+            }) : current)
+          }
+        }
       }
+
       toast.success(`Canal ${channel} desconectado.`)
       await loadStatus()
-      await loadConversations()
+      await loadConversations({ disableCache: true })
     } catch (error: any) {
       toast.error(String(error?.message || `Falha ao desconectar canal ${channel}`))
     } finally {
@@ -3375,6 +3801,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       preferredName: conv.preferredName || (conv.name && !isLikelyWhatsAppJid(conv.name) ? conv.name : undefined),
       phone: conv.phone || conv.contactPhone || conv.contact_phone || conv.contact_phone_raw,
       aliases: Array.isArray(conv.aliases) ? conv.aliases : [],
+      archived: Boolean(conv?.archived || conv?.isArchived),
+      isArchived: Boolean(conv?.archived || conv?.isArchived),
       channels: Number.isFinite(Number(conv.channel)) ? [Number(conv.channel)] : []
     }))
 
@@ -3431,6 +3859,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         const incomingName = String(item?.name || '')
         const useIncomingName = incomingName && !isLikelyWhatsAppJid(incomingName)
         const useExistingName = existingName && !isLikelyWhatsAppJid(existingName)
+        const mergedArchived = Boolean(existing?.archived || existing?.isArchived || item?.archived || item?.isArchived)
         merged[idx] = {
           ...existing,
           ...item,
@@ -3441,6 +3870,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           normalizedJid: item.normalizedJid || existing.normalizedJid,
           aliases: Array.from(new Set([...(existing.aliases || []), ...(item.aliases || [])])),
           channels: Array.from(new Set([...(existing.channels || []), ...(item.channels || [])])).filter((n) => Number.isFinite(Number(n))),
+          archived: mergedArchived,
+          isArchived: mergedArchived,
           leadId: existing.leadId,
           stage: existing.stage,
           leadUpdatedAt: existing.leadUpdatedAt,
@@ -3577,6 +4008,21 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       overdue: 'Atrasados (> 24h)',
       resolved: 'Resolvidos'
     } as const
+    const isInitialSyncActive = Number.isFinite(waInitialSyncChannel) && waInitialSyncChannel !== null
+    const renderWhatsAppSyncNotice = (mode: 'inline' | 'panel' = 'inline') => (
+      <div
+        className={`rounded-xl border border-cyan-300/30 bg-cyan-500/10 ${
+          mode === 'panel' ? 'px-4 py-5' : 'px-3 py-2.5'
+        }`}
+      >
+        <div className={`inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-1.5 text-sm font-medium text-cyan-100`}>
+          <CircleNotch className="h-4 w-4 animate-spin" />
+          <span>Carregando</span>
+        </div>
+        <div className="mt-2 text-sm text-cyan-100/90">Suas conversas estão sendo carregadas.</div>
+        <div className="mt-1 text-xs text-cyan-100/75">Mantenha o WhatsApp aberto nos dois dispositivos.</div>
+      </div>
+    )
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
         {paused ? (
@@ -3625,6 +4071,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                       {(loadingConversations || harmoniaInboxLoading) && (
                         <div className="text-sm text-blue-100/60 py-4 text-center">Carregando conversas...</div>
                       )}
+                      {isInitialSyncActive ? (
+                        <div className="py-1">
+                          {renderWhatsAppSyncNotice('inline')}
+                        </div>
+                      ) : null}
                       {harmoniaInboxError && (
                         <div className="text-xs text-red-200/80 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
                           {harmoniaInboxError}
@@ -3677,7 +4128,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                         conversationActionTriggerRefs.current.delete(conversationKey)
                                       }
                                     }}
-                                    className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+                                    className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
                                     aria-label="Abrir ações da conversa"
                                     onClick={(event) => {
                                       event.stopPropagation()
@@ -3688,7 +4139,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                       })
                                     }}
                                   >
-                                    <DotsThreeVertical className="h-4 w-4" weight="bold" />
+                                    <DotsThreeVertical className="h-3 w-3" weight="bold" />
                                   </button>
 
                                   <div className="flex items-start gap-2">
@@ -3740,8 +4191,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                         </span>
                                       </div>
                                     </div>
-                                    <div className="ml-2 shrink-0 flex items-center gap-2">
-                                      <ConversationAvatar conv={conv} size={34} />
+                                    <div className="ml-2 shrink-0 self-center flex items-center gap-2">
+                                      <ConversationAvatar conv={conv} size={42} />
                                       {unreadCount > 0 ? (
                                         <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-sky-500/90 px-1 text-[10px] font-semibold text-white">
                                           {unreadCount > 99 ? '99+' : unreadCount}
@@ -3957,10 +4408,11 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                       <span>Carregando mensagens...</span>
                                     </div>
                                   </div>
-                                ) : messages.map((msg) => {
+                                ) : messages.map((msg, msgIndex) => {
                                 const outbound = isOutboundMessage(msg)
                                 const ts = msg.createdAt || msg.timestamp
-                                const messageId = String(msg?.id || '')
+                                const messageId = String(msg?.id || msg?.provider_message_id || '').trim()
+                                const messageAnchorKey = buildMessageUiAnchorKey(msg, msgIndex)
                                 const isGroupConversation = String(
                                   selectedConversation?.conversationId ||
                                   selectedConversation?.rawJid ||
@@ -4026,10 +4478,10 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                 const isFavoritedMessage = Boolean(msg?.favorite)
                                 const isPinnedMessage = Boolean(msg?.pinned)
                                 const isReportedMessage = Boolean(msg?.reported)
-                                const isMessageActionMenuOpen = openMessageActionMenuId === messageId
-                                const isReactionMenuExpanded = expandedReactionMenuId === messageId
+                                const isMessageActionMenuOpen = openMessageActionMenuId === messageAnchorKey
+                                const isReactionMenuExpanded = expandedReactionMenuId === messageAnchorKey
                                 return (
-                                  <div key={msg.id} className={`group flex items-end gap-2 ${outbound ? 'justify-end' : 'justify-start'}`}>
+                                  <div key={messageAnchorKey} className={`group flex items-end gap-2 ${outbound ? 'justify-end' : 'justify-start'}`}>
                                     {showReactionActions && outbound ? (
                                       <div className="relative flex items-center gap-1 self-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                                         <Button
@@ -4099,17 +4551,17 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                       onContextMenu={(event) => {
                                         event.preventDefault()
                                         event.stopPropagation()
-                                        openMessageActionMenu(messageId)
+                                        openMessageActionMenu(messageAnchorKey)
                                       }}
                                     >
                                       <div
                                         className={`absolute top-2 z-40 ${outbound ? 'left-2' : 'right-2'}`}
-                                        data-message-action-root={messageId}
+                                        data-message-action-root={messageAnchorKey}
                                         ref={(node) => {
                                           if (node) {
-                                            messageActionRootRefs.current.set(messageId, node)
+                                            messageActionRootRefs.current.set(messageAnchorKey, node)
                                           } else {
-                                            messageActionRootRefs.current.delete(messageId)
+                                            messageActionRootRefs.current.delete(messageAnchorKey)
                                           }
                                         }}
                                       >
@@ -4120,21 +4572,22 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                           className="h-6 w-6 rounded-full border border-white/10 bg-black/15 text-blue-100 opacity-75 transition-opacity hover:bg-black/25 hover:opacity-100"
                                           aria-label="Abrir ações da mensagem"
                                           aria-expanded={isMessageActionMenuOpen}
-                                          data-testid={`message-actions-trigger-${messageId}`}
+                                          data-testid={`message-actions-trigger-${messageAnchorKey}`}
                                           onClick={(event) => {
                                             event.stopPropagation()
-                                            toggleMessageActionMenu(messageId)
+                                            toggleMessageActionMenu(messageAnchorKey)
                                           }}
                                         >
                                           <CaretDown className="h-3.5 w-3.5" />
                                         </Button>
-                                        {isMessageActionMenuOpen ? (
+                                        {isMessageActionMenuOpen && typeof document !== 'undefined'
+                                          ? createPortal(
                                           <div
                                             ref={messageActionMenuRef}
                                             role="menu"
-                                            data-testid={`message-actions-menu-${messageId}`}
+                                            data-testid={`message-actions-menu-${messageAnchorKey}`}
                                             className="fixed z-[70] flex flex-col overflow-y-auto rounded-2xl border border-white/20 bg-slate-900/72 p-1 text-sm text-blue-50 shadow-2xl backdrop-blur-xl"
-                                            style={messageActionMenuLayout?.messageId === messageId ? {
+                                            style={messageActionMenuLayout?.anchorKey === messageAnchorKey ? {
                                               top: `${messageActionMenuLayout.top}px`,
                                               left: `${messageActionMenuLayout.left}px`,
                                               maxHeight: `${messageActionMenuLayout.maxHeight}px`,
@@ -4162,7 +4615,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                               className="flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10"
                                               onClick={() => {
                                                 if (!showReactionActions) return
-                                                setExpandedReactionMenuId((current) => current === messageId ? null : messageId)
+                                                setExpandedReactionMenuId((current) => current === messageAnchorKey ? null : messageAnchorKey)
                                               }}
                                             >
                                               <Smiley className="h-4 w-4" />
@@ -4302,7 +4755,8 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                               <CheckCircle className="h-4 w-4" weight={isSelectedMessage ? 'fill' : 'regular'} />
                                               {isSelectedMessage ? 'Desselecionar mensagem' : 'Selecionar mensagens'}
                                             </button>
-                                          </div>
+                                          </div>,
+                                          document.body
                                         ) : null}
                                       </div>
                                       {Array.isArray(msg?.reactions) && msg.reactions.length > 0 ? (
@@ -4570,12 +5024,18 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                     </div>
                   ) : (
                     <div className="flex flex-1 items-center justify-center">
-                      <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-6 py-6 text-center max-w-sm">
-                        <div className="text-sm text-blue-100/70">Nenhuma conversa selecionada</div>
-                        <div className="text-xs text-blue-100/50 mt-2">
-                          As mensagens aparecerão aqui assim que as contas estiverem conectadas.
+                      {isInitialSyncActive ? (
+                        <div className="max-w-sm">
+                          {renderWhatsAppSyncNotice('panel')}
                         </div>
-                      </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-white/10 bg-white/5 px-6 py-6 text-center max-w-sm">
+                          <div className="text-sm text-blue-100/70">Nenhuma conversa selecionada</div>
+                          <div className="text-xs text-blue-100/50 mt-2">
+                            As mensagens aparecerão aqui assim que as contas estiverem conectadas.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   </CardContent>
@@ -4681,6 +5141,24 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
               ))}
             </div>
             <div className="flex justify-end gap-2">
+              {connectedWhatsapps.length > 1 ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void refreshAllConnectedChannels()
+                  }}
+                  disabled={refreshAllChannelsLoading || Object.values(connectedChannelAction).some(Boolean)}
+                >
+                  {refreshAllChannelsLoading ? (
+                    <>
+                      <CircleNotch className="mr-1 h-4 w-4 animate-spin" />
+                      Refrescando todos...
+                    </>
+                  ) : (
+                    'Refrescar todos'
+                  )}
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => setWaStatusOpen(false)}>
                 Fechar
               </Button>
@@ -4903,11 +5381,26 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         <Dialog open={qrDialogChannel !== null} onOpenChange={(open) => !open && setQrDialogChannel(null)}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>QR Code do canal {qrDialogChannel}</DialogTitle>
-              <DialogDescription>Use o WhatsApp para escanear.</DialogDescription>
+              <DialogTitle>
+                {waInitialSyncChannel === qrDialogChannel ? `Conectando canal ${qrDialogChannel}` : `QR Code do canal ${qrDialogChannel}`}
+              </DialogTitle>
+              <DialogDescription>
+                {waInitialSyncChannel === qrDialogChannel
+                  ? 'Sincronização inicial em andamento.'
+                  : 'Use o WhatsApp para escanear.'}
+              </DialogDescription>
             </DialogHeader>
             <div className="flex justify-center">
-              {qrDialogChannel && channelQR.get(qrDialogChannel)?.dataUrl ? (
+              {waInitialSyncChannel === qrDialogChannel ? (
+                <div className="w-full rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-5">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-1.5 text-sm font-medium text-cyan-100">
+                    <CircleNotch className="h-4 w-4 animate-spin" />
+                    <span>Carregando</span>
+                  </div>
+                  <div className="mt-3 text-sm text-cyan-100/90">Suas conversas estão sendo carregadas.</div>
+                  <div className="mt-1 text-xs text-cyan-100/75">Mantenha o WhatsApp aberto nos dois dispositivos.</div>
+                </div>
+              ) : qrDialogChannel && channelQR.get(qrDialogChannel)?.dataUrl ? (
                 <img src={channelQR.get(qrDialogChannel)?.dataUrl} alt={`QR ${qrDialogChannel}`} className="h-64 w-64 rounded-lg bg-white p-2" />
               ) : (
                 <div className="text-sm text-blue-100/70">Gerando QR...</div>

@@ -245,6 +245,34 @@ API_PID=""; WEB_PID=""
 
 start_api() {
   if [[ $START_API -eq 1 ]]; then
+    # Prefer Evolution orchestrator locally when an Evolution .env with API key is available.
+    if [[ -z "${WA_ORCHESTRATOR_PROVIDER:-}" ]]; then
+      EVOLUTION_ENV_CANDIDATES=(
+        "$SKINCOS_ROOT/backend/apps/whatsapp/evolution-api/.env"
+        "$HOME/Automation/n8n/evolution-api/.env"
+      )
+      EVOLUTION_ENV_FILE=""
+      for candidate in "${EVOLUTION_ENV_CANDIDATES[@]}"; do
+        if [[ -f "$candidate" ]]; then
+          EVOLUTION_ENV_FILE="$candidate"
+          break
+        fi
+      done
+      if [[ -n "$EVOLUTION_ENV_FILE" ]]; then
+        EVOLUTION_KEY_RAW="$(/usr/bin/grep -E '^AUTHENTICATION_API_KEY=' "$EVOLUTION_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\r')"
+        EVOLUTION_KEY="${EVOLUTION_KEY_RAW%\"}"
+        EVOLUTION_KEY="${EVOLUTION_KEY#\"}"
+        EVOLUTION_KEY="${EVOLUTION_KEY%\'}"
+        EVOLUTION_KEY="${EVOLUTION_KEY#\'}"
+        if [[ -n "$EVOLUTION_KEY" ]]; then
+          export WA_ORCHESTRATOR_PROVIDER="evolution"
+          export EVOLUTION_API_URL="${EVOLUTION_API_URL:-http://127.0.0.1:8080}"
+          export EVOLUTION_API_KEY="${EVOLUTION_API_KEY:-$EVOLUTION_KEY}"
+          echo "[restart_crm] Evolution local autodetect ativo ($EVOLUTION_ENV_FILE)"
+        fi
+      fi
+    fi
+
     echo "[restart_crm] Iniciando API (porta $CRM_API_PORT)${WATCH_MODE:+ [watch]}..."
     export CRM_API_PORT
     export PORT="$CRM_API_PORT"

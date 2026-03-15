@@ -154,8 +154,16 @@ function mapStateToStatus(state) {
   const normalized = String(state || '').toLowerCase()
   if (normalized === 'open' || normalized === 'connected') return 'connected'
   if (normalized === 'connecting') return 'qr_pending'
-  if (normalized === 'close' || normalized === 'closed') return 'free'
-  if (normalized === 'available') return 'available'
+  if (
+    normalized === 'close' ||
+    normalized === 'closed' ||
+    normalized === 'available' ||
+    normalized === 'disconnected' ||
+    normalized === 'disconnect' ||
+    normalized === 'stopped' ||
+    normalized === 'idle' ||
+    normalized === 'logout'
+  ) return 'free'
   return 'error'
 }
 
@@ -234,6 +242,25 @@ function normalizeQrValue(raw) {
   }
 
   return value
+}
+
+function resolveEvolutionErrorMessage(responseLike) {
+  const json = responseLike?.json
+  const direct = String(json?.error || json?.message || '').trim()
+  if (direct && direct.toLowerCase() !== 'internal server error') return direct
+  const nestedMessage = json?.response?.message
+  if (Array.isArray(nestedMessage)) {
+    for (const entry of nestedMessage) {
+      if (typeof entry === 'string' && entry.trim()) return entry.trim()
+      if (entry && typeof entry === 'object') {
+        const candidate = String(entry?.message?.[1] || entry?.message || entry?.error || '').trim()
+        if (candidate) return candidate
+      }
+    }
+  }
+  const fallback = String(responseLike?.text || '').trim()
+  if (fallback) return fallback
+  return `HTTP ${Number(responseLike?.status) || 500}`
 }
 
 function debugQr(event, payload = {}) {
@@ -327,7 +354,53 @@ async function ensureInstance(channel, instanceName) {
   return res.json?.instance || null
 }
 
+function normalizeInstanceSettingsPayload(raw = {}) {
+  return {
+    rejectCall: Boolean(raw?.rejectCall),
+    msgCall: typeof raw?.msgCall === 'string' ? raw.msgCall : '',
+    groupsIgnore: Boolean(raw?.groupsIgnore),
+    alwaysOnline: Boolean(raw?.alwaysOnline),
+    readMessages: Boolean(raw?.readMessages),
+    readStatus: Boolean(raw?.readStatus),
+    syncFullHistory: Boolean(raw?.syncFullHistory),
+    wavoipToken: typeof raw?.wavoipToken === 'string' ? raw.wavoipToken : ''
+  }
+}
+
+async function ensureHistorySyncEnabled(instanceName) {
+  try {
+    const currentRes = await evolutionFetch(`/settings/find/${encodeURIComponent(instanceName)}`, {
+      disableAutoRecovery: true
+    })
+    let payload = normalizeInstanceSettingsPayload(currentRes?.json || {})
+    if (payload.syncFullHistory) return
+    payload = {
+      ...payload,
+      syncFullHistory: true
+    }
+    const setRes = await evolutionFetch(`/settings/set/${encodeURIComponent(instanceName)}`, {
+      method: 'POST',
+      body: payload,
+      disableAutoRecovery: true
+    })
+    if (!setRes.ok) {
+      console.warn('[WA_ORCHESTRATOR] Failed to enforce syncFullHistory', {
+        instanceName,
+        status: setRes.status
+      })
+      return
+    }
+    console.info('[WA_ORCHESTRATOR] syncFullHistory enabled', { instanceName })
+  } catch (error) {
+    console.warn('[WA_ORCHESTRATOR] Could not verify/enforce syncFullHistory', {
+      instanceName,
+      error: error?.message || String(error)
+    })
+  }
+}
+
 async function connectInstance(instanceName) {
+  await ensureHistorySyncEnabled(instanceName)
   const res = await evolutionFetch(`/instance/connect/${encodeURIComponent(instanceName)}`)
   debugQr('connectInstance:response', {
     instanceName,
@@ -344,6 +417,33 @@ async function connectInstance(instanceName) {
   if (res.json) return res.json
   if (res.text) return { rawText: res.text }
   return null
+}
+
+function isAlreadyDisconnectedMessage(message) {
+  const value = String(message || '').toLowerCase()
+  return (
+    value.includes('not connected') ||
+    value.includes('is not connected') ||
+    value.includes('already disconnected') ||
+    value.includes('já desconectado') ||
+    value.includes('nao conectado') ||
+    value.includes('não conectado')
+  )
+}
+
+async function getInstanceConnectionState(instanceName) {
+  try {
+    const res = await evolutionFetch(`/instance/connectionState/${encodeURIComponent(instanceName)}`, {
+      disableAutoRecovery: true
+    })
+    if (!res.ok) return null
+    const rawState = res?.json?.instance?.state ?? res?.json?.state ?? null
+    if (rawState == null) return null
+    const state = normalizeState(rawState)
+    return state === 'unknown' ? null : state
+  } catch {
+    return null
+  }
 }
 
 async function getStatus() {
@@ -383,7 +483,7 @@ async function getStatus() {
     }
   }
 
-  const channels = DEFAULT_CHANNELS.map((channel) => {
+  const channels = await Promise.all(DEFAULT_CHANNELS.map(async (channel) => {
     const name = channelName(channel, instancePrefix)
     const instance = instances.find((inst) => String(inst?.name) === name)
     if (!instance) {
@@ -397,8 +497,15 @@ async function getStatus() {
         updatedAt: null
       }
     }
-    const state = normalizeState(instance.connectionStatus)
-    const status = mapStateToStatus(state)
+    let state = normalizeState(instance.connectionStatus)
+    let status = mapStateToStatus(state)
+    if (status !== 'free') {
+      const liveState = await getInstanceConnectionState(name)
+      if (liveState) {
+        state = liveState
+        status = mapStateToStatus(state)
+      }
+    }
     return {
       id: `wa-channel-${channel}`,
       channel,
@@ -409,10 +516,10 @@ async function getStatus() {
       updatedAt: instance.updatedAt || null,
       metadata: {
         phoneNumber: instance.number || instance.ownerJid || null,
-        errorMessage: instance.disconnectionReasonCode || null
+        errorMessage: status === 'connected' ? null : (instance.disconnectionReasonCode || null)
       }
     }
-  })
+  }))
 
   return {
     totalChannels: DEFAULT_CHANNELS.length,
@@ -499,10 +606,21 @@ async function stopChannel(channel) {
   const name = channelName(channel, instancePrefix)
   const res = await evolutionFetch(`/instance/logout/${encodeURIComponent(name)}`, { method: 'DELETE' })
   if (!res.ok) {
-    const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
-    throw new Error(message)
+    const message = resolveEvolutionErrorMessage(res)
+    if (!isAlreadyDisconnectedMessage(message)) {
+      throw new Error(message)
+    }
   }
-  return { success: true, channel, port: 3001 }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const liveState = await getInstanceConnectionState(name)
+    const mapped = mapStateToStatus(liveState)
+    if (!liveState || mapped === 'free') {
+      return { success: true, channel, port: 3001, state: liveState || 'close' }
+    }
+    await wait(700)
+  }
+  return { success: true, channel, port: 3001, state: 'disconnecting' }
 }
 
 async function restartChannel(channel) {
@@ -516,14 +634,20 @@ async function restartChannel(channel) {
   return { success: true, channel, port: 3001 }
 }
 
-async function fetchChats(channel, { limit = 50, offset = 0 } = {}) {
+async function fetchChats(channel, { limit = 50, offset = 0, archivedOnly = false, includeArchived = false } = {}) {
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
+  const normalizedLimit = Math.max(1, Number(limit) || 50)
+  const normalizedOffset = Math.max(0, Number(offset) || 0)
+  const where = archivedOnly
+    ? { archived: true }
+    : (includeArchived ? undefined : { archived: false })
   const res = await evolutionFetch(`/chat/findChats/${encodeURIComponent(name)}`, {
     method: 'POST',
     body: {
-      take: limit,
-      skip: offset
+      take: normalizedLimit,
+      skip: normalizedOffset,
+      ...(where ? { where } : {})
     }
   })
   if (!res.ok) {
@@ -607,6 +731,27 @@ async function sendText(channel, remoteJid, text, options = {}) {
   })
   if (!res.ok) {
     const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return res.json
+}
+
+async function archiveChat(channel, remoteJid, archive = true) {
+  const { instancePrefix } = resolveEvolutionConfig()
+  const name = channelName(channel, instancePrefix)
+  const jid = normalizeRemoteJid(remoteJid)
+  if (!jid) {
+    throw new Error('remoteJid is required')
+  }
+  const res = await evolutionFetch(`/chat/archiveChat/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: {
+      chat: jid,
+      archive: Boolean(archive)
+    }
+  })
+  if (!res.ok) {
+    const message = resolveEvolutionErrorMessage(res)
     throw new Error(message)
   }
   return res.json
@@ -703,6 +848,7 @@ export const evolutionOrchestrator = {
   fetchChats,
   fetchMessages,
   sendText,
+  archiveChat,
   markMessagesAsRead,
   getBase64FromMediaMessage,
   setWebhook,
