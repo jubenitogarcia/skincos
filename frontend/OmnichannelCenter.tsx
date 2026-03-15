@@ -4413,6 +4413,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                 const ts = msg.createdAt || msg.timestamp
                                 const messageId = String(msg?.id || msg?.provider_message_id || '').trim()
                                 const messageAnchorKey = buildMessageUiAnchorKey(msg, msgIndex)
+                                const messageActionTestIdKey = messageId || `msg-${msgIndex}`
                                 const isGroupConversation = String(
                                   selectedConversation?.conversationId ||
                                   selectedConversation?.rawJid ||
@@ -4572,7 +4573,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                                           className="h-6 w-6 rounded-full border border-white/10 bg-black/15 text-blue-100 opacity-75 transition-opacity hover:bg-black/25 hover:opacity-100"
                                           aria-label="Abrir ações da mensagem"
                                           aria-expanded={isMessageActionMenuOpen}
-                                          data-testid={`message-actions-trigger-${messageAnchorKey}`}
+                                          data-testid={`message-actions-trigger-${messageActionTestIdKey}`}
                                           onClick={(event) => {
                                             event.stopPropagation()
                                             toggleMessageActionMenu(messageAnchorKey)
