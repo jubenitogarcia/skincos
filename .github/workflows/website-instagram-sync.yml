@@ -42,16 +42,8 @@ jobs:
             force_bool="true"
           fi
 
-          payload=$(cat <<JSON
-          {
-            "force": ${force_bool},
-            "includeStories": ${stories_bool},
-            "maxFeedItems": 72,
-            "concurrency": 3,
-            "source": "github_actions_schedule"
-          }
-JSON
-)
+          payload=$(printf '{"force":%s,"includeStories":%s,"maxFeedItems":72,"concurrency":3,"source":"github_actions_schedule"}' \
+            "${force_bool}" "${stories_bool}")
 
           echo "POST ${WEBSITE_BASE_URL}/api/instagram/sync"
           status=$(curl -sS -o response.json -w "%{http_code}" \
