@@ -66,6 +66,19 @@ Setup (produção/preview):
 - Veja o guia: `docs/booking/SETUP_CLOUDFLARE_D1.md`
 - Arquivo de exemplo para preview local: `.dev.vars.example`
 
+## Instagram dos doutores (cache nativo no banco)
+
+O modal de Instagram do site agora lê de cache persistido no `BOOKING_DB` (D1), com sync recorrente:
+- Tabelas: `instagram_profiles`, `instagram_media`, `instagram_sync_runs`
+- Migration: `migrations/0003_instagram_cache.sql`
+- Endpoint de sync protegido: `POST /api/instagram/sync`
+  - Auth: `Authorization: Bearer <INSTAGRAM_SYNC_TOKEN>` (ou header `x-instagram-sync-token`)
+  - Sem `handles` no payload, ele sincroniza automaticamente os handles dos doutores ativos do diretório
+
+Automação:
+- Workflow agendado: `.github/workflows/website-instagram-sync.yml` (a cada 30 min)
+- Secret exigido no GitHub + Worker: `INSTAGRAM_SYNC_TOKEN`
+
 Deploy do worker de redirects (domínio `esfa.co`):
 ```bash
 npm run deploy:esfa

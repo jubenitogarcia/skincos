@@ -27,6 +27,7 @@ jobs:
       TITAN_SMTP_PASS_BARRA: ${{ secrets.TITAN_SMTP_PASS_BARRA }}
       TITAN_SMTP_USER_NH: ${{ secrets.TITAN_SMTP_USER_NH }}
       TITAN_SMTP_PASS_NH: ${{ secrets.TITAN_SMTP_PASS_NH }}
+      INSTAGRAM_SYNC_TOKEN: ${{ secrets.INSTAGRAM_SYNC_TOKEN }}
 
     steps:
       - name: Guard Cloudflare deploy secrets
@@ -74,7 +75,7 @@ jobs:
         run: npm run lint
 
       - name: Sync worker secrets (optional)
-        if: ${{ steps.guard.outputs.skip != 'true' && (env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '') }}
+        if: ${{ steps.guard.outputs.skip != 'true' && (env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
         continue-on-error: true
         working-directory: website
         run: |
@@ -100,6 +101,7 @@ jobs:
           put_secret "TITAN_SMTP_PASS_BARRA" "${TITAN_SMTP_PASS_BARRA}"
           put_secret "TITAN_SMTP_USER_NH" "${TITAN_SMTP_USER_NH}"
           put_secret "TITAN_SMTP_PASS_NH" "${TITAN_SMTP_PASS_NH}"
+          put_secret "INSTAGRAM_SYNC_TOKEN" "${INSTAGRAM_SYNC_TOKEN}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
