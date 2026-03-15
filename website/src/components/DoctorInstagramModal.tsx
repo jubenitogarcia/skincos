@@ -8,10 +8,12 @@ type InstagramMedia = {
     code: string | null;
     mediaType: "image" | "video" | "carousel";
     isReel: boolean;
+    isStory?: boolean;
     caption: string | null;
     takenAtMs: number | null;
     thumbnailUrl: string;
     videoUrl: string | null;
+    permalink?: string | null;
 };
 
 type InstagramFeedResponse =
@@ -335,7 +337,15 @@ export default function DoctorInstagramModal(props: {
                     {instagramItems.length > 0 ? (
                         <div className="instagramGrid">
                             {instagramItems.map((item) => {
-                                const label = item.isReel ? "Reel" : item.mediaType === "video" ? "Vídeo" : item.mediaType === "carousel" ? "Carrossel" : "Post";
+                                const label = item.isStory
+                                    ? "Story"
+                                    : item.isReel
+                                      ? "Reel"
+                                      : item.mediaType === "video"
+                                        ? "Vídeo"
+                                        : item.mediaType === "carousel"
+                                          ? "Carrossel"
+                                          : "Post";
                                 return (
                                     <button
                                         key={item.id}
@@ -378,7 +388,7 @@ export default function DoctorInstagramModal(props: {
 
                     {instagramHasMore ? <div className="instagramInfiniteSentinel" ref={instagramInfiniteSentinelRef} aria-hidden="true" /> : null}
                     {instagramLoadingMore ? <div className="instagramLoadingMoreInline">Carregando mais publicações…</div> : null}
-                    <div className="modalNote">Posts e reels são exibidos dentro desta janela para manter você no site.</div>
+                    <div className="modalNote">Posts, reels e stories são exibidos dentro desta janela para manter você no site.</div>
                 </div>
             </div>
         </div>
