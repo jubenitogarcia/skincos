@@ -52,6 +52,36 @@ test('getStatus degrades gracefully when Evolution is offline', async () => {
   assert.ok(status.channels.every((channel) => channel.status === 'error'))
 })
 
+test('getStatus treats disconnected and available-like states as free', async () => {
+  process.env.EVOLUTION_API_URL = 'http://evolution.local'
+  process.env.EVOLUTION_API_KEY = 'test-key'
+  process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
+  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
+
+  global.fetch = async (url) => {
+    if (String(url) === 'http://evolution.local/instance/fetchInstances') {
+      return mockJsonResponse([
+        { name: 'crm-channel-1', connectionStatus: 'disconnected', profileName: 'Canal 1' },
+        { name: 'crm-channel-2', connectionStatus: 'available', profileName: 'Canal 2' },
+        { name: 'crm-channel-3', connectionStatus: 'closed', profileName: 'Canal 3' },
+        { name: 'crm-channel-4', connectionStatus: 'open', profileName: 'Canal 4' }
+      ])
+    }
+    return mockJsonResponse([])
+  }
+
+  const status = await evolutionOrchestrator.getStatus()
+  const byChannel = new Map(status.channels.map((item) => [item.channel, item.status]))
+
+  assert.equal(byChannel.get(1), 'free')
+  assert.equal(byChannel.get(2), 'free')
+  assert.equal(byChannel.get(3), 'free')
+  assert.equal(byChannel.get(4), 'connected')
+  assert.equal(status.freeInstances, 8)
+  assert.equal(status.connectedInstances, 1)
+  assert.equal(status.errorInstances, 0)
+})
+
 test('fetchChats sends the expected Evolution endpoint and pagination payload', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
   process.env.EVOLUTION_API_KEY = 'test-key'
@@ -71,7 +101,24 @@ test('fetchChats sends the expected Evolution endpoint and pagination payload', 
   assert.equal(capturedUrl, 'http://evolution.local/chat/findChats/crm-channel-3')
   assert.equal(capturedInit.method, 'POST')
   assert.equal(capturedInit.headers.get('apikey'), 'test-key')
-  assert.deepEqual(JSON.parse(capturedInit.body), { take: 25, skip: 50 })
+  assert.deepEqual(JSON.parse(capturedInit.body), { take: 25, skip: 50, where: { archived: false } })
+})
+
+test('fetchChats sends archived=true filter when archivedOnly is requested', async () => {
+  process.env.EVOLUTION_API_URL = 'http://evolution.local'
+  process.env.EVOLUTION_API_KEY = 'test-key'
+  process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
+  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
+
+  let capturedBody = null
+  global.fetch = async (_url, init) => {
+    capturedBody = JSON.parse(init.body)
+    return mockJsonResponse({ records: [] })
+  }
+
+  await evolutionOrchestrator.fetchChats(4, { limit: 10, offset: 20, archivedOnly: true })
+
+  assert.deepEqual(capturedBody, { take: 10, skip: 20, where: { archived: true } })
 })
 
 test('fetchContacts sends the expected Evolution endpoint and pagination payload', async () => {
@@ -154,6 +201,27 @@ test('sendText uses /message/sendText with number and quoted reply metadata', as
         conversation: 'Mensagem original'
       }
     }
+  })
+})
+
+test('archiveChat uses /chat/archiveChat with normalized remoteJid and archive flag', async () => {
+  process.env.EVOLUTION_API_URL = 'http://evolution.local'
+  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
+
+  let capturedUrl = ''
+  let capturedBody = null
+  global.fetch = async (url, init) => {
+    capturedUrl = String(url)
+    capturedBody = JSON.parse(init.body)
+    return mockJsonResponse({ archived: true })
+  }
+
+  await evolutionOrchestrator.archiveChat(2, '5511999998888', true)
+
+  assert.equal(capturedUrl, 'http://evolution.local/chat/archiveChat/crm-channel-2')
+  assert.deepEqual(capturedBody, {
+    chat: '5511999998888@s.whatsapp.net',
+    archive: true
   })
 })
 

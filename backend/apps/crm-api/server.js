@@ -5877,7 +5877,7 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
             maybeAutoBootstrapSync(status)
             const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
             const connectedInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
-            const freeInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'free').length
+            const freeInstances = scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length
             const errorInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'error').length
             const startingInstances = scopedChannels.filter((item) => {
                 const value = String(item?.status || '').toLowerCase()
@@ -5900,8 +5900,8 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
                 bootstrapSync,
                 sseClients: waEventClients.size,
                 webhookMetrics: waWebhookMetrics,
-                availableChannelsList: scopedChannels.filter((c) => c.status === 'free').map((c) => c.channel),
-                freeChannelsList: scopedChannels.filter((c) => c.status === 'free').map((c) => c.channel),
+                availableChannelsList: scopedChannels.filter((c) => isWaChannelIdleStatus(c?.status)).map((c) => c.channel),
+                freeChannelsList: scopedChannels.filter((c) => isWaChannelIdleStatus(c?.status)).map((c) => c.channel),
                 recoverySuggestions: null,
                 endpoints: {
                     channels: '/api/wa-orchestrator/channels',
@@ -5919,7 +5919,7 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
         const status = whatsappOrchestrator.getStatus()
         const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
         const connectedInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
-        const freeInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'free').length
+        const freeInstances = scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length
         const errorInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'error').length
         const startingInstances = scopedChannels.filter((item) => {
             const value = String(item?.status || '').toLowerCase()
@@ -6242,9 +6242,10 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
         }
         const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 200)
         const offset = Math.max(parseInt(String(req.query.offset || '0'), 10) || 0, 0)
+        const archivedOnly = normalizeBoolean(req.query.archivedOnly, false)
 
         if (USE_EVOLUTION_ORCHESTRATOR) {
-            const data = await evolutionOrchestrator.fetchChats(channel, { limit, offset })
+            const data = await evolutionOrchestrator.fetchChats(channel, { limit, offset, archivedOnly })
             const chats = Array.isArray(data) ? data : (data?.chats || data?.data || [])
             const mapped = chats.map((chat) => {
                 upsertWaContactDirectoryEntry(channel, {
@@ -6270,6 +6271,26 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                 const lastMessageId = String(chat?.lastMessage?.id || chat?.lastMessage?.key?.id || '').trim()
                 const updatedAt = normalizeEvolutionTimestamp(chat.updatedAt || chat.lastMessage?.messageTimestamp)
                 const profilePic = chat.profilePicUrl || chat.profilePictureUrl || chat.avatarUrl || chat.avatar || chat.imgUrl || chat.pictureUrl || chat.photoUrl || null
+                const labels = Array.isArray(chat?.labels)
+                    ? chat.labels
+                    : Array.isArray(chat?.tags)
+                        ? chat.tags
+                        : []
+                const hasArchivedLabel = labels.some((label) => {
+                    const normalized = String(label || '').trim().toLowerCase()
+                    return normalized === 'archived' || normalized === 'arquivada' || normalized === '__archived__'
+                })
+                const isArchived = normalizeBoolean(
+                    chat?.archived ??
+                    chat?.isArchived ??
+                    chat?.archive ??
+                    chat?.isArchive ??
+                    chat?.chat?.archived ??
+                    chat?.chat?.archive ??
+                    chat?.metadata?.archived ??
+                    hasArchivedLabel,
+                    false
+                )
                 const mappedItem = {
                     conversationId: identity.rawJid || identity.normalizedJid,
                     rawJid: rawIdentity.rawJid || identity.rawJid || identity.normalizedJid,
@@ -6298,6 +6319,8 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                             : undefined,
                     updatedAt,
                     unreadCount: chat.unreadCount ?? chat.unreadMessages ?? 0,
+                    archived: isArchived,
+                    isArchived,
                     aliases: Array.from(new Set([...(rawIdentity.aliases || []), ...(identity.aliases || []), ...(altIdentity.aliases || [])]))
                 }
                 const directoryEntry = lookupWaContactDirectoryEntry(channel, [
@@ -6330,6 +6353,7 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                 const currentUpdatedAt = Date.parse(item.updatedAt || '') || 0
                 const newest = currentUpdatedAt >= prevUpdatedAt ? item : previous
                 const mergedAliases = Array.from(new Set([...(previous.aliases || []), ...(item.aliases || [])]))
+                const mergedArchived = Boolean(previous?.archived || previous?.isArchived || item?.archived || item?.isArchived)
                 dedupedMap.set(key, {
                     ...previous,
                     ...newest,
@@ -6338,6 +6362,8 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                     normalizedJid: newest.normalizedJid || previous.normalizedJid,
                     phone: newest.phone || previous.phone,
                     aliases: mergedAliases,
+                    archived: mergedArchived,
+                    isArchived: mergedArchived,
                     unreadCount: Number(previous.unreadCount || 0) + Number(item.unreadCount || 0),
                     name: (
                         (newest.name && !/^\d{10,}$/.test(String(newest.name || ''))) ? newest.name : null
@@ -6362,7 +6388,9 @@ app.get('/api/wa-orchestrator/channels/:channel/conversations', async (req, res)
                 platform: 'whatsapp',
                 lastMessage: c.lastMessage || 'Sem mensagens',
                 updatedAt: c.updatedAt || new Date().toISOString(),
-                unreadCount: c.unreadCount || 0
+                unreadCount: c.unreadCount || 0,
+                archived: Boolean(c.archived),
+                isArchived: Boolean(c.archived)
             }))
         return res.json({ success: true, items, meta: { limit, offset, hasMore: false } })
     } catch (error) {
@@ -6623,6 +6651,38 @@ app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/read',
             success: true,
             conversationId: normalizedRemoteJid,
             readCount: readMessages.length,
+            result
+        })
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message })
+    }
+})
+
+app.post('/api/wa-orchestrator/channels/:channel/conversations/:remoteJid/archive', async (req, res) => {
+    try {
+        const channel = parseInt(req.params.channel, 10)
+        if (isNaN(channel) || channel < 1 || channel > 9) {
+            return res.status(400).json({ success: false, error: 'Invalid channel. Must be between 1 and 9.' })
+        }
+        if (!USE_EVOLUTION_ORCHESTRATOR) {
+            return res.status(400).json({ success: false, error: 'Archive sync is only available for Evolution provider.' })
+        }
+        const normalizedRemoteJid = normalizeWhatsAppJid(req.params.remoteJid)
+        if (!normalizedRemoteJid) {
+            return res.status(400).json({ success: false, error: 'remoteJid is required' })
+        }
+        const archive = normalizeBoolean(req.body?.archive, true)
+        const result = await evolutionOrchestrator.archiveChat(channel, normalizedRemoteJid, archive)
+        broadcastWaEvent({
+            type: 'conversation_archive_toggled',
+            channel,
+            remoteJid: normalizedRemoteJid,
+            archived: archive
+        })
+        return res.json({
+            success: true,
+            conversationId: normalizedRemoteJid,
+            archived: archive,
             result
         })
     } catch (error) {
@@ -7238,7 +7298,7 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const status = await evolutionOrchestrator.getStatus()
             const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
-            const free = scopedChannels.find((item) => String(item?.status || '').toLowerCase() === 'free')
+            const free = scopedChannels.find((item) => isWaChannelIdleStatus(item?.status))
             if (free) {
                 return res.json({
                     success: true,
@@ -7252,8 +7312,8 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
                 error: 'No free ports available',
                 status: {
                     totalChannels: scopedChannels.length,
-                    availableChannels: scopedChannels.filter((item) => item.status === 'free').length,
-                    freeInstances: scopedChannels.filter((item) => item.status === 'free').length,
+                    availableChannels: scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length,
+                    freeInstances: scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length,
                     connectedInstances: scopedChannels.filter((item) => item.status === 'connected').length,
                     errorInstances: scopedChannels.filter((item) => item.status === 'error').length
                 }
@@ -7262,7 +7322,7 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
 
         const status = whatsappOrchestrator.getStatus()
         const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
-        const free = scopedChannels.find((item) => String(item?.status || '').toLowerCase() === 'free')
+        const free = scopedChannels.find((item) => isWaChannelIdleStatus(item?.status))
         if (free) {
             return res.json({
                 success: true,
@@ -7276,8 +7336,8 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
             error: 'No free ports available',
             status: {
                 totalChannels: scopedChannels.length,
-                availableChannels: scopedChannels.filter((item) => item.status === 'free').length,
-                freeInstances: scopedChannels.filter((item) => item.status === 'free').length,
+                availableChannels: scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length,
+                freeInstances: scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length,
                 connectedInstances: scopedChannels.filter((item) => item.status === 'connected').length,
                 errorInstances: scopedChannels.filter((item) => item.status === 'error').length
             }
@@ -7299,7 +7359,7 @@ app.get('/api/wa-orchestrator/channels', async (req, res) => {
             maybeAutoBootstrapSync(status)
         }
         const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
-        const freeChannels = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'free').map((item) => item.channel)
+        const freeChannels = scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).map((item) => item.channel)
         const connectedCount = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
         const errorCount = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'error').length
         const startingCount = scopedChannels.filter((item) => {
@@ -7733,7 +7793,7 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
         if (USE_EVOLUTION_ORCHESTRATOR) {
             const status = await evolutionOrchestrator.getStatus()
             const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
-            const free = scopedChannels.find((c) => c.status === 'free')
+            const free = scopedChannels.find((c) => isWaChannelIdleStatus(c?.status))
             if (free) {
                 return res.json({
                     success: true,
@@ -7747,8 +7807,8 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
                 error: 'No available channels',
                 status: {
                     totalChannels: scopedChannels.length,
-                    availableChannels: scopedChannels.filter((c) => c.status === 'free').length,
-                    freeInstances: scopedChannels.filter((c) => c.status === 'free').length,
+                    availableChannels: scopedChannels.filter((c) => isWaChannelIdleStatus(c?.status)).length,
+                    freeInstances: scopedChannels.filter((c) => isWaChannelIdleStatus(c?.status)).length,
                     connectedInstances: scopedChannels.filter((c) => c.status === 'connected').length,
                     errorInstances: scopedChannels.filter((c) => c.status === 'error').length
                 }
@@ -7772,8 +7832,8 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
                 error: 'No available channels',
                 status: {
                     totalChannels: scopedChannels.length,
-                    availableChannels: scopedChannels.filter((item) => item.status === 'free').length,
-                    freeInstances: scopedChannels.filter((item) => item.status === 'free').length,
+                    availableChannels: scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length,
+                    freeInstances: scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length,
                     connectedInstances: scopedChannels.filter((item) => item.status === 'connected').length,
                     errorInstances: scopedChannels.filter((item) => item.status === 'error').length
                 }
