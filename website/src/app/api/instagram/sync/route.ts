@@ -5,6 +5,7 @@ import {
     isInstagramProfileStale,
     normalizeInstagramHandleInput,
     resolveDoctorInstagramHandles,
+    type SyncHandleResult,
     syncInstagramHandlesBatch,
 } from "@/lib/instagramSync";
 
@@ -16,7 +17,13 @@ type SyncPayload = {
     force?: boolean;
     maxFeedItems?: number;
     concurrency?: number;
+    maxHandleRetries?: number;
+    retryDelayMs?: number;
     source?: string;
+};
+
+type SyncHandleResultWithAttempts = SyncHandleResult & {
+    attempts: number;
 };
 
 function json(data: unknown, init?: ResponseInit) {
@@ -53,6 +60,10 @@ function normalizePositiveInt(value: unknown, fallback: number, min: number, max
     return Math.min(max, Math.max(min, out));
 }
 
+async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function POST(request: Request) {
     if (!(await assertToken(request))) {
         return json({ ok: false, error: "unauthorized" }, { status: 401 });
@@ -69,6 +80,8 @@ export async function POST(request: Request) {
     const force = normalizeBool(payload.force, false);
     const maxFeedItems = normalizePositiveInt(payload.maxFeedItems, 72, 9, 120);
     const concurrency = normalizePositiveInt(payload.concurrency, 3, 1, 8);
+    const maxHandleRetries = normalizePositiveInt(payload.maxHandleRetries, 2, 0, 4);
+    const retryDelayMs = normalizePositiveInt(payload.retryDelayMs, 1200, 250, 10000);
     const source = typeof payload.source === "string" && payload.source.trim() ? payload.source.trim().slice(0, 80) : "api_instagram_sync";
 
     const requestedHandles = Array.isArray(payload.handles)
@@ -107,12 +120,67 @@ export async function POST(request: Request) {
     }
 
     const startedAtMs = Date.now();
-    const results = await syncInstagramHandlesBatch({
-        handles: targetHandles,
-        includeStories,
-        maxFeedItems,
-        source,
-        concurrency,
+    const resultsByHandle = new Map<string, SyncHandleResult>();
+    const attemptsByHandle = new Map<string, number>();
+    const batchSummaries: Array<{
+        attempt: number;
+        handles: string[];
+        successCount: number;
+        failureCount: number;
+    }> = [];
+
+    let pendingHandles = [...targetHandles];
+    for (let attempt = 1; attempt <= maxHandleRetries + 1; attempt++) {
+        if (!pendingHandles.length) break;
+
+        const batchResults = await syncInstagramHandlesBatch({
+            handles: pendingHandles,
+            includeStories,
+            maxFeedItems,
+            source: `${source}:attempt_${attempt}`,
+            concurrency,
+        });
+
+        const failed: string[] = [];
+        let successCount = 0;
+        for (const result of batchResults) {
+            attemptsByHandle.set(result.handle, (attemptsByHandle.get(result.handle) ?? 0) + 1);
+            const previous = resultsByHandle.get(result.handle);
+            if (!previous || result.ok || !previous.ok) {
+                resultsByHandle.set(result.handle, result);
+            }
+            if (result.ok) successCount += 1;
+            else failed.push(result.handle);
+        }
+
+        batchSummaries.push({
+            attempt,
+            handles: pendingHandles,
+            successCount,
+            failureCount: failed.length,
+        });
+
+        if (!failed.length) break;
+        pendingHandles = [...new Set(failed)];
+        if (attempt <= maxHandleRetries) {
+            await sleep(retryDelayMs * attempt);
+        }
+    }
+
+    const results: SyncHandleResultWithAttempts[] = targetHandles.map((handle) => {
+        const result = resultsByHandle.get(handle) ?? {
+            handle,
+            ok: false,
+            userId: null,
+            fetchedItems: 0,
+            fetchedStories: 0,
+            upsertedItems: 0,
+            error: "sync_not_executed",
+        };
+        return {
+            ...result,
+            attempts: attemptsByHandle.get(handle) ?? 0,
+        };
     });
 
     const okCount = results.filter((r) => r.ok).length;
@@ -133,8 +201,11 @@ export async function POST(request: Request) {
             force,
             maxFeedItems,
             concurrency,
+            maxHandleRetries,
+            retryDelayMs,
             source,
         },
+        retrySummary: batchSummaries,
         results,
     });
 }
