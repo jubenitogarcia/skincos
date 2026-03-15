@@ -4,15 +4,6 @@ on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
-    inputs:
-      force:
-        description: "Forçar sync completo"
-        required: false
-        default: "false"
-      include_stories:
-        description: "Incluir stories"
-        required: false
-        default: "true"
 
 concurrency:
   group: website-instagram-sync
@@ -43,22 +34,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          FORCE_INPUT="${{ github.event.inputs.force || 'false' }}"
-          STORIES_INPUT="${{ github.event.inputs.include_stories || 'true' }}"
-
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            FORCE_INPUT="false"
-            STORIES_INPUT="true"
-          fi
-
           force_bool="false"
           stories_bool="true"
-          case "${FORCE_INPUT,,}" in
-            1|true|yes) force_bool="true" ;;
-          esac
-          case "${STORIES_INPUT,,}" in
-            0|false|no) stories_bool="false" ;;
-          esac
+
+          # Manual dispatch executes a full refresh; scheduled runs are incremental.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            force_bool="true"
+          fi
 
           payload=$(cat <<JSON
           {
