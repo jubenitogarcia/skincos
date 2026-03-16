@@ -1411,11 +1411,11 @@ button:focus-visible {
 }
 
 .bookingFlow__doctorBadgeGrid > :first-child {
-  margin-left: 16px;
+  margin-left: 0;
 }
 
 .bookingFlow__doctorBadgeGrid > :last-child {
-  margin-right: 16px;
+  margin-right: 0;
 }
 
 .bookingFlow__doctorBadgeWrap {
@@ -1504,11 +1504,6 @@ button:focus-visible {
   padding-top: 6px;
 }
 
-.bookingFlow__picker--doctor.bookingFlow__picker--rail::before,
-.bookingFlow__picker--doctor.bookingFlow__picker--rail::after {
-  background: transparent;
-}
-
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap:hover,
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap:focus-within {
   z-index: 30;
@@ -1583,14 +1578,6 @@ button:focus-visible {
   width: max-content;
   min-width: max-content;
   padding: 6px 0 6px;
-}
-
-.bookingFlow__procedureBadgeGrid > :first-child {
-  margin-left: 10px;
-}
-
-.bookingFlow__procedureBadgeGrid > :last-child {
-  margin-right: 10px;
 }
 
 .bookingFlow__procedureBadgeWrap {
@@ -1819,9 +1806,8 @@ button:focus-visible {
 
 .bookingFlow__picker {
   --picker-side-space: 54px;
-  --picker-edge-width: 40px;
+  --picker-fade-width: 34px;
   --picker-edge-height: 84px;
-  --picker-edge-offset: 20px;
   position: relative;
   margin-top: 4px;
   overflow: visible;
@@ -1836,60 +1822,60 @@ button:focus-visible {
 
 .bookingFlow__picker--rail::before,
 .bookingFlow__picker--rail::after {
-  display: none;
-}
-
-.bookingFlow__edgeGlass {
-  --edge-strength: 0;
+  content: "";
   position: absolute;
   top: 8px;
-  width: var(--picker-edge-width);
+  width: var(--picker-fade-width);
   height: var(--picker-edge-height);
-  border-radius: 999px;
+  border-radius: 0;
   pointer-events: none;
-  opacity: calc(var(--edge-strength) * 0.95);
-  backdrop-filter: blur(calc(2px + (var(--edge-strength) * 8px)));
-  -webkit-backdrop-filter: blur(calc(2px + (var(--edge-strength) * 8px)));
+  opacity: 0;
+  backdrop-filter: blur(5px) saturate(104%);
+  -webkit-backdrop-filter: blur(5px) saturate(104%);
   z-index: 46;
-  transition: opacity 140ms ease;
+  transition: opacity 160ms ease;
 }
 
-.bookingFlow__edgeGlass--left {
-  --edge-strength: var(--edge-left-strength, 0);
-  left: calc(var(--picker-side-space) - var(--picker-edge-offset));
-  background: linear-gradient(90deg, rgba(244, 244, 244, 0.95) 0%, rgba(244, 244, 244, 0.58) 54%, rgba(244, 244, 244, 0) 100%);
+.bookingFlow__picker--rail::before {
+  left: var(--picker-side-space);
+  transform: translateX(-30%);
+  background: linear-gradient(90deg, rgba(244, 244, 244, 0.82) 0%, rgba(244, 244, 244, 0.38) 48%, rgba(244, 244, 244, 0) 100%);
 }
 
-.bookingFlow__edgeGlass--right {
-  --edge-strength: var(--edge-right-strength, 0);
-  right: calc(var(--picker-side-space) - var(--picker-edge-offset));
-  background: linear-gradient(270deg, rgba(244, 244, 244, 0.95) 0%, rgba(244, 244, 244, 0.58) 54%, rgba(244, 244, 244, 0) 100%);
+.bookingFlow__picker--rail::after {
+  right: var(--picker-side-space);
+  transform: translateX(30%);
+  background: linear-gradient(270deg, rgba(244, 244, 244, 0.82) 0%, rgba(244, 244, 244, 0.38) 48%, rgba(244, 244, 244, 0) 100%);
+}
+
+.bookingFlow__picker[data-left-fade="true"]::before {
+  opacity: 1;
+}
+
+.bookingFlow__picker[data-right-fade="true"]::after {
+  opacity: 1;
 }
 
 .bookingFlow__picker .bookingFlow__scrollWindow {
-  width: calc(100% - (var(--picker-side-space) * 2));
-  margin-left: var(--picker-side-space);
-  margin-right: var(--picker-side-space);
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
   margin-top: 0;
-  padding-left: 0;
-  padding-right: 0;
+  padding-left: var(--picker-side-space);
+  padding-right: var(--picker-side-space);
   padding-top: 8px;
   padding-bottom: 10px;
-  scroll-padding-left: 10px;
-  scroll-padding-right: 10px;
+  scroll-padding-left: var(--picker-side-space);
+  scroll-padding-right: var(--picker-side-space);
 }
 
 .bookingFlow__scrollWindow--doctor {
   padding-top: 8px !important;
-  padding-bottom: 18px !important;
+  padding-bottom: 16px !important;
 }
 
 .bookingFlow__cardProcedure .bookingFlow__scrollWindow {
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-  padding-bottom: 18px !important;
-  scroll-padding-left: 10px !important;
-  scroll-padding-right: 10px !important;
+  padding-bottom: 16px !important;
 }
 
 .bookingFlow__hoverZone {
@@ -1950,8 +1936,8 @@ button:focus-visible {
 
 @media (hover: hover) and (pointer: fine) {
   .bookingFlow__cardProcedure .bookingFlow__scrollWindow {
-    scroll-padding-left: 10px !important;
-    scroll-padding-right: 10px !important;
+    scroll-padding-left: var(--picker-side-space) !important;
+    scroll-padding-right: var(--picker-side-space) !important;
   }
 }
 
@@ -1964,9 +1950,14 @@ button:focus-visible {
     width: 100%;
     margin-left: 0;
     margin-right: 0;
+    padding-left: 0;
+    padding-right: 0;
+    scroll-padding-left: 0;
+    scroll-padding-right: 0;
   }
 
-  .bookingFlow__edgeGlass {
+  .bookingFlow__picker--rail::before,
+  .bookingFlow__picker--rail::after {
     display: none;
   }
 
