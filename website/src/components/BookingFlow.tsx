@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
@@ -282,14 +282,26 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
     const hoverTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [canLeft, setCanLeft] = useState(false);
     const [canRight, setCanRight] = useState(false);
+    const [leftEdgeStrength, setLeftEdgeStrength] = useState(0);
+    const [rightEdgeStrength, setRightEdgeStrength] = useState(0);
 
     const update = () => {
         const el = ref.current;
         if (!el) return;
         const left = el.scrollLeft;
-        const maxLeft = el.scrollWidth - el.clientWidth;
+        const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
         setCanLeft(left > 1);
         setCanRight(left < maxLeft - 1);
+        if (maxLeft <= 0) {
+            setLeftEdgeStrength(0);
+            setRightEdgeStrength(0);
+            return;
+        }
+        const fadeDistance = 54;
+        const nextLeftStrength = Math.max(0, Math.min(1, left / fadeDistance));
+        const nextRightStrength = Math.max(0, Math.min(1, (maxLeft - left) / fadeDistance));
+        setLeftEdgeStrength(nextLeftStrength);
+        setRightEdgeStrength(nextRightStrength);
     };
 
     useEffect(() => {
@@ -341,8 +353,19 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
         el.scrollBy({ left: dir * 120, behavior: "smooth" });
     };
 
+    const pickerStyle = useMemo(
+        () =>
+            ({
+                "--edge-left-strength": leftEdgeStrength.toString(),
+                "--edge-right-strength": rightEdgeStrength.toString(),
+            }) as CSSProperties,
+        [leftEdgeStrength, rightEdgeStrength],
+    );
+
     return (
-        <div className={["bookingFlow__picker", props.className].filter(Boolean).join(" ")}>
+        <div className={["bookingFlow__picker", props.className].filter(Boolean).join(" ")} style={pickerStyle}>
+            <span className="bookingFlow__edgeGlass bookingFlow__edgeGlass--left" aria-hidden="true" />
+            <span className="bookingFlow__edgeGlass bookingFlow__edgeGlass--right" aria-hidden="true" />
             <button
                 type="button"
                 className="bookingFlow__hoverZone bookingFlow__hoverZone--left"
@@ -1183,7 +1206,7 @@ export default function BookingFlow() {
                             ) : (
                                 <HoverScrollPicker
                                     ariaLabel="Lista de profissionais"
-                                    className="bookingFlow__picker--bleed bookingFlow__picker--rail bookingFlow__picker--doctor"
+                                    className="bookingFlow__picker--rail bookingFlow__picker--doctor"
                                     scrollWindowClassName="bookingFlow__scrollWindow--doctor"
                                 >
                                     <div className="bookingFlow__doctorBadgeGrid">
@@ -1290,7 +1313,7 @@ export default function BookingFlow() {
                                 <div className="bookingFlow__lockText">Selecione a unidade no topo para continuar.</div>
                             </div>
                         ) : null}
-                        <HoverScrollPicker ariaLabel="Lista de procedimentos" className="bookingFlow__picker--bleed bookingFlow__picker--rail">
+                        <HoverScrollPicker ariaLabel="Lista de procedimentos" className="bookingFlow__picker--rail">
                             <div className="bookingFlow__procedureBadgeGrid">
                                 {services.map((s) => {
                                     const active = selectedServices.some((item) => item.id === s.id);
