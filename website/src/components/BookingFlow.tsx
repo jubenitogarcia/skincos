@@ -342,11 +342,7 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
     };
 
     return (
-        <div
-            className={["bookingFlow__picker", props.className].filter(Boolean).join(" ")}
-            data-left-fade={canLeft ? "true" : "false"}
-            data-right-fade={canRight ? "true" : "false"}
-        >
+        <div className={["bookingFlow__picker", props.className].filter(Boolean).join(" ")}>
             <button
                 type="button"
                 className="bookingFlow__hoverZone bookingFlow__hoverZone--left"
