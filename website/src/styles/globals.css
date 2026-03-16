@@ -1577,7 +1577,7 @@ button:focus-visible {
   align-items: flex-start;
   width: max-content;
   min-width: max-content;
-  padding: 6px 0 6px;
+  padding: 6px 8px 6px;
 }
 
 .bookingFlow__procedureBadgeWrap {
