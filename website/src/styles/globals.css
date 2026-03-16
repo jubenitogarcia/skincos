@@ -1528,6 +1528,8 @@ button:focus-visible {
   border-radius: 10px;
   background: rgba(17, 17, 17, 0.96);
   color: #fff;
+  font-size: 11px;
+  line-height: 1.25;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
   white-space: normal;
   pointer-events: auto;
@@ -1544,7 +1546,7 @@ button:focus-visible {
 .bookingFlow__doctorTooltipName {
   font-weight: 900;
   line-height: 1.1;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .bookingFlow__doctorTooltipSub {
@@ -1576,11 +1578,19 @@ button:focus-visible {
 .bookingFlow__procedureBadgeGrid {
   display: flex;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 2px;
   align-items: flex-start;
   width: max-content;
   min-width: max-content;
-  padding: 8px 0 14px;
+  padding: 6px 0 6px;
+}
+
+.bookingFlow__procedureBadgeGrid > :first-child {
+  margin-left: 10px;
+}
+
+.bookingFlow__procedureBadgeGrid > :last-child {
+  margin-right: 10px;
 }
 
 .bookingFlow__procedureBadgeWrap {
@@ -1597,9 +1607,9 @@ button:focus-visible {
   appearance: none;
   display: grid;
   justify-items: center;
-  gap: 5px;
-  width: 88px;
-  min-width: 88px;
+  gap: 4px;
+  width: 84px;
+  min-width: 84px;
   flex: 0 0 auto;
   padding: 0;
   border: 0;
@@ -1675,7 +1685,7 @@ button:focus-visible {
   text-wrap: pretty;
   overflow-wrap: anywhere;
   width: 100%;
-  min-height: 2.2em;
+  min-height: 1.95em;
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeLabel {
@@ -1808,8 +1818,12 @@ button:focus-visible {
 }
 
 .bookingFlow__picker {
+  --picker-side-space: 54px;
+  --picker-edge-width: 40px;
+  --picker-edge-height: 84px;
+  --picker-edge-offset: 20px;
   position: relative;
-  margin-top: 6px;
+  margin-top: 4px;
   overflow: visible;
   border-radius: 18px;
   width: 100%;
@@ -1822,56 +1836,68 @@ button:focus-visible {
 
 .bookingFlow__picker--rail::before,
 .bookingFlow__picker--rail::after {
-  content: "";
+  display: none;
+}
+
+.bookingFlow__edgeGlass {
+  --edge-strength: 0;
   position: absolute;
   top: 8px;
-  bottom: auto;
-  height: 82px;
-  width: 44px;
+  width: var(--picker-edge-width);
+  height: var(--picker-edge-height);
   border-radius: 999px;
   pointer-events: none;
-  z-index: 1;
+  opacity: calc(var(--edge-strength) * 0.95);
+  backdrop-filter: blur(calc(2px + (var(--edge-strength) * 8px)));
+  -webkit-backdrop-filter: blur(calc(2px + (var(--edge-strength) * 8px)));
+  z-index: 46;
+  transition: opacity 140ms ease;
 }
 
-.bookingFlow__picker--rail::before {
-  left: 0;
-  background: linear-gradient(90deg, rgba(246, 246, 246, 0.16) 0%, rgba(246, 246, 246, 0) 100%);
+.bookingFlow__edgeGlass--left {
+  --edge-strength: var(--edge-left-strength, 0);
+  left: calc(var(--picker-side-space) - var(--picker-edge-offset));
+  background: linear-gradient(90deg, rgba(244, 244, 244, 0.95) 0%, rgba(244, 244, 244, 0.58) 54%, rgba(244, 244, 244, 0) 100%);
 }
 
-.bookingFlow__picker--rail::after {
-  right: 0;
-  background: linear-gradient(270deg, rgba(246, 246, 246, 0.16) 0%, rgba(246, 246, 246, 0) 100%);
+.bookingFlow__edgeGlass--right {
+  --edge-strength: var(--edge-right-strength, 0);
+  right: calc(var(--picker-side-space) - var(--picker-edge-offset));
+  background: linear-gradient(270deg, rgba(244, 244, 244, 0.95) 0%, rgba(244, 244, 244, 0.58) 54%, rgba(244, 244, 244, 0) 100%);
 }
 
 .bookingFlow__picker .bookingFlow__scrollWindow {
+  width: calc(100% - (var(--picker-side-space) * 2));
+  margin-left: var(--picker-side-space);
+  margin-right: var(--picker-side-space);
   margin-top: 0;
   padding-left: 0;
   padding-right: 0;
   padding-top: 8px;
-  padding-bottom: 8px;
-  scroll-padding-left: 24px;
-  scroll-padding-right: 24px;
+  padding-bottom: 10px;
+  scroll-padding-left: 10px;
+  scroll-padding-right: 10px;
 }
 
 .bookingFlow__scrollWindow--doctor {
   padding-top: 8px !important;
-  padding-bottom: 56px !important;
+  padding-bottom: 18px !important;
 }
 
 .bookingFlow__cardProcedure .bookingFlow__scrollWindow {
-  padding-left: 14px !important;
-  padding-right: 14px !important;
-  padding-bottom: 52px !important;
-  scroll-padding-left: 14px !important;
-  scroll-padding-right: 14px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-bottom: 18px !important;
+  scroll-padding-left: 10px !important;
+  scroll-padding-right: 10px !important;
 }
 
 .bookingFlow__hoverZone {
   position: absolute;
   top: 8px;
-  height: 82px;
-  z-index: 45;
-  width: 56px;
+  height: var(--picker-edge-height);
+  z-index: 55;
+  width: var(--picker-side-space);
   border: 0;
   padding: 0;
   background: transparent;
@@ -1894,12 +1920,12 @@ button:focus-visible {
 
 .bookingFlow__hoverZone--left {
   left: 0;
-  justify-content: flex-start;
+  justify-content: center;
 }
 
 .bookingFlow__hoverZone--right {
   right: 0;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .bookingFlow__scrollArrow {
@@ -1915,23 +1941,35 @@ button:focus-visible {
 }
 
 .bookingFlow__scrollArrow--left {
-  margin-left: 6px;
+  margin-left: 0;
 }
 
 .bookingFlow__scrollArrow--right {
-  margin-right: 6px;
+  margin-right: 0;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .bookingFlow__cardProcedure .bookingFlow__scrollWindow {
-    padding-left: 56px !important;
-    padding-right: 56px !important;
-    scroll-padding-left: 56px !important;
-    scroll-padding-right: 56px !important;
+    scroll-padding-left: 10px !important;
+    scroll-padding-right: 10px !important;
   }
 }
 
 @media (hover: none), (pointer: coarse) {
+  .bookingFlow__picker {
+    --picker-side-space: 0px;
+  }
+
+  .bookingFlow__picker .bookingFlow__scrollWindow {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .bookingFlow__edgeGlass {
+    display: none;
+  }
+
   .bookingFlow__hoverZone {
     display: none;
   }
