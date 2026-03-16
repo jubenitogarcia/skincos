@@ -1514,14 +1514,13 @@ button:focus-visible {
   z-index: 30;
 }
 
+.bookingFlow__tooltipAnchor {
+  position: relative;
+  display: inline-flex;
+}
+
 .bookingFlow__doctorTooltip,
 .bookingFlow__procedureTooltip {
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 4px);
-  bottom: auto;
-  transform: translateX(-50%);
-  display: none;
   width: max-content;
   min-width: 118px;
   max-width: 184px;
@@ -1540,16 +1539,6 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.bookingFlow__doctorBadgeWrap:hover .bookingFlow__doctorTooltip,
-.bookingFlow__doctorBadgeWrap:focus-within .bookingFlow__doctorTooltip {
-  display: block;
-}
-
-.bookingFlow__procedureBadgeWrap:hover .bookingFlow__procedureTooltip,
-.bookingFlow__procedureBadgeWrap:focus-within .bookingFlow__procedureTooltip {
-  display: block;
 }
 
 .bookingFlow__doctorTooltipName {

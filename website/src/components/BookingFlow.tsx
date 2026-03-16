@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { units } from "@/data/units";
@@ -179,6 +180,101 @@ function isDateKeyBeforeToday(dateKey: string): boolean {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return candidate.getTime() < today.getTime();
+}
+
+function PortalTooltip(props: { content: ReactNode; children: ReactNode; className: string; disabled?: boolean }) {
+    const anchorRef = useRef<HTMLDivElement | null>(null);
+    const tooltipRef = useRef<HTMLDivElement | null>(null);
+    const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [open, setOpen] = useState(false);
+    const [position, setPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+
+    const clearCloseTimer = useCallback(() => {
+        if (!closeTimerRef.current) return;
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+    }, []);
+
+    const openTooltip = useCallback(() => {
+        if (props.disabled) return;
+        clearCloseTimer();
+        setOpen(true);
+    }, [clearCloseTimer, props.disabled]);
+
+    const scheduleClose = useCallback(() => {
+        clearCloseTimer();
+        closeTimerRef.current = setTimeout(() => setOpen(false), 120);
+    }, [clearCloseTimer]);
+
+    const updatePosition = useCallback(() => {
+        const anchor = anchorRef.current;
+        const tooltip = tooltipRef.current;
+        if (!anchor || !tooltip) return;
+        const anchorRect = anchor.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const viewportPadding = 8;
+        let left = anchorRect.left + anchorRect.width / 2;
+        const minLeft = viewportPadding + tooltipRect.width / 2;
+        const maxLeft = window.innerWidth - viewportPadding - tooltipRect.width / 2;
+        left = Math.max(minLeft, Math.min(maxLeft, left));
+        const top = anchorRect.bottom + 4;
+        setPosition({ left, top });
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!open) return;
+        updatePosition();
+    }, [open, updatePosition, props.content]);
+
+    useEffect(() => {
+        if (!open) return;
+        const onWindowChange = () => updatePosition();
+        window.addEventListener("resize", onWindowChange);
+        window.addEventListener("scroll", onWindowChange, true);
+        return () => {
+            window.removeEventListener("resize", onWindowChange);
+            window.removeEventListener("scroll", onWindowChange, true);
+        };
+    }, [open, updatePosition]);
+
+    useEffect(() => {
+        return () => clearCloseTimer();
+    }, [clearCloseTimer]);
+
+    return (
+        <div
+            ref={anchorRef}
+            className="bookingFlow__tooltipAnchor"
+            onMouseEnter={openTooltip}
+            onMouseLeave={scheduleClose}
+            onFocusCapture={openTooltip}
+            onBlurCapture={scheduleClose}
+        >
+            {props.children}
+            {open && typeof document !== "undefined"
+                ? createPortal(
+                      <div
+                          ref={tooltipRef}
+                          className={props.className}
+                          role="tooltip"
+                          style={{
+                              position: "fixed",
+                              left: position.left,
+                              top: position.top,
+                              transform: "translateX(-50%)",
+                              display: "block",
+                              zIndex: 5000,
+                          }}
+                          onMouseEnter={openTooltip}
+                          onMouseLeave={scheduleClose}
+                      >
+                          {props.content}
+                      </div>,
+                      document.body,
+                  )
+                : null}
+        </div>
+    );
 }
 
 function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; className?: string; scrollWindowClassName?: string }) {
@@ -1096,77 +1192,89 @@ export default function BookingFlow() {
                                             const instagramHref = d.instagramUrl ?? (d.handle ? `https://instagram.com/${d.handle.replace(/^@/, "")}` : null);
                                             return (
                                                 <div key={d.slug} className="bookingFlow__doctorBadgeWrap" data-active={active ? "true" : "false"} role="listitem">
-                                                    <button
-                                                        type="button"
-                                                        className="bookingFlow__doctorBadge"
-                                                        data-active={active ? "true" : "false"}
-                                                        onClick={() => selectDoctor({ slug: d.slug, name: d.name, handle: d.handle })}
-                                                        aria-label={active ? `Remover seleção de ${d.name}` : `Selecionar ${d.name}`}
-                                                        aria-pressed={active}
+                                                    <PortalTooltip
+                                                        className="bookingFlow__doctorTooltip"
+                                                        content={
+                                                            <>
+                                                                <div className="bookingFlow__doctorTooltipHeader">
+                                                                    <div className="bookingFlow__doctorTooltipName">{d.name}</div>
+                                                                    {instagramHref ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="bookingFlow__doctorTooltipLink"
+                                                                            aria-label={`Abrir Instagram de ${d.name}`}
+                                                                            title="Abrir Instagram"
+                                                                            onClick={(event) => {
+                                                                                event.stopPropagation();
+                                                                                openDoctorInstagram({
+                                                                                    name: d.name,
+                                                                                    handle: d.handle,
+                                                                                    instagramUrl: instagramHref,
+                                                                                });
+                                                                            }}
+                                                                        >
+                                                                            <InstagramIcon size={14} />
+                                                                        </button>
+                                                                    ) : null}
+                                                                </div>
+                                                                <div className="bookingFlow__doctorTooltipSub">{d.nickname || unitLabel}</div>
+                                                            </>
+                                                        }
                                                     >
-                                                        <span className="bookingFlow__doctorBadgeAvatar">
-                                                            {d.handle ? (
-                                                                <Image
-                                                                    src={avatarUrl(d.handle, d.nickname ?? d.name)}
-                                                                    alt={d.nickname ?? d.name}
-                                                                    fill
-                                                                    sizes="76px"
-                                                                    style={{ objectFit: "cover" }}
-                                                                    unoptimized
-                                                                />
-                                                            ) : (
-                                                                <span className="bookingFlow__doctorBadgeFallback">{initialsFromName(d.nickname ?? d.name)}</span>
-                                                            )}
-                                                        </span>
-                                                    </button>
-                                                    <div className="bookingFlow__doctorTooltip" role="tooltip">
-                                                        <div className="bookingFlow__doctorTooltipHeader">
-                                                            <div className="bookingFlow__doctorTooltipName">{d.name}</div>
-                                                            {instagramHref ? (
-                                                                <button
-                                                                    type="button"
-                                                                    className="bookingFlow__doctorTooltipLink"
-                                                                    aria-label={`Abrir Instagram de ${d.name}`}
-                                                                    title="Abrir Instagram"
-                                                                    onClick={(event) => {
-                                                                        event.stopPropagation();
-                                                                        openDoctorInstagram({
-                                                                            name: d.name,
-                                                                            handle: d.handle,
-                                                                            instagramUrl: instagramHref,
-                                                                        });
-                                                                    }}
-                                                                >
-                                                                    <InstagramIcon size={14} />
-                                                                </button>
-                                                            ) : null}
-                                                        </div>
-                                                        <div className="bookingFlow__doctorTooltipSub">{d.nickname || unitLabel}</div>
-                                                    </div>
+                                                        <button
+                                                            type="button"
+                                                            className="bookingFlow__doctorBadge"
+                                                            data-active={active ? "true" : "false"}
+                                                            onClick={() => selectDoctor({ slug: d.slug, name: d.name, handle: d.handle })}
+                                                            aria-label={active ? `Remover seleção de ${d.name}` : `Selecionar ${d.name}`}
+                                                            aria-pressed={active}
+                                                        >
+                                                            <span className="bookingFlow__doctorBadgeAvatar">
+                                                                {d.handle ? (
+                                                                    <Image
+                                                                        src={avatarUrl(d.handle, d.nickname ?? d.name)}
+                                                                        alt={d.nickname ?? d.name}
+                                                                        fill
+                                                                        sizes="76px"
+                                                                        style={{ objectFit: "cover" }}
+                                                                        unoptimized
+                                                                    />
+                                                                ) : (
+                                                                    <span className="bookingFlow__doctorBadgeFallback">{initialsFromName(d.nickname ?? d.name)}</span>
+                                                                )}
+                                                            </span>
+                                                        </button>
+                                                    </PortalTooltip>
                                                 </div>
                                             );
                                         })}
 
                                         <div className="bookingFlow__doctorBadgeWrap" data-active={doctor?.slug === ANY_DOCTOR.slug ? "true" : "false"} role="listitem">
-                                            <button
-                                                type="button"
-                                                className="bookingFlow__doctorBadge bookingFlow__doctorBadge--all"
-                                                data-active={doctor?.slug === ANY_DOCTOR.slug ? "true" : "false"}
-                                                onClick={() => selectDoctor(ANY_DOCTOR)}
-                                                aria-label={doctor?.slug === ANY_DOCTOR.slug ? "Remover seleção de sem preferência" : "Selecionar sem preferência de doutor"}
-                                                aria-pressed={doctor?.slug === ANY_DOCTOR.slug}
+                                            <PortalTooltip
+                                                className="bookingFlow__doctorTooltip"
+                                                content={
+                                                    <>
+                                                        <div className="bookingFlow__doctorTooltipName">Sem Preferência</div>
+                                                        <div className="bookingFlow__doctorTooltipSub">Mostra a agenda mais ampla da unidade.</div>
+                                                    </>
+                                                }
                                             >
-                                                <span className="bookingFlow__doctorBadgeAvatar bookingFlow__doctorBadgeAvatar--all">
-                                                    <span className="bookingFlow__doctorBadgeFallback bookingFlow__doctorBadgeFallback--all">
-                                                        <span>Sem</span>
-                                                        <span>Preferência</span>
+                                                <button
+                                                    type="button"
+                                                    className="bookingFlow__doctorBadge bookingFlow__doctorBadge--all"
+                                                    data-active={doctor?.slug === ANY_DOCTOR.slug ? "true" : "false"}
+                                                    onClick={() => selectDoctor(ANY_DOCTOR)}
+                                                    aria-label={doctor?.slug === ANY_DOCTOR.slug ? "Remover seleção de sem preferência" : "Selecionar sem preferência de doutor"}
+                                                    aria-pressed={doctor?.slug === ANY_DOCTOR.slug}
+                                                >
+                                                    <span className="bookingFlow__doctorBadgeAvatar bookingFlow__doctorBadgeAvatar--all">
+                                                        <span className="bookingFlow__doctorBadgeFallback bookingFlow__doctorBadgeFallback--all">
+                                                            <span>Sem</span>
+                                                            <span>Preferência</span>
+                                                        </span>
                                                     </span>
-                                                </span>
-                                            </button>
-                                            <div className="bookingFlow__doctorTooltip" role="tooltip">
-                                                <div className="bookingFlow__doctorTooltipName">Sem Preferência</div>
-                                                <div className="bookingFlow__doctorTooltipSub">Mostra a agenda mais ampla da unidade.</div>
-                                            </div>
+                                                </button>
+                                            </PortalTooltip>
                                         </div>
                                     </div>
                                 </HoverScrollPicker>
@@ -1188,31 +1296,36 @@ export default function BookingFlow() {
                                     const active = selectedServices.some((item) => item.id === s.id);
                                     return (
                                         <div key={s.id} className="bookingFlow__procedureBadgeWrap" role="listitem" data-active={active ? "true" : "false"}>
-                                            <button
-                                                type="button"
-                                                disabled={!canPickProcedure}
-                                                className="bookingFlow__procedureBadge"
-                                                data-active={active ? "true" : "false"}
-                                                onClick={() => toggleProcedure(s)}
+                                            <PortalTooltip
+                                                className="bookingFlow__procedureTooltip"
+                                                disabled={!s.subtitle}
+                                                content={s.subtitle ?? ""}
                                             >
-                                                <span className="bookingFlow__procedureBadgeAvatar">
-                                                    {s.highlightImage ? (
-                                                        <Image
-                                                            src={s.highlightImage}
-                                                            alt=""
-                                                            fill
-                                                            sizes="76px"
-                                                            style={{ objectFit: "cover" }}
-                                                            unoptimized
-                                                            aria-hidden="true"
-                                                        />
-                                                    ) : (
-                                                        <span className="bookingFlow__procedureBadgeFallback">EF</span>
-                                                    )}
-                                                </span>
-                                                <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
-                                            </button>
-                                            {s.subtitle ? <div className="bookingFlow__procedureTooltip" role="tooltip">{s.subtitle}</div> : null}
+                                                <button
+                                                    type="button"
+                                                    disabled={!canPickProcedure}
+                                                    className="bookingFlow__procedureBadge"
+                                                    data-active={active ? "true" : "false"}
+                                                    onClick={() => toggleProcedure(s)}
+                                                >
+                                                    <span className="bookingFlow__procedureBadgeAvatar">
+                                                        {s.highlightImage ? (
+                                                            <Image
+                                                                src={s.highlightImage}
+                                                                alt=""
+                                                                fill
+                                                                sizes="76px"
+                                                                style={{ objectFit: "cover" }}
+                                                                unoptimized
+                                                                aria-hidden="true"
+                                                            />
+                                                        ) : (
+                                                            <span className="bookingFlow__procedureBadgeFallback">EF</span>
+                                                        )}
+                                                    </span>
+                                                    <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
+                                                </button>
+                                            </PortalTooltip>
                                         </div>
                                     );
                                 })}
@@ -1222,19 +1335,20 @@ export default function BookingFlow() {
                                     role="listitem"
                                     data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
                                 >
-                                    <button
-                                        type="button"
-                                        disabled={!canPickProcedure}
-                                        className="bookingFlow__procedureBadge"
-                                        data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
-                                        onClick={() => toggleProcedure(OTHER_SERVICE)}
-                                    >
-                                        <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
-                                            <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
-                                        </span>
-                                        <span className="bookingFlow__procedureBadgeLabel">Outro</span>
-                                    </button>
-                                    <div className="bookingFlow__procedureTooltip" role="tooltip">Outro procedimento ou combinação</div>
+                                    <PortalTooltip className="bookingFlow__procedureTooltip" content="Outro procedimento ou combinação">
+                                        <button
+                                            type="button"
+                                            disabled={!canPickProcedure}
+                                            className="bookingFlow__procedureBadge"
+                                            data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
+                                            onClick={() => toggleProcedure(OTHER_SERVICE)}
+                                        >
+                                            <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
+                                                <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
+                                            </span>
+                                            <span className="bookingFlow__procedureBadgeLabel">Outro</span>
+                                        </button>
+                                    </PortalTooltip>
                                 </div>
                             </div>
                         </HoverScrollPicker>
