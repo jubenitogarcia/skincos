@@ -203,6 +203,20 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
         return () => window.removeEventListener("resize", onResize);
     }, []);
 
+    useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+
+        update();
+
+        if (typeof ResizeObserver === "undefined") return;
+
+        const observer = new ResizeObserver(() => update());
+        observer.observe(el);
+        Array.from(el.children).forEach((child) => observer.observe(child));
+        return () => observer.disconnect();
+    }, [props.children]);
+
     const stopHoverScroll = () => {
         if (!hoverTimerRef.current) return;
         clearInterval(hoverTimerRef.current);
@@ -1173,50 +1187,55 @@ export default function BookingFlow() {
                                 {services.map((s) => {
                                     const active = selectedServices.some((item) => item.id === s.id);
                                     return (
-                                        <button
-                                            key={s.id}
-                                            type="button"
-                                            role="listitem"
-                                            disabled={!canPickProcedure}
-                                            className={`bookingFlow__procedureBadge${s.subtitle ? " bookingFlow__tooltipTrigger bookingFlow__procedureBadge--hasTooltip" : ""}`}
-                                            data-active={active ? "true" : "false"}
-                                            data-tooltip={s.subtitle ?? undefined}
-                                            onClick={() => toggleProcedure(s)}
-                                        >
-                                            <span className="bookingFlow__procedureBadgeAvatar">
-                                                {s.highlightImage ? (
-                                                    <Image
-                                                        src={s.highlightImage}
-                                                        alt=""
-                                                        fill
-                                                        sizes="76px"
-                                                        style={{ objectFit: "cover" }}
-                                                        unoptimized
-                                                        aria-hidden="true"
-                                                    />
-                                                ) : (
-                                                    <span className="bookingFlow__procedureBadgeFallback">EF</span>
-                                                )}
-                                            </span>
-                                            <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
-                                        </button>
+                                        <div key={s.id} className="bookingFlow__procedureBadgeWrap" role="listitem" data-active={active ? "true" : "false"}>
+                                            <button
+                                                type="button"
+                                                disabled={!canPickProcedure}
+                                                className="bookingFlow__procedureBadge"
+                                                data-active={active ? "true" : "false"}
+                                                onClick={() => toggleProcedure(s)}
+                                            >
+                                                <span className="bookingFlow__procedureBadgeAvatar">
+                                                    {s.highlightImage ? (
+                                                        <Image
+                                                            src={s.highlightImage}
+                                                            alt=""
+                                                            fill
+                                                            sizes="76px"
+                                                            style={{ objectFit: "cover" }}
+                                                            unoptimized
+                                                            aria-hidden="true"
+                                                        />
+                                                    ) : (
+                                                        <span className="bookingFlow__procedureBadgeFallback">EF</span>
+                                                    )}
+                                                </span>
+                                                <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
+                                            </button>
+                                            {s.subtitle ? <div className="bookingFlow__procedureTooltip" role="tooltip">{s.subtitle}</div> : null}
+                                        </div>
                                     );
                                 })}
 
-                                <button
-                                    type="button"
+                                <div
+                                    className="bookingFlow__procedureBadgeWrap"
                                     role="listitem"
-                                    disabled={!canPickProcedure}
-                                    className="bookingFlow__procedureBadge bookingFlow__tooltipTrigger bookingFlow__procedureBadge--hasTooltip"
                                     data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
-                                    data-tooltip="Outro procedimento ou combinação"
-                                    onClick={() => toggleProcedure(OTHER_SERVICE)}
                                 >
-                                    <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
-                                        <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
-                                    </span>
-                                    <span className="bookingFlow__procedureBadgeLabel">Outro</span>
-                                </button>
+                                    <button
+                                        type="button"
+                                        disabled={!canPickProcedure}
+                                        className="bookingFlow__procedureBadge"
+                                        data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
+                                        onClick={() => toggleProcedure(OTHER_SERVICE)}
+                                    >
+                                        <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
+                                            <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
+                                        </span>
+                                        <span className="bookingFlow__procedureBadgeLabel">Outro</span>
+                                    </button>
+                                    <div className="bookingFlow__procedureTooltip" role="tooltip">Outro procedimento ou combinação</div>
+                                </div>
                             </div>
                         </HoverScrollPicker>
                     </div>
