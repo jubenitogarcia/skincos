@@ -10,17 +10,17 @@ export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = [
     {
         type: "image",
         src: "/images/hero/desktop/banner-01.png",
-        alt: "Botox 3 Regiões (40ui) e Botox Full Face",
+        alt: "Mês do Consumidor - Preenchimento 2mL",
     },
     {
         type: "image",
         src: "/images/hero/desktop/banner-02.png",
-        alt: "Festival do Preenchimento",
+        alt: "Mês do Consumidor - Preenchimento com Lavieen",
     },
     {
         type: "image",
         src: "/images/hero/desktop/banner-03.png",
-        alt: "Carnaval beleza - Brilhe de dentro para fora",
+        alt: "Mês do Consumidor - Combo exclusivo de preenchimento",
     },
 ];
 
@@ -28,13 +28,18 @@ export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = [
     {
         type: "image",
         src: "/images/hero/mobile/banner-01-optimized.jpg",
-        alt: "Espaco Facial mobile banner",
+        alt: "Mês do Consumidor - Preenchimento 2mL",
     },
-    ...Array.from({ length: 26 }, (_, idx) => ({
-        type: "image" as const,
-        src: `/images/hero/mobile/banner-${String(idx + 2).padStart(2, "0")}.png`,
-        alt: "Espaco Facial mobile banner",
-    })),
+    {
+        type: "image",
+        src: "/images/hero/mobile/banner-02.png",
+        alt: "Mês do Consumidor - Preenchimento com Lavieen",
+    },
+    {
+        type: "image",
+        src: "/images/hero/mobile/banner-03.png",
+        alt: "Mês do Consumidor - Combo exclusivo de preenchimento",
+    },
 ];
 
 export function getLocalHeroItems(variant: HeroMediaVariant): HeroMediaItem[] {
