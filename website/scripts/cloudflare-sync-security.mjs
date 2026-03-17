@@ -8,10 +8,11 @@ const DESIRED_RULE = {
   action: "block",
   enabled: true,
   ratelimit: {
-    characteristics: ["ip.src"],
-    period: 60,
-    requests_per_period: 12,
-    mitigation_timeout: 600,
+    // This zone only supports 10s period/timeout values; 2/10s preserves the prior 12/minute rate.
+    characteristics: ["cf.colo.id", "ip.src"],
+    period: 10,
+    requests_per_period: 2,
+    mitigation_timeout: 10,
   },
 };
 
@@ -26,6 +27,11 @@ function log(msg) {
 function isUnsupportedBotFightModeError(err) {
   const message = String(err?.message ?? "").toLowerCase();
   return message.includes("undefined zone setting: bot_fight_mode");
+}
+
+function isMissingRateLimitEntrypointError(err) {
+  const message = String(err?.message ?? "").toLowerCase();
+  return message.includes("could not find entrypoint ruleset in the http_ratelimit phase");
 }
 
 async function cfFetch(path, init = {}) {
@@ -113,7 +119,15 @@ function sameRateLimitConfig(rule) {
 }
 
 async function assertRateLimitRule(zoneId) {
-  const entrypoint = await cfFetch(`/zones/${zoneId}/rulesets/phases/http_ratelimit/entrypoint`);
+  let entrypoint;
+  try {
+    entrypoint = await cfFetch(`/zones/${zoneId}/rulesets/phases/http_ratelimit/entrypoint`);
+  } catch (err) {
+    if (isMissingRateLimitEntrypointError(err)) {
+      throw new Error("rate_limit_rule_drift_detected");
+    }
+    throw err;
+  }
   const existingRules = Array.isArray(entrypoint?.rules) ? entrypoint.rules : [];
   const matched = existingRules.find((rule) => rule?.ref === RATE_LIMIT_REF);
   if (!sameRateLimitConfig(matched)) {
@@ -123,7 +137,30 @@ async function assertRateLimitRule(zoneId) {
 }
 
 async function upsertRateLimitRule(zoneId) {
-  const entrypoint = await cfFetch(`/zones/${zoneId}/rulesets/phases/http_ratelimit/entrypoint`);
+  let entrypoint;
+  try {
+    entrypoint = await cfFetch(`/zones/${zoneId}/rulesets/phases/http_ratelimit/entrypoint`);
+  } catch (err) {
+    if (!isMissingRateLimitEntrypointError(err)) {
+      throw err;
+    }
+  }
+
+  if (!entrypoint) {
+    await cfFetch(`/zones/${zoneId}/rulesets`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "default",
+        description: "EF: zone-level rate limiting ruleset (managed by repo)",
+        kind: "zone",
+        phase: "http_ratelimit",
+        rules: [DESIRED_RULE],
+      }),
+    });
+    log("rate limit entrypoint created (http_ratelimit)");
+    return;
+  }
+
   const existingRules = Array.isArray(entrypoint?.rules) ? entrypoint.rules : [];
   const preserved = existingRules.filter((r) => r?.ref !== RATE_LIMIT_REF);
 
