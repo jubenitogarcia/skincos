@@ -23,6 +23,11 @@ function log(msg) {
   console.log(`[cf-security] ${msg}`);
 }
 
+function isUnsupportedBotFightModeError(err) {
+  const message = String(err?.message ?? "").toLowerCase();
+  return message.includes("undefined zone setting: bot_fight_mode");
+}
+
 async function cfFetch(path, init = {}) {
   const token = env("CLOUDFLARE_API_TOKEN");
   if (!token) throw new Error("missing CLOUDFLARE_API_TOKEN");
@@ -53,7 +58,16 @@ async function getZoneIdByName(zoneName) {
 }
 
 async function tryEnableBotFightMode(zoneId) {
-  const current = await cfFetch(`/zones/${zoneId}/settings/bot_fight_mode`);
+  let current;
+  try {
+    current = await cfFetch(`/zones/${zoneId}/settings/bot_fight_mode`);
+  } catch (err) {
+    if (isUnsupportedBotFightModeError(err)) {
+      log("bot_fight_mode unsupported for this zone; skipping");
+      return;
+    }
+    throw err;
+  }
   const currentValue = (current?.value ?? "").toLowerCase();
   if (CHECK_MODE) {
     if (currentValue !== "on") {
@@ -68,10 +82,18 @@ async function tryEnableBotFightMode(zoneId) {
     return;
   }
 
-  await cfFetch(`/zones/${zoneId}/settings/bot_fight_mode`, {
-    method: "PATCH",
-    body: JSON.stringify({ value: "on" }),
-  });
+  try {
+    await cfFetch(`/zones/${zoneId}/settings/bot_fight_mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ value: "on" }),
+    });
+  } catch (err) {
+    if (isUnsupportedBotFightModeError(err)) {
+      log("bot_fight_mode unsupported for this zone; skipping");
+      return;
+    }
+    throw err;
+  }
   log("bot_fight_mode enabled");
 }
 
