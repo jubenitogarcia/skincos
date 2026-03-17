@@ -145,6 +145,7 @@ google_credentials.json
 bandit-report.json
 .bandit
 coverage.xml
+.coverage
 .turbo/
 .rush/
 .pnp/
