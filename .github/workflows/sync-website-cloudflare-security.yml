@@ -19,9 +19,9 @@ jobs:
       - name: Guard Cloudflare security sync secrets
         id: guard
         run: |
-          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+          if [ -z "${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN }}" ] && [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Cloudflare API token not configured; skipping website security sync."
+            echo "Cloudflare security token not configured; skipping website security sync."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -48,7 +48,7 @@ jobs:
         working-directory: website
         run: npm run cf:security
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_NAME: espacofacial.com
 
       - name: Verify Cloudflare security settings
@@ -56,5 +56,5 @@ jobs:
         working-directory: website
         run: npm run cf:security:check
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_NAME: espacofacial.com

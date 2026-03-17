@@ -13,7 +13,8 @@ Este repositório inclui um script versionado para manter configurações de seg
 ## Requisitos
 
 GitHub Secret:
-- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_SECURITY_API_TOKEN` (preferido)
+- `CLOUDFLARE_API_TOKEN` (fallback)
 
 O token deve ter permissões suficientes na zona `espacofacial.com` para:
 - Ler zona
