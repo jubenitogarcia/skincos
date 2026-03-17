@@ -114,7 +114,7 @@ jobs:
           set -euxo pipefail
           cd backend/apps/crm-api
           npm install --package-lock-only --ignore-scripts
-          npm ci
+          npm ci --ignore-scripts
           npm test
 
   python-lint:

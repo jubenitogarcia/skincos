@@ -155,7 +155,7 @@ test.describe('escala', () => {
     await page.goto('/?module=escala-profissionais')
 
     await page.getByTestId('escala-day-2026-03-15').click()
-    await page.getByText('Dr. Lucas').click()
+    await page.getByRole('dialog').getByText('Dr. Lucas').click()
     await page.keyboard.press('Escape')
 
     await expect.poll(() => replacePayloads).toEqual([
