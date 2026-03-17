@@ -19,6 +19,8 @@ jobs:
           set -euxo pipefail
           python3 scripts/check-large-artifacts.py --allowlist .github/allowlists/large-artifacts.txt --max-bytes 5242880
           python3 scripts/validate-n8n-workflows.py
+          node scripts/check-js-security-exceptions.mjs
+          bash backend/scripts/ci-no-demo-guard.sh
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -50,6 +52,13 @@ jobs:
           set -euxo pipefail
           cd frontend
           npm run typecheck
+
+      - name: Frontend unit tests
+        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        run: |
+          set -euxo pipefail
+          cd frontend
+          npm run test
 
       - name: Frontend build
         if: ${{ hashFiles('frontend/package-lock.json') != '' }}
@@ -91,13 +100,22 @@ jobs:
           set -euxo pipefail
           pnpm -C backend install --frozen-lockfile
 
-      - name: Backend lint/format/typecheck (best-effort)
+      - name: Backend lint/format/typecheck (workspace advisory)
         if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
         run: |
           set -euxo pipefail
           pnpm -C backend -r run lint --if-present
           pnpm -C backend -r run format:check --if-present
           pnpm -C backend -r run typecheck --if-present
+
+      - name: CRM API tests
+        if: ${{ hashFiles('backend/apps/crm-api/package.json') != '' }}
+        run: |
+          set -euxo pipefail
+          cd backend/apps/crm-api
+          npm install --package-lock-only --ignore-scripts
+          npm ci
+          npm test
 
   python-lint:
     name: Python Lint & Static Analysis

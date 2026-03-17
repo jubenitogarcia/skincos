@@ -4,9 +4,14 @@
 # CI / workflows
 /.github/ @jubenitogarcia
 
-# Core code
-/backend/ @jubenitogarcia
+# Public website
+/website/ @jubenitogarcia
+
+# CRM / Pages frontend
 /frontend/ @jubenitogarcia
+
+# Backend services
+/backend/ @jubenitogarcia
 
 # Repo hygiene
 /.pre-commit-config.yaml @jubenitogarcia
@@ -14,4 +19,4 @@
 /.editorconfig @jubenitogarcia
 /Makefile @jubenitogarcia
 /README.md @jubenitogarcia
-
+/docs/ @jubenitogarcia

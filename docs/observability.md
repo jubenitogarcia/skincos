@@ -4,18 +4,34 @@ title: Observabilidade e SLOs
 
 # Observabilidade e SLOs
 
-Este documento define os SLOs mínimos e como ativar alertas para o CRM (Pages), Workers e CRM API.
+Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacional para CRM, Website e Workers.
+
+## Princípios
+
+- Monitor sintético não substitui telemetria de aplicação.
+- Todo alerta precisa de owner e runbook.
+- Toda resposta operacional precisa de um identificador de correlação por request ou incidente.
 
 ## SLOs propostos
 
 - **Disponibilidade (mensal)**: 99,9%
 - **Latência (p95)**:
+  - Website `/api/booking/status`: ≤ 800ms
   - CRM Pages `/api/health`: ≤ 800ms
   - Worker API `/health` e `/insumos/health`: ≤ 800ms
 - **Erros**:
   - 5xx ≥ 1% em 5m → alerta
   - Rate limit ≥ 5% em 5m → alerta
   - D1/R2 error rate ≥ 1% em 5m → alerta
+
+## Owners de alerta
+
+- Website / booking: owner `website/`
+- CRM / Escala / Ponto: owner `frontend/`
+- CRM API: owner `backend/apps/crm-api/`
+- Infra Cloudflare / segredos: owner `.github/` + backend de domínio afetado
+
+Até existirem times GitHub por domínio, o owner humano único deve manter a matriz acima atualizada em `docs/service-catalog.md`.
 
 ## Alertas automáticos (GitHub Actions)
 
@@ -31,6 +47,13 @@ Secrets (repo → Settings → Secrets and variables → Actions):
 - `OBS_ALERT_WEBHOOK_URL` (opcional) para receber alerta push quando o workflow falhar.
 
 O workflow falha quando qualquer endpoint retornar status não-2xx ou ultrapassar o `OBS_LATENCY_MS`.
+
+## Telemetria de aplicação mínima
+
+- Booking e APIs sensíveis devem logar `request_id`, rota, status e tempo total.
+- Eventos de erro devem incluir domínio funcional (`booking`, `escala`, `crm-auth`, `insumos`).
+- Logs sem PII sensível: tokens, segredos e payloads integrais ficam proibidos.
+- O identificador do incidente deve aparecer no postmortem e no alerta.
 
 ## Alertas no Cloudflare (produção)
 
@@ -83,7 +106,8 @@ Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produt
 
 ## Runbook mínimo
 
-1. Validar status com os endpoints de health.
-2. Verificar logs de Worker/Pages e CRM API (Escala emite eventos `escala.*` e `escala.error`).
+1. Validar status com os endpoints de health e confirmar qual domínio está em degradação.
+2. Verificar logs de Worker/Pages e CRM API usando `request_id` ou janela temporal do alerta.
 3. Confirmar D1/R2 status no painel Cloudflare.
-4. Mitigar (rollback, fix, rate limits, cache) e registrar incidente.
+4. Mitigar com rollback, fix ou isolamento de rota.
+5. Registrar incidente com causa, impacto, owner e follow-up de prevenção.

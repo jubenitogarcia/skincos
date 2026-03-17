@@ -30,6 +30,8 @@ Ou:
 ## Endpoints
 - `GET /api/escala/overview`
 - `GET /api/escala/professionals?unit=...`
+- `POST /api/escala/professionals`
+- `PUT /api/escala/professionals`
 - `GET /api/escala/schedule?unit=...&month=YYYY-MM`
 - `POST /api/escala/schedule` (add)
 - `PUT /api/escala/schedule` (replace day)

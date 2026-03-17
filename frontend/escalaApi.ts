@@ -30,6 +30,12 @@ function normalizeFetchError(error: unknown) {
   return `Falha de conexão com a Escala.${suffix} Verifique /api/escala/_proxy-status.`
 }
 
+export const __testables = {
+  parseJsonResponse,
+  normalizeApiError,
+  normalizeFetchError,
+}
+
 async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
   const url = `${ESCALA_API_BASE}${path}`
   try {
@@ -84,6 +90,35 @@ export async function fetchEscalaOverview() {
 export async function fetchEscalaProfessionals(unit?: string) {
   const qs = unit ? `?unit=${encodeURIComponent(unit)}` : ''
   return apiGet<{ data: any[] }>(`/professionals${qs}`)
+}
+
+export async function updateEscalaProfessional(payload: {
+  currentName: string
+  name: string
+  status: string
+  units: string[]
+  role: string
+  shift: string
+  nickname: string
+  phone: string
+  email: string
+  instagram: string
+}) {
+  return apiWrite<{ ok: boolean }>(`/professionals`, 'PUT', payload)
+}
+
+export async function addEscalaProfessional(payload: {
+  name: string
+  status: string
+  units: string[]
+  role: string
+  shift: string
+  nickname: string
+  phone: string
+  email: string
+  instagram: string
+}) {
+  return apiWrite<{ ok: boolean }>(`/professionals`, 'POST', payload)
 }
 
 export async function fetchEscalaSchedule(unit?: string, month?: string) {

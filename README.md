@@ -69,6 +69,9 @@ Plataforma interna (local) para automações e operações da clínica.
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
 - Segredos e rotação: `docs/secrets-rotation.md`
 - Observabilidade/SLOs: `docs/observability.md`
+- Catálogo de serviços: `docs/service-catalog.md`
+- Ownership e operação: `docs/ownership-model.md`
+- Controle estratégico: `docs/strategic-control-plan.md`
 - Workflow de criativos WhatsApp (prompt system): `backend/docs/modules/crm/whatsapp-creative-workflow.md`
 
 ## CRM (banner de demo)
@@ -76,3 +79,4 @@ Plataforma interna (local) para automações e operações da clínica.
 
 ## Sanity check
 - Suite rápida (recomendado): `./backend/scripts/doctor.sh`
+- Quality gates críticos: `npm run quality:critical`

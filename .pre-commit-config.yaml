@@ -70,3 +70,42 @@ repos:
       - id: prettier
         files: \.(yaml|yml|json|md)$
         exclude: ^(\.github/|package-lock\.json)
+
+  - repo: local
+    hooks:
+      - id: frontend-lint-changed
+        name: Frontend lint (changed files)
+        entry: bash -lc 'if printf "%s\n" "$@" | grep -q "^frontend/"; then cd frontend && npm run lint; else echo "frontend lint skipped"; fi' --
+        language: system
+        pass_filenames: true
+        files: ^frontend/.*\.(ts|tsx)$
+      - id: website-lint-changed
+        name: Website lint (changed files)
+        entry: bash -lc 'if printf "%s\n" "$@" | grep -q "^website/"; then cd website && npm run lint; else echo "website lint skipped"; fi' --
+        language: system
+        pass_filenames: true
+        files: ^website/.*\.(ts|tsx|js|jsx)$
+      - id: frontend-tests-pre-push
+        name: Frontend tests (pre-push)
+        entry: bash -lc 'cd frontend && npm run test && npm run typecheck'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: website-tests-pre-push
+        name: Website tests (pre-push)
+        entry: bash -lc 'cd website && npm run test && npm run typecheck'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: crm-api-tests-pre-push
+        name: CRM API tests (pre-push)
+        entry: bash -lc 'cd backend/apps/crm-api && npm test'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: python-unit-tests-pre-push
+        name: Python unit tests (pre-push)
+        entry: bash -lc 'cd backend && python -m pytest tests/unit --cov=config --cov-fail-under=80'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Shield } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, Plus, Save, Shield, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
@@ -9,16 +9,19 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/input'
 import { LoadingPercentText } from '@/LoadingPattern'
 import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useAuth } from '@/contexts'
 import { cn } from '@/utils'
 import {
   addClosedDay,
+  addEscalaProfessional,
   fetchEscalaOverview,
   fetchEscalaProfessionals,
   fetchEscalaSchedule,
   removeScheduleEntry,
   removeClosedDay,
-  replaceScheduleEntries
+  replaceScheduleEntries,
+  updateEscalaProfessional
 } from '@/escalaApi'
 
 type CalendarCell = {
@@ -48,6 +51,10 @@ const DEFAULT_MONTH_NUMBER = String(DEFAULT_DATE.getMonth() + 1).padStart(2, '0'
 const DEFAULT_YEAR = String(DEFAULT_DATE.getFullYear())
 const MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'))
 const ALL_PROFESSIONALS_OPTION = '–'
+const NEW_TEAM_MEMBER_KEY = '__new__'
+const STATUS_OPTIONS = ['Ativo', 'Inativo']
+const UNIT_OPTIONS = ['BarraShoppingSul', 'Novo Hamburgo']
+const ROLE_OPTIONS = ['Diretor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
 
 function formatMonthLabel(value: string) {
   if (MONTH_LABELS.has(value)) return MONTH_LABELS.get(value) as string
@@ -150,7 +157,7 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
       name,
       status: 'Sem cadastro',
       units: [],
-      role: 'Profissional',
+      role: 'Injetor',
       shift: '',
       nickname: '',
       phone: '',
@@ -163,6 +170,33 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
 
 function uniqueNames(values: string[]) {
   return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)))
+}
+
+function parseDelimitedValues(value: string) {
+  return uniqueNames(String(value || '').split(',').map((item) => item.trim()))
+}
+
+function formatDelimitedValues(values: string[]) {
+  return uniqueNames(values).join(', ')
+}
+
+function parseUnitsInput(value: string) {
+  return parseDelimitedValues(value)
+}
+
+function normalizeProfessionalForCompare(prof: EscalaProfessional | null) {
+  if (!prof) return null
+  return {
+    name: String(prof.name || '').trim(),
+    status: String(prof.status || '').trim(),
+    units: uniqueNames(prof.units || []),
+    role: String(prof.role || '').trim(),
+    shift: String(prof.shift || '').trim(),
+    nickname: String(prof.nickname || '').trim(),
+    phone: String(prof.phone || '').trim(),
+    email: String(prof.email || '').trim(),
+    instagram: String(prof.instagram || '').trim(),
+  }
 }
 
 function buildYearOptions(monthKeys: string[]) {
@@ -259,6 +293,90 @@ function slugifySegment(value: string) {
     .replace(/(^-|-$)/g, '')
 }
 
+function createEmptyProfessional(selectedUnit?: string): EscalaProfessional {
+  return {
+    name: '',
+    status: 'Ativo',
+    units: selectedUnit ? [selectedUnit] : [],
+    role: '',
+    shift: '',
+    nickname: '',
+    phone: '',
+    email: '',
+    instagram: '',
+  }
+}
+
+type MultiSelectFieldProps = {
+  label: string
+  placeholder: string
+  options: string[]
+  values: string[]
+  onToggle: (option: string) => void
+  testId: string
+  full?: boolean
+}
+
+function MultiSelectField({
+  label,
+  placeholder,
+  options,
+  values,
+  onToggle,
+  testId,
+  full,
+}: MultiSelectFieldProps) {
+  const displayValue = values.length ? values.join(', ') : placeholder
+
+  return (
+    <label className={cn('space-y-1.5', full && 'sm:col-span-2')}>
+      <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+        {label}
+      </span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'flex h-10 w-full items-center justify-between rounded-md border border-white/10 bg-white/[0.05] px-3 text-left text-sm transition hover:border-white/20',
+              values.length ? 'text-white' : 'text-slate-400'
+            )}
+            data-testid={testId}
+          >
+            <span className="truncate">{displayValue}</span>
+            <span className="ml-3 text-[10px] uppercase tracking-[0.14em] text-slate-400">
+              {values.length || 0}
+            </span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[320px] border-white/15 bg-slate-900/95 p-2 text-slate-100" align="start">
+          <div className="space-y-1">
+            {options.map((option) => {
+              const checked = values.includes(option)
+              return (
+                <label
+                  key={option}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm transition hover:bg-white/[0.06]',
+                    checked && 'bg-white/[0.08]'
+                  )}
+                >
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => onToggle(option)}
+                    data-testid={`${testId}-${slugifySegment(option)}`}
+                  />
+                  <span>{option}</span>
+                </label>
+              )
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </label>
+  )
+}
+
 export function EscalaProfissionaisModule() {
   const { user } = useAuth()
   const roleKey = String(user?.role || '').trim().toUpperCase()
@@ -282,7 +400,12 @@ export function EscalaProfissionaisModule() {
   const [dayActionKey, setDayActionKey] = useState<string | null>(null)
   const [activeDate, setActiveDate] = useState<string | null>(null)
   const [highlightMode, setHighlightMode] = useState<'scheduled' | 'blocked' | 'empty' | null>(null)
+  const [selectedTeamMember, setSelectedTeamMember] = useState<string>('')
+  const [teamMemberDrafts, setTeamMemberDrafts] = useState<Record<string, EscalaProfessional>>({})
+  const [savingTeamMember, setSavingTeamMember] = useState(false)
+  const [teamFormMode, setTeamFormMode] = useState<'idle' | 'edit' | 'add'>('idle')
   const activeDateRef = useRef<string | null>(null)
+  const teamPanelExpanded = teamFormMode !== 'idle'
   const selectedMonth = useMemo(
     () => (selectedYear && selectedMonthNumber ? `${selectedYear}-${selectedMonthNumber}` : ''),
     [selectedMonthNumber, selectedYear],
@@ -402,9 +525,56 @@ export function EscalaProfissionaisModule() {
     setDayProfessionalDrafts({})
   }, [selectedMonth, selectedUnit, selectedProfessional])
 
+  useEffect(() => {
+    setTeamMemberDrafts({})
+    setTeamFormMode('idle')
+  }, [selectedUnit])
+
   const scheduleForMonth = schedule
   const closedDaysForMonth = closedDays
   const holidaysForMonth = holidays
+
+  useEffect(() => {
+    setSelectedTeamMember((prev) => (prev && professionalsByUnit.some((prof) => prof.name === prev) ? prev : ''))
+  }, [professionalsByUnit])
+
+  const selectedTeamMemberBase = useMemo(
+    () => ((teamFormMode === 'edit' || teamFormMode === 'idle') ? (professionalsByUnit.find((prof) => prof.name === selectedTeamMember) || null) : null),
+    [professionalsByUnit, selectedTeamMember, teamFormMode],
+  )
+
+  const selectedTeamMemberDraft = useMemo(() => {
+    if (teamFormMode === 'add') {
+      return teamMemberDrafts[NEW_TEAM_MEMBER_KEY] || createEmptyProfessional(selectedUnit)
+    }
+    if (teamFormMode === 'idle') return null
+    if (!selectedTeamMemberBase) return null
+    return teamMemberDrafts[selectedTeamMemberBase.name] || { ...selectedTeamMemberBase, units: [...selectedTeamMemberBase.units] }
+  }, [selectedTeamMemberBase, selectedUnit, teamFormMode, teamMemberDrafts])
+
+  const selectedTeamMemberDirty = useMemo(() => {
+    if (teamFormMode === 'idle') return false
+    if (teamFormMode === 'add') {
+      if (!selectedTeamMemberDraft) return false
+      const normalizedDraft = normalizeProfessionalForCompare(selectedTeamMemberDraft)
+      if (!normalizedDraft) return false
+      return Boolean(
+        normalizedDraft.name ||
+        normalizedDraft.status ||
+        normalizedDraft.units.length ||
+        normalizedDraft.role ||
+        normalizedDraft.shift ||
+        normalizedDraft.nickname ||
+        normalizedDraft.phone ||
+        normalizedDraft.email ||
+        normalizedDraft.instagram
+      )
+    }
+    const base = normalizeProfessionalForCompare(selectedTeamMemberBase)
+    const draft = normalizeProfessionalForCompare(selectedTeamMemberDraft)
+    if (!base || !draft) return false
+    return JSON.stringify(base) !== JSON.stringify(draft)
+  }, [selectedTeamMemberBase, selectedTeamMemberDraft, teamFormMode])
 
   const scheduleByDate = useMemo(() => {
     const map = new Map<string, EscalaScheduleEntry[]>()
@@ -666,6 +836,148 @@ export function EscalaProfissionaisModule() {
     await refreshOverview()
   }, [closedDateSet, closedReasonByDate, dayBlockReasons, refreshOverview, refreshSchedule, selectedUnit])
 
+  const updateSelectedTeamMemberField = useCallback((field: keyof EscalaProfessional, value: string) => {
+    const draftKey = teamFormMode === 'add' ? NEW_TEAM_MEMBER_KEY : selectedTeamMemberBase?.name
+    if (!draftKey) return
+    setTeamMemberDrafts((prev) => {
+      const fallback = teamFormMode === 'add'
+        ? createEmptyProfessional(selectedUnit)
+        : (selectedTeamMemberBase ? { ...selectedTeamMemberBase, units: [...selectedTeamMemberBase.units] } : null)
+      if (!fallback) return prev
+      const current = prev[draftKey] || fallback
+      return {
+        ...prev,
+        [draftKey]: {
+          ...current,
+          [field]: field === 'units' ? parseUnitsInput(value) : value
+        }
+      }
+    })
+  }, [selectedTeamMemberBase, selectedUnit, teamFormMode])
+
+  const toggleSelectedTeamMemberOption = useCallback((field: 'units' | 'role', option: string) => {
+    const draft = selectedTeamMemberDraft
+    if (!draft) return
+    if (field === 'units') {
+      const next = draft.units.includes(option)
+        ? draft.units.filter((item) => item !== option)
+        : [...draft.units, option]
+      updateSelectedTeamMemberField('units', formatDelimitedValues(next))
+      return
+    }
+    const currentValues = parseDelimitedValues(draft[field])
+    const nextValues = currentValues.includes(option)
+      ? currentValues.filter((item) => item !== option)
+      : [...currentValues, option]
+    updateSelectedTeamMemberField(field, formatDelimitedValues(nextValues))
+  }, [selectedTeamMemberDraft, updateSelectedTeamMemberField])
+
+  const beginAddTeamMember = useCallback(() => {
+    setTeamFormMode('add')
+    setSelectedProfessional(ALL_PROFESSIONALS_OPTION)
+    setHighlightMode(null)
+    setTeamMemberDrafts((prev) => ({
+      ...prev,
+      [NEW_TEAM_MEMBER_KEY]: createEmptyProfessional(selectedUnit),
+    }))
+  }, [selectedUnit])
+
+  const selectTeamMember = useCallback((name: string) => {
+    const isSameSelection = selectedTeamMember === name && teamFormMode === 'idle'
+    if (isSameSelection) {
+      setSelectedTeamMember('')
+      setSelectedProfessional(ALL_PROFESSIONALS_OPTION)
+      setActiveDate(null)
+      setHighlightMode(null)
+      return
+    }
+    setSelectedTeamMember(name)
+    setTeamFormMode('idle')
+    setSelectedProfessional(name)
+    setActiveDate(null)
+    setHighlightMode(null)
+  }, [selectedTeamMember, teamFormMode])
+
+  const beginEditTeamMember = useCallback((name?: string) => {
+    if (name) setSelectedTeamMember(name)
+    setTeamFormMode('edit')
+    setTeamMemberDrafts((prev) => {
+      const next = { ...prev }
+      delete next[NEW_TEAM_MEMBER_KEY]
+      return next
+    })
+  }, [])
+
+  const closeTeamPanel = useCallback(() => {
+    setTeamFormMode('idle')
+    setTeamMemberDrafts((prev) => {
+      if (!(NEW_TEAM_MEMBER_KEY in prev)) return prev
+      const next = { ...prev }
+      delete next[NEW_TEAM_MEMBER_KEY]
+      return next
+    })
+  }, [])
+
+  const handleSaveTeamMember = useCallback(async () => {
+    if (!selectedTeamMemberDraft || !selectedTeamMemberDirty) return
+
+    setSavingTeamMember(true)
+    const normalizedDraft = normalizeProfessionalForCompare(selectedTeamMemberDraft)
+    if (!normalizedDraft?.name) {
+      setSavingTeamMember(false)
+      toast.error('Informe o nome do injetor.')
+      return
+    }
+    const payload = {
+      name: normalizedDraft.name,
+      status: normalizedDraft.status || 'Ativo',
+      units: normalizedDraft.units || [],
+      role: normalizedDraft.role || '',
+      shift: normalizedDraft.shift || '',
+      nickname: normalizedDraft.nickname || '',
+      phone: normalizedDraft.phone || '',
+      email: normalizedDraft.email || '',
+      instagram: normalizedDraft.instagram || '',
+    }
+    const res = teamFormMode === 'add'
+      ? await addEscalaProfessional(payload)
+      : await updateEscalaProfessional({
+          currentName: selectedTeamMemberBase?.name || '',
+          ...payload,
+        })
+    setSavingTeamMember(false)
+
+    if (!res.ok) {
+      toast.error(res.error || 'Falha ao salvar o cadastro do injetor.')
+      return
+    }
+
+    const nextName = normalizedDraft.name
+    toast.success(teamFormMode === 'add' ? 'Injetor adicionado.' : 'Cadastro do injetor atualizado.')
+    setTeamMemberDrafts((prev) => {
+      const next = { ...prev }
+      if (selectedTeamMemberBase?.name) delete next[selectedTeamMemberBase.name]
+      delete next[NEW_TEAM_MEMBER_KEY]
+      return next
+    })
+    setSelectedTeamMember(nextName)
+    setSelectedProfessional((prev) => (selectedTeamMemberBase?.name && prev === selectedTeamMemberBase.name ? nextName : prev))
+    setTeamFormMode('idle')
+    await refreshProfessionals(selectedUnit)
+    await refreshSchedule(selectedUnit, selectedMonth)
+    await refreshOverview()
+  }, [
+    refreshOverview,
+    refreshProfessionals,
+    refreshSchedule,
+    selectedMonth,
+    selectedTeamMemberBase,
+    selectedTeamMemberDirty,
+    selectedTeamMemberDraft,
+    selectedUnit,
+    teamFormMode,
+  ])
+
   if (!canAccess) {
     return (
       <Card className="glass-card">
@@ -680,32 +992,34 @@ export function EscalaProfissionaisModule() {
   }
 
   return (
-    <div className="escala-surface flex h-full min-h-0 flex-col gap-4 px-4 pb-6 pt-2">
+    <div className="escala-surface flex min-h-full flex-col gap-4 px-4 pb-6 pt-2">
       {error ? (
         <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-100/80">
           {error}
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1">
-        <Card className="glass-card flex min-h-0 flex-col">
-          <CardContent className="flex min-h-0 flex-col gap-2 pt-3">
-            <div className="flex items-center justify-end gap-2 pb-1">
-              {loadingSchedule ? (
-                <div className="text-[11px] text-slate-300/75">
-                  <LoadingPercentText label="Atualizando agenda" showPercent={false} />
+      <div className="flex-1">
+        <Card className="glass-card flex flex-col">
+          <CardContent className="flex flex-col gap-2 pt-3">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+              <div className="flex flex-col gap-2" data-testid="escala-calendar-panel">
+                <div className="flex items-center justify-end gap-2 pb-1">
+                  {loadingSchedule ? (
+                    <div className="text-[11px] text-slate-300/75">
+                      <LoadingPercentText label="Atualizando agenda" showPercent={false} />
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-            <div className="grid grid-cols-7 gap-1.5 text-[10px] uppercase tracking-[0.2em] text-slate-300/70">
-              {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((label) => (
-                <div key={label} className="text-center">
-                  {label}
+                <div className="grid grid-cols-7 gap-1.5 text-[10px] uppercase tracking-[0.2em] text-slate-300/70">
+                  {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((label) => (
+                    <div key={label} className="text-center">
+                      {label}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="grid flex-1 grid-cols-7 gap-1.5">
-              {calendarCells.map((cell, index) => {
+                <div className="grid flex-1 grid-cols-7 gap-1.5">
+                  {calendarCells.map((cell, index) => {
                 const entries = scheduleByDate.get(cell.date) || []
                 const entryNames = uniqueNames(entries.map((entry) => entry.professional))
                 const isBlocked = blockedDates.has(cell.date)
@@ -770,121 +1084,305 @@ export function EscalaProfissionaisModule() {
                   setActiveDate(cell.date)
                 }
 
-                return (
-                  <div
-                    key={cell.date}
-                    role={isAdjacentMonth ? undefined : 'button'}
-                    tabIndex={isAdjacentMonth ? undefined : 0}
-                    data-testid={`escala-day-${cell.date}`}
-                    data-escala-preserve-filter="true"
-                    onClick={isAdjacentMonth ? undefined : handleOpenDate}
-                    onKeyDown={isAdjacentMonth ? undefined : (event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        handleOpenDate()
-                      }
-                    }}
-                    className={cn(
-                      'escala-day-card flex h-full min-h-[68px] flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.045] px-2 py-1.5 text-left text-[11px] text-slate-100/90 transition-all',
-                      isAdjacentMonth ? 'border-slate-400/8 bg-slate-400/[0.03] text-slate-500/65 saturate-50' : 'hover:border-white/30',
-                      isBlocked && 'border-rose-300/45 bg-rose-500/12 text-rose-50/95',
-                      isTracked && 'escala-day-card--tracked',
-                      isActiveDate && 'escala-day-card--selected border-sky-200/80 bg-sky-300/14 ring-2 ring-sky-300/32',
-                      (dimmedByActiveDate || dimmedByTrackedFilter) && 'opacity-45 saturate-75'
-                    )}
-                    style={cardStyle}
-                  >
-                    <div className={cn('flex items-start gap-2', isAdjacentMonth && 'min-h-full flex-col items-center justify-center gap-2 text-center')}>
-                      <div className={cn(
-                        'flex min-w-[1.4rem] items-start gap-1 pt-0.5 text-[13px] font-semibold leading-none text-white/92',
-                        isAdjacentMonth && 'min-w-0 justify-center pt-0 text-slate-500/60'
-                      )}>
-                        <span className={cn(isAdjacentMonth && 'text-slate-400/60')}>{cell.day}</span>
-                      </div>
-                      <div className="min-w-0 flex-1 space-y-1">
-                        {isAdjacentMonth ? (
-                          <div className="flex min-h-[30px] w-full items-center justify-center">
-                            {isPrevMonthShortcut ? (
-                              <button
-                                type="button"
-                                className="flex size-10 items-center justify-center rounded-full border border-white/14 bg-white/[0.07] text-slate-200/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition hover:border-white/25 hover:bg-white/[0.12] hover:text-white"
-                                data-escala-preserve-filter="true"
-                                aria-label="Mês anterior"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  shiftSelectedMonth(-1)
-                                }}
-                              >
-                                <ChevronLeft className="size-5" />
-                              </button>
-                            ) : null}
-                            {isNextMonthShortcut ? (
-                              <button
-                                type="button"
-                                className="flex size-10 items-center justify-center rounded-full border border-white/14 bg-white/[0.07] text-slate-200/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition hover:border-white/25 hover:bg-white/[0.12] hover:text-white"
-                                data-escala-preserve-filter="true"
-                                aria-label="Próximo mês"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  shiftSelectedMonth(1)
-                                }}
-                              >
-                                <ChevronRight className="size-5" />
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : displayEntryNames.length ? (
-                          <div className="flex flex-wrap gap-1">
-                          {displayEntryNames.map((name) => {
-                            const isActiveSelection = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name === selectedProfessional
-                            const isMuted = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name !== selectedProfessional
-                            return (
-                              <button
-                                key={`${cell.date}__${name}`}
-                                type="button"
-                                data-testid={`escala-pill-${cell.date}-${slugifySegment(name)}`}
-                                data-escala-preserve-filter="true"
-                                className={cn(
-                                  'escala-entry-pill rounded-full border px-1.5 py-0.5 text-[10px] font-semibold transition-all',
-                                  isActiveSelection && 'escala-entry-pill--active',
-                                  isMuted && 'escala-entry-pill--muted',
-                                )}
-                                style={getProfessionalBadgeStyle(name, isActiveSelection ? 'active' : (isMuted ? 'muted' : 'default'))}
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  focusProfessional(name)
-                                }}
-                                aria-pressed={isActiveSelection}
-                              >
-                                {name}
-                              </button>
-                            )
-                          })}
-                          </div>
-                        ) : null}
-                        {!isAdjacentMonth && !displayEntryNames.length && isBlocked ? (
-                          <Badge variant="outline" className="max-w-full border-rose-200/35 bg-rose-500/16 px-1.5 py-0.5 text-[10px] text-rose-50">
-                            {blockBadgeLabel}
-                          </Badge>
-                        ) : null}
-                        {!isAdjacentMonth && !displayEntryNames.length && !isBlocked && (
-                          <div className={cn(
-                            'rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300/80',
-                            highlightMode === 'empty' && isEmptyDay && 'border-amber-300/35 bg-amber-400/12 text-amber-50'
-                          )}>
-                            Sem atendimento
-                          </div>
-                        )}
-                        {!isAdjacentMonth && holidayLabels.length ? (
-                          <Badge variant="warning" className="max-w-full px-1.5 py-0.5 text-[10px]">
-                            {holidayLabels[0]}
-                          </Badge>
-                        ) : null}
+                  return (
+                    <div
+                      key={cell.date}
+                      role={isAdjacentMonth ? undefined : 'button'}
+                      tabIndex={isAdjacentMonth ? undefined : 0}
+                      data-testid={`escala-day-${cell.date}`}
+                      data-escala-preserve-filter="true"
+                      onClick={isAdjacentMonth ? undefined : handleOpenDate}
+                      onKeyDown={isAdjacentMonth ? undefined : (event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleOpenDate()
+                        }
+                      }}
+                      className={cn(
+                        'escala-day-card flex h-full min-h-[68px] flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.045] px-2 py-1.5 text-left text-[11px] text-slate-100/90 transition-all',
+                        isAdjacentMonth ? 'border-slate-400/8 bg-slate-400/[0.03] text-slate-500/65 saturate-50' : 'hover:border-white/30',
+                        isBlocked && 'border-rose-300/45 bg-rose-500/12 text-rose-50/95',
+                        isTracked && 'escala-day-card--tracked',
+                        isActiveDate && 'escala-day-card--selected border-sky-200/80 bg-sky-300/14 ring-2 ring-sky-300/32',
+                        (dimmedByActiveDate || dimmedByTrackedFilter) && 'opacity-45 saturate-75'
+                      )}
+                      style={cardStyle}
+                    >
+                      <div className={cn('flex items-start gap-2', isAdjacentMonth && 'min-h-full flex-col items-center justify-center gap-2 text-center')}>
+                        <div className={cn(
+                          'flex min-w-[1.4rem] items-start gap-1 pt-0.5 text-[13px] font-semibold leading-none text-white/92',
+                          isAdjacentMonth && 'min-w-0 justify-center pt-0 text-slate-500/60'
+                        )}>
+                          <span className={cn(isAdjacentMonth && 'text-slate-400/60')}>{cell.day}</span>
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          {isAdjacentMonth ? (
+                            <div className="flex min-h-[30px] w-full items-center justify-center">
+                              {isPrevMonthShortcut ? (
+                                <button
+                                  type="button"
+                                  className="flex size-10 items-center justify-center rounded-full border border-white/14 bg-white/[0.07] text-slate-200/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition hover:border-white/25 hover:bg-white/[0.12] hover:text-white"
+                                  data-escala-preserve-filter="true"
+                                  aria-label="Mês anterior"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    shiftSelectedMonth(-1)
+                                  }}
+                                >
+                                  <ChevronLeft className="size-5" />
+                                </button>
+                              ) : null}
+                              {isNextMonthShortcut ? (
+                                <button
+                                  type="button"
+                                  className="flex size-10 items-center justify-center rounded-full border border-white/14 bg-white/[0.07] text-slate-200/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition hover:border-white/25 hover:bg-white/[0.12] hover:text-white"
+                                  data-escala-preserve-filter="true"
+                                  aria-label="Próximo mês"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    shiftSelectedMonth(1)
+                                  }}
+                                >
+                                  <ChevronRight className="size-5" />
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : displayEntryNames.length ? (
+                            <div className="flex flex-wrap gap-1">
+                              {displayEntryNames.map((name) => {
+                                const isActiveSelection = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name === selectedProfessional
+                                const isMuted = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name !== selectedProfessional
+                                return (
+                                  <button
+                                    key={`${cell.date}__${name}`}
+                                    type="button"
+                                    data-testid={`escala-pill-${cell.date}-${slugifySegment(name)}`}
+                                    data-escala-preserve-filter="true"
+                                    className={cn(
+                                      'escala-entry-pill rounded-full border px-1.5 py-0.5 text-[10px] font-semibold transition-all',
+                                      isActiveSelection && 'escala-entry-pill--active',
+                                      isMuted && 'escala-entry-pill--muted',
+                                    )}
+                                    style={getProfessionalBadgeStyle(name, isActiveSelection ? 'active' : (isMuted ? 'muted' : 'default'))}
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      focusProfessional(name)
+                                    }}
+                                    aria-pressed={isActiveSelection}
+                                  >
+                                    {name}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ) : null}
+                          {!isAdjacentMonth && !displayEntryNames.length && isBlocked ? (
+                            <Badge variant="outline" className="max-w-full border-rose-200/35 bg-rose-500/16 px-1.5 py-0.5 text-[10px] text-rose-50">
+                              {blockBadgeLabel}
+                            </Badge>
+                          ) : null}
+                          {!isAdjacentMonth && !displayEntryNames.length && !isBlocked && (
+                            <div className={cn(
+                              'rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300/80',
+                              highlightMode === 'empty' && isEmptyDay && 'border-amber-300/35 bg-amber-400/12 text-amber-50'
+                            )}>
+                              Sem atendimento
+                            </div>
+                          )}
+                          {!isAdjacentMonth && holidayLabels.length ? (
+                            <Badge variant="warning" className="max-w-full px-1.5 py-0.5 text-[10px]">
+                              {holidayLabels[0]}
+                            </Badge>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
+                  )
+                })}
+                </div>
+              </div>
+
+              <div
+                className="flex flex-col self-start overflow-hidden rounded-2xl border border-white/10 bg-slate-950/45 xl:w-[420px] xl:justify-self-end"
+                data-testid="escala-team-panel"
+              >
+                <div className="border-b border-white/10 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-slate-300/60">Equipe</div>
+                      <div className="mt-1 text-sm font-semibold text-white">Equipe</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant={teamFormMode === 'add' ? 'premium' : 'outline'}
+                        onClick={beginAddTeamMember}
+                        aria-label="Adicionar injetor"
+                        title="Adicionar"
+                        data-testid="escala-team-add"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                      {teamPanelExpanded ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="premium"
+                            onClick={() => void handleSaveTeamMember()}
+                            disabled={!selectedTeamMemberDraft || !selectedTeamMemberDirty || savingTeamMember || !String(selectedTeamMemberDraft.name || '').trim()}
+                            aria-label="Salvar cadastro do injetor"
+                            title="Salvar"
+                            data-testid="escala-team-save"
+                          >
+                            <Save className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            onClick={closeTeamPanel}
+                            aria-label="Fechar cadastro da equipe"
+                            title="Fechar"
+                            data-testid="escala-team-close"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => beginEditTeamMember(selectedTeamMember)}
+                          disabled={!selectedTeamMember}
+                          aria-label="Editar injetor"
+                          title="Editar"
+                          data-testid="escala-team-edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                )
-              })}
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {professionalsByUnit.length ? professionalsByUnit.map((prof) => {
+                      const isCurrent = prof.name === selectedTeamMember
+                      return (
+                        <button
+                          key={prof.name}
+                          type="button"
+                          className={cn(
+                            'rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all',
+                            isCurrent ? 'text-white shadow-[0_14px_26px_rgba(15,23,42,0.24)]' : 'text-slate-200/80 hover:text-white'
+                          )}
+                          style={getProfessionalBadgeStyle(prof.name, isCurrent ? 'active' : 'default')}
+                          onClick={() => selectTeamMember(prof.name)}
+                          data-testid={`escala-team-member-${slugifySegment(prof.name)}`}
+                        >
+                          {prof.name}
+                        </button>
+                      )
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-xs text-slate-300/70">
+                        Nenhum injetor encontrado para a unidade selecionada.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {teamPanelExpanded ? (
+                  <>
+                <div className="px-4 py-4">
+                  {selectedTeamMemberDraft ? (
+                    <div className="grid content-start gap-3 sm:grid-cols-2">
+                      <label className="space-y-1.5">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+                          NOME
+                        </span>
+                        <Input
+                          value={selectedTeamMemberDraft.name}
+                          onChange={(event) => updateSelectedTeamMemberField('name', event.target.value)}
+                          className="h-10 border-white/10 bg-white/[0.05] text-sm text-white placeholder:text-slate-500"
+                          data-testid="escala-team-field-name"
+                        />
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+                          SITUAÇÃO
+                        </span>
+                        <Select
+                          value={selectedTeamMemberDraft.status || STATUS_OPTIONS[0]}
+                          onValueChange={(value) => updateSelectedTeamMemberField('status', value)}
+                        >
+                          <SelectTrigger className="h-10 w-full border-white/10 bg-white/[0.05] text-white" data-testid="escala-team-field-status">
+                            <SelectValue placeholder="Selecione" />
+                          </SelectTrigger>
+                          <SelectContent className="border-white/15 bg-slate-900 text-slate-100">
+                            {STATUS_OPTIONS.map((option) => (
+                              <SelectItem key={option} value={option}>{option}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <MultiSelectField
+                        label="CARGO"
+                        placeholder="Selecione os cargos"
+                        options={ROLE_OPTIONS}
+                        values={parseDelimitedValues(selectedTeamMemberDraft.role)}
+                        onToggle={(option) => toggleSelectedTeamMemberOption('role', option)}
+                        testId="escala-team-field-role"
+                      />
+
+                      <MultiSelectField
+                        label="UNIDADE"
+                        placeholder="Selecione as unidades"
+                        options={UNIT_OPTIONS}
+                        values={selectedTeamMemberDraft.units}
+                        onToggle={(option) => toggleSelectedTeamMemberOption('units', option)}
+                        testId="escala-team-field-units"
+                      />
+
+                      <label className="space-y-1.5">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+                          EMAIL
+                        </span>
+                        <Input
+                          value={selectedTeamMemberDraft.email}
+                          onChange={(event) => updateSelectedTeamMemberField('email', event.target.value)}
+                          className="h-10 border-white/10 bg-white/[0.05] text-sm text-white placeholder:text-slate-500"
+                          data-testid="escala-team-field-email"
+                        />
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+                          TELEFONE
+                        </span>
+                        <Input
+                          value={selectedTeamMemberDraft.phone}
+                          onChange={(event) => updateSelectedTeamMemberField('phone', event.target.value)}
+                          className="h-10 border-white/10 bg-white/[0.05] text-sm text-white placeholder:text-slate-500"
+                          data-testid="escala-team-field-phone"
+                        />
+                      </label>
+
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-sm text-slate-300/70">
+                      {selectedTeamMember
+                        ? 'Clique em Editar para abrir os campos do injetor selecionado.'
+                        : 'Selecione um injetor e clique em Editar para abrir os campos.'}
+                    </div>
+                  )}
+                </div>
+                  </>
+                ) : null}
+              </div>
             </div>
           </CardContent>
         </Card>
