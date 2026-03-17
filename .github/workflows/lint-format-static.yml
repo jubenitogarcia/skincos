@@ -112,10 +112,7 @@ jobs:
         if: ${{ hashFiles('backend/apps/crm-api/package.json') != '' }}
         run: |
           set -euxo pipefail
-          cd backend/apps/crm-api
-          npm install --package-lock-only --ignore-scripts
-          npm ci --ignore-scripts
-          npm test
+          pnpm -C backend --filter crm-api test
 
   python-lint:
     name: Python Lint & Static Analysis
