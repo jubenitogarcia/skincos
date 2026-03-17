@@ -8,11 +8,11 @@ const DESIRED_RULE = {
   action: "block",
   enabled: true,
   ratelimit: {
-    // This zone only supports a 10-second period; 2/10s preserves the prior 12/minute rate.
+    // This zone only supports 10s period/timeout values; 2/10s preserves the prior 12/minute rate.
     characteristics: ["cf.colo.id", "ip.src"],
     period: 10,
     requests_per_period: 2,
-    mitigation_timeout: 600,
+    mitigation_timeout: 10,
   },
 };
 
