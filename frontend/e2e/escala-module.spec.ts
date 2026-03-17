@@ -60,13 +60,20 @@ test.describe('escala', () => {
     await expect(page.getByTestId('escala-day-2026-03-05')).toBeVisible()
     await expect(page.getByText('Dra. Ana').first()).toBeVisible()
     await expect(page.getByText('Dia do Cliente').first()).toBeVisible()
-	    await expect(page.getByTestId('escala-day-2026-03-10')).toContainText('Feriado local')
+    await expect(page.getByTestId('escala-day-2026-03-10')).toContainText('Feriado local')
+    await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
+    await expect(page.getByTestId('escala-team-member-bruna')).toHaveCount(0)
+    await expect(page.getByTestId('escala-team-member-carla')).toHaveCount(0)
+    await expect(page.getByTestId('escala-team-inactive-toggle')).toContainText('Inativos (1)')
+    await page.getByTestId('escala-team-inactive-toggle').click()
+    await expect(page.getByTestId('escala-team-member-carla')).toBeVisible()
+    await expect(page.getByTestId('escala-empty-day-icon-2026-03-01')).toBeVisible()
 
-	    await page.getByRole('combobox', { name: '' }).nth(3).click()
-	    await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
-	    await expect(page.getByRole('option', { name: 'Bruna' })).toHaveCount(0)
-	    await expect(page.getByRole('option', { name: 'Carla' })).toHaveCount(0)
-	  })
+    await page.getByRole('combobox', { name: '' }).nth(3).click()
+    await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Bruna' })).toHaveCount(0)
+    await expect(page.getByRole('option', { name: 'Carla' })).toHaveCount(0)
+  })
 
   test('edits schedule entries directly from the day card modal', async ({ page }) => {
     const replacePayloads: any[] = []
@@ -505,7 +512,7 @@ test.describe('escala', () => {
     await expect(page.getByTestId('escala-team-field-nickname')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-field-instagram')).toHaveCount(0)
     await page.getByTestId('escala-team-field-role').click()
-    await page.getByTestId('escala-team-field-role-consultor').click()
+    await page.getByTestId('escala-team-field-role-injetor').click()
     await page.getByTestId('escala-team-save').click()
 
     await expect.poll(() => professionalPayloads).toEqual([
@@ -513,7 +520,7 @@ test.describe('escala', () => {
         name: 'Paula Nova',
         status: 'Inativo',
         units: ['Novo Hamburgo'],
-        role: 'Consultor',
+        role: 'Injetor',
         shift: '',
         nickname: '',
         phone: '',
@@ -522,6 +529,10 @@ test.describe('escala', () => {
       }
     ])
 
+    await expect(page.getByTestId('escala-team-inactive-toggle')).toContainText('Inativos (1)')
+    if (await page.getByTestId('escala-team-member-paula-nova').count() === 0) {
+      await page.getByTestId('escala-team-inactive-toggle').click()
+    }
     await expect(page.getByTestId('escala-team-member-paula-nova')).toBeVisible()
     await expect(page.getByTestId('escala-team-field-name')).toHaveCount(0)
   })

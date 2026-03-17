@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Pencil, Plus, Save, Shield, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CircleSlash, Pencil, Plus, Save, Shield, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
@@ -147,6 +147,16 @@ function isActiveInjector(prof: EscalaProfessional) {
   const role = normalizeText(prof.role)
   const status = normalizeText(prof.status)
   return role.includes('injetor') && status === 'ativo'
+}
+
+function isInactiveInjector(prof: EscalaProfessional) {
+  const role = normalizeText(prof.role)
+  const status = normalizeText(prof.status)
+  return role.includes('injetor') && status === 'inativo'
+}
+
+function isVisibleInjector(prof: EscalaProfessional) {
+  return isActiveInjector(prof) || isInactiveInjector(prof)
 }
 
 function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional[]) {
@@ -404,6 +414,7 @@ export function EscalaProfissionaisModule() {
   const [teamMemberDrafts, setTeamMemberDrafts] = useState<Record<string, EscalaProfessional>>({})
   const [savingTeamMember, setSavingTeamMember] = useState(false)
   const [teamFormMode, setTeamFormMode] = useState<'idle' | 'edit' | 'add'>('idle')
+  const [showInactiveTeamMembers, setShowInactiveTeamMembers] = useState(false)
   const activeDateRef = useRef<string | null>(null)
   const teamPanelExpanded = teamFormMode !== 'idle'
   const selectedMonth = useMemo(
@@ -502,7 +513,9 @@ export function EscalaProfissionaisModule() {
     return mergedProfessionals.filter((p) => !p.units.length || p.units.some((unit) => unitsMatch(unit, selectedUnit)))
   }, [mergedProfessionals, selectedUnit])
 
-  const activeInjectors = useMemo(() => professionalsByUnit.filter(isActiveInjector), [professionalsByUnit])
+  const visibleInjectors = useMemo(() => professionalsByUnit.filter(isVisibleInjector), [professionalsByUnit])
+  const activeInjectors = useMemo(() => visibleInjectors.filter(isActiveInjector), [visibleInjectors])
+  const inactiveInjectors = useMemo(() => visibleInjectors.filter(isInactiveInjector), [visibleInjectors])
   const professionalOptions = useMemo(() => uniqueNames(activeInjectors.map((prof) => prof.name)), [activeInjectors])
   const headerProfessionalOptions = useMemo(
     () => uniqueNames(selectedProfessional !== ALL_PROFESSIONALS_OPTION ? [...professionalOptions, selectedProfessional] : professionalOptions),
@@ -528,6 +541,7 @@ export function EscalaProfissionaisModule() {
   useEffect(() => {
     setTeamMemberDrafts({})
     setTeamFormMode('idle')
+    setShowInactiveTeamMembers(false)
   }, [selectedUnit])
 
   const scheduleForMonth = schedule
@@ -535,12 +549,18 @@ export function EscalaProfissionaisModule() {
   const holidaysForMonth = holidays
 
   useEffect(() => {
-    setSelectedTeamMember((prev) => (prev && professionalsByUnit.some((prof) => prof.name === prev) ? prev : ''))
-  }, [professionalsByUnit])
+    setSelectedTeamMember((prev) => (prev && visibleInjectors.some((prof) => prof.name === prev) ? prev : ''))
+  }, [visibleInjectors])
+
+  useEffect(() => {
+    if (selectedTeamMember && inactiveInjectors.some((prof) => prof.name === selectedTeamMember)) {
+      setShowInactiveTeamMembers(true)
+    }
+  }, [inactiveInjectors, selectedTeamMember])
 
   const selectedTeamMemberBase = useMemo(
-    () => ((teamFormMode === 'edit' || teamFormMode === 'idle') ? (professionalsByUnit.find((prof) => prof.name === selectedTeamMember) || null) : null),
-    [professionalsByUnit, selectedTeamMember, teamFormMode],
+    () => ((teamFormMode === 'edit' || teamFormMode === 'idle') ? (visibleInjectors.find((prof) => prof.name === selectedTeamMember) || null) : null),
+    [visibleInjectors, selectedTeamMember, teamFormMode],
   )
 
   const selectedTeamMemberDraft = useMemo(() => {
@@ -891,12 +911,15 @@ export function EscalaProfissionaisModule() {
       setHighlightMode(null)
       return
     }
+    if (inactiveInjectors.some((prof) => prof.name === name)) {
+      setShowInactiveTeamMembers(true)
+    }
     setSelectedTeamMember(name)
     setTeamFormMode('idle')
     setSelectedProfessional(name)
     setActiveDate(null)
     setHighlightMode(null)
-  }, [selectedTeamMember, teamFormMode])
+  }, [inactiveInjectors, selectedTeamMember, teamFormMode])
 
   const beginEditTeamMember = useCallback((name?: string) => {
     if (name) setSelectedTeamMember(name)
@@ -1182,11 +1205,16 @@ export function EscalaProfissionaisModule() {
                             </Badge>
                           ) : null}
                           {!isAdjacentMonth && !displayEntryNames.length && !isBlocked && (
-                            <div className={cn(
-                              'rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300/80',
-                              highlightMode === 'empty' && isEmptyDay && 'border-amber-300/35 bg-amber-400/12 text-amber-50'
-                            )}>
-                              Sem atendimento
+                            <div
+                              className={cn(
+                                'inline-flex w-fit items-center rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-slate-300/80',
+                                highlightMode === 'empty' && isEmptyDay && 'border-amber-300/35 bg-amber-400/12 text-amber-50'
+                              )}
+                              data-testid={`escala-empty-day-icon-${cell.date}`}
+                              aria-label="Sem atendimento"
+                              title="Sem atendimento"
+                            >
+                              <CircleSlash className="h-3.5 w-3.5" />
                             </div>
                           )}
                           {!isAdjacentMonth && holidayLabels.length ? (
@@ -1268,7 +1296,9 @@ export function EscalaProfissionaisModule() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {professionalsByUnit.length ? professionalsByUnit.map((prof) => {
+                    {activeInjectors.length || inactiveInjectors.length ? (
+                      <>
+                        {activeInjectors.map((prof) => {
                       const isCurrent = prof.name === selectedTeamMember
                       return (
                         <button
@@ -1285,7 +1315,60 @@ export function EscalaProfissionaisModule() {
                           {prof.name}
                         </button>
                       )
-                    }) : (
+                        })}
+                        {inactiveInjectors.length ? (
+                          <>
+                            <button
+                              type="button"
+                              className={cn(
+                                'rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all',
+                                showInactiveTeamMembers ? 'text-white' : 'text-rose-100/90 hover:text-white'
+                              )}
+                              style={{
+                                background: showInactiveTeamMembers
+                                  ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.38), rgba(190, 24, 93, 0.28))'
+                                  : 'linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(190, 24, 93, 0.16))',
+                                borderColor: showInactiveTeamMembers ? 'rgba(254, 202, 202, 0.85)' : 'rgba(252, 165, 165, 0.45)',
+                                boxShadow: showInactiveTeamMembers
+                                  ? '0 14px 26px rgba(69, 10, 10, 0.26), inset 0 1px 0 rgba(255,255,255,0.16)'
+                                  : 'inset 0 1px 0 rgba(255,255,255,0.05)',
+                              }}
+                              onClick={() => setShowInactiveTeamMembers((prev) => !prev)}
+                              data-testid="escala-team-inactive-toggle"
+                              aria-expanded={showInactiveTeamMembers}
+                            >
+                              Inativos ({inactiveInjectors.length})
+                            </button>
+                            {showInactiveTeamMembers ? inactiveInjectors.map((prof) => {
+                              const isCurrent = prof.name === selectedTeamMember
+                              return (
+                                <button
+                                  key={prof.name}
+                                  type="button"
+                                  className={cn(
+                                    'rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all',
+                                    isCurrent ? 'text-white shadow-[0_14px_26px_rgba(69,10,10,0.28)]' : 'text-rose-100/90 hover:text-white'
+                                  )}
+                                  style={{
+                                    background: isCurrent
+                                      ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.42), rgba(190, 24, 93, 0.3))'
+                                      : 'linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(190, 24, 93, 0.16))',
+                                    borderColor: isCurrent ? 'rgba(254, 202, 202, 0.9)' : 'rgba(252, 165, 165, 0.45)',
+                                    boxShadow: isCurrent
+                                      ? '0 14px 26px rgba(69,10,10,0.3), inset 0 1px 0 rgba(255,255,255,0.18)'
+                                      : 'inset 0 1px 0 rgba(255,255,255,0.05)',
+                                  }}
+                                  onClick={() => selectTeamMember(prof.name)}
+                                  data-testid={`escala-team-member-${slugifySegment(prof.name)}`}
+                                >
+                                  {prof.name}
+                                </button>
+                              )
+                            }) : null}
+                          </>
+                        ) : null}
+                      </>
+                    ) : (
                       <div className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-xs text-slate-300/70">
                         Nenhum injetor encontrado para a unidade selecionada.
                       </div>
