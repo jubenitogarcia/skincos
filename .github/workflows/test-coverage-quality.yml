@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  js-ts-coverage:
-    name: JS/TS Coverage (best-effort)
+  frontend-website-quality:
+    name: Frontend & Website Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,12 +30,12 @@ jobs:
           cd frontend
           npm ci
 
-      - name: Frontend coverage (if configured)
+      - name: Frontend coverage
         if: ${{ hashFiles('frontend/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd frontend
-          npm run test:coverage --if-present
+          npm run test:coverage
 
       - name: Website install
         if: ${{ hashFiles('website/package-lock.json') != '' }}
@@ -51,30 +51,12 @@ jobs:
           cd website
           npm run test
 
-      - name: Setup pnpm (for backend workspace)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-
-      - name: Backend workspace install (pnpm)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+      - name: Website typecheck
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          pnpm -C backend install --frozen-lockfile
-
-      - name: Backend coverage (if configured)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
-        run: |
-          set -euxo pipefail
-          pnpm -C backend -r run test:coverage --if-present
-      - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: js-ts-coverage
-          path: |
-            **/coverage*
-            **/coverage.*
+          cd website
+          npm run typecheck
 
   python-coverage:
     name: Python Coverage
@@ -97,7 +79,7 @@ jobs:
       - name: Run pytest with coverage
         run: |
           cd backend
-          python -m pytest tests/unit --cov=. --cov-fail-under=5 --cov-report=xml:coverage.xml --cov-report=term
+          python -m pytest tests/unit --cov=config --cov-fail-under=80 --cov-report=xml:coverage.xml --cov-report=term
       - name: Upload coverage.xml
         uses: actions/upload-artifact@v4
         with:

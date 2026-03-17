@@ -899,10 +899,10 @@ export default function BookingFlow() {
 
         async function tick() {
             try {
-                const res = await fetch(
-                    `/api/booking/status?id=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(safeStatusToken)}`,
-                    { cache: "no-store" },
-                );
+                const res = await fetch(`/api/booking/status?id=${encodeURIComponent(bookingId)}`, {
+                    cache: "no-store",
+                    headers: { "x-booking-status-token": safeStatusToken },
+                });
                 const json = (await res.json().catch(() => null)) as StatusResponse | null;
                 if (cancelled) return;
                 if (res.ok && json && isOkResponse(json)) {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getBookingDb, nowMs } from "@/lib/bookingDb";
 import { getServiceById } from "@/data/services";
 import { verifyBookingStatusToken } from "@/lib/bookingSecurity";
+import { readBookingStatusAuth } from "./auth";
 
 export const dynamic = "force-dynamic";
 
@@ -49,11 +50,8 @@ async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: 
 }
 
 export async function GET(req: Request) {
-    const url = new URL(req.url);
-    const id = (url.searchParams.get("id") ?? "").trim();
-    if (!id) return json({ ok: false, error: "missing_id" }, { status: 400 });
-    const token = (url.searchParams.get("token") ?? "").trim();
-    if (!token) return json({ ok: false, error: "missing_token" }, { status: 400 });
+    const auth = readBookingStatusAuth(req);
+    if (!auth.ok) return json({ ok: false, error: auth.error }, { status: auth.status });
 
     const secret = (process.env.BOOKING_STATUS_SECRET ?? process.env.BOOKING_DECISION_SECRET ?? "").trim();
     if (!secret) {
@@ -62,8 +60,8 @@ export async function GET(req: Request) {
 
     const verification = await verifyBookingStatusToken({
         secret,
-        id,
-        token,
+        id: auth.id,
+        token: auth.token,
         nowMs: nowMs(),
     });
     if (!verification.ok) {
@@ -71,13 +69,13 @@ export async function GET(req: Request) {
     }
 
     const db = await getBookingDb();
-    await expireIfNeeded(db, id);
+    await expireIfNeeded(db, auth.id);
 
     const row = await db
         .prepare(
             "SELECT id, unit_slug, doctor_slug, service_id, start_at_ms, end_at_ms, status, confirm_by_ms FROM booking_requests WHERE id = ?",
         )
-        .bind(id)
+        .bind(auth.id)
         .first<BookingStatusRow>();
 
     if (!row) return json({ ok: false, error: "not_found" }, { status: 404 }, true);

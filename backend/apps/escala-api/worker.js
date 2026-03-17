@@ -285,6 +285,134 @@ async function listKnownProfessionals(env, names) {
   return (res.results || []).map((r) => r.name)
 }
 
+async function handleProfessionalPut(env, actor, body) {
+  const currentName = normalizeName(body?.currentName)
+  const nextName = normalizeName(body?.name)
+  const status = normalizeName(body?.status)
+  const role = normalizeName(body?.role)
+  const shift = normalizeName(body?.shift)
+  const nickname = normalizeName(body?.nickname)
+  const phone = normalizeName(body?.phone)
+  const email = normalizeName(body?.email)
+  const instagram = normalizeName(body?.instagram)
+  const unitsInput = Array.isArray(body?.units) ? body.units : []
+  const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
+
+  if (!currentName || !nextName) {
+    return { ok: false, status: 400, body: { ok: false, error: 'INVALID_INPUT' } }
+  }
+  for (const unit of units) {
+    const unitAllowed = ensureUnitAllowed(actor, unit)
+    if (!unitAllowed.ok) return unitAllowed
+  }
+
+  const existing = await env.DB.prepare(
+    `select name from professionals where name = ?1`
+  ).bind(currentName).first()
+  if (!existing) {
+    return { ok: false, status: 404, body: { ok: false, error: 'PROFESSIONAL_NOT_FOUND' } }
+  }
+
+  if (currentName !== nextName) {
+    const conflicting = await env.DB.prepare(
+      `select name from professionals where name = ?1`
+    ).bind(nextName).first()
+    if (conflicting) {
+      return { ok: false, status: 409, body: { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' } }
+    }
+  }
+
+  const now = new Date().toISOString()
+  await env.DB.prepare(
+    `update professionals
+     set name = ?1,
+         status = ?2,
+         role = ?3,
+         shift = ?4,
+         nickname = ?5,
+         phone = ?6,
+         email = ?7,
+         instagram = ?8,
+         units_json = ?9,
+         updated_at = ?10
+     where name = ?11`
+  ).bind(
+    nextName,
+    status || null,
+    role || null,
+    shift || null,
+    nickname || null,
+    phone || null,
+    email || null,
+    instagram || null,
+    JSON.stringify(units),
+    now,
+    currentName,
+  ).run()
+
+  if (currentName !== nextName) {
+    await env.DB.prepare(
+      `update schedule_entries
+       set professional_name = ?1,
+           updated_at = ?2,
+           updated_by = ?3
+       where professional_name = ?4`
+    ).bind(nextName, now, actor.id, currentName).run()
+  }
+
+  return { ok: true, status: 200, body: { ok: true } }
+}
+
+async function handleProfessionalPost(env, actor, body) {
+  const name = normalizeName(body?.name)
+  const status = normalizeName(body?.status)
+  const role = normalizeName(body?.role)
+  const shift = normalizeName(body?.shift)
+  const nickname = normalizeName(body?.nickname)
+  const phone = normalizeName(body?.phone)
+  const email = normalizeName(body?.email)
+  const instagram = normalizeName(body?.instagram)
+  const unitsInput = Array.isArray(body?.units) ? body.units : []
+  const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
+
+  if (!name) {
+    return { ok: false, status: 400, body: { ok: false, error: 'INVALID_INPUT' } }
+  }
+  for (const unit of units) {
+    const unitAllowed = ensureUnitAllowed(actor, unit)
+    if (!unitAllowed.ok) return unitAllowed
+  }
+
+  const conflicting = await env.DB.prepare(
+    `select name from professionals where name = ?1`
+  ).bind(name).first()
+  if (conflicting) {
+    return { ok: false, status: 409, body: { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' } }
+  }
+
+  const now = new Date().toISOString()
+  await env.DB.prepare(
+    `insert into professionals
+     (id, name, status, role, shift, nickname, phone, email, instagram, units_json, created_at, updated_at)
+     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+  ).bind(
+    crypto.randomUUID(),
+    name,
+    status || null,
+    role || null,
+    shift || null,
+    nickname || null,
+    phone || null,
+    email || null,
+    instagram || null,
+    JSON.stringify(units),
+    now,
+    now,
+  ).run()
+
+  return { ok: true, status: 200, body: { ok: true } }
+}
+
 async function handleSchedulePost(env, actor, body) {
   const unit = normalizeName(body?.unit)
   const date = normalizeName(body?.date)
@@ -460,6 +588,27 @@ export default {
       }
 
       if (path === '/api/escala/professionals') {
+        if (request.method === 'POST') {
+          const body = await readJson(request)
+          if (!body) {
+            return jsonResponse({ ok: false, error: 'INVALID_JSON' }, { status: 400, headers: { ...corsHeaders, 'x-request-id': requestId } })
+          }
+          const result = await handleProfessionalPost(env, actor, body)
+          console.log(JSON.stringify({ event: 'escala.professionals.create', requestId, actor: actor.id, status: result.status }))
+          return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
+        if (request.method === 'PUT') {
+          const body = await readJson(request)
+          if (!body) {
+            return jsonResponse({ ok: false, error: 'INVALID_JSON' }, { status: 400, headers: { ...corsHeaders, 'x-request-id': requestId } })
+          }
+          const result = await handleProfessionalPut(env, actor, body)
+          console.log(JSON.stringify({ event: 'escala.professionals.update', requestId, actor: actor.id, status: result.status }))
+          return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
+        if (request.method !== 'GET') {
+          return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
         const unit = url.searchParams.get('unit') || ''
         const unitAllowed = ensureUnitAllowed(actor, unit)
         if (!unitAllowed.ok) {

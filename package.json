@@ -1,5 +1,11 @@
 {
   "scripts": {
+    "quality:frontend": "npm --prefix frontend run lint && npm --prefix frontend run typecheck && npm --prefix frontend run test && npm --prefix frontend run build",
+    "quality:website": "npm --prefix website run lint && npm --prefix website run typecheck && npm --prefix website run test && npm --prefix website run build",
+    "quality:backend:crm-api": "npm --prefix backend/apps/crm-api test",
+    "quality:backend:python": "cd backend && python -m pytest tests/unit --cov=config --cov-report=term --cov-fail-under=80",
+    "quality:security": "node ./scripts/check-js-security-exceptions.mjs && bash ./backend/scripts/ci-no-demo-guard.sh",
+    "quality:critical": "npm run quality:frontend && npm run quality:website && npm run quality:backend:crm-api && npm run quality:backend:python && npm run quality:security",
     "website:install": "npm --prefix website ci",
     "website:dev": "npm --prefix website run dev",
     "website:build": "npm --prefix website run build",

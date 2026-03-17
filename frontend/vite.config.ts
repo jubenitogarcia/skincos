@@ -767,6 +767,72 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
       return true
     }
 
+    if (path === '/api/escala/professionals' && method === 'POST') {
+      const payload = await parseJsonBody(req)
+      const nextName = String(payload?.name || '').trim()
+      const nextUnits = csvNames(payload?.units)
+      if (!nextName) {
+        toJson(res, 400, { ok: false, error: 'INVALID_PAYLOAD' }, { 'x-request-id': requestId })
+        return true
+      }
+      if (localEscalaStore.professionals.some((prof) => prof.name === nextName)) {
+        toJson(res, 409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' }, { 'x-request-id': requestId })
+        return true
+      }
+      localEscalaStore.professionals.push({
+        name: nextName,
+        status: String(payload?.status || '').trim(),
+        units: nextUnits,
+        role: String(payload?.role || '').trim(),
+        shift: String(payload?.shift || '').trim(),
+        nickname: String(payload?.nickname || '').trim(),
+        phone: String(payload?.phone || '').trim(),
+        email: String(payload?.email || '').trim(),
+        instagram: String(payload?.instagram || '').trim(),
+      })
+      toJson(res, 200, { ok: true, source: 'local-mock' }, { 'x-request-id': requestId })
+      return true
+    }
+
+    if (path === '/api/escala/professionals' && method === 'PUT') {
+      const payload = await parseJsonBody(req)
+      const currentName = String(payload?.currentName || '').trim()
+      const nextName = String(payload?.name || '').trim()
+      const nextUnits = csvNames(payload?.units)
+      if (!currentName || !nextName) {
+        toJson(res, 400, { ok: false, error: 'INVALID_PAYLOAD' }, { 'x-request-id': requestId })
+        return true
+      }
+      const index = localEscalaStore.professionals.findIndex((prof) => prof.name === currentName)
+      if (index < 0) {
+        toJson(res, 404, { ok: false, error: 'PROFESSIONAL_NOT_FOUND' }, { 'x-request-id': requestId })
+        return true
+      }
+      if (currentName !== nextName && localEscalaStore.professionals.some((prof) => prof.name === nextName)) {
+        toJson(res, 409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' }, { 'x-request-id': requestId })
+        return true
+      }
+      localEscalaStore.professionals[index] = {
+        ...localEscalaStore.professionals[index],
+        name: nextName,
+        status: String(payload?.status || '').trim(),
+        units: nextUnits,
+        role: String(payload?.role || '').trim(),
+        shift: String(payload?.shift || '').trim(),
+        nickname: String(payload?.nickname || '').trim(),
+        phone: String(payload?.phone || '').trim(),
+        email: String(payload?.email || '').trim(),
+        instagram: String(payload?.instagram || '').trim(),
+      }
+      if (currentName !== nextName) {
+        localEscalaStore.schedule = localEscalaStore.schedule.map((row) => (
+          row.professional === currentName ? { ...row, professional: nextName } : row
+        ))
+      }
+      toJson(res, 200, { ok: true, source: 'local-mock' }, { 'x-request-id': requestId })
+      return true
+    }
+
     if (path === '/api/escala/schedule' && method === 'GET') {
       let schedule = [...localEscalaStore.schedule]
       let closedDays = [...localEscalaStore.closedDays]

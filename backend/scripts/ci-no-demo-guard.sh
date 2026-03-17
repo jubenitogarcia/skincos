@@ -15,7 +15,7 @@ fail_if_found() {
   local pattern="$1"
   local description="$2"
   local output
-  output="$(grep -R --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=e2e --exclude-dir=test-results --exclude-dir=.playwright-output -n "${pattern}" "${FRONTEND_DIR}" || true)"
+  output="$(grep -R --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git --exclude-dir=e2e --exclude-dir=test-results --exclude-dir=.playwright-output --exclude=.dev.vars --exclude=.dev.vars.* -n "${pattern}" "${FRONTEND_DIR}" || true)"
   if [[ -n "${output}" ]]; then
     echo "[no-demo-guard] ERROR: ${description}" >&2
     echo "${output}" >&2
@@ -28,6 +28,8 @@ fail_if_found "demoNotifications" "Demo notification seed found in frontend sour
 fail_if_found "VITE_DEMO_DATA" "Demo-data env flag must not be referenced in frontend source."
 fail_if_found "DEMO_DATA_ACTIVE" "Demo-data toggle must not exist in frontend source."
 fail_if_found "VITE_NO_AUTH" "NO_AUTH mode must not be wired into production frontend."
+fail_if_found "LOCAL_AUTH_BYPASS=true" "Local auth bypass must never be hardcoded in frontend source."
+fail_if_found "VITE_LOCAL_AUTH_BYPASS=true" "Vite local auth bypass must never be hardcoded in frontend source."
 
 # Keep WebSocket disabled by default in production.
 if ! grep -q "enabled = import.meta.env.DEV" "${FRONTEND_DIR}/useWebSocket.ts"; then

@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
+    "test": "node --test worker.test.js",
     "deploy": "wrangler deploy",
     "migrate:remote": "wrangler d1 migrations apply skincos-escala --remote",
     "seed:remote": "wrangler d1 execute skincos-escala --remote --file=seed/escala_seed.sql"

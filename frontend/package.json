@@ -9,6 +9,8 @@
     "kill": "fuser -k 5000/tcp",
     "build": "tsc -b --noCheck && vite build",
     "lint": "eslint . --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "fetch-face-models": "node ./scripts/fetch-face-models.mjs",
     "optimize": "vite optimize",
@@ -86,6 +88,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.54.2",
+    "@vitest/coverage-v8": "^3.2.4",
     "@cloudflare/workers-types": "^4.20260124.0",
     "@eslint/js": "^9.21.0",
     "@tailwindcss/postcss": "^4.2.0",
@@ -100,7 +103,8 @@
     "tailwindcss": "^4.2.0",
     "typescript": "~5.7.2",
     "typescript-eslint": "^8.38.0",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
   },
   "overrides": {
     "tar": "7.5.8",
