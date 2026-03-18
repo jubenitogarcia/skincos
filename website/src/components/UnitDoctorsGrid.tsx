@@ -263,8 +263,10 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                         className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
                                         content={
                                             <>
-                                                <div className="bookingFlow__doctorTooltipName">{fullName}</div>
-                                                <div className="unitDoctorsCompact__tooltipActions" data-single={instagramHandle ? undefined : "true"}>
+                                                <div className="unitDoctorsCompact__tooltipHeader">
+                                                    <div className="bookingFlow__doctorTooltipName">{fullName}</div>
+                                                </div>
+                                                <div className="unitDoctorsCompact__tooltipActions">
                                                     <Link
                                                         className="unitDoctorsCompact__tooltipAction"
                                                         href={bookingHref}
@@ -279,8 +281,8 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                                         aria-label={`Agendar com ${fullName}`}
                                                         title="Agendar"
                                                     >
-                                                        <span className="unitDoctorsCompact__tooltipActionIcon">{bookingIcon()}</span>
-                                                        <span className="unitDoctorsCompact__tooltipActionLabel">Agendar</span>
+                                                        {bookingIcon()}
+                                                        <span>Agenda</span>
                                                     </Link>
                                                     {instagramHandle ? (
                                                         <button
@@ -290,10 +292,8 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                                             aria-label={`Abrir Instagram de ${fullName}`}
                                                             title="Instagram"
                                                         >
-                                                            <span className="unitDoctorsCompact__tooltipActionIcon">
-                                                                <InstagramIcon size={14} />
-                                                            </span>
-                                                            <span className="unitDoctorsCompact__tooltipActionLabel">Instagram</span>
+                                                            <InstagramIcon size={13} />
+                                                            <span>Insta</span>
                                                         </button>
                                                     ) : null}
                                                 </div>

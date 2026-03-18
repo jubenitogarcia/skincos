@@ -33,7 +33,7 @@ test.describe('escala', () => {
 	        body: JSON.stringify({
 	          ok: true,
 	          data: [
-	            { name: 'Dra. Ana', status: 'Ativo', units: ['novo-hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+	            { name: 'Dra. Ana', status: '', units: ['novo-hamburgo'], role: '', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
 	            { name: 'Bruna', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Consultor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '' },
 	            { name: 'Carla', status: 'Inativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#ef4444' }
 	          ]
@@ -47,7 +47,10 @@ test.describe('escala', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          schedule: [{ date: '2026-03-05', unit: 'Novo Hamburgo', professional: 'Dra. Ana' }],
+          schedule: [
+            { date: '2026-03-05', unit: 'Novo Hamburgo', professional: 'Dra. Ana' },
+            { date: '2026-03-06', unit: 'Novo Hamburgo', professional: 'Dr. Agenda' }
+          ],
           closedDays: [{ date: '2026-03-10', unit: 'Novo Hamburgo', reason: 'Feriado local' }],
           holidays: [{ date: '2026-03-20', unit: 'Novo Hamburgo', name: 'Dia do Cliente' }]
         })
@@ -59,10 +62,12 @@ test.describe('escala', () => {
     await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId('escala-day-2026-03-05')).toBeVisible()
     await expect(page.getByText('Dra. Ana').first()).toBeVisible()
+    await expect(page.getByText('Dr. Agenda').first()).toBeVisible()
     await expect(page.getByText('Dia do Cliente').first()).toBeVisible()
     await expect(page.getByTestId('escala-no-attendance-icon-2026-03-10')).toBeVisible()
     await expect(page.getByTestId('escala-day-2026-03-10')).not.toContainText('Feriado local')
     await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
+    await expect(page.getByTestId('escala-team-member-dr-agenda')).toBeVisible()
     await expect(page.getByTestId('escala-team-member-bruna')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-member-carla')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-inactive-toggle')).toContainText('Inativos (1)')
@@ -72,6 +77,7 @@ test.describe('escala', () => {
 
     await page.getByRole('combobox', { name: '' }).nth(3).click()
     await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Dr. Agenda' })).toBeVisible()
     await expect(page.getByRole('option', { name: 'Bruna' })).toHaveCount(0)
     await expect(page.getByRole('option', { name: 'Carla' })).toHaveCount(0)
   })

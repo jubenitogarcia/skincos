@@ -205,12 +205,23 @@ function isVisibleInjector(prof: EscalaProfessional) {
 }
 
 function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional[]) {
-  const map = new Map(base.map((p) => [p.name, p]))
+  const map = new Map<string, EscalaProfessional>()
+  base.forEach((prof) => {
+    const isScheduled = scheduleNames.has(prof.name)
+    const role = String(prof.role || '').trim() || (isScheduled ? 'Injetor' : '')
+    const status = String(prof.status || '').trim() || (isScheduled ? 'Ativo' : '')
+    map.set(prof.name, {
+      ...prof,
+      role,
+      status,
+      units: Array.isArray(prof.units) ? prof.units : [],
+    })
+  })
   scheduleNames.forEach((name) => {
     if (map.has(name)) return
     map.set(name, {
       name,
-      status: 'Sem cadastro',
+      status: 'Ativo',
       units: [],
       role: 'Injetor',
       shift: '',
@@ -397,7 +408,7 @@ function NoAttendanceChip({
   return (
     <div
       className={cn(
-        'inline-flex min-h-8 w-fit max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
+        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
         blocked
           ? 'border-rose-200/35 bg-rose-500/14 text-rose-50'
           : 'border-white/10 bg-white/5 text-slate-200/80',
@@ -407,7 +418,6 @@ function NoAttendanceChip({
       title={text}
     >
       <CalendarX2 className="h-3.5 w-3.5" />
-      {label ? <span className="truncate">{text}</span> : null}
     </div>
   )
 }
