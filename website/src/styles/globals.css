@@ -2579,6 +2579,79 @@ video.heroMediaEl {
   gap: 10px;
 }
 
+.instagramGalleryIntro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.08), transparent 30%),
+    rgba(255, 255, 255, 0.04);
+}
+
+.instagramGalleryIntroCopy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.instagramGalleryEyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.instagramGalleryLead,
+.instagramGalleryBio {
+  margin: 0;
+}
+
+.instagramGalleryLead {
+  max-width: 58ch;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.instagramGalleryBio {
+  max-width: 62ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.62);
+  white-space: pre-wrap;
+}
+
+.instagramGalleryStats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.instagramGalleryStat {
+  min-width: 132px;
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.instagramGalleryStat strong {
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.instagramGalleryStat span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
 .instagramMediaBtn {
   position: relative;
   appearance: none;
@@ -2589,6 +2662,18 @@ video.heroMediaEl {
   margin: 0;
   background: rgba(255, 255, 255, 0.04);
   cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.instagramMediaBtn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.instagramMediaBtn:hover .instagramMediaOverlay,
+.instagramMediaBtn:focus-visible .instagramMediaOverlay {
+  opacity: 1;
 }
 
 .instagramMediaBtn--active {
@@ -2603,6 +2688,33 @@ video.heroMediaEl {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.instagramMediaOverlay {
+  position: absolute;
+  inset: auto 10px 10px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(7, 7, 8, 0.18), rgba(7, 7, 8, 0.72));
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.instagramMediaOverlayLabel,
+.instagramMediaOverlayAction,
+.instagramMediaDate {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.instagramMediaOverlayAction {
+  color: rgba(255, 255, 255, 0.72);
+}
+
 .instagramMediaBadge {
   position: absolute;
   top: 8px;
@@ -2615,24 +2727,119 @@ video.heroMediaEl {
   background: rgba(0, 0, 0, 0.58);
 }
 
+.instagramMediaDate {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(0, 0, 0, 0.42);
+}
+
 .instagramViewer {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.08), transparent 34%),
+    rgba(255, 255, 255, 0.04);
+}
+
+.instagramViewerShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.instagramViewerStage {
+  min-width: 0;
 }
 
 .instagramViewerTop {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 10px;
+}
+
+.instagramViewerMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.instagramViewerBadge,
+.instagramViewerCounter,
+.instagramViewerThumbBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.instagramViewerBadge,
+.instagramViewerThumbBadge {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.instagramViewerCounter {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .instagramViewerNav {
   display: flex;
   gap: 8px;
+}
+
+.instagramViewerSidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.instagramViewerCopy {
+  display: grid;
+  gap: 8px;
+}
+
+.instagramViewerHandle {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.instagramViewerHandleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.instagramViewerDate {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.instagramHeaderMeta {
+  margin-left: 6px;
+  color: rgba(255, 255, 255, 0.52);
 }
 
 .instagramViewerBack,
@@ -2649,26 +2856,135 @@ video.heroMediaEl {
 }
 
 .instagramViewerMediaWrap {
-  border-radius: 12px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: clamp(340px, 62vh, 720px);
+  padding: 22px;
+  border-radius: 18px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.instagramViewerMediaWrap::before,
+.instagramViewerMediaWrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.instagramViewerMediaWrap::before {
+  background-image: var(--instagram-viewer-image);
+  background-position: center;
+  background-size: cover;
+  filter: blur(36px) saturate(0.95);
+  transform: scale(1.08);
+  opacity: 0.52;
+}
+
+.instagramViewerMediaWrap::after {
+  background: linear-gradient(180deg, rgba(9, 9, 10, 0.12), rgba(9, 9, 10, 0.44));
+}
+
+.instagramViewerArrow {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(9, 9, 10, 0.52);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 28px;
+  line-height: 1;
+  transform: translateY(-50%);
+  backdrop-filter: blur(10px);
+}
+
+.instagramViewerArrow--left {
+  left: 16px;
+}
+
+.instagramViewerArrow--right {
+  right: 16px;
 }
 
 .instagramViewerMedia {
+  position: relative;
+  z-index: 1;
   display: block;
-  width: 100%;
-  max-height: 64vh;
+  width: auto;
+  max-width: min(100%, 620px);
+  max-height: min(70vh, 720px);
   height: auto;
   object-fit: contain;
-  background: #0c0c0d;
+  border-radius: 20px;
+  background: rgba(12, 12, 13, 0.18);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
 }
 
 .instagramViewerCaption {
-  margin: 10px 2px 0;
   font-size: 13px;
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.86);
   white-space: pre-wrap;
+  margin: 0;
+}
+
+.instagramViewerCaption--muted {
+  color: rgba(255, 255, 255, 0.54);
+}
+
+.instagramViewerThumbs {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.instagramViewerThumb {
+  position: relative;
+  flex: 0 0 84px;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  overflow: hidden;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.instagramViewerThumb:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.instagramViewerThumb--active {
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+.instagramViewerThumbImage {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+.instagramViewerThumbBadge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 4px 7px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.62);
 }
 
 .instagramInlineError {
@@ -2745,6 +3061,40 @@ video.heroMediaEl {
 
   .instagramGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .instagramGalleryIntro {
+    padding: 12px;
+  }
+
+  .instagramGalleryStat {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .instagramGalleryIntro {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .instagramGalleryStats {
+    justify-content: stretch;
+  }
+
+  .instagramViewerShell {
+    grid-template-columns: 1fr;
+  }
+
+  .instagramViewerMediaWrap {
+    min-height: clamp(280px, 54vh, 560px);
+    padding: 14px;
+  }
+
+  .instagramViewerMedia {
+    max-width: 100%;
+    max-height: min(58vh, 560px);
   }
 }
 
