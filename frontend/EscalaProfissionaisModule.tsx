@@ -407,7 +407,7 @@ function NoAttendanceChip({
       title={text}
     >
       <CalendarX2 className="h-3.5 w-3.5" />
-      <span className="truncate">{text}</span>
+      {label ? <span className="truncate">{text}</span> : null}
     </div>
   )
 }
@@ -1180,8 +1180,9 @@ export function EscalaProfissionaisModule() {
                     ? cell.day
                     : 0
                 const adjacentTotal = cell.monthOffset === -1 ? previousMonthCellsCount : nextMonthCellsCount
-                const blockReason = dayBlockReasons[cell.date] || closedReasonByDate.get(cell.date) || ''
-                const blockBadgeLabel = String(closedReasonByDate.get(cell.date) || blockReason || '').trim() || 'Sem atendimento'
+                const localBlockReason = String(dayBlockReasons[cell.date] || '').trim()
+                const blockReason = localBlockReason || closedReasonByDate.get(cell.date) || ''
+                const blockBadgeLabel = String(blockReason || '').trim() || 'Sem atendimento'
                 const trackedCardStyle = matchesSelectedProfessional
                   ? getProfessionalCardHighlightStyle(selectedProfessional, selectedProfessionalColor)
                   : matchesHighlightMode && highlightMode === 'scheduled'
@@ -1311,7 +1312,11 @@ export function EscalaProfissionaisModule() {
                             </div>
                           ) : null}
                           {!isAdjacentMonth && !displayEntryNames.length && isBlocked ? (
-                            <NoAttendanceChip date={cell.date} blocked label={blockBadgeLabel} />
+                            <NoAttendanceChip
+                              date={cell.date}
+                              blocked
+                              label={localBlockReason ? blockBadgeLabel : undefined}
+                            />
                           ) : null}
                           {!isAdjacentMonth && !displayEntryNames.length && !isBlocked && (
                             <div className={cn(highlightMode === 'empty' && isEmptyDay && '[&_div]:border-amber-300/35 [&_div]:bg-amber-400/12 [&_div]:text-amber-50')}>
