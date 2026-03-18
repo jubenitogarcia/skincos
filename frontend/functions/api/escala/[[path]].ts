@@ -90,6 +90,7 @@ type LocalProfessional = {
   phone: string
   email: string
   instagram: string
+  color: string
 }
 
 type LocalScheduleEntry = { date: string; unit: string; professional: string }
@@ -213,6 +214,7 @@ function getEscalaLocalStore(): EscalaLocalStore {
         phone: '',
         email: 'ana@local.test',
         instagram: '',
+        color: '',
       },
       {
         name: 'Dr. Lucas',
@@ -224,6 +226,7 @@ function getEscalaLocalStore(): EscalaLocalStore {
         phone: '',
         email: 'lucas@local.test',
         instagram: '',
+        color: '',
       },
       {
         name: 'Dra. Carla',
@@ -235,6 +238,7 @@ function getEscalaLocalStore(): EscalaLocalStore {
         phone: '',
         email: 'carla@local.test',
         instagram: '',
+        color: '',
       },
     ],
     schedule: [],
@@ -516,6 +520,63 @@ async function handleLocalEscalaRequest(
       return prof.units.some((u) => canUseUnit(actor, u))
     })
     return done(200, { ok: true, data: visible, source: 'local-mock' })
+  }
+
+  if (rest === '/professionals' && method === 'POST') {
+    const payload = await readJson(request)
+    const name = String(payload?.name || '').trim()
+    const unitsInput = Array.isArray(payload?.units) ? payload.units : []
+    const nextUnits: string[] = Array.from(new Set(unitsInput.map((item) => String(item || '').trim()).filter(Boolean)))
+    if (!name) return done(400, { ok: false, error: 'INVALID_PAYLOAD' })
+    if (store.professionals.some((prof) => prof.name === name)) {
+      return done(409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' })
+    }
+    store.professionals.push({
+      name,
+      status: String(payload?.status || '').trim(),
+      units: nextUnits,
+      role: String(payload?.role || '').trim(),
+      shift: String(payload?.shift || '').trim(),
+      nickname: String(payload?.nickname || '').trim(),
+      phone: String(payload?.phone || '').trim(),
+      email: String(payload?.email || '').trim(),
+      instagram: String(payload?.instagram || '').trim(),
+      color: String(payload?.color || '').trim(),
+    })
+    return done(200, { ok: true, source: 'local-mock' })
+  }
+
+  if (rest === '/professionals' && method === 'PUT') {
+    const payload = await readJson(request)
+    const currentName = String(payload?.currentName || '').trim()
+    const nextName = String(payload?.name || '').trim()
+    const unitsInput = Array.isArray(payload?.units) ? payload.units : []
+    const nextUnits: string[] = Array.from(new Set(unitsInput.map((item) => String(item || '').trim()).filter(Boolean)))
+    if (!currentName || !nextName) return done(400, { ok: false, error: 'INVALID_PAYLOAD' })
+    const index = store.professionals.findIndex((prof) => prof.name === currentName)
+    if (index < 0) return done(404, { ok: false, error: 'PROFESSIONAL_NOT_FOUND' })
+    if (currentName !== nextName && store.professionals.some((prof) => prof.name === nextName)) {
+      return done(409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' })
+    }
+    store.professionals[index] = {
+      ...store.professionals[index],
+      name: nextName,
+      status: String(payload?.status || '').trim(),
+      units: nextUnits,
+      role: String(payload?.role || '').trim(),
+      shift: String(payload?.shift || '').trim(),
+      nickname: String(payload?.nickname || '').trim(),
+      phone: String(payload?.phone || '').trim(),
+      email: String(payload?.email || '').trim(),
+      instagram: String(payload?.instagram || '').trim(),
+      color: String(payload?.color || '').trim(),
+    }
+    if (currentName !== nextName) {
+      store.schedule = store.schedule.map((row) => (
+        row.professional === currentName ? { ...row, professional: nextName } : row
+      ))
+    }
+    return done(200, { ok: true, source: 'local-mock' })
   }
 
   if (rest === '/schedule' && method === 'GET') {

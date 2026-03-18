@@ -165,6 +165,7 @@ type LocalProfessional = {
   phone: string
   email: string
   instagram: string
+  color: string
 }
 
 type LocalScheduleEntry = { date: string; unit: string; professional: string }
@@ -210,7 +211,8 @@ const localEscalaStore: {
       nickname: 'Ana',
       phone: '',
       email: 'ana@local.test',
-      instagram: ''
+      instagram: '',
+      color: ''
     },
     {
       name: 'Dr. Lucas',
@@ -221,7 +223,8 @@ const localEscalaStore: {
       nickname: 'Lucas',
       phone: '',
       email: 'lucas@local.test',
-      instagram: ''
+      instagram: '',
+      color: ''
     },
     {
       name: 'Dra. Carla',
@@ -232,7 +235,8 @@ const localEscalaStore: {
       nickname: 'Carla',
       phone: '',
       email: 'carla@local.test',
-      instagram: ''
+      instagram: '',
+      color: ''
     }
   ],
   schedule: [],
@@ -789,6 +793,7 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
         phone: String(payload?.phone || '').trim(),
         email: String(payload?.email || '').trim(),
         instagram: String(payload?.instagram || '').trim(),
+        color: String(payload?.color || '').trim(),
       })
       toJson(res, 200, { ok: true, source: 'local-mock' }, { 'x-request-id': requestId })
       return true
@@ -823,6 +828,7 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
         phone: String(payload?.phone || '').trim(),
         email: String(payload?.email || '').trim(),
         instagram: String(payload?.instagram || '').trim(),
+        color: String(payload?.color || '').trim(),
       }
       if (currentName !== nextName) {
         localEscalaStore.schedule = localEscalaStore.schedule.map((row) => (

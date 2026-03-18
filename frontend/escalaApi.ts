@@ -103,6 +103,7 @@ export async function updateEscalaProfessional(payload: {
   phone: string
   email: string
   instagram: string
+  color: string
 }) {
   return apiWrite<{ ok: boolean }>(`/professionals`, 'PUT', payload)
 }
@@ -117,6 +118,7 @@ export async function addEscalaProfessional(payload: {
   phone: string
   email: string
   instagram: string
+  color: string
 }) {
   return apiWrite<{ ok: boolean }>(`/professionals`, 'POST', payload)
 }

@@ -33,9 +33,9 @@ test.describe('escala', () => {
 	        body: JSON.stringify({
 	          ok: true,
 	          data: [
-	            { name: 'Dra. Ana', status: 'Ativo', units: ['novo-hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '' },
-	            { name: 'Bruna', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Consultor', shift: '', nickname: '', phone: '', email: '', instagram: '' },
-	            { name: 'Carla', status: 'Inativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '' }
+	            { name: 'Dra. Ana', status: 'Ativo', units: ['novo-hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+	            { name: 'Bruna', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Consultor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '' },
+	            { name: 'Carla', status: 'Inativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#ef4444' }
 	          ]
 	        })
 	      })
@@ -60,14 +60,15 @@ test.describe('escala', () => {
     await expect(page.getByTestId('escala-day-2026-03-05')).toBeVisible()
     await expect(page.getByText('Dra. Ana').first()).toBeVisible()
     await expect(page.getByText('Dia do Cliente').first()).toBeVisible()
-    await expect(page.getByTestId('escala-day-2026-03-10')).toContainText('Feriado local')
+    await expect(page.getByTestId('escala-no-attendance-icon-2026-03-10')).toBeVisible()
+    await expect(page.getByTestId('escala-day-2026-03-10')).not.toContainText('Feriado local')
     await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
     await expect(page.getByTestId('escala-team-member-bruna')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-member-carla')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-inactive-toggle')).toContainText('Inativos (1)')
     await page.getByTestId('escala-team-inactive-toggle').click()
     await expect(page.getByTestId('escala-team-member-carla')).toBeVisible()
-    await expect(page.getByTestId('escala-empty-day-icon-2026-03-01')).toBeVisible()
+    await expect(page.getByTestId('escala-no-attendance-icon-2026-03-01')).toBeVisible()
 
     await page.getByRole('combobox', { name: '' }).nth(3).click()
     await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
@@ -116,8 +117,8 @@ test.describe('escala', () => {
         body: JSON.stringify({
           ok: true,
           data: [
-            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '' },
-            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '' }
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' }
           ]
         })
       })
@@ -220,8 +221,8 @@ test.describe('escala', () => {
         body: JSON.stringify({
           ok: true,
           data: [
-            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '' },
-            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '' }
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' }
           ]
         })
       })
@@ -282,7 +283,8 @@ test.describe('escala', () => {
         nickname: 'Ana',
         phone: '',
         email: 'ana@local.test',
-        instagram: 'draana'
+        instagram: 'draana',
+        color: '#22c55e'
       }
     ]
     let scheduleState = {
@@ -337,7 +339,8 @@ test.describe('escala', () => {
           nickname: payload.nickname,
           phone: payload.phone,
           email: payload.email,
-          instagram: payload.instagram
+          instagram: payload.instagram,
+          color: payload.color
         }]
         scheduleState = {
           ...scheduleState,
@@ -390,7 +393,8 @@ test.describe('escala', () => {
     await expect(page.getByTestId('escala-team-close')).toBeVisible()
     await expect(page.getByTestId('escala-team-field-shift')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-field-nickname')).toHaveCount(0)
-    await expect(page.getByTestId('escala-team-field-instagram')).toHaveCount(0)
+    await expect(page.getByTestId('escala-team-field-instagram')).toHaveValue('draana')
+    await expect(page.getByTestId('escala-team-field-color')).toHaveValue('#22c55e')
     const calendarPanelAfterEdit = await page.getByTestId('escala-calendar-panel').boundingBox()
     const teamPanelAfterEdit = await page.getByTestId('escala-team-panel').boundingBox()
     const teamPanelOverflowAfterEdit = await page.getByTestId('escala-team-panel').evaluate((element) => ({
@@ -409,6 +413,8 @@ test.describe('escala', () => {
     await expect(page.getByTestId('escala-team-field-name')).toHaveValue('Dra. Ana')
     await page.getByTestId('escala-team-field-name').fill('Dra. Anita')
     await page.getByTestId('escala-team-field-phone').fill('5551999999999')
+    await page.getByTestId('escala-team-field-instagram').fill('draanita')
+    await page.getByTestId('escala-team-field-color').fill('#0ea5e9')
     await page.getByTestId('escala-team-save').click()
 
     await expect.poll(() => professionalPayloads).toEqual([
@@ -420,9 +426,10 @@ test.describe('escala', () => {
         role: 'Injetor',
         shift: 'Manhã',
         nickname: 'Ana',
-        phone: '5551999999999',
+        phone: '+55 (51) 99999-9999',
         email: 'ana@local.test',
-        instagram: 'draana'
+        instagram: 'draanita',
+        color: '#0ea5e9'
       }
     ])
 
@@ -443,7 +450,8 @@ test.describe('escala', () => {
         nickname: 'Ana',
         phone: '',
         email: 'ana@local.test',
-        instagram: 'draana'
+        instagram: 'draana',
+        color: '#22c55e'
       }
     ]
 
@@ -510,9 +518,13 @@ test.describe('escala', () => {
     await page.getByRole('option', { name: 'Inativo' }).click()
     await expect(page.getByTestId('escala-team-field-shift')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-field-nickname')).toHaveCount(0)
-    await expect(page.getByTestId('escala-team-field-instagram')).toHaveCount(0)
+    await expect(page.getByTestId('escala-team-field-instagram')).toHaveValue('')
+    await expect(page.getByTestId('escala-team-field-color')).toHaveValue('#ec4899')
     await page.getByTestId('escala-team-field-role').click()
     await page.getByTestId('escala-team-field-role-injetor').click()
+    await page.getByTestId('escala-team-field-phone').fill('51999999999')
+    await page.getByTestId('escala-team-field-instagram').fill('paulanova')
+    await page.getByTestId('escala-team-field-color').fill('#f97316')
     await page.getByTestId('escala-team-save').click()
 
     await expect.poll(() => professionalPayloads).toEqual([
@@ -523,9 +535,10 @@ test.describe('escala', () => {
         role: 'Injetor',
         shift: '',
         nickname: '',
-        phone: '',
+        phone: '+55 (51) 99999-9999',
         email: '',
-        instagram: ''
+        instagram: 'paulanova',
+        color: '#f97316'
       }
     ])
 

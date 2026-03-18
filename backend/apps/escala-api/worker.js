@@ -188,7 +188,7 @@ async function handleOverview(env, actor) {
 
 async function handleProfessionals(env, unit, actor) {
   const res = await env.DB.prepare(
-    `select name, status, role, shift, nickname, phone, email, instagram, units_json
+    `select name, status, role, shift, nickname, phone, email, instagram, color, units_json
      from professionals
      order by name`
   ).all()
@@ -295,6 +295,7 @@ async function handleProfessionalPut(env, actor, body) {
   const phone = normalizeName(body?.phone)
   const email = normalizeName(body?.email)
   const instagram = normalizeName(body?.instagram)
+  const color = normalizeName(body?.color)
   const unitsInput = Array.isArray(body?.units) ? body.units : []
   const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
 
@@ -333,9 +334,10 @@ async function handleProfessionalPut(env, actor, body) {
          phone = ?6,
          email = ?7,
          instagram = ?8,
-         units_json = ?9,
-         updated_at = ?10
-     where name = ?11`
+         color = ?9,
+         units_json = ?10,
+         updated_at = ?11
+     where name = ?12`
   ).bind(
     nextName,
     status || null,
@@ -345,6 +347,7 @@ async function handleProfessionalPut(env, actor, body) {
     phone || null,
     email || null,
     instagram || null,
+    color || null,
     JSON.stringify(units),
     now,
     currentName,
@@ -372,6 +375,7 @@ async function handleProfessionalPost(env, actor, body) {
   const phone = normalizeName(body?.phone)
   const email = normalizeName(body?.email)
   const instagram = normalizeName(body?.instagram)
+  const color = normalizeName(body?.color)
   const unitsInput = Array.isArray(body?.units) ? body.units : []
   const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
 
@@ -393,8 +397,8 @@ async function handleProfessionalPost(env, actor, body) {
   const now = new Date().toISOString()
   await env.DB.prepare(
     `insert into professionals
-     (id, name, status, role, shift, nickname, phone, email, instagram, units_json, created_at, updated_at)
-     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+     (id, name, status, role, shift, nickname, phone, email, instagram, color, units_json, created_at, updated_at)
+     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
   ).bind(
     crypto.randomUUID(),
     name,
@@ -405,6 +409,7 @@ async function handleProfessionalPost(env, actor, body) {
     phone || null,
     email || null,
     instagram || null,
+    color || null,
     JSON.stringify(units),
     now,
     now,

@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 
@@ -32,6 +33,22 @@ export type DoctorInstagramProfile = {
 };
 
 const INSTAGRAM_PAGE_SIZE = 9;
+const FOCUSABLE_SELECTORS = [
+    'a[href]',
+    'button:not([disabled])',
+    'textarea:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function getInstagramMediaLabel(item: InstagramMedia): string {
+    if (item.isStory) return "Story";
+    if (item.isReel) return "Reel";
+    if (item.mediaType === "video") return "Vídeo";
+    if (item.mediaType === "carousel") return "Carrossel";
+    return "Post";
+}
 
 async function sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,6 +90,19 @@ async function fetchInstagramFeed(params: {
     return null;
 }
 
+function formatInstagramDate(timestampMs: number | null): string | null {
+    if (!timestampMs || !Number.isFinite(timestampMs)) return null;
+    try {
+        return new Intl.DateTimeFormat("pt-BR", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+        }).format(new Date(timestampMs));
+    } catch {
+        return null;
+    }
+}
+
 export function InstagramIcon(props: { size?: number }) {
     const size = props.size ?? 16;
     return (
@@ -92,6 +122,8 @@ export default function DoctorInstagramModal(props: {
     const { profile, onClose } = props;
     const [instagramItems, setInstagramItems] = useState<InstagramMedia[]>([]);
     const [instagramUserId, setInstagramUserId] = useState<string | null>(null);
+    const [instagramUserName, setInstagramUserName] = useState<string | null>(null);
+    const [instagramUserBio, setInstagramUserBio] = useState<string | null>(null);
     const [instagramNextCursor, setInstagramNextCursor] = useState<string | null>(null);
     const [instagramHasMore, setInstagramHasMore] = useState(false);
     const [instagramLoading, setInstagramLoading] = useState(false);
@@ -101,22 +133,8 @@ export default function DoctorInstagramModal(props: {
     const [instagramReloadToken, setInstagramReloadToken] = useState(0);
     const instagramScrollRef = useRef<HTMLDivElement | null>(null);
     const instagramInfiniteSentinelRef = useRef<HTMLDivElement | null>(null);
-
-    useEffect(() => {
-        if (!profile) return;
-
-        function onKeyDown(event: KeyboardEvent) {
-            if (event.key !== "Escape") return;
-            if (activeInstagramMediaId) {
-                setActiveInstagramMediaId(null);
-                return;
-            }
-            onClose();
-        }
-
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-    }, [activeInstagramMediaId, onClose, profile]);
+    const modalCardRef = useRef<HTMLDivElement | null>(null);
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
     const loadMoreInstagram = useCallback(async () => {
         if (!profile || !instagramUserId || !instagramNextCursor || instagramLoadingMore) return;
@@ -161,6 +179,8 @@ export default function DoctorInstagramModal(props: {
             setInstagramError(null);
             setInstagramItems([]);
             setInstagramUserId(null);
+            setInstagramUserName(null);
+            setInstagramUserBio(null);
             setInstagramNextCursor(null);
             setInstagramHasMore(false);
             setActiveInstagramMediaId(null);
@@ -180,6 +200,8 @@ export default function DoctorInstagramModal(props: {
 
                 setInstagramItems(Array.isArray(json.items) ? json.items : []);
                 setInstagramUserId(json.user?.id || null);
+                setInstagramUserName(json.user?.name || null);
+                setInstagramUserBio(json.user?.bio || null);
                 setInstagramNextCursor(json.nextCursor ?? null);
                 setInstagramHasMore(Boolean(json.hasMore && json.nextCursor));
             } catch {
@@ -205,9 +227,82 @@ export default function DoctorInstagramModal(props: {
         if (activeInstagramMediaIndex < 0) return null;
         return instagramItems[activeInstagramMediaIndex] ?? null;
     }, [activeInstagramMediaIndex, instagramItems]);
+    const activeInstagramMediaDate = useMemo(() => formatInstagramDate(activeInstagramMedia?.takenAtMs ?? null), [activeInstagramMedia?.takenAtMs]);
 
     const hasPrevInstagramMedia = activeInstagramMediaIndex > 0;
     const hasNextInstagramMedia = activeInstagramMediaIndex >= 0 && activeInstagramMediaIndex < instagramItems.length - 1;
+
+    useEffect(() => {
+        if (!profile) return;
+
+        const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+
+        function onKeyDown(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                if (activeInstagramMediaId) {
+                    setActiveInstagramMediaId(null);
+                    return;
+                }
+                onClose();
+                return;
+            }
+
+            if (!activeInstagramMediaId) return;
+
+            if (event.key === "ArrowLeft" && hasPrevInstagramMedia) {
+                event.preventDefault();
+                setActiveInstagramMediaId(instagramItems[activeInstagramMediaIndex - 1]?.id ?? null);
+            }
+
+            if (event.key === "ArrowRight" && hasNextInstagramMedia) {
+                event.preventDefault();
+                setActiveInstagramMediaId(instagramItems[activeInstagramMediaIndex + 1]?.id ?? null);
+            }
+
+            if (event.key === "Tab") {
+                const container = modalCardRef.current;
+                if (!container) return;
+                const focusableElements = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)).filter(
+                    (element) => !element.hasAttribute("disabled") && element.tabIndex !== -1,
+                );
+                if (focusableElements.length === 0) return;
+                const firstElement = focusableElements[0];
+                const lastElement = focusableElements[focusableElements.length - 1];
+                const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+                if (event.shiftKey && activeElement === firstElement) {
+                    event.preventDefault();
+                    lastElement.focus();
+                } else if (!event.shiftKey && activeElement === lastElement) {
+                    event.preventDefault();
+                    firstElement.focus();
+                }
+            }
+        }
+
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            document.removeEventListener("keydown", onKeyDown);
+            previousActiveElement?.focus?.();
+        };
+    }, [activeInstagramMediaId, activeInstagramMediaIndex, hasNextInstagramMedia, hasPrevInstagramMedia, instagramItems, onClose, profile]);
+
+    useEffect(() => {
+        if (!activeInstagramMediaId) return;
+        if (instagramScrollRef.current) instagramScrollRef.current.scrollTop = 0;
+    }, [activeInstagramMediaId]);
+
+    useEffect(() => {
+        if (!activeInstagramMediaId || !instagramHasMore || instagramLoadingMore) return;
+        if (activeInstagramMediaIndex < 0) return;
+        if (activeInstagramMediaIndex >= instagramItems.length - 3) {
+            void loadMoreInstagram();
+        }
+    }, [activeInstagramMediaId, activeInstagramMediaIndex, instagramHasMore, instagramItems.length, instagramLoadingMore, loadMoreInstagram]);
 
     useEffect(() => {
         if (!profile || !instagramHasMore || instagramLoading || instagramLoadingMore) return;
@@ -234,6 +329,9 @@ export default function DoctorInstagramModal(props: {
 
     if (!profile) return null;
 
+    const profileUrl = `https://www.instagram.com/${profile.handle}/`;
+    const activeInstagramMediaUrl = activeInstagramMedia?.permalink || profileUrl;
+
     return (
         <div
             className="modalOverlay"
@@ -244,13 +342,16 @@ export default function DoctorInstagramModal(props: {
                 if (event.target === event.currentTarget) onClose();
             }}
         >
-            <div className="modalCard instagramModalCard">
+            <div className="modalCard instagramModalCard" ref={modalCardRef}>
                 <div className="modalHeader">
                     <div>
                         <div className="modalTitle">{profile.name}</div>
-                        <div className="modalSubtitle">@{profile.handle}</div>
+                        <div className="modalSubtitle">
+                            @{profile.handle}
+                            {instagramUserName && instagramUserName !== profile.name ? <span className="instagramHeaderMeta">· {instagramUserName}</span> : null}
+                        </div>
                     </div>
-                    <button className="modalClose" type="button" onClick={onClose} aria-label="Fechar">
+                    <button className="modalClose" type="button" onClick={onClose} aria-label="Fechar" ref={closeButtonRef}>
                         ×
                     </button>
                 </div>
@@ -277,97 +378,182 @@ export default function DoctorInstagramModal(props: {
 
                     {activeInstagramMedia ? (
                         <div className="instagramViewer">
-                            <div className="instagramViewerTop">
-                                <button className="btn btnGhost instagramViewerBack" type="button" onClick={() => setActiveInstagramMediaId(null)}>
-                                    Voltar ao grid
-                                </button>
-                                <div className="instagramViewerNav">
-                                    <button
-                                        className="btn btnGhost instagramViewerStep"
-                                        type="button"
-                                        disabled={!hasPrevInstagramMedia}
-                                        onClick={() => {
-                                            if (!hasPrevInstagramMedia) return;
-                                            setActiveInstagramMediaId(instagramItems[activeInstagramMediaIndex - 1]?.id ?? null);
-                                        }}
+                            <div className="instagramViewerShell">
+                                <div className="instagramViewerStage">
+                                    <div
+                                        className="instagramViewerMediaWrap"
+                                        style={
+                                            {
+                                                "--instagram-viewer-image": `url("${activeInstagramMedia.thumbnailUrl}")`,
+                                            } as CSSProperties
+                                        }
                                     >
-                                        Anterior
-                                    </button>
-                                    <button
-                                        className="btn btnGhost instagramViewerStep"
-                                        type="button"
-                                        disabled={!hasNextInstagramMedia}
-                                        onClick={() => {
-                                            if (!hasNextInstagramMedia) return;
-                                            setActiveInstagramMediaId(instagramItems[activeInstagramMediaIndex + 1]?.id ?? null);
-                                        }}
-                                    >
-                                        Próximo
-                                    </button>
+                                        {hasPrevInstagramMedia ? (
+                                            <button
+                                                className="instagramViewerArrow instagramViewerArrow--left"
+                                                type="button"
+                                                onClick={() => setActiveInstagramMediaId(instagramItems[activeInstagramMediaIndex - 1]?.id ?? null)}
+                                                aria-label="Ver publicação anterior"
+                                            >
+                                                ‹
+                                            </button>
+                                        ) : null}
+
+                                        {activeInstagramMedia.mediaType === "video" && activeInstagramMedia.videoUrl ? (
+                                            <video
+                                                className="instagramViewerMedia"
+                                                src={activeInstagramMedia.videoUrl}
+                                                poster={activeInstagramMedia.thumbnailUrl}
+                                                controls
+                                                playsInline
+                                                preload="metadata"
+                                            />
+                                        ) : (
+                                            <Image
+                                                className="instagramViewerMedia"
+                                                src={activeInstagramMedia.thumbnailUrl}
+                                                alt={`Publicação de ${profile.name}`}
+                                                width={1400}
+                                                height={1400}
+                                                loading="lazy"
+                                                unoptimized
+                                            />
+                                        )}
+
+                                        {hasNextInstagramMedia ? (
+                                            <button
+                                                className="instagramViewerArrow instagramViewerArrow--right"
+                                                type="button"
+                                                onClick={() => setActiveInstagramMediaId(instagramItems[activeInstagramMediaIndex + 1]?.id ?? null)}
+                                                aria-label="Ver próxima publicação"
+                                            >
+                                                ›
+                                            </button>
+                                        ) : null}
+                                    </div>
                                 </div>
-                            </div>
 
-                            <div className="instagramViewerMediaWrap">
-                                {activeInstagramMedia.mediaType === "video" && activeInstagramMedia.videoUrl ? (
-                                    <video
-                                        className="instagramViewerMedia"
-                                        src={activeInstagramMedia.videoUrl}
-                                        poster={activeInstagramMedia.thumbnailUrl}
-                                        controls
-                                        playsInline
-                                        preload="metadata"
-                                    />
-                                ) : (
-                                    <Image
-                                        className="instagramViewerMedia"
-                                        src={activeInstagramMedia.thumbnailUrl}
-                                        alt={`Publicação de ${profile.name}`}
-                                        width={1200}
-                                        height={1200}
-                                        loading="lazy"
-                                        unoptimized
-                                    />
-                                )}
-                            </div>
+                                <aside className="instagramViewerSidebar">
+                                    <div className="instagramViewerTop">
+                                        <div className="instagramViewerMeta">
+                                            <span className="instagramViewerBadge">{getInstagramMediaLabel(activeInstagramMedia)}</span>
+                                            <span className="instagramViewerCounter">
+                                                {activeInstagramMediaIndex + 1} de {instagramItems.length}
+                                            </span>
+                                        </div>
+                                        <div className="instagramViewerNav">
+                                            <button className="btn btnGhost instagramViewerBack" type="button" onClick={() => setActiveInstagramMediaId(null)}>
+                                                Ver grade
+                                            </button>
+                                        </div>
+                                    </div>
 
-                            {activeInstagramMedia.caption ? <p className="instagramViewerCaption">{activeInstagramMedia.caption}</p> : null}
+                                    <div className="instagramViewerCopy">
+                                        <div className="instagramViewerHandleRow">
+                                            <div className="instagramViewerHandle">@{profile.handle}</div>
+                                            {activeInstagramMediaDate ? <div className="instagramViewerDate">{activeInstagramMediaDate}</div> : null}
+                                        </div>
+                                        {activeInstagramMedia.caption ? (
+                                            <p className="instagramViewerCaption">{activeInstagramMedia.caption}</p>
+                                        ) : (
+                                            <p className="instagramViewerCaption instagramViewerCaption--muted">
+                                                Sem legenda pública nesta publicação.
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className="modalActions">
+                                        <a className="btn btnPrimary" href={activeInstagramMediaUrl} target="_blank" rel="noreferrer">
+                                            Ver no Instagram
+                                        </a>
+                                        <a className="btn btnGhost" href={profileUrl} target="_blank" rel="noreferrer">
+                                            Abrir perfil
+                                        </a>
+                                    </div>
+
+                                    <div className="instagramViewerThumbs" aria-label="Outras publicações">
+                                        {instagramItems.map((item, index) => (
+                                            <button
+                                                key={item.id}
+                                                type="button"
+                                                className={`instagramViewerThumb ${activeInstagramMediaId === item.id ? "instagramViewerThumb--active" : ""}`.trim()}
+                                                onClick={() => setActiveInstagramMediaId(item.id)}
+                                                aria-label={`Abrir ${getInstagramMediaLabel(item).toLowerCase()} ${index + 1}`}
+                                            >
+                                                <Image
+                                                    className="instagramViewerThumbImage"
+                                                    src={item.thumbnailUrl}
+                                                    alt=""
+                                                    width={120}
+                                                    height={120}
+                                                    loading="lazy"
+                                                    unoptimized
+                                                />
+                                                {item.isReel || item.mediaType !== "image" ? (
+                                                    <span className="instagramViewerThumbBadge">{getInstagramMediaLabel(item)}</span>
+                                                ) : null}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </aside>
+                            </div>
                         </div>
                     ) : null}
 
-                    {instagramItems.length > 0 ? (
-                        <div className="instagramGrid">
-                            {instagramItems.map((item) => {
-                                const label = item.isStory
-                                    ? "Story"
-                                    : item.isReel
-                                      ? "Reel"
-                                      : item.mediaType === "video"
-                                        ? "Vídeo"
-                                        : item.mediaType === "carousel"
-                                          ? "Carrossel"
-                                          : "Post";
-                                return (
-                                    <button
-                                        key={item.id}
-                                        type="button"
-                                        className={`instagramMediaBtn ${activeInstagramMediaId === item.id ? "instagramMediaBtn--active" : ""}`.trim()}
-                                        onClick={() => setActiveInstagramMediaId(item.id)}
-                                        aria-label={`Abrir ${label.toLowerCase()} de ${profile.name}`}
-                                    >
-                                        <Image
-                                            className="instagramMediaThumb"
-                                            src={item.thumbnailUrl}
-                                            alt={`Publicação de ${profile.name}`}
-                                            width={320}
-                                            height={320}
-                                            loading="lazy"
-                                            unoptimized
-                                        />
-                                        {label !== "Post" ? <span className="instagramMediaBadge">{label}</span> : null}
-                                    </button>
-                                );
-                            })}
-                        </div>
+                    {instagramItems.length > 0 && !activeInstagramMedia ? (
+                        <>
+                            <div className="instagramGalleryIntro">
+                                <div className="instagramGalleryIntroCopy">
+                                    <div className="instagramGalleryEyebrow">Galeria do Instagram</div>
+                                    <p className="instagramGalleryLead">
+                                        Toque em qualquer publicação para abrir um viewer com navegação lateral, atalhos de teclado e acesso direto ao Instagram.
+                                    </p>
+                                    {instagramUserBio ? <p className="instagramGalleryBio">{instagramUserBio}</p> : null}
+                                </div>
+                                <div className="instagramGalleryStats" aria-label="Resumo do perfil">
+                                    <div className="instagramGalleryStat">
+                                        <strong>{instagramItems.length}</strong>
+                                        <span>itens carregados</span>
+                                    </div>
+                                    <div className="instagramGalleryStat">
+                                        <strong>{instagramHasMore ? "Ao vivo" : "Completo"}</strong>
+                                        <span>{instagramHasMore ? "mais publicações disponíveis" : "feed carregado"}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="instagramGrid">
+                                {instagramItems.map((item) => {
+                                    const label = getInstagramMediaLabel(item);
+                                    const itemDate = formatInstagramDate(item.takenAtMs);
+                                    return (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            className={`instagramMediaBtn ${activeInstagramMediaId === item.id ? "instagramMediaBtn--active" : ""}`.trim()}
+                                            onClick={() => setActiveInstagramMediaId(item.id)}
+                                            aria-label={`Abrir ${label.toLowerCase()} de ${profile.name}`}
+                                        >
+                                            <Image
+                                                className="instagramMediaThumb"
+                                                src={item.thumbnailUrl}
+                                                alt={`Publicação de ${profile.name}`}
+                                                width={320}
+                                                height={320}
+                                                loading="lazy"
+                                                unoptimized
+                                            />
+                                            <span className="instagramMediaOverlay" aria-hidden="true">
+                                                <span className="instagramMediaOverlayLabel">{label}</span>
+                                                <span className="instagramMediaOverlayAction">Abrir</span>
+                                            </span>
+                                            {label !== "Post" ? <span className="instagramMediaBadge">{label}</span> : null}
+                                            {itemDate ? <span className="instagramMediaDate">{itemDate}</span> : null}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </>
                     ) : null}
 
                     {instagramError && instagramItems.length > 0 ? (
@@ -388,7 +574,7 @@ export default function DoctorInstagramModal(props: {
 
                     {instagramHasMore ? <div className="instagramInfiniteSentinel" ref={instagramInfiniteSentinelRef} aria-hidden="true" /> : null}
                     {instagramLoadingMore ? <div className="instagramLoadingMoreInline">Carregando mais publicações…</div> : null}
-                    <div className="modalNote">Posts, reels e stories são exibidos dentro desta janela para manter você no site.</div>
+                    <div className="modalNote">Posts, reels e stories são exibidos dentro desta janela para manter você no site. Use `Esc` para fechar e as setas do teclado para navegar.</div>
                 </div>
             </div>
         </div>

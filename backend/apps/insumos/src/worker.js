@@ -26,6 +26,7 @@ import {
     d1Ajuste,
     d1Transfer,
     d1ListMovimentacoes,
+    d1UpdateMovimentacao,
     d1ListInsumosPaged,
     d1ListInsumosOptions,
     d1GetUserByUsername,
@@ -1479,14 +1480,23 @@ export default {
             transfer: ({ body }) => d1Transfer({ env, body }),
             listMovimentacoes: ({ unidade, tipo, de, ate, pagina, limite, codigoBarras }) =>
                 d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina, limite, codigoBarras }),
+            updateMovimentacao: ({ id, body }) => d1UpdateMovimentacao({ env, id, body }),
         };
 
         const movResp = await handleMovimentacoesRoutes({
             request,
             url,
+            env,
+            ctx,
             appOrigin,
             withCORS,
             unidade,
+            requireRoles,
+            appendAuditLog,
+            enqueueNotificationsRefresh,
+            ip,
+            userAgent,
+            idempotencyKey,
             d1,
         });
         if (movResp) return movResp;
