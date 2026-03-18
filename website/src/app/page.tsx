@@ -49,7 +49,7 @@ export default async function HomePage() {
 
         <section id="doutores" className="pageSection" style={{ marginTop: 50 }}>
           <h2 className="sectionTitle">Nossos Doutores</h2>
-          <UnitDoctorsGrid />
+          <UnitDoctorsGrid variant="booking-compact" />
         </section>
 
         <section id="unidades" className="pageSection" style={{ marginTop: 50 }}>
