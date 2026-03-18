@@ -264,7 +264,7 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                         content={
                                             <>
                                                 <div className="bookingFlow__doctorTooltipName">{fullName}</div>
-                                                <div className="unitDoctorsCompact__tooltipActions">
+                                                <div className="unitDoctorsCompact__tooltipActions" data-single={instagramHandle ? undefined : "true"}>
                                                     <Link
                                                         className="unitDoctorsCompact__tooltipAction"
                                                         href={bookingHref}
@@ -279,7 +279,8 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                                         aria-label={`Agendar com ${fullName}`}
                                                         title="Agendar"
                                                     >
-                                                        {bookingIcon()}
+                                                        <span className="unitDoctorsCompact__tooltipActionIcon">{bookingIcon()}</span>
+                                                        <span className="unitDoctorsCompact__tooltipActionLabel">Agendar</span>
                                                     </Link>
                                                     {instagramHandle ? (
                                                         <button
@@ -289,7 +290,10 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                                             aria-label={`Abrir Instagram de ${fullName}`}
                                                             title="Instagram"
                                                         >
-                                                            <InstagramIcon size={14} />
+                                                            <span className="unitDoctorsCompact__tooltipActionIcon">
+                                                                <InstagramIcon size={14} />
+                                                            </span>
+                                                            <span className="unitDoctorsCompact__tooltipActionLabel">Instagram</span>
                                                         </button>
                                                     ) : null}
                                                 </div>
