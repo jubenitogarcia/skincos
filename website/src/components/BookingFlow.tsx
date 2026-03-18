@@ -1217,7 +1217,7 @@ export default function BookingFlow() {
                                                                         </button>
                                                                     ) : null}
                                                                 </div>
-                                                                <div className="bookingFlow__doctorTooltipSub">{d.nickname || unitLabel}</div>
+                                                                <div className="bookingFlow__doctorTooltipSub">{unitLabel}</div>
                                                             </>
                                                         }
                                                     >
@@ -1232,15 +1232,15 @@ export default function BookingFlow() {
                                                             <span className="bookingFlow__doctorBadgeAvatar">
                                                                 {d.handle ? (
                                                                     <Image
-                                                                        src={avatarUrl(d.handle, d.nickname ?? d.name)}
-                                                                        alt={d.nickname ?? d.name}
+                                                                        src={avatarUrl(d.handle, d.name)}
+                                                                        alt={d.name}
                                                                         fill
                                                                         sizes="76px"
                                                                         style={{ objectFit: "cover" }}
                                                                         unoptimized
                                                                     />
                                                                 ) : (
-                                                                    <span className="bookingFlow__doctorBadgeFallback">{initialsFromName(d.nickname ?? d.name)}</span>
+                                                                    <span className="bookingFlow__doctorBadgeFallback">{initialsFromName(d.name)}</span>
                                                                 )}
                                                             </span>
                                                         </button>
