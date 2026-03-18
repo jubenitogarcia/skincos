@@ -392,19 +392,22 @@ function NoAttendanceChip({
   blocked?: boolean
   label?: string
 }) {
+  const text = String(label || 'Sem atendimento').trim() || 'Sem atendimento'
+
   return (
     <div
       className={cn(
-        'inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-2.5 text-[10px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
+        'inline-flex min-h-8 w-fit max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
         blocked
           ? 'border-rose-200/35 bg-rose-500/14 text-rose-50'
           : 'border-white/10 bg-white/5 text-slate-200/80',
       )}
       data-testid={`escala-no-attendance-icon-${date}`}
-      aria-label="Sem atendimento"
-      title={label || 'Sem atendimento'}
+      aria-label={text}
+      title={text}
     >
       <CalendarX2 className="h-3.5 w-3.5" />
+      <span className="truncate">{text}</span>
     </div>
   )
 }
