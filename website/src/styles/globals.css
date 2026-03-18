@@ -3669,23 +3669,15 @@ video.heroMediaEl {
 
 .unitDoctorsCompact {
   display: grid;
-  gap: 14px;
-  padding: 18px;
-}
-
-.unitDoctorsCompact__header {
-  display: grid;
-  gap: 4px;
-}
-
-.unitDoctorsCompact__unit {
-  color: var(--muted);
+  gap: 10px;
+  padding: 16px 18px 14px;
 }
 
 .unitDoctorsCompact__rail {
   display: flex;
   gap: 14px;
   align-items: flex-start;
+  justify-content: center;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 8px 0 6px;
@@ -3734,24 +3726,44 @@ video.heroMediaEl {
   text-wrap: balance;
 }
 
-.unitDoctorsCompact__instagram {
+.unitDoctorsCompact__tooltip {
+  display: grid;
+  gap: 8px;
+  min-width: 138px;
+}
+
+.unitDoctorsCompact__tooltip .bookingFlow__doctorTooltipName {
+  text-align: center;
+}
+
+.unitDoctorsCompact__tooltipActions {
+  display: flex;
+  gap: 6px;
+}
+
+.unitDoctorsCompact__tooltipAction {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(17, 17, 17, 0.08);
+  min-width: 0;
+  flex: 1 1 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
-  color: #111;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
   cursor: pointer;
-  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.unitDoctorsCompact__instagram:hover {
+.unitDoctorsCompact__tooltipAction:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
   transform: translateY(-1px);
-  background: #fff;
-  border-color: rgba(17, 17, 17, 0.16);
 }
 
 .pageNarrative {

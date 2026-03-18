@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { doctorSlugFromTeamMember } from "@/lib/doctorSlug";
 import { trackBookingStart, trackDoctorInstagramClick } from "@/lib/leadTracking";
@@ -57,6 +58,101 @@ function extractInstagramHandle(url: string | null): string | null {
 type UnitDoctorsGridProps = {
     variant?: "directory" | "booking-compact";
 };
+
+function PortalTooltip(props: { content: ReactNode; children: ReactNode; className: string; disabled?: boolean }) {
+    const anchorRef = useRef<HTMLDivElement | null>(null);
+    const tooltipRef = useRef<HTMLDivElement | null>(null);
+    const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [open, setOpen] = useState(false);
+    const [position, setPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+
+    const clearCloseTimer = useCallback(() => {
+        if (!closeTimerRef.current) return;
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+    }, []);
+
+    const openTooltip = useCallback(() => {
+        if (props.disabled) return;
+        clearCloseTimer();
+        setOpen(true);
+    }, [clearCloseTimer, props.disabled]);
+
+    const scheduleClose = useCallback(() => {
+        clearCloseTimer();
+        closeTimerRef.current = setTimeout(() => setOpen(false), 120);
+    }, [clearCloseTimer]);
+
+    const updatePosition = useCallback(() => {
+        const anchor = anchorRef.current;
+        const tooltip = tooltipRef.current;
+        if (!anchor || !tooltip) return;
+        const anchorRect = anchor.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const viewportPadding = 8;
+        let left = anchorRect.left + anchorRect.width / 2;
+        const minLeft = viewportPadding + tooltipRect.width / 2;
+        const maxLeft = window.innerWidth - viewportPadding - tooltipRect.width / 2;
+        left = Math.max(minLeft, Math.min(maxLeft, left));
+        const top = anchorRect.bottom + 4;
+        setPosition({ left, top });
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!open) return;
+        updatePosition();
+    }, [open, updatePosition, props.content]);
+
+    useEffect(() => {
+        if (!open) return;
+        const onWindowChange = () => updatePosition();
+        window.addEventListener("resize", onWindowChange);
+        window.addEventListener("scroll", onWindowChange, true);
+        return () => {
+            window.removeEventListener("resize", onWindowChange);
+            window.removeEventListener("scroll", onWindowChange, true);
+        };
+    }, [open, updatePosition]);
+
+    useEffect(() => {
+        return () => clearCloseTimer();
+    }, [clearCloseTimer]);
+
+    return (
+        <div
+            ref={anchorRef}
+            className="bookingFlow__tooltipAnchor"
+            onMouseEnter={openTooltip}
+            onMouseLeave={scheduleClose}
+            onFocusCapture={openTooltip}
+            onBlurCapture={scheduleClose}
+        >
+            {props.children}
+            {open && typeof document !== "undefined"
+                ? createPortal(
+                      <div
+                          ref={tooltipRef}
+                          className={props.className}
+                          role="tooltip"
+                          style={{
+                              position: "fixed",
+                              left: position.left,
+                              top: position.top,
+                              transform: "translateX(-50%)",
+                              display: "block",
+                              zIndex: 5000,
+                          }}
+                          onMouseEnter={openTooltip}
+                          onMouseLeave={scheduleClose}
+                      >
+                          {props.content}
+                      </div>,
+                      document.body,
+                  )
+                : null}
+        </div>
+    );
+}
 
 export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGridProps) {
     const unit = useCurrentUnit();
@@ -141,13 +237,6 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
             <>
                 {selectedUnitSubtitle}
                 <div className="card unitDoctorsCompact">
-                    <div className="unitDoctorsCompact__header">
-                        <div className="small unitDoctorsCompact__unit">
-                            Unidade: <span className="bookingFlow__unitName">{unit?.name ?? unitLabel}</span>
-                        </div>
-                        <div className="bookingFlow__cardSub">Escolha um doutor para abrir o agendamento com o profissional já selecionado.</div>
-                    </div>
-
                     <div className="unitDoctorsCompact__rail" role="list" aria-label="Lista de doutores da unidade">
                         {filtered.map((d) => {
                             const fullName = d.name;
@@ -170,42 +259,63 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
 
                             return (
                                 <article key={`${fullName}-${href ?? "noinsta"}`} className="unitDoctorsCompact__item" role="listitem">
-                                    <Link
-                                        className="bookingFlow__doctorBadge unitDoctorsCompact__badgeLink"
-                                        href={bookingHref}
-                                        onClick={() =>
-                                            trackBookingStart({
-                                                placement: "doctor_grid",
-                                                unitSlug: unit?.slug ?? null,
-                                                doctorName: fullName,
-                                                bookingUrl: bookingHref,
-                                            })
+                                    <PortalTooltip
+                                        className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
+                                        content={
+                                            <>
+                                                <div className="bookingFlow__doctorTooltipName">{fullName}</div>
+                                                <div className="unitDoctorsCompact__tooltipActions">
+                                                    <Link
+                                                        className="unitDoctorsCompact__tooltipAction"
+                                                        href={bookingHref}
+                                                        onClick={() =>
+                                                            trackBookingStart({
+                                                                placement: "doctor_grid",
+                                                                unitSlug: unit?.slug ?? null,
+                                                                doctorName: fullName,
+                                                                bookingUrl: bookingHref,
+                                                            })
+                                                        }
+                                                    >
+                                                        Agendar
+                                                    </Link>
+                                                    {instagramHandle ? (
+                                                        <button
+                                                            type="button"
+                                                            className="unitDoctorsCompact__tooltipAction"
+                                                            onClick={openInstagram}
+                                                        >
+                                                            Instagram
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            </>
                                         }
-                                        aria-label={`Agendar com ${fullName}`}
-                                        title={`Agendar com ${fullName}`}
                                     >
-                                        <span className="bookingFlow__doctorBadgeAvatar">
-                                            {instagramHandle ? (
-                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
-                                            ) : (
-                                                <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
-                                            )}
-                                        </span>
-                                    </Link>
+                                        <Link
+                                            className="bookingFlow__doctorBadge unitDoctorsCompact__badgeLink"
+                                            href={bookingHref}
+                                            onClick={() =>
+                                                trackBookingStart({
+                                                    placement: "doctor_grid",
+                                                    unitSlug: unit?.slug ?? null,
+                                                    doctorName: fullName,
+                                                    bookingUrl: bookingHref,
+                                                })
+                                            }
+                                            aria-label={`Agendar com ${fullName}`}
+                                        >
+                                            <span className="bookingFlow__doctorBadgeAvatar">
+                                                {instagramHandle ? (
+                                                    <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
+                                                ) : (
+                                                    <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
+                                                )}
+                                            </span>
+                                        </Link>
+                                    </PortalTooltip>
 
                                     <div className="unitDoctorsCompact__name">{fullName}</div>
-
-                                    {instagramHandle ? (
-                                        <button
-                                            type="button"
-                                            className="unitDoctorsCompact__instagram"
-                                            onClick={openInstagram}
-                                            aria-label={`Abrir Instagram de ${fullName}`}
-                                            title="Abrir Instagram"
-                                        >
-                                            <InstagramIcon size={14} />
-                                        </button>
-                                    ) : null}
                                 </article>
                             );
                         })}
