@@ -54,7 +54,11 @@ function extractInstagramHandle(url: string | null): string | null {
     }
 }
 
-export default function UnitDoctorsGrid() {
+type UnitDoctorsGridProps = {
+    variant?: "directory" | "booking-compact";
+};
+
+export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGridProps) {
     const unit = useCurrentUnit();
     const unitLabel = unitLabelFromSlug(unit?.slug);
 
@@ -107,7 +111,10 @@ export default function UnitDoctorsGrid() {
         );
     }
 
-    const selectedUnitSubtitle = <p className="sectionSub">Conheça nossos doutores, veja seus perfis e procedimentos realizados.</p>;
+    const selectedUnitSubtitle =
+        variant === "booking-compact"
+            ? <p className="sectionSub">Conheça a equipe da unidade e entre no agendamento com o doutor já definido.</p>
+            : <p className="sectionSub">Conheça nossos doutores, veja seus perfis e procedimentos realizados.</p>;
 
     if (filtered === null) {
         return (
@@ -129,13 +136,93 @@ export default function UnitDoctorsGrid() {
         );
     }
 
+    if (variant === "booking-compact") {
+        return (
+            <>
+                {selectedUnitSubtitle}
+                <div className="card unitDoctorsCompact">
+                    <div className="unitDoctorsCompact__header">
+                        <div className="small unitDoctorsCompact__unit">
+                            Unidade: <span className="bookingFlow__unitName">{unit?.name ?? unitLabel}</span>
+                        </div>
+                        <div className="bookingFlow__cardSub">Escolha um doutor para abrir o agendamento com o profissional já selecionado.</div>
+                    </div>
+
+                    <div className="unitDoctorsCompact__rail" role="list" aria-label="Lista de doutores da unidade">
+                        {filtered.map((d) => {
+                            const fullName = d.name;
+                            const handle = d.instagramHandle;
+                            const href = d.instagramUrl;
+                            const instagramHandle = handle || extractInstagramHandle(href);
+                            const doctorSlug = doctorSlugFromTeamMember({ name: fullName, instagramHandle: handle });
+                            const bookingHref = unit?.slug
+                                ? `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=${encodeURIComponent(doctorSlug)}`
+                                : "/agendamento";
+                            const openInstagram = () => {
+                                if (!instagramHandle) return;
+                                setActiveInstagram({ name: fullName, handle: instagramHandle });
+                                trackDoctorInstagramClick({
+                                    unitSlug: unit?.slug ?? null,
+                                    doctorName: fullName,
+                                    instagramUrl: href ?? `https://www.instagram.com/${instagramHandle}/`,
+                                });
+                            };
+
+                            return (
+                                <article key={`${fullName}-${href ?? "noinsta"}`} className="unitDoctorsCompact__item" role="listitem">
+                                    <Link
+                                        className="bookingFlow__doctorBadge unitDoctorsCompact__badgeLink"
+                                        href={bookingHref}
+                                        onClick={() =>
+                                            trackBookingStart({
+                                                placement: "doctor_grid",
+                                                unitSlug: unit?.slug ?? null,
+                                                doctorName: fullName,
+                                                bookingUrl: bookingHref,
+                                            })
+                                        }
+                                        aria-label={`Agendar com ${fullName}`}
+                                        title={`Agendar com ${fullName}`}
+                                    >
+                                        <span className="bookingFlow__doctorBadgeAvatar">
+                                            {instagramHandle ? (
+                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
+                                            ) : (
+                                                <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
+                                            )}
+                                        </span>
+                                    </Link>
+
+                                    <div className="unitDoctorsCompact__name">{fullName}</div>
+
+                                    {instagramHandle ? (
+                                        <button
+                                            type="button"
+                                            className="unitDoctorsCompact__instagram"
+                                            onClick={openInstagram}
+                                            aria-label={`Abrir Instagram de ${fullName}`}
+                                            title="Abrir Instagram"
+                                        >
+                                            <InstagramIcon size={14} />
+                                        </button>
+                                    ) : null}
+                                </article>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <DoctorInstagramModal profile={activeInstagram} onClose={() => setActiveInstagram(null)} />
+            </>
+        );
+    }
+
     return (
         <>
             {selectedUnitSubtitle}
             <div className="grid">
                 {filtered.map((d) => {
                     const fullName = d.name;
-                    const nickname = d.nickname;
                     const handle = d.instagramHandle;
                     const href = d.instagramUrl;
                     const instagramHandle = handle || extractInstagramHandle(href);
@@ -170,28 +257,24 @@ export default function UnitDoctorsGrid() {
                                     >
                                         <div style={{ width: 56, height: 56, borderRadius: 14, overflow: "hidden", background: "white" }}>
                                             {instagramHandle ? (
-                                                <Image src={avatarUrl(instagramHandle, nickname ?? fullName)} alt={nickname ?? fullName} width={56} height={56} unoptimized />
+                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={56} height={56} unoptimized />
                                             ) : null}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <h3 style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName}</h3>
-                                            <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                {nickname || unitLabel}
-                                            </p>
+                                            <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{unitLabel}</p>
                                         </div>
                                     </button>
                                 ) : (
                                     <div className="doctorCardMainLink" aria-label={fullName}>
                                         <div style={{ width: 56, height: 56, borderRadius: 14, overflow: "hidden", background: "white" }}>
                                             {instagramHandle ? (
-                                                <Image src={avatarUrl(instagramHandle, nickname ?? fullName)} alt={nickname ?? fullName} width={56} height={56} unoptimized />
+                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={56} height={56} unoptimized />
                                             ) : null}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <h3 style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName}</h3>
-                                            <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                {nickname || unitLabel}
-                                            </p>
+                                            <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{unitLabel}</p>
                                         </div>
                                     </div>
                                 )}
