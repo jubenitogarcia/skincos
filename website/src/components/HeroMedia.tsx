@@ -13,7 +13,7 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
     const [index, setIndex] = useState(0);
     const [prevIndex, setPrevIndex] = useState<number | null>(null);
     const [aspectRatio, setAspectRatio] = useState<string>("16 / 9");
-    const [variant, setVariant] = useState<HeroMediaVariant>("desktop");
+    const [variant, setVariant] = useState<HeroMediaVariant>(initialVariant ?? "desktop");
 
     type HeroStyle = CSSProperties & Record<"--hero-ar", string>;
     useEffect(() => {
@@ -43,6 +43,7 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
 
     const item = items[index] ?? items[0]!;
     const shouldLoopVideo = item.type === "video" && items.length === 1;
+    const imageFit = effectiveVariant === "mobile" ? "cover" : "contain";
 
     const goTo = useCallback(
         (nextIndex: number) => {
@@ -143,7 +144,7 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
                                 setAspectRatio(`${img.naturalWidth} / ${img.naturalHeight}`);
                             }
                         }}
-                        style={{ objectFit: "cover" }}
+                        style={{ objectFit: imageFit, backgroundColor: "#050505" }}
                     />
                 )}
             </div>
