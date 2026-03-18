@@ -23,6 +23,156 @@ function normalizeTipo(tipo) {
   return String(tipo || '').toUpperCase().replace('Í', 'I');
 }
 
+function extractTransferFreeText(observacoes) {
+  const raw = String(observacoes || '').trim();
+  if (!raw) return '';
+  const sep = raw.indexOf(' | ');
+  return sep >= 0 ? raw.slice(sep + 3).trim() : '';
+}
+
+function buildTransferObservacoes(kind, fromUnidade, toUnidade, freeText) {
+  const tipo = normalizeTipo(kind);
+  const from = String(fromUnidade || '').trim();
+  const to = String(toUnidade || '').trim();
+  const note = String(freeText || '').trim();
+  const prefix = tipo.includes('SAIDA') ? `Transferência para ${to}` : `Transferência de ${from}`;
+  return note ? `${prefix} | ${note}` : prefix;
+}
+
+function computeMovementDelta(row) {
+  const tipo = normalizeTipo(row?.tipo);
+  if (tipo === 'AJUSTE') {
+    return toInt(row?.estoque_novo, 0) - toInt(row?.estoque_anterior, 0);
+  }
+  if (tipo.includes('ENTRADA')) return Math.max(1, toInt(row?.quantidade, 1));
+  if (tipo.includes('SAIDA')) return -Math.max(1, toInt(row?.quantidade, 1));
+  return 0;
+}
+
+async function recomputeMovementLedgerForRegistro({ env, registro, overrides = new Map() }) {
+  const reg = String(registro || '').trim();
+  if (!reg) throw new Error('Registro inválido');
+
+  const movementRows = await env.DB.prepare(
+    `SELECT
+        id,
+        data_hora,
+        tipo,
+        codigo_barras,
+        registro_insumo,
+        lote,
+        data_validade,
+        produto,
+        quantidade,
+        estoque_anterior,
+        estoque_novo,
+        unidade,
+        unidade_origem,
+        unidade_destino,
+        id_transferencia,
+        usuario,
+        motivo,
+        observacoes
+     FROM insumos_movements
+     WHERE registro_insumo = ?
+     ORDER BY data_hora ASC, id ASC`
+  ).bind(reg).all();
+
+  const rows = (movementRows?.results || []).map((row) => ({ ...row }));
+
+  const stockRows = await env.DB.prepare(
+    `SELECT unidade, quantidade
+     FROM insumos_stocks
+     WHERE registro = ?`
+  ).bind(reg).all();
+
+  const currentStockByUnit = new Map();
+  for (const row of stockRows?.results || []) {
+    const unit = String(row?.unidade || '').trim();
+    if (!unit) continue;
+    currentStockByUnit.set(unit, toInt(row?.quantidade, 0));
+  }
+
+  const historicalDeltaByUnit = new Map();
+  for (const row of rows) {
+    const unit = String(row?.unidade || '').trim();
+    if (!unit) continue;
+    historicalDeltaByUnit.set(unit, toInt(historicalDeltaByUnit.get(unit), 0) + computeMovementDelta(row));
+  }
+
+  const baseStockByUnit = new Map();
+  const allUnits = new Set([...currentStockByUnit.keys(), ...historicalDeltaByUnit.keys()]);
+  for (const unit of allUnits) {
+    const current = toInt(currentStockByUnit.get(unit), 0);
+    const delta = toInt(historicalDeltaByUnit.get(unit), 0);
+    baseStockByUnit.set(unit, current - delta);
+  }
+
+  const rowsWithOverrides = rows.map((row) => {
+    const patch = overrides instanceof Map ? overrides.get(String(row.id || '').trim()) : null;
+    return patch ? { ...row, ...patch } : row;
+  });
+
+  const nextStockByUnit = new Map(baseStockByUnit);
+  const movementUpdates = [];
+  for (const row of rowsWithOverrides) {
+    const unit = String(row?.unidade || '').trim();
+    if (!unit) continue;
+    const tipo = normalizeTipo(row?.tipo);
+    const before = toInt(nextStockByUnit.get(unit), 0);
+    let quantidade = Math.max(1, toInt(row?.quantidade, 1));
+    let after = before;
+
+    if (tipo === 'AJUSTE') {
+      after = Math.max(0, toInt(row?.estoque_novo, before));
+      quantidade = Math.abs(after - before);
+    } else if (tipo.includes('ENTRADA')) {
+      after = before + quantidade;
+    } else if (tipo.includes('SAIDA')) {
+      after = before - quantidade;
+    }
+
+    nextStockByUnit.set(unit, after);
+    movementUpdates.push({
+      id: String(row.id || '').trim(),
+      quantidade,
+      estoqueAnterior: before,
+      estoqueNovo: after,
+      motivo: String(row?.motivo || '').trim(),
+      observacoes: String(row?.observacoes || '').trim(),
+    });
+  }
+
+  const statements = [];
+  for (const row of movementUpdates) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE insumos_movements
+         SET quantidade = ?, estoque_anterior = ?, estoque_novo = ?, motivo = ?, observacoes = ?
+         WHERE id = ?`
+      ).bind(row.quantidade, row.estoqueAnterior, row.estoqueNovo, row.motivo, row.observacoes, row.id)
+    );
+  }
+
+  for (const [unit, qty] of nextStockByUnit.entries()) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(registro, unidade) DO UPDATE SET quantidade = excluded.quantidade, updated_at = excluded.updated_at`
+      ).bind(reg, unit, toInt(qty, 0), nowIso())
+    );
+  }
+
+  if (statements.length) await env.DB.batch(statements);
+
+  return {
+    registro: reg,
+    movimentos: movementUpdates,
+    estoqueAtual: Object.fromEntries(Array.from(nextStockByUnit.entries()).map(([unit, qty]) => [unit, toInt(qty, 0)])),
+  };
+}
+
 function normalizeTipoUnidade(raw) {
   const v = String(raw || '')
     .trim()
@@ -1386,6 +1536,136 @@ export async function d1Transfer({ env, body }) {
   };
 }
 
+export async function d1UpdateMovimentacao({ env, id, body }) {
+  const movementId = String(id || '').trim();
+  if (!movementId) return { ok: false, status: 400, error: 'Movimentação inválida' };
+
+  const movement = await env.DB.prepare(
+    `SELECT
+        id,
+        data_hora,
+        tipo,
+        codigo_barras,
+        registro_insumo,
+        lote,
+        data_validade,
+        produto,
+        quantidade,
+        estoque_anterior,
+        estoque_novo,
+        unidade,
+        unidade_origem,
+        unidade_destino,
+        id_transferencia,
+        usuario,
+        motivo,
+        observacoes
+     FROM insumos_movements
+     WHERE id = ?`
+  ).bind(movementId).first();
+  if (!movement) return { ok: false, status: 404, error: 'Movimentação não encontrada' };
+
+  const registro = String(movement?.registro_insumo || '').trim();
+  if (!registro) return { ok: false, status: 400, error: 'Movimentação sem registro de insumo' };
+
+  const tipo = normalizeTipo(movement?.tipo);
+  const overrides = new Map();
+
+  if (String(movement?.id_transferencia || '').trim()) {
+    const transferId = String(movement.id_transferencia || '').trim();
+    const pairRowsRes = await env.DB.prepare(
+      `SELECT
+          id,
+          tipo,
+          unidade,
+          unidade_origem,
+          unidade_destino,
+          quantidade,
+          observacoes
+       FROM insumos_movements
+       WHERE id_transferencia = ?
+       ORDER BY data_hora ASC, id ASC`
+    ).bind(transferId).all();
+    const pairRows = (pairRowsRes?.results || []).map((row) => ({ ...row }));
+    if (!pairRows.length) return { ok: false, status: 404, error: 'Transferência vinculada não encontrada' };
+
+    const quantidadeProvided = Object.prototype.hasOwnProperty.call(body || {}, 'quantidade');
+    const quantidade = quantidadeProvided ? toInt(body?.quantidade, NaN) : toInt(movement?.quantidade, 1);
+    if (!Number.isFinite(quantidade) || quantidade < 1) {
+      return { ok: false, status: 400, error: 'Quantidade inválida' };
+    }
+
+    const freeText = Object.prototype.hasOwnProperty.call(body || {}, 'observacoes')
+      ? String(body?.observacoes || '').trim()
+      : extractTransferFreeText(movement?.observacoes);
+
+    for (const row of pairRows) {
+      overrides.set(String(row.id || '').trim(), {
+        quantidade,
+        observacoes: buildTransferObservacoes(row?.tipo, row?.unidade_origem, row?.unidade_destino, freeText),
+      });
+    }
+  } else if (tipo === 'AJUSTE') {
+    const targetProvided = Object.prototype.hasOwnProperty.call(body || {}, 'estoqueNovo');
+    const motivoProvided = Object.prototype.hasOwnProperty.call(body || {}, 'motivo');
+    const observacoesProvided = Object.prototype.hasOwnProperty.call(body || {}, 'observacoes');
+    const estoqueNovo = targetProvided ? toInt(body?.estoqueNovo, NaN) : toInt(movement?.estoque_novo, NaN);
+    const motivo = motivoProvided ? String(body?.motivo || '').trim() : String(movement?.motivo || '').trim();
+    const observacoes = observacoesProvided ? String(body?.observacoes || '').trim() : String(movement?.observacoes || '').trim();
+
+    if (!Number.isFinite(estoqueNovo) || estoqueNovo < 0) {
+      return { ok: false, status: 400, error: 'Novo estoque inválido' };
+    }
+    if (!motivo) return { ok: false, status: 400, error: 'Motivo é obrigatório' };
+
+    overrides.set(movementId, { estoque_novo: estoqueNovo, motivo, observacoes });
+  } else {
+    const quantidadeProvided = Object.prototype.hasOwnProperty.call(body || {}, 'quantidade');
+    const observacoesProvided = Object.prototype.hasOwnProperty.call(body || {}, 'observacoes');
+    const quantidade = quantidadeProvided ? toInt(body?.quantidade, NaN) : toInt(movement?.quantidade, 1);
+    const observacoes = observacoesProvided ? String(body?.observacoes || '').trim() : String(movement?.observacoes || '').trim();
+    if (!Number.isFinite(quantidade) || quantidade < 1) {
+      return { ok: false, status: 400, error: 'Quantidade inválida' };
+    }
+    overrides.set(movementId, { quantidade, observacoes });
+  }
+
+  const recomputed = await recomputeMovementLedgerForRegistro({ env, registro, overrides });
+
+  const updatedRowsRes = await env.DB.prepare(
+    `SELECT
+        id,
+        data_hora AS dataHora,
+        tipo,
+        codigo_barras AS codigoBarras,
+        produto,
+        quantidade,
+        estoque_anterior AS estoqueAnterior,
+        estoque_novo AS estoqueNovo,
+        unidade,
+        unidade_origem AS unidadeOrigem,
+        unidade_destino AS unidadeDestino,
+        id_transferencia AS transferId,
+        usuario,
+        motivo,
+        observacoes,
+        registro_insumo AS registroInsumo,
+        lote,
+        data_validade AS dataValidade
+     FROM insumos_movements
+     WHERE id = ? OR (? != '' AND id_transferencia = ?)
+     ORDER BY data_hora ASC, id ASC`
+  ).bind(movementId, String(movement?.id_transferencia || '').trim(), String(movement?.id_transferencia || '').trim()).all();
+
+  return {
+    ok: true,
+    registro,
+    transferId: String(movement?.id_transferencia || '').trim() || null,
+    movimentos: updatedRowsRes?.results || [],
+    estoqueAtual: recomputed.estoqueAtual,
+  };
+}
+
 export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina, limite, codigoBarras }) {
   const where = [];
   const binds = [];
@@ -1423,6 +1703,7 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
 
   const rows = await env.DB.prepare(
     `SELECT
+        m.id AS id,
         m.data_hora AS dataHora,
         m.tipo AS tipo,
         m.codigo_barras AS codigoBarras,

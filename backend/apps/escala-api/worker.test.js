@@ -60,7 +60,7 @@ class FakeD1 {
   all(sql, params) {
     const query = normalizeSql(sql)
 
-    if (query.includes('select name, status, role, shift, nickname, phone, email, instagram, units_json from professionals')) {
+    if (query.includes('select name, status, role, shift, nickname, phone, email, instagram, color, units_json from professionals')) {
       return [...this.professionals]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((prof) => ({ ...prof }))
@@ -110,15 +110,16 @@ class FakeD1 {
         phone: params[6],
         email: params[7],
         instagram: params[8],
-        units_json: params[9],
-        created_at: params[10],
-        updated_at: params[11],
+        color: params[9],
+        units_json: params[10],
+        created_at: params[11],
+        updated_at: params[12],
       })
       return
     }
 
     if (query.startsWith('update professionals set name = ?1')) {
-      const index = this.professionals.findIndex((prof) => prof.name === params[10])
+      const index = this.professionals.findIndex((prof) => prof.name === params[11])
       if (index >= 0) {
         this.professionals[index] = {
           ...this.professionals[index],
@@ -130,8 +131,9 @@ class FakeD1 {
           phone: params[5],
           email: params[6],
           instagram: params[7],
-          units_json: params[8],
-          updated_at: params[9],
+          color: params[8],
+          units_json: params[9],
+          updated_at: params[10],
         }
       }
       return
@@ -229,6 +231,8 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
         role: 'Injetor',
         phone: '5551999999999',
         email: 'ana@local.test',
+        instagram: 'draana',
+        color: '#22c55e',
       },
     }),
     env,
@@ -237,6 +241,7 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
   assert.equal(db.professionals.length, 1)
   assert.equal(db.professionals[0].name, 'Dra. Ana')
   assert.equal(JSON.parse(db.professionals[0].units_json)[0], 'Novo Hamburgo')
+  assert.equal(db.professionals[0].color, '#22c55e')
 
   const scheduleResponse = await worker.fetch(
     await signedRequest('https://escala.local/api/escala/schedule', {
@@ -266,8 +271,10 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
         status: 'Ativo',
         units: ['Novo Hamburgo'],
         role: 'Injetor, Consultor',
-        phone: '5551888888888',
+        phone: '+55 (51) 88888-8888',
         email: 'anita@local.test',
+        instagram: 'draanita',
+        color: '#0ea5e9',
       },
     }),
     env,
@@ -289,8 +296,10 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
   assert.equal(professionalsJson.data[0].name, 'Dra. Anita')
   assert.equal(professionalsJson.data[0].status, 'Ativo')
   assert.equal(professionalsJson.data[0].role, 'Injetor, Consultor')
-  assert.equal(professionalsJson.data[0].phone, '5551888888888')
+  assert.equal(professionalsJson.data[0].phone, '+55 (51) 88888-8888')
   assert.equal(professionalsJson.data[0].email, 'anita@local.test')
+  assert.equal(professionalsJson.data[0].instagram, 'draanita')
+  assert.equal(professionalsJson.data[0].color, '#0ea5e9')
   assert.deepEqual(professionalsJson.data[0].units, ['Novo Hamburgo'])
 
   const updatedScheduleResponse = await worker.fetch(

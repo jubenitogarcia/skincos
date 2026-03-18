@@ -59,6 +59,7 @@ type Insumo = {
 }
 
 type Movimentacao = {
+  id?: string
   dataHora?: string
   tipo?: string
   codigoBarras?: string
@@ -591,6 +592,17 @@ function fmtDateOnlyBR(value?: string | null) {
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return v
   const iso = dateInputToIso(v)
   return iso ? isoToBrDate(iso) : v
+}
+
+function normalizeMovimentacaoTipo(value?: string | null) {
+  return String(value || '').toUpperCase().replace('Í', 'I')
+}
+
+function extractTransferMovementNote(value?: string | null) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const sep = raw.indexOf(' | ')
+  return sep >= 0 ? raw.slice(sep + 3).trim() : ''
 }
 
 function statusBadgeVariant(status?: string): 'default' | 'secondary' | 'destructive' {
@@ -1155,6 +1167,8 @@ export function InsumosModule() {
   const [insumosTotal, setInsumosTotal] = React.useState<number | null>(null)
   const [insumosHasMore, setInsumosHasMore] = React.useState(false)
   const insumosRef = React.useRef<Insumo[]>([])
+  const insumosCacheRef = React.useRef<Map<string, Map<string, Insumo>>>(new Map())
+  const [insumosCacheVersion, setInsumosCacheVersion] = React.useState(0)
   const [selectedCodigoBarras, setSelectedCodigoBarras] = React.useState('')
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createScanOpen, setCreateScanOpen] = React.useState(false)
@@ -1249,6 +1263,13 @@ export function InsumosModule() {
   >('dataHora')
   const [movSortDir, setMovSortDir] = React.useState<'asc' | 'desc'>('desc')
   const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const [editMovOpen, setEditMovOpen] = React.useState(false)
+  const [editMovTarget, setEditMovTarget] = React.useState<Movimentacao | null>(null)
+  const [editMovQuantidade, setEditMovQuantidade] = React.useState('1')
+  const [editMovNovoEstoque, setEditMovNovoEstoque] = React.useState('')
+  const [editMovObservacoes, setEditMovObservacoes] = React.useState('')
+  const [editMovMotivo, setEditMovMotivo] = React.useState('')
+  const [editMovSaving, setEditMovSaving] = React.useState(false)
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
 
@@ -1613,6 +1634,59 @@ export function InsumosModule() {
     },
     [DashboardLoadingButton, isAuthed, renderLoadingText, shouldShowDashboardLoading]
   )
+
+  const upsertInsumosCache = React.useCallback((items: Insumo[]) => {
+    if (!Array.isArray(items) || !items.length) return
+    let changed = false
+    for (const it of items) {
+      const codes = getInsumoBarcodes(it)
+      if (!codes.length) continue
+      const registro = String(it?.registro || '').trim() || `__no_registro__:${codes[0]}`
+      for (const codigo of codes) {
+        let byRegistro = insumosCacheRef.current.get(codigo)
+        if (!byRegistro) {
+          byRegistro = new Map<string, Insumo>()
+          insumosCacheRef.current.set(codigo, byRegistro)
+        }
+        const prev = byRegistro.get(registro)
+        if (!prev) {
+          byRegistro.set(registro, it)
+          changed = true
+          continue
+        }
+        const merged: Insumo = {
+          ...prev,
+          ...it,
+          estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
+          statusValidade: it.statusValidade || prev.statusValidade
+        }
+        byRegistro.set(registro, merged)
+        changed = true
+      }
+    }
+    if (changed) setInsumosCacheVersion((v) => v + 1)
+  }, [])
+
+  const readCachedInsumosByCodigo = React.useCallback(
+    ({ codigoBarras, ctxUnidade }: { codigoBarras: string; ctxUnidade: string }) => {
+      const codigo = String(codigoBarras || '').trim()
+      if (!codigo) return []
+      const byRegistro = insumosCacheRef.current.get(codigo)
+      if (!byRegistro || !byRegistro.size) return []
+      return Array.from(byRegistro.values()).map((item) => {
+        const unit = String(ctxUnidade || '').trim()
+        if (!unit || !item?.estoques) return item
+        const stockForUnit = Number(item.estoques?.[unit])
+        if (!Number.isFinite(stockForUnit)) return item
+        return { ...item, estoqueAtual: stockForUnit }
+      })
+    },
+    []
+  )
+
+  React.useEffect(() => {
+    upsertInsumosCache(insumos || [])
+  }, [insumos, upsertInsumosCache])
 
   const visibleMainPanels = React.useMemo(() => {
     const allowed = new Set(DEFAULT_MAIN_PANELS)
@@ -2217,7 +2291,9 @@ export function InsumosModule() {
           })
           const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?${params.toString()}`)
           if (token !== quickSearchRemoteTokenRef.current) return
-          setQuickSearchRemote(Array.isArray(out?.data) ? out.data : [])
+          const items = Array.isArray(out?.data) ? out.data : []
+          if (items.length) upsertInsumosCache(items)
+          setQuickSearchRemote(items)
         } catch (e: any) {
           if (token !== quickSearchRemoteTokenRef.current) return
           const message = e?.message || 'Falha ao buscar insumos.'
@@ -2235,7 +2311,7 @@ export function InsumosModule() {
       })()
     }, 250)
     return () => window.clearTimeout(t)
-  }, [apiJson, canUseApi, isAuthed, quickOp, quickSearch, transferFrom, unidade])
+  }, [apiJson, canUseApi, isAuthed, quickOp, quickSearch, transferFrom, unidade, upsertInsumosCache])
 
   React.useEffect(() => {
     const query = quickSearch.trim()
@@ -2345,6 +2421,8 @@ export function InsumosModule() {
     async ({ codigoBarras, ctxUnidade }: { codigoBarras: string; ctxUnidade: string }) => {
       const codigo = String(codigoBarras || '').trim()
       if (!codigo) return []
+      const cached = readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade })
+      if (cached.length) return cached
       const params = new URLSearchParams({
         unidade: ctxUnidade,
         q: codigo,
@@ -2353,10 +2431,11 @@ export function InsumosModule() {
       })
       const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
       const list = Array.isArray(out?.data) ? out.data : []
+      if (list.length) upsertInsumosCache(list)
       const exact = list.filter((i) => getInsumoBarcodes(i).includes(codigo))
       return exact.length ? exact : list
     },
-    [apiJson]
+    [apiJson, readCachedInsumosByCodigo, upsertInsumosCache]
   )
 
   const lookupInsumosByCodigos = React.useCallback(
@@ -2364,14 +2443,26 @@ export function InsumosModule() {
       const list = Array.isArray(codigosBarras) ? codigosBarras : []
       const cleaned = Array.from(new Set(list.map((v) => String(v || '').trim()).filter(Boolean)))
       if (!cleaned.length) return []
+      const cachedItems = cleaned.flatMap((codigo) => readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade }))
+      const cachedCodes = new Set(cachedItems.flatMap((item) => getInsumoBarcodes(item)))
+      const missingCodes = cleaned.filter((codigo) => !cachedCodes.has(codigo))
+      if (!missingCodes.length) return cachedItems
       const params = new URLSearchParams({ unidade: ctxUnidade })
       const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos/lookup?${params.toString()}`, {
         method: 'POST',
-        body: { codigos: cleaned }
+        body: { codigos: missingCodes }
       })
-      return Array.isArray(out?.data) ? out.data : []
+      const fetched = Array.isArray(out?.data) ? out.data : []
+      if (fetched.length) upsertInsumosCache(fetched)
+      const deduped = new Map<string, Insumo>()
+      for (const item of [...cachedItems, ...fetched]) {
+        const key = String(item?.registro || '').trim() || getInsumoBarcodes(item).join('|')
+        if (!key) continue
+        deduped.set(key, item)
+      }
+      return Array.from(deduped.values())
     },
-    [apiJson]
+    [apiJson, readCachedInsumosByCodigo, upsertInsumosCache]
   )
 
   React.useEffect(() => {
@@ -2387,6 +2478,15 @@ export function InsumosModule() {
       return
     }
     const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
+    const cached = readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade })
+    if (cached.length) {
+      setQuickLookupLoading(false)
+      setQuickLookupError(null)
+      setQuickLookupItems(cached)
+      setQuickLookupCode(codigo)
+      setQuickLookupCtxUnidade(ctxUnidade)
+      return
+    }
     const token = ++quickLookupTokenRef.current
     setQuickLookupLoading(true)
     setQuickLookupError(null)
@@ -2418,7 +2518,7 @@ export function InsumosModule() {
 	    }, 250)
 
     return () => window.clearTimeout(t)
-  }, [canUseApi, isAuthed, lookupInsumosByCodigo, quickCodigo, quickOp, transferFrom, unidade])
+  }, [canUseApi, isAuthed, lookupInsumosByCodigo, quickCodigo, quickOp, readCachedInsumosByCodigo, transferFrom, unidade])
 
   const createLookupApplyPrefill = React.useCallback((items: Insumo[]) => {
     const it = Array.isArray(items) && items.length ? items[0] : null
@@ -2465,6 +2565,14 @@ export function InsumosModule() {
       setCreateLookupItems([])
       return
     }
+    const cached = readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: unidade })
+    if (cached.length) {
+      setCreateLookupLoading(false)
+      setCreateLookupError(null)
+      setCreateLookupItems(cached)
+      createLookupApplyPrefill(cached)
+      return
+    }
     const token = ++createLookupTokenRef.current
     setCreateLookupLoading(true)
     setCreateLookupError(null)
@@ -2486,7 +2594,7 @@ export function InsumosModule() {
 	      })()
 	    }, 250)
     return () => window.clearTimeout(t)
-  }, [canUseApi, createCodigo, createLookupApplyPrefill, createOpen, isAuthed, lookupInsumosByCodigo, unidade])
+  }, [canUseApi, createCodigo, createLookupApplyPrefill, createOpen, isAuthed, lookupInsumosByCodigo, readCachedInsumosByCodigo, unidade])
 
   React.useEffect(() => {
     if (!quickOp) return
@@ -3342,6 +3450,22 @@ export function InsumosModule() {
     setEditOpen(true)
   }, [getPolicyForItem])
 
+  const openMovementEditDialog = React.useCallback((m: Movimentacao) => {
+    const movementId = String(m?.id || '').trim()
+    if (!movementId) {
+      toast.error('Movimentação sem identificador para edição.')
+      return
+    }
+    const tipo = normalizeMovimentacaoTipo(m?.tipo)
+    setEditMovTarget(m)
+    setEditMovQuantidade(String(Math.max(1, Number(m?.quantidade) || 1)))
+    setEditMovNovoEstoque(String(Number.isFinite(Number(m?.estoqueNovo)) ? Number(m.estoqueNovo) : 0))
+    setEditMovObservacoes(m?.transferId ? extractTransferMovementNote(m?.observacoes) : String(m?.observacoes || ''))
+    setEditMovMotivo(String(m?.motivo || ''))
+    if (tipo !== 'AJUSTE') setEditMovMotivo('')
+    setEditMovOpen(true)
+  }, [])
+
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
       if (!isAuthed) {
@@ -4059,6 +4183,84 @@ export function InsumosModule() {
 	    [autoSyncSuspendedUntil, insightsLoaded, loadInsights, loadOverview, overviewLoaded]
 	  )
 
+  const saveMovementEdit = React.useCallback(async () => {
+    const target = editMovTarget
+    const movementId = String(target?.id || '').trim()
+    if (!movementId) {
+      toast.error('Movimentação inválida.')
+      return
+    }
+    if (!canUseApi || !isAuthed) return
+
+    const tipo = normalizeMovimentacaoTipo(target?.tipo)
+    const body: Record<string, unknown> = {
+      observacoes: editMovObservacoes.trim()
+    }
+
+    if (String(target?.transferId || '').trim()) {
+      const quantidade = parseInt(editMovQuantidade, 10)
+      if (!Number.isFinite(quantidade) || quantidade < 1) {
+        toast.error('Informe uma quantidade válida.')
+        return
+      }
+      body.quantidade = quantidade
+    } else if (tipo === 'AJUSTE') {
+      const estoqueNovo = parseInt(editMovNovoEstoque, 10)
+      if (!Number.isFinite(estoqueNovo) || estoqueNovo < 0) {
+        toast.error('Informe o novo estoque.')
+        return
+      }
+      const motivo = editMovMotivo.trim()
+      if (!motivo) {
+        toast.error('Informe o motivo do ajuste.')
+        return
+      }
+      body.estoqueNovo = estoqueNovo
+      body.motivo = motivo
+    } else {
+      const quantidade = parseInt(editMovQuantidade, 10)
+      if (!Number.isFinite(quantidade) || quantidade < 1) {
+        toast.error('Informe uma quantidade válida.')
+        return
+      }
+      body.quantidade = quantidade
+    }
+
+    setEditMovSaving(true)
+    try {
+      await mutateJson<{ success?: boolean }>(
+        `/movimentacoes/${encodeURIComponent(movementId)}?unidade=${encodeURIComponent(String(target?.unidade || unidade || '').trim() || unidade)}`,
+        {
+          method: 'PUT',
+          body,
+          queueLabel: 'Edição de movimentação'
+        }
+      )
+      toast.success('Lançamento atualizado.')
+      setEditMovOpen(false)
+      setEditMovTarget(null)
+      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
+      schedulePostMutationRefresh({ overview: true, insights: true })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setEditMovSaving(false)
+    }
+  }, [
+    canUseApi,
+    editMovMotivo,
+    editMovNovoEstoque,
+    editMovObservacoes,
+    editMovQuantidade,
+    editMovTarget,
+    isAuthed,
+    loadMovimentacoes,
+    mutateJson,
+    refreshInsumos,
+    schedulePostMutationRefresh,
+    unidade
+  ])
+
   const runQuickAction = React.useCallback(
     async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
       if (!canUseApi || !isAuthed) return false
@@ -4395,45 +4597,6 @@ export function InsumosModule() {
   }, [canUseApi, insumosLimite, insumosQuery, isAuthed, loadInsumosPaged, unidade])
 
   const filteredInsumos = insumos
-
-  const insumosCacheRef = React.useRef<Map<string, Map<string, Insumo>>>(new Map())
-  const [insumosCacheVersion, setInsumosCacheVersion] = React.useState(0)
-
-  const upsertInsumosCache = React.useCallback((items: Insumo[]) => {
-    if (!Array.isArray(items) || !items.length) return
-    let changed = false
-    for (const it of items) {
-      const codes = getInsumoBarcodes(it)
-      if (!codes.length) continue
-      const registro = String(it?.registro || '').trim() || `__no_registro__:${codes[0]}`
-      for (const codigo of codes) {
-        let byRegistro = insumosCacheRef.current.get(codigo)
-        if (!byRegistro) {
-          byRegistro = new Map<string, Insumo>()
-          insumosCacheRef.current.set(codigo, byRegistro)
-        }
-        const prev = byRegistro.get(registro)
-        if (!prev) {
-          byRegistro.set(registro, it)
-          changed = true
-          continue
-        }
-        const merged: Insumo = {
-          ...prev,
-          ...it,
-          estoques: { ...(prev.estoques || {}), ...(it.estoques || {}) },
-          statusValidade: it.statusValidade || prev.statusValidade
-        }
-        byRegistro.set(registro, merged)
-        changed = true
-      }
-    }
-    if (changed) setInsumosCacheVersion((v) => v + 1)
-  }, [])
-
-  React.useEffect(() => {
-    upsertInsumosCache(insumos || [])
-  }, [insumos, upsertInsumosCache])
 
   const selectedInsumo = React.useMemo(() => {
     const code = selectedCodigoBarras.trim()
@@ -6236,7 +6399,7 @@ export function InsumosModule() {
         open={quickOp != null}
         onOpenChange={(open) => {
           if (open) return
-          resetQuickOperationState({ keepFeedback: !!quickActionFeedback })
+          resetQuickOperationState()
           setQuickOp(null)
         }}
       >
@@ -6546,6 +6709,18 @@ export function InsumosModule() {
                 onClose={() => setQuickScanOpen(false)}
               />
             ) : null}
+
+            {quickActionFeedback ? (
+              <div
+                className={`rounded-lg border px-3 py-2 text-sm ${
+                  quickActionFeedback.type === 'success'
+                    ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+                    : 'border-red-400/40 bg-red-500/10 text-red-100'
+                }`}
+              >
+                {quickActionFeedback.message}
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter>
@@ -6565,7 +6740,6 @@ export function InsumosModule() {
                   const ok = await runTransfer()
                   if (ok) {
                     resetQuickOperationState({ keepFeedback: true })
-                    setQuickOp(null)
                   }
                 }}
                 disabled={quickActionLoading || !isAuthed}
@@ -6594,7 +6768,6 @@ export function InsumosModule() {
                   const ok = await runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')
                   if (ok) {
                     resetQuickOperationState({ keepFeedback: true })
-                    setQuickOp(null)
                   }
                 }}
                 disabled={quickActionLoading || !isAuthed}
@@ -6615,28 +6788,99 @@ export function InsumosModule() {
       </Dialog>
 
       <Dialog
-        open={!!quickActionFeedback}
+        open={editMovOpen}
         onOpenChange={(open) => {
-          if (!open) setQuickActionFeedback(null)
+          setEditMovOpen(open)
+          if (!open) {
+            setEditMovTarget(null)
+            setEditMovSaving(false)
+          }
         }}
       >
         <DialogContent className={`${dialogSmallClass} dark bg-corporate-900 border-white/10 text-white`}>
           <DialogHeader>
             <DialogTitle className="text-white">
-              {quickActionFeedback?.type === 'success' ? 'Sucesso' : 'Falha'}
+              {(() => {
+                const tipo = normalizeMovimentacaoTipo(editMovTarget?.tipo)
+                if (String(editMovTarget?.transferId || '').trim()) return 'Editar transferência'
+                if (tipo === 'AJUSTE') return 'Editar ajuste'
+                if (tipo.includes('ENTRADA')) return 'Editar entrada'
+                if (tipo.includes('SAIDA')) return 'Editar saída'
+                return 'Editar lançamento'
+              })()}
             </DialogTitle>
             <DialogDescription className="text-blue-100/70">
-              {quickActionFeedback?.type === 'success'
-                ? 'A operacao foi registrada.'
-                : 'Nao foi possivel concluir a operacao.'}
+              Edite os dados do lançamento sem abrir o cadastro do insumo.
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm text-blue-50">
-            {quickActionFeedback?.message || '-'}
+
+          <div className="space-y-3">
+            <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80">
+              <div><span className="text-blue-200/60">Produto:</span> {String(editMovTarget?.produto || '-')}</div>
+              <div><span className="text-blue-200/60">Data:</span> {fmtDate(editMovTarget?.dataHora) || '-'}</div>
+              <div>
+                <span className="text-blue-200/60">Unidade:</span>{' '}
+                {String(editMovTarget?.transferId || '').trim()
+                  ? `${unidadeLabel(String(editMovTarget?.unidadeOrigem || ''))} → ${unidadeLabel(String(editMovTarget?.unidadeDestino || ''))}`
+                  : unidadeLabel(String(editMovTarget?.unidade || unidade))}
+              </div>
+              {editMovTarget?.registroInsumo ? (
+                <div><span className="text-blue-200/60">Registro:</span> <span className="font-mono">{String(editMovTarget.registroInsumo)}</span></div>
+              ) : null}
+            </div>
+
+            {normalizeMovimentacaoTipo(editMovTarget?.tipo) === 'AJUSTE' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Novo estoque</div>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={editMovNovoEstoque}
+                    onChange={(e) => setEditMovNovoEstoque(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-blue-200/70 mb-1">Motivo</div>
+                  <Input value={editMovMotivo} onChange={(e) => setEditMovMotivo(e.target.value)} />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
+                <Input
+                  type="number"
+                  min={1}
+                  value={editMovQuantidade}
+                  onChange={(e) => setEditMovQuantidade(e.target.value)}
+                />
+              </div>
+            )}
+
+            <div>
+              <div className="text-xs text-blue-200/70 mb-1">Observações</div>
+              <Textarea
+                value={editMovObservacoes}
+                onChange={(e) => setEditMovObservacoes(e.target.value)}
+                placeholder="opcional"
+                rows={3}
+              />
+            </div>
           </div>
+
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setQuickActionFeedback(null)}>
-              Fechar
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setEditMovOpen(false)
+                setEditMovTarget(null)
+              }}
+              disabled={editMovSaving}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={() => void saveMovementEdit()} disabled={editMovSaving || !isAuthed}>
+              {editMovSaving ? 'Salvando...' : 'Salvar lançamento'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -9381,11 +9625,8 @@ export function InsumosModule() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => {
-                              if (insumo) openEditDialog(insumo)
-                              else if (codigoBarras) openInsumosListModal({ codigoBarras })
-                            }}
-                            disabled={!isAuthed || !codigoBarras}
+                            onClick={() => openMovementEditDialog(m)}
+                            disabled={!isAuthed || !String(m.id || '').trim()}
                           >
                             Editar
                           </Button>

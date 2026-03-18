@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, CircleSlash, Pencil, Plus, Save, Shield, X } from 'lucide-react'
+import { CalendarX2, ChevronLeft, ChevronRight, Pencil, Plus, Save, Shield, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
@@ -40,6 +40,7 @@ type EscalaProfessional = {
   phone: string
   email: string
   instagram: string
+  color: string
 }
 
 type EscalaScheduleEntry = { date: string; unit: string; professional: string }
@@ -55,6 +56,7 @@ const NEW_TEAM_MEMBER_KEY = '__new__'
 const STATUS_OPTIONS = ['Ativo', 'Inativo']
 const UNIT_OPTIONS = ['BarraShoppingSul', 'Novo Hamburgo']
 const ROLE_OPTIONS = ['Diretor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
+const DEFAULT_TEAM_COLOR = '#ec4899'
 
 function formatMonthLabel(value: string) {
   if (MONTH_LABELS.has(value)) return MONTH_LABELS.get(value) as string
@@ -130,6 +132,49 @@ function normalizeText(value: string) {
   return String(value || '').trim().toLowerCase()
 }
 
+function normalizeHexColor(value: string) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return ''
+  const normalized = raw.startsWith('#') ? raw : `#${raw}`
+  if (/^#[0-9a-f]{6}$/.test(normalized)) return normalized
+  if (/^#[0-9a-f]{3}$/.test(normalized)) {
+    const [, r, g, b] = normalized
+    return `#${r}${r}${g}${g}${b}${b}`
+  }
+  return ''
+}
+
+function hexToRgba(value: string, alpha: number) {
+  const hex = normalizeHexColor(value)
+  if (!hex) return `rgba(236, 72, 153, ${alpha})`
+  const red = Number.parseInt(hex.slice(1, 3), 16)
+  const green = Number.parseInt(hex.slice(3, 5), 16)
+  const blue = Number.parseInt(hex.slice(5, 7), 16)
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
+}
+
+function formatBrazilPhone(value: string) {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (!digits) return ''
+  const normalized = (digits.startsWith('55') ? digits : `55${digits}`).slice(0, 13)
+  const country = normalized.slice(0, 2)
+  const area = normalized.slice(2, 4)
+  const subscriber = normalized.slice(4)
+  let formatted = `+${country}`
+  if (area) {
+    formatted += ` (${area}`
+    if (area.length === 2) formatted += ')'
+  }
+  if (subscriber) {
+    const prefixLength = subscriber.length > 8 ? 5 : Math.min(4, subscriber.length)
+    const prefix = subscriber.slice(0, prefixLength)
+    const suffix = subscriber.slice(prefixLength)
+    formatted += ` ${prefix}`
+    if (suffix) formatted += `-${suffix}`
+  }
+  return formatted
+}
+
 function normalizeUnitKey(value: string) {
   return String(value || '')
     .normalize('NFD')
@@ -172,7 +217,8 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
       nickname: '',
       phone: '',
       email: '',
-      instagram: ''
+      instagram: '',
+      color: '',
     })
   })
   return Array.from(map.values())
@@ -206,6 +252,7 @@ function normalizeProfessionalForCompare(prof: EscalaProfessional | null) {
     phone: String(prof.phone || '').trim(),
     email: String(prof.email || '').trim(),
     instagram: String(prof.instagram || '').trim(),
+    color: normalizeHexColor(prof.color),
   }
 }
 
@@ -227,17 +274,26 @@ function hashString(value: string) {
   return Math.abs(hash)
 }
 
-function getProfessionalBadgeStyle(name: string, mode: 'default' | 'active' | 'muted' = 'default') {
+function getProfessionalBadgeStyle(
+  name: string,
+  mode: 'default' | 'active' | 'muted' = 'default',
+  accentColor?: string,
+) {
+  const color = normalizeHexColor(accentColor || '')
   const hash = hashString(name)
   const hue = hash % 360
-  const baseText = `hsl(${hue} 88% 92%)`
+  const baseText = color ? 'white' : `hsl(${hue} 88% 92%)`
 
   if (mode === 'active') {
     return {
-      background: `linear-gradient(135deg, hsla(${hue}, 82%, 56%, 0.38), hsla(${(hue + 28) % 360}, 82%, 58%, 0.26))`,
-      borderColor: `hsla(${hue}, 88%, 74%, 0.9)`,
+      background: color
+        ? `linear-gradient(135deg, ${hexToRgba(color, 0.55)}, ${hexToRgba(color, 0.28)})`
+        : `linear-gradient(135deg, hsla(${hue}, 82%, 56%, 0.38), hsla(${(hue + 28) % 360}, 82%, 58%, 0.26))`,
+      borderColor: color ? hexToRgba(color, 0.92) : `hsla(${hue}, 88%, 74%, 0.9)`,
       color: 'white',
-      boxShadow: `0 0 0 1px hsla(${hue}, 90%, 74%, 0.45), 0 16px 28px hsla(${hue}, 90%, 20%, 0.28), inset 0 1px 0 rgba(255,255,255,0.18)`,
+      boxShadow: color
+        ? `0 0 0 1px ${hexToRgba(color, 0.45)}, 0 16px 28px ${hexToRgba(color, 0.28)}, inset 0 1px 0 rgba(255,255,255,0.18)`
+        : `0 0 0 1px hsla(${hue}, 90%, 74%, 0.45), 0 16px 28px hsla(${hue}, 90%, 20%, 0.28), inset 0 1px 0 rgba(255,255,255,0.18)`,
       opacity: 1,
     } as React.CSSProperties
   }
@@ -253,20 +309,29 @@ function getProfessionalBadgeStyle(name: string, mode: 'default' | 'active' | 'm
   }
 
   return {
-    background: `linear-gradient(135deg, hsla(${hue}, 78%, 56%, 0.22), hsla(${(hue + 24) % 360}, 78%, 58%, 0.14))`,
-    borderColor: `hsla(${hue}, 84%, 72%, 0.4)`,
+    background: color
+      ? `linear-gradient(135deg, ${hexToRgba(color, 0.28)}, ${hexToRgba(color, 0.16)})`
+      : `linear-gradient(135deg, hsla(${hue}, 78%, 56%, 0.22), hsla(${(hue + 24) % 360}, 78%, 58%, 0.14))`,
+    borderColor: color ? hexToRgba(color, 0.5) : `hsla(${hue}, 84%, 72%, 0.4)`,
     color: baseText,
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+    boxShadow: color
+      ? `inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px ${hexToRgba(color, 0.12)}`
+      : 'inset 0 1px 0 rgba(255,255,255,0.05)',
     opacity: 1,
   } as React.CSSProperties
 }
 
-function getProfessionalCardHighlightStyle(name: string) {
+function getProfessionalCardHighlightStyle(name: string, accentColor?: string) {
+  const color = normalizeHexColor(accentColor || '')
   const hue = hashString(name) % 360
   return {
-    borderColor: `hsla(${hue}, 88%, 74%, 0.72)`,
-    background: `linear-gradient(180deg, hsla(${hue}, 86%, 54%, 0.12), rgba(15, 23, 42, 0.34))`,
-    boxShadow: `0 0 0 1px hsla(${hue}, 88%, 74%, 0.25), 0 18px 34px hsla(${hue}, 90%, 18%, 0.24), inset 0 1px 0 rgba(255,255,255,0.06)`,
+    borderColor: color ? hexToRgba(color, 0.78) : `hsla(${hue}, 88%, 74%, 0.72)`,
+    background: color
+      ? `linear-gradient(180deg, ${hexToRgba(color, 0.18)}, rgba(15, 23, 42, 0.34))`
+      : `linear-gradient(180deg, hsla(${hue}, 86%, 54%, 0.12), rgba(15, 23, 42, 0.34))`,
+    boxShadow: color
+      ? `0 0 0 1px ${hexToRgba(color, 0.24)}, 0 18px 34px ${hexToRgba(color, 0.24)}, inset 0 1px 0 rgba(255,255,255,0.06)`
+      : `0 0 0 1px hsla(${hue}, 88%, 74%, 0.25), 0 18px 34px hsla(${hue}, 90%, 18%, 0.24), inset 0 1px 0 rgba(255,255,255,0.06)`,
   } as React.CSSProperties
 }
 
@@ -314,7 +379,37 @@ function createEmptyProfessional(selectedUnit?: string): EscalaProfessional {
     phone: '',
     email: '',
     instagram: '',
+    color: '',
   }
+}
+
+function NoAttendanceChip({
+  date,
+  blocked,
+  label,
+}: {
+  date: string
+  blocked?: boolean
+  label?: string
+}) {
+  const text = String(label || 'Sem atendimento').trim() || 'Sem atendimento'
+
+  return (
+    <div
+      className={cn(
+        'inline-flex min-h-8 w-fit max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
+        blocked
+          ? 'border-rose-200/35 bg-rose-500/14 text-rose-50'
+          : 'border-white/10 bg-white/5 text-slate-200/80',
+      )}
+      data-testid={`escala-no-attendance-icon-${date}`}
+      aria-label={text}
+      title={text}
+    >
+      <CalendarX2 className="h-3.5 w-3.5" />
+      {label ? <span className="truncate">{text}</span> : null}
+    </div>
+  )
 }
 
 type MultiSelectFieldProps = {
@@ -516,6 +611,10 @@ export function EscalaProfissionaisModule() {
   const visibleInjectors = useMemo(() => professionalsByUnit.filter(isVisibleInjector), [professionalsByUnit])
   const activeInjectors = useMemo(() => visibleInjectors.filter(isActiveInjector), [visibleInjectors])
   const inactiveInjectors = useMemo(() => visibleInjectors.filter(isInactiveInjector), [visibleInjectors])
+  const professionalMap = useMemo(
+    () => new Map(mergedProfessionals.map((prof) => [prof.name, prof])),
+    [mergedProfessionals],
+  )
   const professionalOptions = useMemo(() => uniqueNames(activeInjectors.map((prof) => prof.name)), [activeInjectors])
   const headerProfessionalOptions = useMemo(
     () => uniqueNames(selectedProfessional !== ALL_PROFESSIONALS_OPTION ? [...professionalOptions, selectedProfessional] : professionalOptions),
@@ -587,7 +686,8 @@ export function EscalaProfissionaisModule() {
         normalizedDraft.nickname ||
         normalizedDraft.phone ||
         normalizedDraft.email ||
-        normalizedDraft.instagram
+        normalizedDraft.instagram ||
+        normalizedDraft.color
       )
     }
     const base = normalizeProfessionalForCompare(selectedTeamMemberBase)
@@ -869,7 +969,13 @@ export function EscalaProfissionaisModule() {
         ...prev,
         [draftKey]: {
           ...current,
-          [field]: field === 'units' ? parseUnitsInput(value) : value
+          [field]: field === 'units'
+            ? parseUnitsInput(value)
+            : field === 'phone'
+              ? formatBrazilPhone(value)
+              : field === 'color'
+                ? normalizeHexColor(value)
+                : value
         }
       }
     })
@@ -961,6 +1067,7 @@ export function EscalaProfissionaisModule() {
       phone: normalizedDraft.phone || '',
       email: normalizedDraft.email || '',
       instagram: normalizedDraft.instagram || '',
+      color: normalizedDraft.color || '',
     }
     const res = teamFormMode === 'add'
       ? await addEscalaProfessional(payload)
@@ -1064,16 +1171,20 @@ export function EscalaProfissionaisModule() {
                 const isAdjacentMonth = cell.monthOffset !== 0
                 const isPrevMonthShortcut = index === firstCurrentMonthIndex - 1
                 const isNextMonthShortcut = cell.monthOffset === 1 && cell.day === 1
+                const selectedProfessionalColor = selectedProfessional !== ALL_PROFESSIONALS_OPTION
+                  ? professionalMap.get(selectedProfessional)?.color
+                  : ''
                 const adjacentPosition = cell.monthOffset === -1
                   ? index + 1
                   : cell.monthOffset === 1
                     ? cell.day
                     : 0
                 const adjacentTotal = cell.monthOffset === -1 ? previousMonthCellsCount : nextMonthCellsCount
-                const blockReason = dayBlockReasons[cell.date] || closedReasonByDate.get(cell.date) || ''
-                const blockBadgeLabel = String(closedReasonByDate.get(cell.date) || blockReason || '').trim() || 'Sem Atendimento'
+                const localBlockReason = String(dayBlockReasons[cell.date] || '').trim()
+                const blockReason = localBlockReason || closedReasonByDate.get(cell.date) || ''
+                const blockBadgeLabel = String(blockReason || '').trim() || 'Sem atendimento'
                 const trackedCardStyle = matchesSelectedProfessional
-                  ? getProfessionalCardHighlightStyle(selectedProfessional)
+                  ? getProfessionalCardHighlightStyle(selectedProfessional, selectedProfessionalColor)
                   : matchesHighlightMode && highlightMode === 'scheduled'
                     ? {
                         borderColor: 'rgba(125, 211, 252, 0.68)',
@@ -1175,6 +1286,7 @@ export function EscalaProfissionaisModule() {
                               {displayEntryNames.map((name) => {
                                 const isActiveSelection = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name === selectedProfessional
                                 const isMuted = selectedProfessional !== ALL_PROFESSIONALS_OPTION && name !== selectedProfessional
+                                const accentColor = professionalMap.get(name)?.color
                                 return (
                                   <button
                                     key={`${cell.date}__${name}`}
@@ -1186,7 +1298,7 @@ export function EscalaProfissionaisModule() {
                                       isActiveSelection && 'escala-entry-pill--active',
                                       isMuted && 'escala-entry-pill--muted',
                                     )}
-                                    style={getProfessionalBadgeStyle(name, isActiveSelection ? 'active' : (isMuted ? 'muted' : 'default'))}
+                                    style={getProfessionalBadgeStyle(name, isActiveSelection ? 'active' : (isMuted ? 'muted' : 'default'), accentColor)}
                                     onClick={(event) => {
                                       event.stopPropagation()
                                       focusProfessional(name)
@@ -1200,21 +1312,15 @@ export function EscalaProfissionaisModule() {
                             </div>
                           ) : null}
                           {!isAdjacentMonth && !displayEntryNames.length && isBlocked ? (
-                            <Badge variant="outline" className="max-w-full border-rose-200/35 bg-rose-500/16 px-1.5 py-0.5 text-[10px] text-rose-50">
-                              {blockBadgeLabel}
-                            </Badge>
+                            <NoAttendanceChip
+                              date={cell.date}
+                              blocked
+                              label={localBlockReason ? blockBadgeLabel : undefined}
+                            />
                           ) : null}
                           {!isAdjacentMonth && !displayEntryNames.length && !isBlocked && (
-                            <div
-                              className={cn(
-                                'inline-flex w-fit items-center rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-slate-300/80',
-                                highlightMode === 'empty' && isEmptyDay && 'border-amber-300/35 bg-amber-400/12 text-amber-50'
-                              )}
-                              data-testid={`escala-empty-day-icon-${cell.date}`}
-                              aria-label="Sem atendimento"
-                              title="Sem atendimento"
-                            >
-                              <CircleSlash className="h-3.5 w-3.5" />
+                            <div className={cn(highlightMode === 'empty' && isEmptyDay && '[&_div]:border-amber-300/35 [&_div]:bg-amber-400/12 [&_div]:text-amber-50')}>
+                              <NoAttendanceChip date={cell.date} label="Sem atendimento" />
                             </div>
                           )}
                           {!isAdjacentMonth && holidayLabels.length ? (
@@ -1308,7 +1414,7 @@ export function EscalaProfissionaisModule() {
                             'rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all',
                             isCurrent ? 'text-white shadow-[0_14px_26px_rgba(15,23,42,0.24)]' : 'text-slate-200/80 hover:text-white'
                           )}
-                          style={getProfessionalBadgeStyle(prof.name, isCurrent ? 'active' : 'default')}
+                          style={getProfessionalBadgeStyle(prof.name, isCurrent ? 'active' : 'default', prof.color)}
                           onClick={() => selectTeamMember(prof.name)}
                           data-testid={`escala-team-member-${slugifySegment(prof.name)}`}
                         >
@@ -1449,9 +1555,46 @@ export function EscalaProfissionaisModule() {
                         <Input
                           value={selectedTeamMemberDraft.phone}
                           onChange={(event) => updateSelectedTeamMemberField('phone', event.target.value)}
+                          placeholder="+55 (51) 99999-9999"
                           className="h-10 border-white/10 bg-white/[0.05] text-sm text-white placeholder:text-slate-500"
                           data-testid="escala-team-field-phone"
                         />
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+                          INSTAGRAM
+                        </span>
+                        <Input
+                          value={selectedTeamMemberDraft.instagram}
+                          onChange={(event) => updateSelectedTeamMemberField('instagram', event.target.value)}
+                          className="h-10 border-white/10 bg-white/[0.05] text-sm text-white placeholder:text-slate-500"
+                          data-testid="escala-team-field-instagram"
+                        />
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-300/65">
+                          COR
+                        </span>
+                        <div className="flex h-10 items-center gap-3 rounded-md border border-white/10 bg-white/[0.05] px-3">
+                          <input
+                            type="color"
+                            value={normalizeHexColor(selectedTeamMemberDraft.color) || DEFAULT_TEAM_COLOR}
+                            onChange={(event) => updateSelectedTeamMemberField('color', event.target.value)}
+                            className="h-7 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                            data-testid="escala-team-field-color"
+                            aria-label="Escolher cor do injetor"
+                          />
+                          <div
+                            className="h-5 w-5 rounded-full border border-white/20"
+                            style={{ background: normalizeHexColor(selectedTeamMemberDraft.color) || DEFAULT_TEAM_COLOR }}
+                            aria-hidden="true"
+                          />
+                          <span className="text-xs text-slate-300/75">
+                            {normalizeHexColor(selectedTeamMemberDraft.color) || DEFAULT_TEAM_COLOR}
+                          </span>
+                        </div>
                       </label>
 
                     </div>
@@ -1556,7 +1699,7 @@ export function EscalaProfissionaisModule() {
                         'flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-2 py-1.5 text-xs transition-all',
                         checked ? 'shadow-[0_10px_24px_rgba(15,23,42,0.18)]' : 'bg-white/[0.03]',
                       )}
-                      style={getProfessionalBadgeStyle(name, checked ? 'active' : 'default')}
+                      style={getProfessionalBadgeStyle(name, checked ? 'active' : 'default', professionalMap.get(name)?.color)}
                     >
                       <Checkbox
                         checked={checked}
