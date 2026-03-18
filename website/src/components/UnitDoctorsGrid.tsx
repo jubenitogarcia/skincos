@@ -276,16 +276,20 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                                                 bookingUrl: bookingHref,
                                                             })
                                                         }
+                                                        aria-label={`Agendar com ${fullName}`}
+                                                        title="Agendar"
                                                     >
-                                                        Agendar
+                                                        {bookingIcon()}
                                                     </Link>
                                                     {instagramHandle ? (
                                                         <button
                                                             type="button"
                                                             className="unitDoctorsCompact__tooltipAction"
                                                             onClick={openInstagram}
+                                                            aria-label={`Abrir Instagram de ${fullName}`}
+                                                            title="Instagram"
                                                         >
-                                                            Instagram
+                                                            <InstagramIcon size={14} />
                                                         </button>
                                                     ) : null}
                                                 </div>
