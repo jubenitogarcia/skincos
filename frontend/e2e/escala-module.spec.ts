@@ -183,7 +183,7 @@ test.describe('escala', () => {
     await expect.poll(() => closedAddPayloads).toEqual([
       { date: '2026-03-15', unit: 'Novo Hamburgo', reason: 'Manutenção' }
     ])
-    await expect(page.getByTestId('escala-day-2026-03-15')).toContainText('Manutenção')
+    await expect(page.getByTestId('escala-no-attendance-icon-2026-03-15')).toBeVisible()
     await expect(page.getByTestId('escala-day-2026-03-15')).not.toContainText('Dra. Ana')
 
     await page.getByTestId('escala-day-2026-03-15').click()
