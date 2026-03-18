@@ -4109,6 +4109,12 @@ video.heroMediaEl {
   flex: 0 0 auto;
 }
 
+.unitDoctorsCompact__tooltipAction svg,
+.unitDoctorsCompact__tooltipAction path,
+.unitDoctorsCompact__tooltipAction span {
+  cursor: pointer;
+}
+
 .unitDoctorsCompact__tooltipAction:hover {
   background: rgba(255, 255, 255, 0.16);
   border-color: rgba(255, 255, 255, 0.28);
