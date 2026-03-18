@@ -40,7 +40,7 @@ export default async function HomePage() {
       <h1 className="srOnly">Espaço Facial</h1>
 
       <section className="hero" aria-label="Destaque">
-        <HeroMedia initialItems={heroItems} />
+        <HeroMedia initialItems={heroItems} initialVariant={variant} />
         <div className="heroOverlay" />
       </section>
 
