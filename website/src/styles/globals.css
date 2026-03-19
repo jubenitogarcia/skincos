@@ -1421,6 +1421,10 @@ button:focus-visible {
 .bookingFlow__doctorBadgeWrap {
   position: relative;
   flex: 0 0 auto;
+  width: 108px;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
 }
 
 .bookingFlow__doctorBadgeWrap::after {
@@ -1438,6 +1442,9 @@ button:focus-visible {
   padding: 0;
   background: transparent;
   cursor: pointer;
+  width: 100%;
+  display: inline-flex;
+  justify-content: center;
 }
 
 .bookingFlow__doctorBadgeAvatar {
@@ -1501,7 +1508,7 @@ button:focus-visible {
 }
 
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap {
-  padding-top: 6px;
+  padding-top: 0;
 }
 
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap:hover,
@@ -1542,6 +1549,49 @@ button:focus-visible {
   font-weight: 900;
   line-height: 1.1;
   font-size: 11px;
+}
+
+.bookingFlow__doctorMeta {
+  width: 100%;
+}
+
+.bookingFlow__doctorNameRow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  min-width: 0;
+}
+
+.bookingFlow__doctorNameLabel {
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.08;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.bookingFlow__doctorInstagramBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #111;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.bookingFlow__doctorInstagramBtn:hover {
+  background: rgba(17, 17, 17, 0.06);
 }
 
 .bookingFlow__doctorTooltipSub {
@@ -1806,6 +1856,7 @@ button:focus-visible {
 
 .bookingFlow__picker {
   --picker-arrow-zone: 46px;
+  --picker-arrow-inset: 6px;
   --picker-edge-height: 84px;
   position: relative;
   margin-top: 4px;
@@ -1829,16 +1880,16 @@ button:focus-visible {
   margin-left: 0;
   margin-right: 0;
   margin-top: 0;
-  padding-left: 0;
-  padding-right: 0;
+  padding-left: 24px;
+  padding-right: 24px;
   padding-top: 8px;
   padding-bottom: 10px;
-  scroll-padding-left: 0;
-  scroll-padding-right: 0;
+  scroll-padding-left: 24px;
+  scroll-padding-right: 24px;
 }
 
 .bookingFlow__scrollWindow--doctor {
-  padding-top: 8px !important;
+  padding-top: 18px !important;
   padding-bottom: 16px !important;
 }
 
@@ -1873,12 +1924,12 @@ button:focus-visible {
 }
 
 .bookingFlow__hoverZone--left {
-  left: calc(var(--picker-arrow-zone) * -1);
+  left: var(--picker-arrow-inset);
   justify-content: center;
 }
 
 .bookingFlow__hoverZone--right {
-  right: calc(var(--picker-arrow-zone) * -1);
+  right: var(--picker-arrow-inset);
   justify-content: center;
 }
 
@@ -4046,15 +4097,22 @@ video.heroMediaEl {
 
 .unitDoctorsCompact__item {
   flex: 0 0 auto;
-  width: 96px;
+  width: 148px;
   display: grid;
   justify-items: center;
-  gap: 8px;
+  gap: 10px;
   text-align: center;
 }
 
 .unitDoctorsCompact__badgeLink {
   text-decoration: none;
+}
+
+.unitDoctorsCompact__badgeLink:hover .bookingFlow__doctorBadgeAvatar,
+.unitDoctorsCompact__badgeLink:focus-visible .bookingFlow__doctorBadgeAvatar {
+  transform: translateY(-2px);
+  border-color: rgba(17, 17, 17, 0.88);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
 }
 
 .unitDoctorsCompact__badgeLink .bookingFlow__doctorBadgeAvatar {
@@ -4068,75 +4126,59 @@ video.heroMediaEl {
   object-fit: cover;
 }
 
+.unitDoctorsCompact__meta {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.unitDoctorsCompact__nameRow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  width: 100%;
+  min-width: 0;
+}
+
 .unitDoctorsCompact__name {
   font-size: 13px;
   font-weight: 900;
   line-height: 1.15;
   letter-spacing: -.03em;
   text-wrap: balance;
-}
-
-.unitDoctorsCompact__tooltip {
-  display: grid;
-  gap: 10px;
-  min-width: 128px;
-  padding: 10px 10px 10px;
-}
-
-.unitDoctorsCompact__tooltipHeader {
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-}
-
-.unitDoctorsCompact__tooltip .bookingFlow__doctorTooltipName {
-  text-align: center;
-  font-size: 12px;
-  line-height: 1.15;
-}
-
-.unitDoctorsCompact__tooltipActions {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-}
-
-.unitDoctorsCompact__tooltipAction {
-  display: inline-grid;
-  justify-items: center;
-  align-content: center;
-  justify-content: center;
-  width: 52px;
-  height: 48px;
+  overflow-wrap: anywhere;
   min-width: 0;
-  flex: 0 0 auto;
-  gap: 5px;
-  padding: 6px 4px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
-  text-decoration: none;
-  font-size: 9.5px;
-  font-weight: 800;
-  line-height: 1;
+}
+
+.unitDoctorsCompact__instagramBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #111;
   cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  flex: 0 0 auto;
 }
 
-.unitDoctorsCompact__tooltipAction svg {
-  width: 14px;
-  height: 14px;
+.unitDoctorsCompact__instagramBtn:hover {
+  background: rgba(17, 17, 17, 0.06);
 }
 
-.unitDoctorsCompact__tooltipAction span {
-  letter-spacing: 0.01em;
-}
-
-.unitDoctorsCompact__tooltipAction:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.28);
-  transform: translateY(-1px);
+.unitDoctorsCompact__bookBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 16px;
+  text-decoration: none;
 }
 
 .pageNarrative {

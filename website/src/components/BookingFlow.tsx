@@ -1217,7 +1217,6 @@ export default function BookingFlow() {
                                                                         </button>
                                                                     ) : null}
                                                                 </div>
-                                                                <div className="bookingFlow__doctorTooltipSub">{unitLabel}</div>
                                                             </>
                                                         }
                                                     >
@@ -1245,6 +1244,28 @@ export default function BookingFlow() {
                                                             </span>
                                                         </button>
                                                     </PortalTooltip>
+                                                    <div className="bookingFlow__doctorMeta">
+                                                        <div className="bookingFlow__doctorNameRow">
+                                                            <span className="bookingFlow__doctorNameLabel">{d.name}</span>
+                                                            {instagramHref ? (
+                                                                <button
+                                                                    type="button"
+                                                                    className="bookingFlow__doctorInstagramBtn"
+                                                                    aria-label={`Abrir Instagram de ${d.name}`}
+                                                                    title="Instagram"
+                                                                    onClick={() =>
+                                                                        openDoctorInstagram({
+                                                                            name: d.name,
+                                                                            handle: d.handle,
+                                                                            instagramUrl: instagramHref,
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    <InstagramIcon size={13} />
+                                                                </button>
+                                                            ) : null}
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -1275,6 +1296,11 @@ export default function BookingFlow() {
                                                     </span>
                                                 </button>
                                             </PortalTooltip>
+                                            <div className="bookingFlow__doctorMeta">
+                                                <div className="bookingFlow__doctorNameRow">
+                                                    <span className="bookingFlow__doctorNameLabel">Sem Preferência</span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </HoverScrollPicker>

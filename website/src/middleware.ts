@@ -30,17 +30,22 @@ export function middleware(req: NextRequest) {
 
     // esfa.co short links -> main site routes
     if (!isPublicAsset(url.pathname) && (host === "esfa.co" || host === "www.esfa.co")) {
-        const pathname = url.pathname.replace(/\/+$/, "") || "/";
+        const pathname = (url.pathname.replace(/\/+$/, "") || "/").toLowerCase();
         const map: Record<string, string> = {
             "/nh": "https://espacofacial.com/novohamburgo",
             "/bss": "https://espacofacial.com/barrashoppingsul",
             "/nh/faleconosco": "https://espacofacial.com/novohamburgo/faleconosco",
             "/bss/faleconosco": "https://espacofacial.com/barrashoppingsul/faleconosco",
+            "/meuespaço": "https://espacofacial.com/MeuEspaço",
         };
 
         const dest = map[pathname];
         if (dest) {
-            return NextResponse.redirect(dest, { status: 301 });
+            const destUrl = new URL(dest);
+            if (req.nextUrl.search) {
+                destUrl.search = req.nextUrl.search;
+            }
+            return NextResponse.redirect(destUrl, { status: 301 });
         }
     }
 
