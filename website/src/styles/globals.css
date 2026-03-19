@@ -4142,6 +4142,101 @@ video.heroMediaEl {
   min-width: 0;
 }
 
+.unitDoctorsCompact__tooltipAnchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.unitDoctorsCompact__triggerBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #111;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.unitDoctorsCompact__triggerBtn:hover,
+.unitDoctorsCompact__triggerBtn:focus-visible {
+  background: rgba(17, 17, 17, 0.06);
+  transform: translateY(-1px);
+}
+
+.unitDoctorsCompact__tooltip {
+  display: grid;
+  gap: 10px;
+  min-width: 176px;
+  padding: 10px 12px 12px;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.3);
+}
+
+.unitDoctorsCompact__tooltipNameRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.unitDoctorsCompact__tooltipName {
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.unitDoctorsCompact__tooltipInstagramBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+
+.unitDoctorsCompact__tooltipInstagramBtn:hover,
+.unitDoctorsCompact__tooltipInstagramBtn:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+  opacity: 1;
+}
+
+.unitDoctorsCompact__tooltipBookBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 16px;
+  text-decoration: none;
+}
+
+.unitDoctorsCompact__tooltipBookBtn:hover,
+.unitDoctorsCompact__tooltipBookBtn:focus-visible {
+  background: #18b14c;
+  box-shadow: 0 10px 26px rgba(22, 163, 74, 0.28);
+}
+
 .unitDoctorsCompact__name {
   font-size: 13px;
   font-weight: 900;
