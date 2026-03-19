@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
@@ -52,6 +53,189 @@ function extractInstagramHandle(url: string | null): string | null {
     } catch {
         return null;
     }
+}
+
+type CompactDoctorTooltipProps = {
+    fullName: string;
+    bookingHref: string;
+    unitSlug: string | null;
+    onOpenInstagram: () => void;
+};
+
+function CompactDoctorTooltip({
+    fullName,
+    bookingHref,
+    unitSlug,
+    onOpenInstagram,
+}: CompactDoctorTooltipProps) {
+    const [open, setOpen] = useState(false);
+    const [ready, setReady] = useState(false);
+    const [position, setPosition] = useState({ left: 0, top: 0 });
+    const triggerRef = useRef<HTMLButtonElement | null>(null);
+    const tooltipRef = useRef<HTMLDivElement | null>(null);
+    const closeTimerRef = useRef<number | null>(null);
+
+    const clearCloseTimer = useCallback(() => {
+        if (!closeTimerRef.current) return;
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+    }, []);
+
+    const scheduleClose = useCallback(() => {
+        clearCloseTimer();
+        closeTimerRef.current = window.setTimeout(() => {
+            setOpen(false);
+        }, 120);
+    }, [clearCloseTimer]);
+
+    const updatePosition = useCallback(() => {
+        const trigger = triggerRef.current;
+        const tooltip = tooltipRef.current;
+        if (!trigger || !tooltip) return;
+
+        const triggerRect = trigger.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const viewportPadding = 12;
+        const gap = 12;
+
+        const centerX = triggerRect.left + triggerRect.width / 2;
+        const halfWidth = tooltipRect.width / 2;
+        const left = Math.min(
+            window.innerWidth - viewportPadding - halfWidth,
+            Math.max(viewportPadding + halfWidth, centerX),
+        );
+
+        const spaceBelow = window.innerHeight - triggerRect.bottom;
+        const spaceAbove = triggerRect.top;
+        const openBelow = spaceBelow >= tooltipRect.height + gap || spaceBelow >= spaceAbove;
+        const top = openBelow
+            ? Math.min(window.innerHeight - viewportPadding - tooltipRect.height, triggerRect.bottom + gap)
+            : Math.max(viewportPadding, triggerRect.top - tooltipRect.height - gap);
+
+        setPosition({ left, top });
+        setReady(true);
+    }, []);
+
+    useEffect(() => {
+        if (!open) {
+            setReady(false);
+            clearCloseTimer();
+            return;
+        }
+
+        const onUpdate = () => updatePosition();
+        const raf = window.requestAnimationFrame(onUpdate);
+        window.addEventListener("resize", onUpdate);
+        window.addEventListener("scroll", onUpdate, true);
+
+        return () => {
+            window.cancelAnimationFrame(raf);
+            window.removeEventListener("resize", onUpdate);
+            window.removeEventListener("scroll", onUpdate, true);
+        };
+    }, [clearCloseTimer, open, updatePosition]);
+
+    useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
+
+    return (
+        <div
+            className="unitDoctorsCompact__tooltipAnchor"
+            onMouseEnter={() => {
+                clearCloseTimer();
+                setOpen(true);
+            }}
+            onMouseLeave={scheduleClose}
+            onFocusCapture={() => {
+                clearCloseTimer();
+                setOpen(true);
+            }}
+            onBlurCapture={(event) => {
+                const next = event.relatedTarget as Node | null;
+                const trigger = triggerRef.current;
+                const tooltip = tooltipRef.current;
+                if (next && ((trigger && trigger.contains(next)) || (tooltip && tooltip.contains(next)))) return;
+                scheduleClose();
+            }}
+        >
+            <button
+                ref={triggerRef}
+                type="button"
+                className="unitDoctorsCompact__triggerBtn"
+                onMouseEnter={() => {
+                    clearCloseTimer();
+                    setOpen(true);
+                }}
+                onClick={() => {
+                    clearCloseTimer();
+                    setOpen((current) => !current);
+                }}
+                aria-haspopup="true"
+                aria-expanded={open}
+                aria-label={`Abrir ações de ${fullName}`}
+                title="Abrir ações"
+            >
+                <InstagramIcon size={14} />
+            </button>
+
+            {open && typeof document !== "undefined"
+                ? createPortal(
+                      <div
+                          ref={tooltipRef}
+                          className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
+                          role="tooltip"
+                          style={{
+                              position: "fixed",
+                              left: position.left,
+                              top: position.top,
+                              transform: "translateX(-50%)",
+                              display: "block",
+                              zIndex: 5000,
+                              opacity: ready ? 1 : 0,
+                          }}
+                          onMouseEnter={() => {
+                              clearCloseTimer();
+                              setOpen(true);
+                          }}
+                          onMouseLeave={scheduleClose}
+                      >
+                          <div className="unitDoctorsCompact__tooltipNameRow">
+                              <div className="unitDoctorsCompact__tooltipName">{fullName}</div>
+                              <button
+                                  type="button"
+                                  className="unitDoctorsCompact__tooltipInstagramBtn"
+                                  onClick={() => {
+                                      clearCloseTimer();
+                                      setOpen(false);
+                                      onOpenInstagram();
+                                  }}
+                                  aria-label={`Abrir Instagram de ${fullName}`}
+                                  title="Instagram"
+                              >
+                                  <InstagramIcon size={14} />
+                              </button>
+                          </div>
+
+                          <Link
+                              className="cta cta--agende unitDoctorsCompact__tooltipBookBtn"
+                              href={bookingHref}
+                              onClick={() =>
+                                  trackBookingStart({
+                                      placement: "doctor_grid",
+                                      unitSlug,
+                                      doctorName: fullName,
+                                      bookingUrl: bookingHref,
+                                  })
+                              }
+                              onMouseEnter={() => clearCloseTimer()}
+                          >
+                              AGENDE
+                          </Link>
+                      </div>,
+                      document.body,
+                  )
+                : null}
+        </div>
+    );
 }
 
 type UnitDoctorsGridProps = {
@@ -189,32 +373,14 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                         <div className="unitDoctorsCompact__nameRow">
                                             <div className="unitDoctorsCompact__name">{fullName}</div>
                                             {instagramHandle ? (
-                                                <button
-                                                    type="button"
-                                                    className="unitDoctorsCompact__instagramBtn"
-                                                    onClick={openInstagram}
-                                                    aria-label={`Abrir Instagram de ${fullName}`}
-                                                    title="Instagram"
-                                                >
-                                                    <InstagramIcon size={14} />
-                                                </button>
+                                                <CompactDoctorTooltip
+                                                    fullName={fullName}
+                                                    bookingHref={bookingHref}
+                                                    unitSlug={unit?.slug ?? null}
+                                                    onOpenInstagram={openInstagram}
+                                                />
                                             ) : null}
                                         </div>
-
-                                        <Link
-                                            className="cta cta--agende unitDoctorsCompact__bookBtn"
-                                            href={bookingHref}
-                                            onClick={() =>
-                                                trackBookingStart({
-                                                    placement: "doctor_grid",
-                                                    unitSlug: unit?.slug ?? null,
-                                                    doctorName: fullName,
-                                                    bookingUrl: bookingHref,
-                                                })
-                                            }
-                                        >
-                                            AGENDE
-                                        </Link>
                                     </div>
                                 </article>
                             );

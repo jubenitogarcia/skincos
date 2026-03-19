@@ -195,6 +195,80 @@ test.describe('escala', () => {
     ])
   })
 
+  test('permite editar dias com feriado legado sem tratá-los como bloqueio', async ({ page }) => {
+    const replacePayloads: any[] = []
+
+    await page.route('**/api/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
+      })
+    })
+
+    await page.route('**/api/insumos/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
+      })
+    })
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-03'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' }
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      const req = route.request()
+      if (req.method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: true,
+            schedule: [{ date: '2026-03-20', unit: 'Novo Hamburgo', professional: 'Dra. Ana' }],
+            closedDays: [],
+            holidays: [{ date: '2026-03-20', unit: 'Novo Hamburgo', name: 'Dia do Cliente' }]
+          })
+        })
+        return
+      }
+      if (req.method() === 'PUT') {
+        replacePayloads.push(await req.postDataJSON())
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+    })
+
+    await page.goto('/?module=escala-profissionais')
+
+    await page.getByTestId('escala-day-2026-03-20').click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('dialog').getByText('Dr. Lucas').click()
+    await page.keyboard.press('Escape')
+
+    await expect.poll(() => replacePayloads).toEqual([
+      { date: '2026-03-20', unit: 'Novo Hamburgo', professionals: ['Dra. Ana', 'Dr. Lucas'] }
+    ])
+  })
+
   test('clicking a professional badge syncs the header filter and highlights matching days', async ({ page }) => {
     await page.route('**/api/auth/me**', async (route) => {
       await route.fulfill({
