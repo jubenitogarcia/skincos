@@ -5,12 +5,13 @@ const REDIRECTS: Record<string, string> = {
     "/barrashoppingsul": "https://espacofacial.com/barrashoppingsul",
     "/nh/faleconosco": "https://espacofacial.com/novohamburgo/faleconosco",
     "/bss/faleconosco": "https://espacofacial.com/barrashoppingsul/faleconosco",
+    "/meuespaço": "https://espacofacial.com/MeuEspaço",
 };
 
 function normalizePathname(pathname: string): string {
     // Remove trailing slashes except for root.
     const trimmed = pathname.replace(/\/+$/, "");
-    return trimmed.length ? trimmed : "/";
+    return (trimmed.length ? trimmed : "/").toLowerCase();
 }
 
 function redirect(to: string, status = 301): Response {

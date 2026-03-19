@@ -32,6 +32,7 @@ const REDIRECTS: Record<string, string> = {
 
   // Interno
   "/sugereaqui": "https://espacofacial.com/sugereaqui",
+  "/meuespaço": "https://espacofacial.com/MeuEspaço",
 
   // Doutores - BSS
   "/bss/dragabrielamenegat": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Gabriela%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",

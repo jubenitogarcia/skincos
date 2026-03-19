@@ -14,6 +14,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeDateTimeInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString();
+}
+
 // D1/SQLite can reject statements with many bound variables.
 // D1 can reject large IN(...) bind lists on some plans/regions.
 // Keep this low to avoid `too many SQL variables` on overview/insights loads.
@@ -49,7 +57,7 @@ function computeMovementDelta(row) {
   return 0;
 }
 
-async function recomputeMovementLedgerForRegistro({ env, registro, overrides = new Map() }) {
+async function recomputeMovementLedgerForRegistro({ env, registro, overrides = new Map(), removeIds = new Set() }) {
   const reg = String(registro || '').trim();
   if (!reg) throw new Error('Registro inválido');
 
@@ -108,10 +116,23 @@ async function recomputeMovementLedgerForRegistro({ env, registro, overrides = n
     baseStockByUnit.set(unit, current - delta);
   }
 
-  const rowsWithOverrides = rows.map((row) => {
-    const patch = overrides instanceof Map ? overrides.get(String(row.id || '').trim()) : null;
-    return patch ? { ...row, ...patch } : row;
-  });
+  const removeIdSet =
+    removeIds instanceof Set
+      ? new Set(Array.from(removeIds).map((id) => String(id || '').trim()).filter(Boolean))
+      : new Set((Array.isArray(removeIds) ? removeIds : []).map((id) => String(id || '').trim()).filter(Boolean));
+
+  const rowsWithOverrides = rows
+    .filter((row) => !removeIdSet.has(String(row.id || '').trim()))
+    .map((row) => {
+      const patch = overrides instanceof Map ? overrides.get(String(row.id || '').trim()) : null;
+      return patch ? { ...row, ...patch } : row;
+    })
+    .sort((a, b) => {
+      const dateA = String(a?.data_hora || '');
+      const dateB = String(b?.data_hora || '');
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return String(a?.id || '').localeCompare(String(b?.id || ''));
+    });
 
   const nextStockByUnit = new Map(baseStockByUnit);
   const movementUpdates = [];
@@ -135,6 +156,11 @@ async function recomputeMovementLedgerForRegistro({ env, registro, overrides = n
     nextStockByUnit.set(unit, after);
     movementUpdates.push({
       id: String(row.id || '').trim(),
+      dataHora: normalizeDateTimeInput(row?.data_hora) || nowIso(),
+      produto: String(row?.produto || '').trim(),
+      unidade: unit,
+      unidadeOrigem: String(row?.unidade_origem || '').trim(),
+      unidadeDestino: String(row?.unidade_destino || '').trim(),
       quantidade,
       estoqueAnterior: before,
       estoqueNovo: after,
@@ -144,15 +170,43 @@ async function recomputeMovementLedgerForRegistro({ env, registro, overrides = n
   }
 
   const statements = [];
+  for (const id of removeIdSet) {
+    statements.push(
+      env.DB.prepare(
+        `DELETE FROM insumos_movements
+         WHERE id = ?`
+      ).bind(id)
+    );
+  }
   for (const row of movementUpdates) {
     statements.push(
       env.DB.prepare(
         `UPDATE insumos_movements
-         SET quantidade = ?, estoque_anterior = ?, estoque_novo = ?, motivo = ?, observacoes = ?
+         SET data_hora = ?, produto = ?, quantidade = ?, estoque_anterior = ?, estoque_novo = ?,
+             unidade = ?, unidade_origem = ?, unidade_destino = ?, motivo = ?, observacoes = ?
          WHERE id = ?`
-      ).bind(row.quantidade, row.estoqueAnterior, row.estoqueNovo, row.motivo, row.observacoes, row.id)
+      ).bind(
+        row.dataHora,
+        row.produto,
+        row.quantidade,
+        row.estoqueAnterior,
+        row.estoqueNovo,
+        row.unidade,
+        row.unidadeOrigem || null,
+        row.unidadeDestino || null,
+        row.motivo,
+        row.observacoes,
+        row.id
+      )
     );
   }
+
+  statements.push(
+    env.DB.prepare(
+      `DELETE FROM insumos_stocks
+       WHERE registro = ?`
+    ).bind(reg)
+  );
 
   for (const [unit, qty] of nextStockByUnit.entries()) {
     statements.push(
@@ -1570,6 +1624,14 @@ export async function d1UpdateMovimentacao({ env, id, body }) {
 
   const tipo = normalizeTipo(movement?.tipo);
   const overrides = new Map();
+  const produtoProvided = Object.prototype.hasOwnProperty.call(body || {}, 'produto');
+  const dataHoraProvided = Object.prototype.hasOwnProperty.call(body || {}, 'dataHora');
+  const unidadeProvided = Object.prototype.hasOwnProperty.call(body || {}, 'unidade');
+  const produto = produtoProvided ? String(body?.produto || '').trim() : String(movement?.produto || '').trim();
+  const dataHora = dataHoraProvided ? normalizeDateTimeInput(body?.dataHora) : normalizeDateTimeInput(movement?.data_hora);
+
+  if (!produto) return { ok: false, status: 400, error: 'Produto inválido' };
+  if (!dataHora) return { ok: false, status: 400, error: 'Data/hora inválida' };
 
   if (String(movement?.id_transferencia || '').trim()) {
     const transferId = String(movement.id_transferencia || '').trim();
@@ -1594,6 +1656,9 @@ export async function d1UpdateMovimentacao({ env, id, body }) {
     if (!Number.isFinite(quantidade) || quantidade < 1) {
       return { ok: false, status: 400, error: 'Quantidade inválida' };
     }
+    if (unidadeProvided) {
+      return { ok: false, status: 400, error: 'Unidade de transferência não pode ser alterada neste modal' };
+    }
 
     const freeText = Object.prototype.hasOwnProperty.call(body || {}, 'observacoes')
       ? String(body?.observacoes || '').trim()
@@ -1601,6 +1666,8 @@ export async function d1UpdateMovimentacao({ env, id, body }) {
 
     for (const row of pairRows) {
       overrides.set(String(row.id || '').trim(), {
+        data_hora: dataHora,
+        produto,
         quantidade,
         observacoes: buildTransferObservacoes(row?.tipo, row?.unidade_origem, row?.unidade_destino, freeText),
       });
@@ -1612,22 +1679,26 @@ export async function d1UpdateMovimentacao({ env, id, body }) {
     const estoqueNovo = targetProvided ? toInt(body?.estoqueNovo, NaN) : toInt(movement?.estoque_novo, NaN);
     const motivo = motivoProvided ? String(body?.motivo || '').trim() : String(movement?.motivo || '').trim();
     const observacoes = observacoesProvided ? String(body?.observacoes || '').trim() : String(movement?.observacoes || '').trim();
+    const unidade = unidadeProvided ? String(body?.unidade || '').trim() : String(movement?.unidade || '').trim();
 
     if (!Number.isFinite(estoqueNovo) || estoqueNovo < 0) {
       return { ok: false, status: 400, error: 'Novo estoque inválido' };
     }
     if (!motivo) return { ok: false, status: 400, error: 'Motivo é obrigatório' };
+    if (!unidade) return { ok: false, status: 400, error: 'Unidade inválida' };
 
-    overrides.set(movementId, { estoque_novo: estoqueNovo, motivo, observacoes });
+    overrides.set(movementId, { data_hora: dataHora, produto, unidade, estoque_novo: estoqueNovo, motivo, observacoes });
   } else {
     const quantidadeProvided = Object.prototype.hasOwnProperty.call(body || {}, 'quantidade');
     const observacoesProvided = Object.prototype.hasOwnProperty.call(body || {}, 'observacoes');
     const quantidade = quantidadeProvided ? toInt(body?.quantidade, NaN) : toInt(movement?.quantidade, 1);
     const observacoes = observacoesProvided ? String(body?.observacoes || '').trim() : String(movement?.observacoes || '').trim();
+    const unidade = unidadeProvided ? String(body?.unidade || '').trim() : String(movement?.unidade || '').trim();
     if (!Number.isFinite(quantidade) || quantidade < 1) {
       return { ok: false, status: 400, error: 'Quantidade inválida' };
     }
-    overrides.set(movementId, { quantidade, observacoes });
+    if (!unidade) return { ok: false, status: 400, error: 'Unidade inválida' };
+    overrides.set(movementId, { data_hora: dataHora, produto, unidade, quantidade, observacoes });
   }
 
   const recomputed = await recomputeMovementLedgerForRegistro({ env, registro, overrides });
@@ -1662,6 +1733,48 @@ export async function d1UpdateMovimentacao({ env, id, body }) {
     registro,
     transferId: String(movement?.id_transferencia || '').trim() || null,
     movimentos: updatedRowsRes?.results || [],
+    estoqueAtual: recomputed.estoqueAtual,
+  };
+}
+
+export async function d1DeleteMovimentacao({ env, id }) {
+  const movementId = String(id || '').trim();
+  if (!movementId) return { ok: false, status: 400, error: 'Movimentação inválida' };
+
+  const movement = await env.DB.prepare(
+    `SELECT
+        id,
+        registro_insumo,
+        unidade,
+        id_transferencia
+     FROM insumos_movements
+     WHERE id = ?`
+  ).bind(movementId).first();
+  if (!movement) return { ok: false, status: 404, error: 'Movimentação não encontrada' };
+
+  const registro = String(movement?.registro_insumo || '').trim();
+  if (!registro) return { ok: false, status: 400, error: 'Movimentação sem registro de insumo' };
+
+  const removeIds = new Set([movementId]);
+  const transferId = String(movement?.id_transferencia || '').trim();
+  if (transferId) {
+    const pairRows = await env.DB.prepare(
+      `SELECT id
+       FROM insumos_movements
+       WHERE id_transferencia = ?`
+    ).bind(transferId).all();
+    for (const row of pairRows?.results || []) {
+      const idValue = String(row?.id || '').trim();
+      if (idValue) removeIds.add(idValue);
+    }
+  }
+
+  const recomputed = await recomputeMovementLedgerForRegistro({ env, registro, removeIds });
+  return {
+    ok: true,
+    registro,
+    transferId: transferId || null,
+    deletedIds: Array.from(removeIds),
     estoqueAtual: recomputed.estoqueAtual,
   };
 }

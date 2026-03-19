@@ -27,6 +27,7 @@ import {
     d1Transfer,
     d1ListMovimentacoes,
     d1UpdateMovimentacao,
+    d1DeleteMovimentacao,
     d1ListInsumosPaged,
     d1ListInsumosOptions,
     d1GetUserByUsername,
@@ -1481,6 +1482,7 @@ export default {
             listMovimentacoes: ({ unidade, tipo, de, ate, pagina, limite, codigoBarras }) =>
                 d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina, limite, codigoBarras }),
             updateMovimentacao: ({ id, body }) => d1UpdateMovimentacao({ env, id, body }),
+            deleteMovimentacao: ({ id }) => d1DeleteMovimentacao({ env, id }),
         };
 
         const movResp = await handleMovimentacoesRoutes({

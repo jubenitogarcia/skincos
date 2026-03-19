@@ -87,6 +87,51 @@ export async function handleMovimentacoesRoutes({
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
             }
         }
+
+        if (url.pathname.startsWith("/movimentacoes/") && request.method === "DELETE") {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+
+                const id = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
+                if (!id) {
+                    return withCORS(JSON.stringify({ success: false, error: 'Movimentação inválida' }), { status: 400 }, appOrigin);
+                }
+
+                const out = await d1.deleteMovimentacao({ id });
+                if (!out.ok) {
+                    return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
+                }
+
+                await appendAuditLog({
+                    env,
+                    actor: auth.user.username,
+                    role: auth.user.role,
+                    ip,
+                    userAgent,
+                    idempotencyKey,
+                    action: 'DELETE',
+                    entity: 'MOVIMENTACAO',
+                    entityId: id,
+                    unidade: String(url.searchParams.get('unidade') || unidade || '').trim(),
+                    before: { transferId: out.transferId || null, deletedIds: out.deletedIds || [id], registro: out.registro },
+                    after: null
+                });
+
+                if (out?.estoqueAtual && typeof out.estoqueAtual === 'object') {
+                  const units = Array.from(new Set(Object.keys(out.estoqueAtual).map((v) => String(v || '').trim()).filter(Boolean)));
+                  for (const unit of units) {
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unit));
+                  }
+                } else {
+                  ctx.waitUntil(enqueueNotificationsRefresh(env, String(url.searchParams.get('unidade') || unidade || '').trim()));
+                }
+
+                return withCORS(JSON.stringify({ success: true, data: { deletedIds: out.deletedIds || [id] } }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
         return null;
     }
 

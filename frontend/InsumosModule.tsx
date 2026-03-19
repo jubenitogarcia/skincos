@@ -594,6 +594,44 @@ function fmtDateOnlyBR(value?: string | null) {
   return iso ? isoToBrDate(iso) : v
 }
 
+function isoToLocalDateInput(value?: string | null) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isoToLocalTimeInput(value?: string | null) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const hours = String(d.getHours()).padStart(2, '0')
+  const minutes = String(d.getMinutes()).padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
+function normalizeTimeInput(value?: string | null) {
+  const raw = String(value || '').trim()
+  const match = raw.match(/^(\d{2}):(\d{2})$/)
+  if (!match) return ''
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return ''
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function combineLocalDateTimeToIso(dateValue?: string | null, timeValue?: string | null) {
+  const isoDate = dateInputToIso(dateValue)
+  const isoTime = normalizeTimeInput(timeValue)
+  if (!isoDate || !isoTime) return ''
+  const d = new Date(`${isoDate}T${isoTime}:00`)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toISOString()
+}
+
 function normalizeMovimentacaoTipo(value?: string | null) {
   return String(value || '').toUpperCase().replace('Í', 'I')
 }
@@ -1265,11 +1303,16 @@ export function InsumosModule() {
   const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
   const [editMovOpen, setEditMovOpen] = React.useState(false)
   const [editMovTarget, setEditMovTarget] = React.useState<Movimentacao | null>(null)
+  const [editMovProduto, setEditMovProduto] = React.useState('')
+  const [editMovData, setEditMovData] = React.useState('')
+  const [editMovHora, setEditMovHora] = React.useState('')
+  const [editMovUnidade, setEditMovUnidade] = React.useState('')
   const [editMovQuantidade, setEditMovQuantidade] = React.useState('1')
   const [editMovNovoEstoque, setEditMovNovoEstoque] = React.useState('')
   const [editMovObservacoes, setEditMovObservacoes] = React.useState('')
   const [editMovMotivo, setEditMovMotivo] = React.useState('')
   const [editMovSaving, setEditMovSaving] = React.useState(false)
+  const [editMovDeleting, setEditMovDeleting] = React.useState(false)
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
 
@@ -3458,13 +3501,17 @@ export function InsumosModule() {
     }
     const tipo = normalizeMovimentacaoTipo(m?.tipo)
     setEditMovTarget(m)
+    setEditMovProduto(String(m?.produto || ''))
+    setEditMovData(isoToLocalDateInput(m?.dataHora))
+    setEditMovHora(isoToLocalTimeInput(m?.dataHora))
+    setEditMovUnidade(String(m?.unidade || unidade))
     setEditMovQuantidade(String(Math.max(1, Number(m?.quantidade) || 1)))
     setEditMovNovoEstoque(String(Number.isFinite(Number(m?.estoqueNovo)) ? Number(m.estoqueNovo) : 0))
     setEditMovObservacoes(m?.transferId ? extractTransferMovementNote(m?.observacoes) : String(m?.observacoes || ''))
     setEditMovMotivo(String(m?.motivo || ''))
     if (tipo !== 'AJUSTE') setEditMovMotivo('')
     setEditMovOpen(true)
-  }, [])
+  }, [unidade])
 
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
@@ -4193,8 +4240,29 @@ export function InsumosModule() {
     if (!canUseApi || !isAuthed) return
 
     const tipo = normalizeMovimentacaoTipo(target?.tipo)
+    const produto = editMovProduto.trim()
+    if (!produto) {
+      toast.error('Informe o produto.')
+      return
+    }
+    const dataHora = combineLocalDateTimeToIso(editMovData, editMovHora)
+    if (!dataHora) {
+      toast.error('Informe uma data e hora válidas.')
+      return
+    }
     const body: Record<string, unknown> = {
+      produto,
+      dataHora,
       observacoes: editMovObservacoes.trim()
+    }
+
+    if (!String(target?.transferId || '').trim()) {
+      const nextUnidade = String(editMovUnidade || '').trim()
+      if (!nextUnidade) {
+        toast.error('Informe a unidade.')
+        return
+      }
+      body.unidade = nextUnidade
     }
 
     if (String(target?.transferId || '').trim()) {
@@ -4248,10 +4316,56 @@ export function InsumosModule() {
     }
   }, [
     canUseApi,
+    editMovData,
+    editMovHora,
     editMovMotivo,
     editMovNovoEstoque,
     editMovObservacoes,
+    editMovProduto,
     editMovQuantidade,
+    editMovTarget,
+    editMovUnidade,
+    isAuthed,
+    loadMovimentacoes,
+    mutateJson,
+    refreshInsumos,
+    schedulePostMutationRefresh,
+    unidade
+  ])
+
+  const deleteMovementEdit = React.useCallback(async () => {
+    const target = editMovTarget
+    const movementId = String(target?.id || '').trim()
+    if (!movementId) {
+      toast.error('Movimentação inválida.')
+      return
+    }
+    if (!canUseApi || !isAuthed) return
+
+    const confirmed = window.confirm('Excluir este lançamento? Essa ação recalcula o estoque do insumo.')
+    if (!confirmed) return
+
+    setEditMovDeleting(true)
+    try {
+      await mutateJson<{ success?: boolean }>(
+        `/movimentacoes/${encodeURIComponent(movementId)}?unidade=${encodeURIComponent(String(target?.unidade || unidade || '').trim() || unidade)}`,
+        {
+          method: 'DELETE',
+          queueLabel: 'Exclusão de movimentação'
+        }
+      )
+      toast.success('Lançamento excluído.')
+      setEditMovOpen(false)
+      setEditMovTarget(null)
+      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
+      schedulePostMutationRefresh({ overview: true, insights: true })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setEditMovDeleting(false)
+    }
+  }, [
+    canUseApi,
     editMovTarget,
     isAuthed,
     loadMovimentacoes,
@@ -4718,6 +4832,12 @@ export function InsumosModule() {
     const fromInsumos = (insumos || []).map((item) => String(item.marca || '').trim()).filter(Boolean)
     return uniqueSortedTextOptions([...fromInsumos, ...insumosOptionsMarcas])
   }, [insumos, insumosOptionsMarcas])
+
+  const insumosProdutos = React.useMemo(() => {
+    const fromInsumos = (insumos || []).map((item) => String(item.produto || '').trim()).filter(Boolean)
+    const fromMovimentacoes = (movimentacoes || []).map((item) => String(item.produto || '').trim()).filter(Boolean)
+    return uniqueSortedTextOptions([...fromInsumos, ...fromMovimentacoes])
+  }, [insumos, movimentacoes])
 
   const insumosTiposUnidade = React.useMemo(() => Array.from(CANONICAL_TIPOS_UNIDADE as readonly string[]), [])
 
@@ -6794,6 +6914,7 @@ export function InsumosModule() {
           if (!open) {
             setEditMovTarget(null)
             setEditMovSaving(false)
+            setEditMovDeleting(false)
           }
         }}
       >
@@ -6815,22 +6936,64 @@ export function InsumosModule() {
           </DialogHeader>
 
           <div className="space-y-3">
-            <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-blue-100/80">
-              <div><span className="text-blue-200/60">Produto:</span> {String(editMovTarget?.produto || '-')}</div>
-              <div><span className="text-blue-200/60">Data:</span> {fmtDate(editMovTarget?.dataHora) || '-'}</div>
-              <div>
-                <span className="text-blue-200/60">Unidade:</span>{' '}
-                {String(editMovTarget?.transferId || '').trim()
-                  ? `${unidadeLabel(String(editMovTarget?.unidadeOrigem || ''))} → ${unidadeLabel(String(editMovTarget?.unidadeDestino || ''))}`
-                  : unidadeLabel(String(editMovTarget?.unidade || unidade))}
-              </div>
-              {editMovTarget?.registroInsumo ? (
-                <div><span className="text-blue-200/60">Registro:</span> <span className="font-mono">{String(editMovTarget.registroInsumo)}</span></div>
-              ) : null}
+            <div>
+              <div className="text-xs text-blue-200/70 mb-1">Produto</div>
+              <AutocompleteInput
+                value={editMovProduto}
+                onValueChange={setEditMovProduto}
+                placeholder="Nome do produto"
+                options={insumosProdutos}
+              />
             </div>
 
-            {normalizeMovimentacaoTipo(editMovTarget?.tipo) === 'AJUSTE' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Data</div>
+                <BrDatePickerInput
+                  value={fmtDateOnlyBR(editMovData)}
+                  onChange={(value) => {
+                    const iso = dateInputToIso(value)
+                    setEditMovData(iso || value)
+                  }}
+                  placeholder="DD/MM/AA"
+                  ariaLabel="Data da movimentação"
+                />
+              </div>
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Hora</div>
+                <Input
+                  type="time"
+                  value={editMovHora}
+                  onChange={(e) => setEditMovHora(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Unidade</div>
+                {String(editMovTarget?.transferId || '').trim() ? (
+                  <Input
+                    value={`${unidadeLabel(String(editMovTarget?.unidadeOrigem || ''))} → ${unidadeLabel(String(editMovTarget?.unidadeDestino || ''))}`}
+                    disabled
+                  />
+                ) : (
+                  <Select value={editMovUnidade || undefined} onValueChange={setEditMovUnidade}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a unidade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unidadeOptions.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {unidadeLabel(u)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              {normalizeMovimentacaoTipo(editMovTarget?.tipo) === 'AJUSTE' ? (
                 <div>
                   <div className="text-xs text-blue-200/70 mb-1">Novo estoque</div>
                   <Input
@@ -6840,48 +7003,56 @@ export function InsumosModule() {
                     onChange={(e) => setEditMovNovoEstoque(e.target.value)}
                   />
                 </div>
+              ) : (
                 <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Motivo</div>
-                  <Input value={editMovMotivo} onChange={(e) => setEditMovMotivo(e.target.value)} />
+                  <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={editMovQuantidade}
+                    onChange={(e) => setEditMovQuantidade(e.target.value)}
+                  />
                 </div>
-              </div>
-            ) : (
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
-                <Input
-                  type="number"
-                  min={1}
-                  value={editMovQuantidade}
-                  onChange={(e) => setEditMovQuantidade(e.target.value)}
-                />
-              </div>
-            )}
-
-            <div>
-              <div className="text-xs text-blue-200/70 mb-1">Observações</div>
-              <Textarea
-                value={editMovObservacoes}
-                onChange={(e) => setEditMovObservacoes(e.target.value)}
-                placeholder="opcional"
-                rows={3}
-              />
+              )}
             </div>
+
+            {normalizeMovimentacaoTipo(editMovTarget?.tipo) === 'AJUSTE' ? (
+              <div>
+                <div className="text-xs text-blue-200/70 mb-1">Motivo</div>
+                <Input value={editMovMotivo} onChange={(e) => setEditMovMotivo(e.target.value)} />
+              </div>
+            ) : null}
+
+            {editMovTarget?.registroInsumo ? (
+              <div className="text-xs text-blue-200/60">
+                Registro: <span className="font-mono">{String(editMovTarget.registroInsumo)}</span>
+              </div>
+            ) : null}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between">
+            <Button
+              variant="destructive"
+              onClick={() => void deleteMovementEdit()}
+              disabled={editMovSaving || editMovDeleting || !isAuthed}
+            >
+              {editMovDeleting ? 'Excluindo...' : 'Excluir'}
+            </Button>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button
               variant="secondary"
               onClick={() => {
                 setEditMovOpen(false)
                 setEditMovTarget(null)
               }}
-              disabled={editMovSaving}
+              disabled={editMovSaving || editMovDeleting}
             >
               Cancelar
             </Button>
-            <Button onClick={() => void saveMovementEdit()} disabled={editMovSaving || !isAuthed}>
+            <Button onClick={() => void saveMovementEdit()} disabled={editMovSaving || editMovDeleting || !isAuthed}>
               {editMovSaving ? 'Salvando...' : 'Salvar lançamento'}
             </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
