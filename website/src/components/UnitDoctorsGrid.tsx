@@ -61,15 +61,25 @@ function doctorHonorific(name: string, nickname: string | null): "Dr." | "Dra." 
     return "Dr.";
 }
 
-function doctorDisplayName(name: string, nickname: string | null): string {
+function doctorBareName(name: string): string {
+    return name.replace(/^\s*(dr\.?|dra\.?|doutor|doutora)\s+/i, "").trim();
+}
+
+function doctorDisplayName(name: string): string {
+    return doctorBareName(name);
+}
+
+function doctorTooltipName(name: string, nickname: string | null): string {
     const honorific = doctorHonorific(name, nickname);
-    const bareName = name.replace(/^\s*(dr\.?|dra\.?|doutor|doutora)\s+/i, "").trim();
-    return `${honorific} ${bareName}`;
+    const bareName = doctorBareName(name);
+    const firstName = bareName.split(/\s+/).filter(Boolean)[0] ?? bareName;
+    return `${honorific} ${firstName}`;
 }
 
 type CompactDoctorTooltipProps = {
     avatar: ReactNode;
-    displayName: string;
+    doctorName: string;
+    tooltipName: string;
     bookingHref: string;
     unitSlug: string | null;
     onOpenInstagram?: () => void;
@@ -77,7 +87,8 @@ type CompactDoctorTooltipProps = {
 
 function CompactDoctorTooltip({
     avatar,
-    displayName,
+    doctorName,
+    tooltipName,
     bookingHref,
     unitSlug,
     onOpenInstagram,
@@ -178,7 +189,7 @@ function CompactDoctorTooltip({
                 }}
                 aria-haspopup="true"
                 aria-expanded={open}
-                aria-label={`Abrir ações de ${displayName}`}
+                aria-label={`Abrir ações de ${doctorName}`}
                 title="Abrir ações"
             >
                 {avatar}
@@ -206,7 +217,7 @@ function CompactDoctorTooltip({
                           onMouseLeave={scheduleClose}
                       >
                           <div className="unitDoctorsCompact__tooltipNameRow">
-                              <div className="unitDoctorsCompact__tooltipName">{displayName}</div>
+                              <div className="unitDoctorsCompact__tooltipName">{tooltipName}</div>
                               {onOpenInstagram ? (
                                   <button
                                       type="button"
@@ -221,7 +232,7 @@ function CompactDoctorTooltip({
                                           if (next && tooltipRef.current?.contains(next)) return;
                                           scheduleClose();
                                       }}
-                                      aria-label={`Abrir Instagram de ${displayName}`}
+                                      aria-label={`Abrir Instagram de ${doctorName}`}
                                       title="Instagram"
                                   >
                                       <InstagramIcon size={14} />
@@ -236,7 +247,7 @@ function CompactDoctorTooltip({
                                   trackBookingStart({
                                       placement: "doctor_grid",
                                       unitSlug,
-                                      doctorName: displayName,
+                                      doctorName,
                                       bookingUrl: bookingHref,
                                   })
                               }
@@ -347,7 +358,8 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                     <div className="unitDoctorsCompact__rail" role="list" aria-label="Lista de doutores da unidade">
                         {filtered.map((d) => {
                             const fullName = d.name;
-                            const displayName = doctorDisplayName(d.name, d.nickname);
+                            const displayName = doctorDisplayName(d.name);
+                            const tooltipName = doctorTooltipName(d.name, d.nickname);
                             const handle = d.instagramHandle;
                             const href = d.instagramUrl;
                             const instagramHandle = handle || extractInstagramHandle(href);
@@ -377,7 +389,8 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                             )}
                                             </span>
                                         }
-                                        displayName={displayName}
+                                        doctorName={fullName}
+                                        tooltipName={tooltipName}
                                         bookingHref={bookingHref}
                                         unitSlug={unit?.slug ?? null}
                                         onOpenInstagram={instagramHandle ? openInstagram : undefined}

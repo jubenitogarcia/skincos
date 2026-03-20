@@ -4076,7 +4076,7 @@ video.heroMediaEl {
 
 .unitDoctorsCompact__rail {
   display: flex;
-  gap: 14px;
+  gap: 8px;
   align-items: flex-start;
   justify-content: center;
   overflow-x: auto;
@@ -4097,7 +4097,7 @@ video.heroMediaEl {
 
 .unitDoctorsCompact__item {
   flex: 0 0 auto;
-  width: 148px;
+  width: 136px;
   display: grid;
   justify-items: center;
   gap: 10px;
