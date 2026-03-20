@@ -20,6 +20,17 @@ type TeamMember = {
     instagramUrl: string | null;
 };
 
+function doctorActionsIcon() {
+    return (
+        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+                fill="currentColor"
+                d="M12 2a5.25 5.25 0 1 1 0 10.5A5.25 5.25 0 0 1 12 2Zm0 2a3.25 3.25 0 1 0 0 6.5A3.25 3.25 0 0 0 12 4Zm0 9.75c4.56 0 8.25 2.78 8.25 6.21a1 1 0 1 1-2 0c0-2.05-2.67-4.21-6.25-4.21s-6.25 2.16-6.25 4.21a1 1 0 1 1-2 0c0-3.43 3.69-6.21 8.25-6.21Z"
+            />
+        </svg>
+    );
+}
+
 function bookingIcon() {
     return (
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -55,15 +66,27 @@ function extractInstagramHandle(url: string | null): string | null {
     }
 }
 
+function doctorHonorific(name: string, nickname: string | null): "Dr." | "Dra." {
+    const source = `${nickname ?? ""} ${name}`.toLowerCase();
+    if (/\b(dra|doutora)\b/.test(source)) return "Dra.";
+    return "Dr.";
+}
+
+function doctorDisplayName(name: string, nickname: string | null): string {
+    const honorific = doctorHonorific(name, nickname);
+    const bareName = name.replace(/^\s*(dr\.?|dra\.?|doutor|doutora)\s+/i, "").trim();
+    return `${honorific} ${bareName}`;
+}
+
 type CompactDoctorTooltipProps = {
-    fullName: string;
+    displayName: string;
     bookingHref: string;
     unitSlug: string | null;
     onOpenInstagram: () => void;
 };
 
 function CompactDoctorTooltip({
-    fullName,
+    displayName,
     bookingHref,
     unitSlug,
     onOpenInstagram,
@@ -138,25 +161,7 @@ function CompactDoctorTooltip({
     useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 
     return (
-        <div
-            className="unitDoctorsCompact__tooltipAnchor"
-            onMouseEnter={() => {
-                clearCloseTimer();
-                setOpen(true);
-            }}
-            onMouseLeave={scheduleClose}
-            onFocusCapture={() => {
-                clearCloseTimer();
-                setOpen(true);
-            }}
-            onBlurCapture={(event) => {
-                const next = event.relatedTarget as Node | null;
-                const trigger = triggerRef.current;
-                const tooltip = tooltipRef.current;
-                if (next && ((trigger && trigger.contains(next)) || (tooltip && tooltip.contains(next)))) return;
-                scheduleClose();
-            }}
-        >
+        <div className="unitDoctorsCompact__tooltipAnchor">
             <button
                 ref={triggerRef}
                 type="button"
@@ -165,16 +170,27 @@ function CompactDoctorTooltip({
                     clearCloseTimer();
                     setOpen(true);
                 }}
+                onMouseLeave={scheduleClose}
                 onClick={() => {
                     clearCloseTimer();
                     setOpen((current) => !current);
                 }}
+                onFocus={() => {
+                    clearCloseTimer();
+                    setOpen(true);
+                }}
+                onBlur={(event) => {
+                    const next = event.relatedTarget as Node | null;
+                    const tooltip = tooltipRef.current;
+                    if (next && tooltip?.contains(next)) return;
+                    scheduleClose();
+                }}
                 aria-haspopup="true"
                 aria-expanded={open}
-                aria-label={`Abrir ações de ${fullName}`}
+                aria-label={`Abrir ações de ${displayName}`}
                 title="Abrir ações"
             >
-                <InstagramIcon size={14} />
+                {doctorActionsIcon()}
             </button>
 
             {open && typeof document !== "undefined"
@@ -199,7 +215,7 @@ function CompactDoctorTooltip({
                           onMouseLeave={scheduleClose}
                       >
                           <div className="unitDoctorsCompact__tooltipNameRow">
-                              <div className="unitDoctorsCompact__tooltipName">{fullName}</div>
+                              <div className="unitDoctorsCompact__tooltipName">{displayName}</div>
                               <button
                                   type="button"
                                   className="unitDoctorsCompact__tooltipInstagramBtn"
@@ -208,7 +224,12 @@ function CompactDoctorTooltip({
                                       setOpen(false);
                                       onOpenInstagram();
                                   }}
-                                  aria-label={`Abrir Instagram de ${fullName}`}
+                                  onBlur={(event) => {
+                                      const next = event.relatedTarget as Node | null;
+                                      if (next && tooltipRef.current?.contains(next)) return;
+                                      scheduleClose();
+                                  }}
+                                  aria-label={`Abrir Instagram de ${displayName}`}
                                   title="Instagram"
                               >
                                   <InstagramIcon size={14} />
@@ -222,11 +243,16 @@ function CompactDoctorTooltip({
                                   trackBookingStart({
                                       placement: "doctor_grid",
                                       unitSlug,
-                                      doctorName: fullName,
+                                      doctorName: displayName,
                                       bookingUrl: bookingHref,
                                   })
                               }
                               onMouseEnter={() => clearCloseTimer()}
+                              onBlur={(event) => {
+                                  const next = event.relatedTarget as Node | null;
+                                  if (next && tooltipRef.current?.contains(next)) return;
+                                  scheduleClose();
+                              }}
                           >
                               AGENDE
                           </Link>
@@ -328,6 +354,7 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                     <div className="unitDoctorsCompact__rail" role="list" aria-label="Lista de doutores da unidade">
                         {filtered.map((d) => {
                             const fullName = d.name;
+                            const displayName = doctorDisplayName(d.name, d.nickname);
                             const handle = d.instagramHandle;
                             const href = d.instagramUrl;
                             const instagramHandle = handle || extractInstagramHandle(href);
@@ -371,10 +398,10 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
 
                                     <div className="unitDoctorsCompact__meta">
                                         <div className="unitDoctorsCompact__nameRow">
-                                            <div className="unitDoctorsCompact__name">{fullName}</div>
+                                            <div className="unitDoctorsCompact__name">{displayName}</div>
                                             {instagramHandle ? (
                                                 <CompactDoctorTooltip
-                                                    fullName={fullName}
+                                                    displayName={displayName}
                                                     bookingHref={bookingHref}
                                                     unitSlug={unit?.slug ?? null}
                                                     onOpenInstagram={openInstagram}
