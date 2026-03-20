@@ -1,7 +1,7 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
@@ -19,17 +19,6 @@ type TeamMember = {
     instagramHandle: string | null;
     instagramUrl: string | null;
 };
-
-function doctorActionsIcon() {
-    return (
-        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path
-                fill="currentColor"
-                d="M12 2a5.25 5.25 0 1 1 0 10.5A5.25 5.25 0 0 1 12 2Zm0 2a3.25 3.25 0 1 0 0 6.5A3.25 3.25 0 0 0 12 4Zm0 9.75c4.56 0 8.25 2.78 8.25 6.21a1 1 0 1 1-2 0c0-2.05-2.67-4.21-6.25-4.21s-6.25 2.16-6.25 4.21a1 1 0 1 1-2 0c0-3.43 3.69-6.21 8.25-6.21Z"
-            />
-        </svg>
-    );
-}
 
 function bookingIcon() {
     return (
@@ -79,13 +68,15 @@ function doctorDisplayName(name: string, nickname: string | null): string {
 }
 
 type CompactDoctorTooltipProps = {
+    avatar: ReactNode;
     displayName: string;
     bookingHref: string;
     unitSlug: string | null;
-    onOpenInstagram: () => void;
+    onOpenInstagram?: () => void;
 };
 
 function CompactDoctorTooltip({
+    avatar,
     displayName,
     bookingHref,
     unitSlug,
@@ -165,7 +156,7 @@ function CompactDoctorTooltip({
             <button
                 ref={triggerRef}
                 type="button"
-                className="unitDoctorsCompact__triggerBtn"
+                className="unitDoctorsCompact__avatarTrigger"
                 onMouseEnter={() => {
                     clearCloseTimer();
                     setOpen(true);
@@ -190,7 +181,7 @@ function CompactDoctorTooltip({
                 aria-label={`Abrir ações de ${displayName}`}
                 title="Abrir ações"
             >
-                {doctorActionsIcon()}
+                {avatar}
             </button>
 
             {open && typeof document !== "undefined"
@@ -216,24 +207,26 @@ function CompactDoctorTooltip({
                       >
                           <div className="unitDoctorsCompact__tooltipNameRow">
                               <div className="unitDoctorsCompact__tooltipName">{displayName}</div>
-                              <button
-                                  type="button"
-                                  className="unitDoctorsCompact__tooltipInstagramBtn"
-                                  onClick={() => {
-                                      clearCloseTimer();
-                                      setOpen(false);
-                                      onOpenInstagram();
-                                  }}
-                                  onBlur={(event) => {
-                                      const next = event.relatedTarget as Node | null;
-                                      if (next && tooltipRef.current?.contains(next)) return;
-                                      scheduleClose();
-                                  }}
-                                  aria-label={`Abrir Instagram de ${displayName}`}
-                                  title="Instagram"
-                              >
-                                  <InstagramIcon size={14} />
-                              </button>
+                              {onOpenInstagram ? (
+                                  <button
+                                      type="button"
+                                      className="unitDoctorsCompact__tooltipInstagramBtn"
+                                      onClick={() => {
+                                          clearCloseTimer();
+                                          setOpen(false);
+                                          onOpenInstagram();
+                                      }}
+                                      onBlur={(event) => {
+                                          const next = event.relatedTarget as Node | null;
+                                          if (next && tooltipRef.current?.contains(next)) return;
+                                          scheduleClose();
+                                      }}
+                                      aria-label={`Abrir Instagram de ${displayName}`}
+                                      title="Instagram"
+                                  >
+                                      <InstagramIcon size={14} />
+                                  </button>
+                              ) : null}
                           </div>
 
                           <Link
@@ -374,39 +367,25 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
 
                             return (
                                 <article key={`${fullName}-${href ?? "noinsta"}`} className="unitDoctorsCompact__item" role="listitem">
-                                    <Link
-                                        className="bookingFlow__doctorBadge unitDoctorsCompact__badgeLink"
-                                        href={bookingHref}
-                                        onClick={() =>
-                                            trackBookingStart({
-                                                placement: "doctor_grid",
-                                                unitSlug: unit?.slug ?? null,
-                                                doctorName: fullName,
-                                                bookingUrl: bookingHref,
-                                            })
-                                        }
-                                        aria-label={`Agendar com ${fullName}`}
-                                    >
-                                        <span className="bookingFlow__doctorBadgeAvatar">
+                                    <CompactDoctorTooltip
+                                        avatar={
+                                            <span className="bookingFlow__doctorBadgeAvatar">
                                             {instagramHandle ? (
                                                 <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
                                             ) : (
                                                 <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
                                             )}
-                                        </span>
-                                    </Link>
+                                            </span>
+                                        }
+                                        displayName={displayName}
+                                        bookingHref={bookingHref}
+                                        unitSlug={unit?.slug ?? null}
+                                        onOpenInstagram={instagramHandle ? openInstagram : undefined}
+                                    />
 
                                     <div className="unitDoctorsCompact__meta">
                                         <div className="unitDoctorsCompact__nameRow">
                                             <div className="unitDoctorsCompact__name">{displayName}</div>
-                                            {instagramHandle ? (
-                                                <CompactDoctorTooltip
-                                                    displayName={displayName}
-                                                    bookingHref={bookingHref}
-                                                    unitSlug={unit?.slug ?? null}
-                                                    onOpenInstagram={openInstagram}
-                                                />
-                                            ) : null}
                                         </div>
                                     </div>
                                 </article>

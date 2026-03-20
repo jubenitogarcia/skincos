@@ -4104,23 +4104,29 @@ video.heroMediaEl {
   text-align: center;
 }
 
-.unitDoctorsCompact__badgeLink {
-  text-decoration: none;
+.unitDoctorsCompact__avatarTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
-.unitDoctorsCompact__badgeLink:hover .bookingFlow__doctorBadgeAvatar,
-.unitDoctorsCompact__badgeLink:focus-visible .bookingFlow__doctorBadgeAvatar {
+.unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeAvatar,
+.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar {
   transform: translateY(-2px);
   border-color: rgba(17, 17, 17, 0.88);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
 }
 
-.unitDoctorsCompact__badgeLink .bookingFlow__doctorBadgeAvatar {
+.unitDoctorsCompact__avatarTrigger .bookingFlow__doctorBadgeAvatar {
   width: 76px;
   height: 76px;
 }
 
-.unitDoctorsCompact__badgeLink .bookingFlow__doctorBadgeAvatar img {
+.unitDoctorsCompact__avatarTrigger .bookingFlow__doctorBadgeAvatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -4147,29 +4153,6 @@ video.heroMediaEl {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-}
-
-.unitDoctorsCompact__triggerBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  padding: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #111;
-  cursor: pointer;
-  flex: 0 0 auto;
-  transition: background 160ms ease, transform 160ms ease;
-}
-
-.unitDoctorsCompact__triggerBtn:hover,
-.unitDoctorsCompact__triggerBtn:focus-visible {
-  background: rgba(17, 17, 17, 0.06);
-  transform: translateY(-1px);
 }
 
 .unitDoctorsCompact__tooltip {
