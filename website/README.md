@@ -46,14 +46,43 @@ Saídas principais:
 - `design-reform-backlog.json` (plano de reformas agressivas priorizado em P0/P1/P2)
 - `design-reform-roadmap.md` (roteiro 0-14 / 15-45 / 46-90 dias)
 
+## Topologia de domínios
+
+Este app Next atende **dois sites públicos distintos** com branding e propósito diferentes:
+
+- `espacofacial.com`
+  - worker: `espacofacial-site`
+  - foco: site público da Espaço Facial
+  - rotas abertas: site institucional, unidades, doutores, agendamento e páginas legais da marca
+
+- `skincos.com.br`
+  - worker: `skincos-site`
+  - foco: hub institucional/jurídico da SKINCOS e do app `ORB by SKINCOS`
+  - rotas abertas: `/`, `/privacidade`, `/dados`, `/termos` e aliases jurídicos equivalentes
+
+Importante:
+- `orb.skincos.com.br` continua sendo um subdomínio técnico separado, via Cloudflare Tunnel, e **não** é servido por este worker.
+- Não reaproveite `skincos.com.br` para páginas de agendamento/unidades da Espaço Facial.
+- Não altere `website/wrangler.toml` para SKINCOS; use `website/wrangler-skincos.toml`.
+
 ## Colocar online (Cloudflare Workers via OpenNext)
 
 Pré-requisitos:
 - Wrangler configurado (login/token) para a conta/zona do Cloudflare.
 
-Deploy do site (Next.js + App Router):
+Deploy do site da Espaço Facial:
 ```bash
 npm run deploy
+```
+
+Deploy do hub jurídico da SKINCOS:
+```bash
+npm run deploy:skincos
+```
+
+Tail do worker da SKINCOS:
+```bash
+npm run tail:skincos
 ```
 
 ## Agendamento (MVP) — Cloudflare D1

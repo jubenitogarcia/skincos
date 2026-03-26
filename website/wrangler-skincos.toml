@@ -1,0 +1,15 @@
+name = "skincos-site"
+main = ".open-next/worker.js"
+compatibility_date = "2026-01-11"
+compatibility_flags = ["nodejs_compat"]
+
+workers_dev = true
+
+routes = [
+  { pattern = "skincos.com.br/*", zone_name = "skincos.com.br" },
+  { pattern = "www.skincos.com.br/*", zone_name = "skincos.com.br" },
+]
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"

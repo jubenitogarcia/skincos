@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import sitemap from "../src/app/sitemap";
+import { GET as sitemapRoute } from "../src/app/sitemap.xml/route";
 
-test("sitemap includes cadastro route", () => {
-    const entries = sitemap();
-    const hasCadastro = entries.some((entry) => entry.url.endsWith("/cadastro"));
-    assert.equal(hasCadastro, true);
+test("sitemap includes cadastro route", async () => {
+    const response = sitemapRoute(new Request("https://espacofacial.com/sitemap.xml"));
+    const xml = await response.text();
+    assert.match(xml, /https:\/\/espacofacial\.com\/cadastro/);
 });

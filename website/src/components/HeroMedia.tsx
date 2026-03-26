@@ -1,5 +1,7 @@
 "use client";
 
+import TrackedBookingLink from "@/components/TrackedBookingLink";
+import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { getLocalHeroItems, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
@@ -10,12 +12,17 @@ type HeroMediaProps = {
 };
 
 export default function HeroMedia({ initialItems, initialVariant }: HeroMediaProps) {
+    const unit = useCurrentUnit();
     const [index, setIndex] = useState(0);
     const [prevIndex, setPrevIndex] = useState<number | null>(null);
     const [aspectRatio, setAspectRatio] = useState<string>("16 / 9");
     const [variant, setVariant] = useState<HeroMediaVariant>(initialVariant ?? "desktop");
 
-    type HeroStyle = CSSProperties & Record<"--hero-ar", string>;
+    type HeroStyle = CSSProperties &
+        Record<
+            "--hero-ar" | "--hero-cta-left" | "--hero-cta-top" | "--hero-cta-width" | "--hero-cta-height",
+            string
+        >;
     useEffect(() => {
         if (Array.isArray(initialItems) && initialItems.length) return;
         if (typeof window === "undefined") return;
@@ -44,6 +51,10 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
     const item = items[index] ?? items[0]!;
     const shouldLoopVideo = item.type === "video" && items.length === 1;
     const imageFit = effectiveVariant === "mobile" ? "cover" : "contain";
+    const bookingHref = useMemo(() => {
+        if (!unit?.slug) return "/agendamento?doctor=none#booking-flow";
+        return `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=none#booking-flow`;
+    }, [unit?.slug]);
 
     const goTo = useCallback(
         (nextIndex: number) => {
@@ -83,8 +94,15 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
     }, [effectiveVariant, goNext, items.length, item.type]);
 
     const style = useMemo<HeroStyle>(() => {
-        return { "--hero-ar": aspectRatio };
-    }, [aspectRatio]);
+        const hotspot = item.bookingHotspot;
+        return {
+            "--hero-ar": aspectRatio,
+            "--hero-cta-left": hotspot ? `${hotspot.leftPct}%` : "0%",
+            "--hero-cta-top": hotspot ? `${hotspot.topPct}%` : "0%",
+            "--hero-cta-width": hotspot ? `${hotspot.widthPct}%` : "0%",
+            "--hero-cta-height": hotspot ? `${hotspot.heightPct}%` : "0%",
+        };
+    }, [aspectRatio, item.bookingHotspot]);
 
     const shouldAnimateIn = prevIndex !== null;
 
@@ -156,18 +174,36 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
             {items.length > 1 ? (
                 <>
                     <div className="heroHoverZone heroHoverZone--left" aria-hidden="true" />
-                    <button type="button" className="heroArrow heroArrow--left" aria-label="Anterior" onClick={goPrev}>
-                        <span aria-hidden="true">‹</span>
+                    <button type="button" className="heroArrow carouselNavChrome heroArrow--left" aria-label="Anterior" onClick={goPrev}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                     </button>
                     <div className="heroHoverZone heroHoverZone--right" aria-hidden="true" />
-                    <button type="button" className="heroArrow heroArrow--right" aria-label="Próximo" onClick={goNext}>
-                        <span aria-hidden="true">›</span>
+                    <button type="button" className="heroArrow carouselNavChrome heroArrow--right" aria-label="Próximo" onClick={goNext}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                     </button>
                 </>
             ) : null}
 
             {renderLayer(item, { layerKey: `active:${item.src}`, kind: "active" })}
             {prevIndex !== null && items[prevIndex] ? renderLayer(items[prevIndex]!, { layerKey: `prev:${items[prevIndex]!.src}:${prevIndex}`, kind: "prev" }) : null}
+
+            {item.bookingHotspot ? (
+                <TrackedBookingLink
+                    href={bookingHref}
+                    className="heroBannerCtaHotspot"
+                    placement="hero_banner"
+                    unitSlug={unit?.slug ?? null}
+                    experience="hero_media"
+                    variant={effectiveVariant}
+                    aria-label={unit?.name ? `Ir para o agendamento da unidade ${unit.name}` : "Ir para a página de agendamento"}
+                >
+                    <span className="srOnly">Garanta o seu</span>
+                </TrackedBookingLink>
+            ) : null}
 
             {items.length > 1 ? (
                 <div className="heroMediaNav" aria-label="Selecionar mídia do banner">

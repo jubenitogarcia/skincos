@@ -11,6 +11,7 @@ export type LeadPlacement =
     | "unit_modal"
     | "doctor_grid"
     | "home_hero"
+    | "hero_banner"
     | "home_panel"
     | "units_page"
     | "doctors_page"

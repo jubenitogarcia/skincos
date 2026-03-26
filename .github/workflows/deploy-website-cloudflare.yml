@@ -117,6 +117,17 @@ jobs:
           NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
 
+      - name: Deploy SKINCOS legal hub (OpenNext -> Workers)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm run deploy:skincos
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+          NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+
       - name: Sync Cloudflare security settings (optional)
         if: ${{ steps.guard.outputs.skip != 'true' }}
         working-directory: website
@@ -148,3 +159,11 @@ jobs:
         env:
           SMOKE_AGENDA_TOKEN: ${{ secrets.AGENDA_SYNC_TOKEN }}
           SMOKE_BASE_URL: https://espacofacial.com
+
+      - name: Smoke test SKINCOS legal pages
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: |
+          set -euo pipefail
+          curl -fsS https://skincos.com.br/privacidade >/dev/null
+          curl -fsS https://skincos.com.br/dados >/dev/null
+          curl -fsS https://skincos.com.br/termos >/dev/null

@@ -1,87 +1,108 @@
 import "@/styles/globals.css";
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { headers } from "next/headers";
 import CookieBanner from "@/components/CookieBanner";
 import Analytics from "@/components/Analytics";
 import MarketingPixels from "@/components/MarketingPixels";
 import CampaignAttribution from "@/components/CampaignAttribution";
 import WebVitalsReporter from "@/components/WebVitalsReporter";
+import { getSiteConfigFromHost } from "@/lib/site-config";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com";
 const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA ?? "";
 const buildTime = process.env.NEXT_PUBLIC_BUILD_TIME ?? "";
 
-export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  robots: {
-    index: true,
-    follow: true,
-  },
-  title: {
-    default: "Espaço Facial | Harmonização Facial e Corporal",
-    template: "%s | Espaço Facial",
-  },
-  description:
-    "Espaço Facial: harmonização facial e corporal com equipe especializada, protocolos personalizados e agendamento online.",
-  openGraph: {
-    title: "Espaço Facial | Harmonização Facial e Corporal",
-    description:
-      "Espaço Facial: harmonização facial e corporal com equipe especializada, protocolos personalizados e agendamento online.",
-    url: siteUrl,
-    siteName: "Espaço Facial",
-    locale: "pt_BR",
-    type: "website",
-    images: [
-      {
-        url: "/opengraph-image",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    images: ["/twitter-image"],
-  },
-  icons: {
-    icon: "/icon.svg",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const site = getSiteConfigFromHost((await headers()).get("host"));
 
-const orgJsonLd = {
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  name: "Espaço Facial",
-  url: siteUrl,
-  logo: `${siteUrl.replace(/\/$/, "")}/icon.svg`,
-  // Unidades operacionais atuais (contas oficiais por unidade).
-  sameAs: [
-    "https://www.instagram.com/espacofacial_barrashoppingsul/",
-    "https://www.facebook.com/espacofacial.barrashoppingsul/",
-    "https://www.threads.com/@espacofacial_barrashoppingsul",
-    "https://www.instagram.com/espacofacial_novohamburgo/",
-    "https://www.facebook.com/espacofacial.novohamburgo/",
-    "https://www.threads.com/@espacofacial_novohamburgo",
-  ],
-  contactPoint: [
-    {
-      "@type": "ContactPoint",
-      contactType: "customer service",
-      telephone: "+5551980882293",
-      email: "barrashoppingsul@espacofacial.com.br",
-      areaServed: "BR",
-      availableLanguage: ["pt-BR"],
+  return {
+    metadataBase: new URL(site.siteUrl),
+    robots: {
+      index: true,
+      follow: true,
     },
-    {
-      "@type": "ContactPoint",
-      contactType: "customer service",
-      telephone: "+5551995811008",
-      email: "novohamburgo@espacofacial.com.br",
-      areaServed: "BR",
-      availableLanguage: ["pt-BR"],
+    title: {
+      default: site.titleDefault,
+      template: site.titleTemplate,
     },
-  ],
-};
+    description: site.description,
+    openGraph: {
+      title: site.titleDefault,
+      description: site.description,
+      url: site.siteUrl,
+      siteName: site.brandName,
+      locale: "pt_BR",
+      type: "website",
+      images: [
+        {
+          url: "/opengraph-image",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      images: ["/twitter-image"],
+    },
+    icons: {
+      icon: "/icon.svg",
+    },
+  };
+}
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const site = getSiteConfigFromHost((await headers()).get("host"));
+  const orgJsonLd =
+    site.key === "skincos"
+      ? {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          name: "SKINCOS",
+          url: site.siteUrl,
+          logo: `${site.siteUrl.replace(/\/$/, "")}/icon.svg`,
+          contactPoint: [
+            {
+              "@type": "ContactPoint",
+              contactType: "customer service",
+              email: "jubenitogarcia@skincos.com.br",
+              areaServed: "BR",
+              availableLanguage: ["pt-BR"],
+            },
+          ],
+        }
+      : {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          name: "Espaço Facial",
+          url: site.siteUrl,
+          logo: `${site.siteUrl.replace(/\/$/, "")}/icon.svg`,
+          sameAs: [
+            "https://www.instagram.com/espacofacial_barrashoppingsul/",
+            "https://www.facebook.com/espacofacial.barrashoppingsul/",
+            "https://www.threads.com/@espacofacial_barrashoppingsul",
+            "https://www.instagram.com/espacofacial_novohamburgo/",
+            "https://www.facebook.com/espacofacial.novohamburgo/",
+            "https://www.threads.com/@espacofacial_novohamburgo",
+          ],
+          contactPoint: [
+            {
+              "@type": "ContactPoint",
+              contactType: "customer service",
+              telephone: "+5551980882293",
+              email: "barrashoppingsul@espacofacial.com.br",
+              areaServed: "BR",
+              availableLanguage: ["pt-BR"],
+            },
+            {
+              "@type": "ContactPoint",
+              contactType: "customer service",
+              telephone: "+5551995811008",
+              email: "novohamburgo@espacofacial.com.br",
+              areaServed: "BR",
+              availableLanguage: ["pt-BR"],
+            },
+          ],
+        };
+
   return (
     <html lang="pt-BR">
       <head>
@@ -89,17 +110,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {buildTime ? <meta name="x-app-build-time" content={buildTime} /> : null}
       </head>
       <body>
-        <Suspense fallback={null}>
-          <CampaignAttribution />
-        </Suspense>
+        {site.key === "espacofacial" ? (
+          <Suspense fallback={null}>
+            <CampaignAttribution />
+          </Suspense>
+        ) : null}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
         />
         {children}
-        <Analytics />
+        {site.key === "espacofacial" ? <Analytics /> : null}
         <WebVitalsReporter />
-        <MarketingPixels />
+        {site.key === "espacofacial" ? <MarketingPixels /> : null}
         <CookieBanner />
       </body>
     </html>

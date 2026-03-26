@@ -354,7 +354,7 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
                 onBlur={stopHoverScroll}
                 onClick={() => scrollByDir(-1)}
             >
-                <span className="bookingFlow__scrollArrow bookingFlow__scrollArrow--left" aria-hidden="true">
+                <span className="bookingFlow__scrollArrow bookingFlow__scrollArrow--left carouselNavChrome carouselNavChrome--light carouselNavChrome--compact" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="18" height="18">
                         <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
@@ -382,7 +382,7 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
                 onBlur={stopHoverScroll}
                 onClick={() => scrollByDir(1)}
             >
-                <span className="bookingFlow__scrollArrow bookingFlow__scrollArrow--right" aria-hidden="true">
+                <span className="bookingFlow__scrollArrow bookingFlow__scrollArrow--right carouselNavChrome carouselNavChrome--light carouselNavChrome--compact" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="18" height="18">
                         <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
@@ -435,6 +435,10 @@ export default function BookingFlow() {
     const draftToRestoreRef = useRef<BookingDraftState | null>(null);
     const draftAppliedRef = useRef(false);
     const draftReadyRef = useRef(false);
+    const forceDoctorClear = useMemo(() => {
+        const value = normalizeDoctorSlug(searchParams?.get("doctor") ?? "");
+        return value === "none" || value === "clear";
+    }, [searchParams]);
 
     const allowedUnitSlugs = useMemo(() => new Set(["barrashoppingsul", "novo-hamburgo"]), []);
 
@@ -521,7 +525,7 @@ export default function BookingFlow() {
         if (!draft) return;
         if (draft.unitSlug && draft.unitSlug !== unitSlug) return;
 
-        if (draft.doctorSlug && draft.doctorName) {
+        if (!forceDoctorClear && draft.doctorSlug && draft.doctorName) {
             setDoctor({ slug: draft.doctorSlug, name: draft.doctorName, handle: draft.doctorHandle });
         }
 
@@ -562,7 +566,7 @@ export default function BookingFlow() {
 
         draftAppliedRef.current = true;
         draftReadyRef.current = true;
-    }, [unitSlug]);
+    }, [forceDoctorClear, unitSlug]);
     const unitLabel = useMemo(() => unitLabelFromSlug(unitSlug), [unitSlug]);
     const doctorsForUnit = useMemo(() => {
         if (!members) return null;
@@ -589,6 +593,12 @@ export default function BookingFlow() {
 
         if (doctorQuery === "any") {
             setDoctor(ANY_DOCTOR);
+            appliedDoctorQueryRef.current = doctorQuery;
+            return;
+        }
+
+        if (doctorQuery === "none" || doctorQuery === "clear") {
+            setDoctor(null);
             appliedDoctorQueryRef.current = doctorQuery;
             return;
         }
