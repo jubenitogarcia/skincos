@@ -2,3 +2,10 @@
 backend/apps/agent-zero/requirements.txt,2026-06-30,openai-whisper dependency resolution currently fails pip-audit build metadata
 backend/apps/agent-zero/requirements.unified.txt,2026-06-30,openai-whisper dependency resolution currently fails pip-audit build metadata
 backend/apps/automations/sprinta/v2/vendor/crawl4ai/requirements.txt,2026-06-30,crawl4ai vendor stack triggers lxml source build in pip-audit and GitHub runner lacks libxml2/libxslt development packages
+backend/apps/automations/scraper/requirements.txt,2026-05-15,python dependency remediation for scraper stack will be handled in a dedicated security update batch
+backend/apps/automations/sprinta/legacy/requirements.txt,2026-05-15,legacy sprinta stack requires coordinated dependency remediation outside this public-site release
+backend/apps/automations/sprinta/v2/requirements.txt,2026-05-15,sprinta v2 python stack requires coordinated dependency remediation outside this public-site release
+backend/apps/instagram/instagrapi/requirements.txt,2026-05-15,instagrapi stack requires dedicated dependency review outside this public-site release
+backend/archive/tools/repo_checks/requirements.txt,2026-05-15,archived tooling dependency remediation is deferred to a separate maintenance pass
+backend/requirements.txt,2026-05-15,backend shared python requirements carry pre-existing vulnerabilities and need a dedicated upgrade pass separate from this release
+backend/tools/scripts/xiaomi/requirements.txt,2026-05-15,xiaomi tooling dependency remediation is deferred to a separate maintenance pass
