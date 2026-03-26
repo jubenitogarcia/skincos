@@ -20,10 +20,14 @@
     "audit:360:ci": "npm ci && npm run audit:360",
     "cf:security": "node scripts/cloudflare-sync-security.mjs",
     "cf:security:check": "node scripts/cloudflare-sync-security.mjs --check",
+    "sync:online:snapshot": "node scripts/sync-online-snapshot.mjs",
     "tail": "wrangler tail espacofacial-site --format pretty --sampling-rate 0.25",
+    "tail:skincos": "wrangler tail skincos-site --format pretty --sampling-rate 0.25",
     "tail:json": "wrangler tail espacofacial-site --format json",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preview:snapshot": "npm run sync:online:snapshot && npm run preview",
+    "deploy": "node scripts/deploy-worker.mjs",
+    "deploy:skincos": "node scripts/deploy-worker.mjs --config wrangler-skincos.toml",
     "deploy:esfa": "wrangler deploy -c workers/esfa-redirector/wrangler.toml"
   },
   "dependencies": {

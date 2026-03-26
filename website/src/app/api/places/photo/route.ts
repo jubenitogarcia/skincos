@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { loadPlacePhotoSnapshot } from "@/lib/productionSnapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,6 @@ function clamp(n: number, min: number, max: number): number {
 }
 
 export async function GET(req: Request) {
-    const apiKey = (process.env.GOOGLE_MAPS_API_KEY ?? "").trim();
     const { searchParams } = new URL(req.url);
 
     const ref = (searchParams.get("ref") ?? "").trim();
@@ -32,12 +32,8 @@ export async function GET(req: Request) {
         return new NextResponse("missing_ref", { status: 400 });
     }
 
-    if (!apiKey) {
-        return new NextResponse("missing_api_key", { status: 503 });
-    }
-
     const cache = getCloudflareCache();
-    const cacheKey = new Request(`https://espacofacial.com/__cache/places/photo?ref=${encodeURIComponent(ref)}&w=${maxWidth}`);
+    const cacheKey = new Request(`https://espacofacial.com/__cache/places/photo?v=2&src=snapshot&ref=${encodeURIComponent(ref)}&w=${maxWidth}`);
 
     if (cache) {
         const hit = await cache.match(cacheKey);
@@ -56,39 +52,20 @@ export async function GET(req: Request) {
         }
     }
 
-    const url = new URL("https://maps.googleapis.com/maps/api/place/photo");
-    url.searchParams.set("photoreference", ref);
-    url.searchParams.set("maxwidth", String(maxWidth));
-    url.searchParams.set("key", apiKey);
-
-    try {
-        const res = await fetch(url.toString(), {
-            redirect: "follow",
-            next: { revalidate: 60 * 60 * 12 },
-        });
-
-        if (!res.ok) {
-            return new NextResponse("photo_fetch_failed", { status: 502 });
-        }
-
-        const contentType = res.headers.get("content-type") ?? "image/jpeg";
-        if (!contentType.toLowerCase().startsWith("image/")) {
-            return new NextResponse("unexpected_content_type", { status: 502 });
-        }
-
-        const resp = new NextResponse(res.body, {
+    const snapshotPhoto = await loadPlacePhotoSnapshot(req, ref);
+    if (snapshotPhoto) {
+        const resp = new NextResponse(snapshotPhoto.response.body, {
             status: 200,
             headers: {
-                "content-type": contentType,
+                "content-type": snapshotPhoto.contentType,
                 "cache-control": "public, max-age=604800, s-maxage=604800, stale-while-revalidate=604800",
-                "x-places-photo": "ok",
+                "x-places-photo": "snapshot_only",
             },
         });
 
         if (cache) void cache.put(cacheKey, resp.clone());
 
         return resp;
-    } catch {
-        return new NextResponse("exception", { status: 500 });
     }
+    return new NextResponse("snapshot_photo_not_found", { status: 404 });
 }

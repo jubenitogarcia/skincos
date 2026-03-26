@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isPathAllowedForSite } from "@/lib/site-config";
 
 function isPublicAsset(pathname: string): boolean {
     return (
@@ -52,6 +53,17 @@ export function middleware(req: NextRequest) {
     if (!isPublicAsset(url.pathname) && !url.pathname.startsWith("/api/") && host.startsWith("www.")) {
         url.host = host.replace(/^www\./, "");
         return NextResponse.redirect(url, 308);
+    }
+
+    if (!isPublicAsset(url.pathname) && !url.pathname.startsWith("/api/") && !isPathAllowedForSite(host, url.pathname)) {
+        return new NextResponse("Not Found", {
+            status: 404,
+            headers: {
+                "content-type": "text/plain; charset=utf-8",
+                "cache-control": "no-store",
+                "x-robots-tag": "noindex",
+            },
+        });
     }
 
     if (!isPublicAsset(url.pathname)) {
@@ -122,6 +134,7 @@ export function middleware(req: NextRequest) {
             "/garcom_modelo": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+do+%40garcom_modelo+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
             "/geschwertner": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+%40geschwertner+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
             "/ggabrielaavilaa": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+%40ggabrielaavilaa+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
+            "/gi_ojeda": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+%40gi_ojeda+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
             "/greice_marczewski": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+%40greice_marczewski+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
             "/gusgho": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+do+%40gusgho+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
             "/isaaaacardoso_": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+%40isaaaacardoso_+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",

@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import type { Unit } from "@/data/units";
 import Image from "next/image";
 import { trackEvent } from "@/lib/analytics";
-import { trackBookingStart } from "@/lib/leadTracking";
+import { trackBookingStart, trackCtaInstagramClick } from "@/lib/leadTracking";
 import UnitQuickButtons from "@/components/UnitQuickButtons";
 
 type PlaceDetailsPayload = {
@@ -40,6 +40,23 @@ type GbpReviewsPayload = {
 
 type ReviewSort = "newest" | "highest" | "lowest";
 
+type GalleryItem =
+    | {
+          id: string;
+          kind: "photo";
+          alt: string;
+          thumbSrc: string;
+          fullSrc: string;
+          googleUrl?: string | null;
+      }
+    | {
+          id: string;
+          kind: "cta";
+          alt: string;
+          href: string;
+          handle: string | null;
+      };
+
 function shouldFallbackFromGbp(error: string | null | undefined): boolean {
     const e = (error ?? "").trim();
     if (!e) return false;
@@ -67,31 +84,44 @@ function buildQueryForUnit(unit: Unit | null): string {
     return query || buildDefaultQuery();
 }
 
-function getGoogleMapsEmbedUrl(query: string): string {
-    const q = encodeURIComponent(query);
-    return `https://www.google.com/maps?q=${q}&z=15&output=embed`;
+function buildOpenMapsUrl(data: PlaceDetailsPayload | null, unit: Unit | null, fallbackQuery: string): string | null {
+    const directUrl = (unit?.maps ?? data?.mapsUrl ?? "").trim();
+    if (directUrl) return directUrl;
+
+    const lat = data?.location?.lat ?? unit?.lat ?? null;
+    const lng = data?.location?.lng ?? unit?.lng ?? null;
+    const query = typeof lat === "number" && typeof lng === "number" ? `${lat},${lng}` : fallbackQuery;
+
+    if (!query.trim()) return null;
+
+    const url = new URL("https://www.google.com/maps/search/");
+    url.searchParams.set("api", "1");
+    url.searchParams.set("query", query);
+    return url.toString();
 }
 
-function getGoogleMapsEmbedUrlForLatLng(lat: number, lng: number, zoom = 16): string {
-    // Lat/Lng ensures the embed is centered correctly (avoids world-zoom glitches).
-    const q = encodeURIComponent(`${lat},${lng}`);
-    return `https://www.google.com/maps?q=${q}&z=${zoom}&output=embed`;
-}
-
-function buildEmbedQuery(data: PlaceDetailsPayload | null, unit: Unit | null, fallbackQuery: string): string {
-    const name = (data?.name ?? "").trim();
-    const address = (data?.address ?? unit?.addressLine ?? "").trim();
-
-    const joined = [name, address].filter(Boolean).join(" - ").trim();
-    if (joined) return joined;
-
-    return fallbackQuery;
+function formatCoordinates(lat: number | null | undefined, lng: number | null | undefined): string | null {
+    if (typeof lat !== "number" || !Number.isFinite(lat) || typeof lng !== "number" || !Number.isFinite(lng)) {
+        return null;
+    }
+    return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 function clampRating(value: number | null | undefined): number {
     const n = typeof value === "number" ? value : 0;
     if (!Number.isFinite(n)) return 0;
     return Math.max(0, Math.min(5, n));
+}
+
+function extractInstagramHandle(url: string | null | undefined): string | null {
+    if (!url) return null;
+    try {
+        const { pathname } = new URL(url);
+        const handle = pathname.split("/").filter(Boolean)[0];
+        return handle ? handle.replace(/^@/, "") : null;
+    } catch {
+        return null;
+    }
 }
 
 function Stars({ rating }: { rating: number | null | undefined }) {
@@ -141,7 +171,8 @@ export default function AboutUsSection() {
     const photosScrollRef = useRef<HTMLDivElement | null>(null);
     const [visiblePhotosCount, setVisiblePhotosCount] = useState<number>(8);
 
-    const photosAutoScrollTimerRef = useRef<number | null>(null);
+    const photosAutoScrollFrameRef = useRef<number | null>(null);
+    const photosAutoScrollVelocityRef = useRef<number>(0);
 
     const [gbpPhotos, setGbpPhotos] = useState<Array<{ name: string; thumbnailUrl: string; googleUrl: string | null }>>([]);
     const [gbpPhotosNextToken, setGbpPhotosNextToken] = useState<string | null>(null);
@@ -154,18 +185,7 @@ export default function AboutUsSection() {
     const [gbpReviewsLoading, setGbpReviewsLoading] = useState<boolean>(false);
     const [gbpForceFallback, setGbpForceFallback] = useState<boolean>(false);
 
-    const [activePhoto, setActivePhoto] = useState<{ src: string; alt: string; googleUrl?: string | null } | null>(null);
-
-    useEffect(() => {
-        if (!activePhoto) return;
-
-        function onKeyDown(e: KeyboardEvent) {
-            if (e.key === "Escape") setActivePhoto(null);
-        }
-
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-    }, [activePhoto]);
+    const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -191,7 +211,7 @@ export default function AboutUsSection() {
                     url.searchParams.set("query", query);
                 }
 
-                const res = await fetch(url.toString(), { cache: "no-store" });
+                const res = await fetch(url.toString());
                 const json = (await res.json()) as PlaceDetailsPayload;
                 if (!cancelled) setData(json);
             } catch {
@@ -223,23 +243,8 @@ export default function AboutUsSection() {
     const gbpLocation = hasSelectedUnit ? (unit?.gbpLocation ?? "").trim() : "";
     const useGbp = Boolean(gbpLocation) && !gbpForceFallback;
 
-    const embedUrl = useMemo(() => {
-        const embedQuery = buildEmbedQuery(data, unit, query);
-
-        // Prefer a descriptive query so the map card shows name/address (not raw coordinates).
-        if (embedQuery && embedQuery !== query) {
-            return getGoogleMapsEmbedUrl(embedQuery);
-        }
-
-        // Fallback: lat/lng gives reliable centering/zoom if we don't have a good label.
-        const lat = data?.location?.lat ?? unit?.lat ?? null;
-        const lng = data?.location?.lng ?? unit?.lng ?? null;
-        if (typeof lat === "number" && Number.isFinite(lat) && typeof lng === "number" && Number.isFinite(lng)) {
-            return getGoogleMapsEmbedUrlForLatLng(lat, lng, 16);
-        }
-
-        return getGoogleMapsEmbedUrl(query);
-    }, [data, unit, query]);
+    const mapOpenUrl = useMemo(() => buildOpenMapsUrl(data, unit, query), [data, unit, query]);
+    const coordinatesLabel = useMemo(() => formatCoordinates(data?.location?.lat ?? unit?.lat, data?.location?.lng ?? unit?.lng), [data?.location?.lat, data?.location?.lng, unit?.lat, unit?.lng]);
 
     const buildPlacePhotoUrl = useCallback((ref: string, maxwidth = 1200) => {
         return `/api/places/photo?ref=${encodeURIComponent(ref)}&maxwidth=${maxwidth}`;
@@ -247,6 +252,89 @@ export default function AboutUsSection() {
 
     const allPhotos = useMemo(() => (hasSelectedUnit ? data?.photos ?? [] : []), [data?.photos, hasSelectedUnit]);
     const photos = useMemo(() => allPhotos.slice(0, visiblePhotosCount), [allPhotos, visiblePhotosCount]);
+    const unitInstagramUrl = (unit?.instagram ?? "").trim() || "https://www.instagram.com/espacofacial/";
+    const unitInstagramHandle = extractInstagramHandle(unitInstagramUrl);
+    const galleryItems = useMemo<GalleryItem[]>(() => {
+        if (!hasSelectedUnit) return [];
+
+        const items: GalleryItem[] = useGbp
+            ? gbpPhotos.map((photo, index) => ({
+                  id: `${photo.thumbnailUrl}-${index}`,
+                  kind: "photo",
+                  alt: "Imagem da unidade",
+                  thumbSrc: photo.thumbnailUrl,
+                  fullSrc: photo.thumbnailUrl,
+                  googleUrl: photo.googleUrl,
+              }))
+            : photos.map((photo) => ({
+                  id: photo.photoReference,
+                  kind: "photo",
+                  alt: "Imagem da unidade",
+                  thumbSrc: buildPlacePhotoUrl(photo.photoReference, 1200),
+                  fullSrc: buildPlacePhotoUrl(photo.photoReference, 1600),
+              }));
+
+        if (unitInstagramUrl) {
+            items.push({
+                id: `cta-${unit?.slug ?? "unit"}`,
+                kind: "cta",
+                alt: "Conheça mais sobre a unidade",
+                href: unitInstagramUrl,
+                handle: unitInstagramHandle,
+            });
+        }
+
+        return items;
+    }, [buildPlacePhotoUrl, gbpPhotos, hasSelectedUnit, photos, unit?.slug, unitInstagramHandle, unitInstagramUrl, useGbp]);
+    const activeGalleryItem = activePhotoIndex !== null ? galleryItems[activePhotoIndex] ?? null : null;
+    const activePhoto = activeGalleryItem?.kind === "photo" ? activeGalleryItem : null;
+    const activeGalleryCta = activeGalleryItem?.kind === "cta" ? activeGalleryItem : null;
+
+    useEffect(() => {
+        if (!activeGalleryItem) return;
+
+        function onKeyDown(e: KeyboardEvent) {
+            if (e.key === "Escape") {
+                setActivePhotoIndex(null);
+                return;
+            }
+            if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                setActivePhotoIndex((current) => {
+                    if (current === null || !galleryItems.length) return current;
+                    return (current - 1 + galleryItems.length) % galleryItems.length;
+                });
+                return;
+            }
+            if (e.key === "ArrowRight") {
+                e.preventDefault();
+                setActivePhotoIndex((current) => {
+                    if (current === null || !galleryItems.length) return current;
+                    return (current + 1) % galleryItems.length;
+                });
+            }
+        }
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        document.addEventListener("keydown", onKeyDown);
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [activeGalleryItem, galleryItems.length]);
+
+    useEffect(() => {
+        if (activePhotoIndex === null) return;
+        if (galleryItems.length === 0) {
+            setActivePhotoIndex(null);
+            return;
+        }
+        if (activePhotoIndex >= galleryItems.length) {
+            setActivePhotoIndex(galleryItems.length - 1);
+        }
+    }, [activePhotoIndex, galleryItems.length]);
 
     const baseReviews = useMemo(() => {
         if (!hasSelectedUnit) return [];
@@ -293,7 +381,7 @@ export default function AboutUsSection() {
     }, [hasSelectedUnit, selectedPlaceId]);
 
     useEffect(() => {
-        setActivePhoto(null);
+        setActivePhotoIndex(null);
     }, [hasSelectedUnit, selectedPlaceId]);
 
     useEffect(() => {
@@ -321,7 +409,7 @@ export default function AboutUsSection() {
                 url.searchParams.set("pageSize", "12");
                 if (token) url.searchParams.set("pageToken", token);
 
-                const res = await fetch(url.toString(), { cache: "no-store" });
+                const res = await fetch(url.toString());
                 const json = (await res.json()) as GbpPhotosPayload;
 
                 if (json?.available) {
@@ -364,7 +452,7 @@ export default function AboutUsSection() {
                 url.searchParams.set("pageSize", "10");
                 if (token) url.searchParams.set("pageToken", token);
 
-                const res = await fetch(url.toString(), { cache: "no-store" });
+                const res = await fetch(url.toString());
                 const json = (await res.json()) as GbpReviewsPayload;
 
                 if (json?.available) {
@@ -495,35 +583,71 @@ export default function AboutUsSection() {
     }, [allPhotos.length, gbpPhotosLoading, gbpPhotosNextToken, loadMorePhotos, useGbp, visiblePhotosCount]);
 
     const stopPhotosAutoScroll = useCallback(() => {
-        if (photosAutoScrollTimerRef.current) {
-            window.clearInterval(photosAutoScrollTimerRef.current);
-            photosAutoScrollTimerRef.current = null;
+        photosAutoScrollVelocityRef.current = 0;
+        if (photosAutoScrollFrameRef.current) {
+            window.cancelAnimationFrame(photosAutoScrollFrameRef.current);
+            photosAutoScrollFrameRef.current = null;
         }
     }, []);
 
     const startPhotosAutoScroll = useCallback(
-        (direction: "left" | "right") => {
-            stopPhotosAutoScroll();
-            const el = photosScrollRef.current;
-            if (!el) return;
+        (velocity: number) => {
+            photosAutoScrollVelocityRef.current = velocity;
+            if (photosAutoScrollFrameRef.current) return;
 
-            photosAutoScrollTimerRef.current = window.setInterval(() => {
+            const tick = () => {
                 const node = photosScrollRef.current;
-                if (!node) return;
-                const delta = direction === "right" ? 12 : -12;
-                node.scrollBy({ left: delta, behavior: "auto" });
+                const currentVelocity = photosAutoScrollVelocityRef.current;
+                if (!node || Math.abs(currentVelocity) < 0.01) {
+                    photosAutoScrollFrameRef.current = null;
+                    return;
+                }
+                node.scrollBy({ left: currentVelocity, behavior: "auto" });
                 maybeLoadMorePhotos();
-            }, 16);
+                photosAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
+            };
+
+            photosAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
         },
-        [maybeLoadMorePhotos, stopPhotosAutoScroll],
+        [maybeLoadMorePhotos],
+    );
+
+    const updatePhotosAutoScroll = useCallback(
+        (direction: "left" | "right", event: ReactMouseEvent<HTMLDivElement>) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const relativeX = event.clientX - bounds.left;
+            const progress = direction === "left" ? 1 - relativeX / bounds.width : relativeX / bounds.width;
+            const eased = Math.min(1, Math.max(0, progress)) ** 2;
+            const velocity = (0.12 + eased * 0.68) * (direction === "right" ? 1 : -1);
+            startPhotosAutoScroll(velocity);
+        },
+        [startPhotosAutoScroll],
     );
 
     const scrollPhotosBy = useCallback((direction: "left" | "right") => {
         const el = photosScrollRef.current;
         if (!el) return;
-        const amount = Math.max(240, Math.floor(el.clientWidth * 0.85));
+        const amount = Math.max(180, Math.floor(el.clientWidth * 0.52));
         el.scrollBy({ left: direction === "right" ? amount : -amount, behavior: "smooth" });
     }, []);
+
+    const openPhotoAtIndex = useCallback((index: number) => {
+        setActivePhotoIndex(index);
+    }, []);
+
+    const goToPreviousPhoto = useCallback(() => {
+        setActivePhotoIndex((current) => {
+            if (current === null || !galleryItems.length) return current;
+            return (current - 1 + galleryItems.length) % galleryItems.length;
+        });
+    }, [galleryItems.length]);
+
+    const goToNextPhoto = useCallback(() => {
+        setActivePhotoIndex((current) => {
+            if (current === null || !galleryItems.length) return current;
+            return (current + 1) % galleryItems.length;
+        });
+    }, [galleryItems.length]);
 
     useEffect(() => {
         return () => stopPhotosAutoScroll();
@@ -542,152 +666,117 @@ export default function AboutUsSection() {
             {!hasSelectedUnit ? null : (
                 <div className="aboutGrid">
                     <div className="aboutPhotosRow" aria-label="Fotos da unidade">
-                        {useGbp ? (
-                            gbpPhotos.length ? (
-                                <div className="aboutPhotosScrollerWrap">
-                                    <div
-                                        className="aboutPhotosEdge aboutPhotosEdge--left"
-                                        aria-hidden="true"
-                                        onMouseEnter={() => startPhotosAutoScroll("left")}
-                                        onMouseLeave={stopPhotosAutoScroll}
-                                    />
-                                    <div
-                                        className="aboutPhotosEdge aboutPhotosEdge--right"
-                                        aria-hidden="true"
-                                        onMouseEnter={() => startPhotosAutoScroll("right")}
-                                        onMouseLeave={stopPhotosAutoScroll}
-                                    />
-
-                                    <button
-                                        type="button"
-                                        className="aboutPhotosArrow aboutPhotosArrow--left"
-                                        aria-label="Fotos anteriores"
-                                        onClick={() => scrollPhotosBy("left")}
-                                    >
-                                        <span aria-hidden="true">‹</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="aboutPhotosArrow aboutPhotosArrow--right"
-                                        aria-label="Próximas fotos"
-                                        onClick={() => scrollPhotosBy("right")}
-                                    >
-                                        <span aria-hidden="true">›</span>
-                                    </button>
-
-                                    <div className="aboutPhotosScroller" ref={photosScrollRef}>
-                                        {gbpPhotos.map((p) => {
-                                            const alt = "Foto da unidade";
-                                            const photo = (
-                                                <Image
-                                                    className="aboutPhotoItem"
-                                                    src={p.thumbnailUrl}
-                                                    alt={alt}
-                                                    width={520}
-                                                    height={488}
-                                                    sizes="25vw"
-                                                    unoptimized
-                                                    style={{ objectFit: "cover" }}
-                                                />
-                                            );
-
-                                            return (
-                                                <button
-                                                    key={p.thumbnailUrl}
-                                                    type="button"
-                                                    className="aboutPhotoLink aboutPhotoButton"
-                                                    aria-label="Ampliar foto da unidade"
-                                                    onClick={() =>
-                                                        setActivePhoto({
-                                                            src: p.thumbnailUrl,
-                                                            alt,
-                                                            googleUrl: p.googleUrl,
-                                                        })
-                                                    }
-                                                >
-                                                    {photo}
-                                                </button>
-                                            );
-                                        })}
-
-                                        {gbpPhotosNextToken ? (
-                                            <div className="aboutPhotosTail">{gbpPhotosLoading ? "Carregando…" : "Mais fotos →"}</div>
-                                        ) : null}
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="aboutMuted">{gbpPhotosLoading ? "Carregando fotos…" : "Fotos indisponíveis no momento."}</div>
-                            )
-                        ) : photos.length ? (
+                        {galleryItems.length ? (
                             <div className="aboutPhotosScrollerWrap">
-                                <div
-                                    className="aboutPhotosEdge aboutPhotosEdge--left"
-                                    aria-hidden="true"
-                                    onMouseEnter={() => startPhotosAutoScroll("left")}
-                                    onMouseLeave={stopPhotosAutoScroll}
-                                />
-                                <div
-                                    className="aboutPhotosEdge aboutPhotosEdge--right"
-                                    aria-hidden="true"
-                                    onMouseEnter={() => startPhotosAutoScroll("right")}
-                                    onMouseLeave={stopPhotosAutoScroll}
-                                />
+                                {galleryItems.length > 1 ? (
+                                    <>
+                                        <div
+                                            className="aboutPhotosEdge aboutPhotosEdge--left"
+                                            aria-hidden="true"
+                                            onMouseEnter={(event) => updatePhotosAutoScroll("left", event)}
+                                            onMouseMove={(event) => updatePhotosAutoScroll("left", event)}
+                                            onMouseLeave={stopPhotosAutoScroll}
+                                        />
+                                        <div
+                                            className="aboutPhotosEdge aboutPhotosEdge--right"
+                                            aria-hidden="true"
+                                            onMouseEnter={(event) => updatePhotosAutoScroll("right", event)}
+                                            onMouseMove={(event) => updatePhotosAutoScroll("right", event)}
+                                            onMouseLeave={stopPhotosAutoScroll}
+                                        />
 
-                                <button
-                                    type="button"
-                                    className="aboutPhotosArrow aboutPhotosArrow--left"
-                                    aria-label="Fotos anteriores"
-                                    onClick={() => scrollPhotosBy("left")}
-                                >
-                                    <span aria-hidden="true">‹</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className="aboutPhotosArrow aboutPhotosArrow--right"
-                                    aria-label="Próximas fotos"
-                                    onClick={() => scrollPhotosBy("right")}
-                                >
-                                    <span aria-hidden="true">›</span>
-                                </button>
+                                        <button
+                                            type="button"
+                                            className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--left"
+                                            aria-label="Fotos anteriores"
+                                            onClick={() => scrollPhotosBy("left")}
+                                        >
+                                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--right"
+                                            aria-label="Próximas fotos"
+                                            onClick={() => scrollPhotosBy("right")}
+                                        >
+                                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                        </button>
+                                    </>
+                                ) : null}
 
                                 <div className="aboutPhotosScroller" ref={photosScrollRef}>
-                                    {photos.map((p) => {
-                                        const alt = "Foto da unidade";
+                                    {galleryItems.map((item, index) => {
+                                        if (item.kind === "photo") {
+                                            return (
+                                                <button
+                                                    key={item.id}
+                                                    type="button"
+                                                    className="aboutPhotoLink aboutPhotoButton"
+                                                    aria-label="Ampliar imagem da unidade"
+                                                    data-active={activePhotoIndex === index ? "true" : "false"}
+                                                    onClick={() => openPhotoAtIndex(index)}
+                                                >
+                                                    <Image
+                                                        className="aboutPhotoItem"
+                                                        src={item.thumbSrc}
+                                                        alt={item.alt}
+                                                        width={520}
+                                                        height={488}
+                                                        sizes="25vw"
+                                                        unoptimized
+                                                        style={{ objectFit: "cover" }}
+                                                    />
+                                                    <span className="aboutPhotoOverlay" aria-hidden="true" />
+                                                </button>
+                                            );
+                                        }
+
                                         return (
-                                            <button
-                                                key={p.photoReference}
-                                                type="button"
-                                                className="aboutPhotoLink aboutPhotoButton"
-                                                aria-label="Ampliar foto da unidade"
+                                            <a
+                                                key={item.id}
+                                                className="aboutPhotoLink aboutPhotoLink--cta"
+                                                href={item.href}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                aria-label={item.alt}
+                                                data-active={activePhotoIndex === index ? "true" : "false"}
                                                 onClick={() =>
-                                                    setActivePhoto({
-                                                        src: buildPlacePhotoUrl(p.photoReference, 1600),
-                                                        alt,
+                                                    trackCtaInstagramClick({
+                                                        placement: "about",
+                                                        unitSlug: unit?.slug ?? null,
+                                                        instagramUrl: unitInstagramUrl,
                                                     })
                                                 }
                                             >
-                                                <Image
-                                                    className="aboutPhotoItem"
-                                                    src={buildPlacePhotoUrl(p.photoReference, 1200)}
-                                                    alt={alt}
-                                                    width={520}
-                                                    height={488}
-                                                    sizes="25vw"
-                                                    unoptimized
-                                                    style={{ objectFit: "cover" }}
-                                                />
-                                            </button>
+                                                <span className="aboutPhotoCtaGlow" aria-hidden="true" />
+                                                <span className="aboutPhotoOverlay aboutPhotoOverlay--cta" aria-hidden="true" />
+                                                <span className="aboutPhotoCtaContent">
+                                                    <span className="aboutPhotoCtaPlus" aria-hidden="true">+</span>
+                                                    <span className="aboutPhotoCtaTitle">Conheça mais</span>
+                                                    {item.handle ? <span className="aboutPhotoCtaMeta">@{item.handle}</span> : null}
+                                                </span>
+                                            </a>
                                         );
                                     })}
 
-                                    {photos.length < allPhotos.length ? <div className="aboutPhotosTail">Mais fotos →</div> : null}
                                 </div>
                             </div>
                         ) : (
-                            <div className="aboutMuted">{loading ? "Carregando fotos…" : "Fotos indisponíveis no momento."}</div>
+                            <div className="aboutMuted">
+                                {useGbp ? (gbpPhotosLoading ? "Carregando fotos…" : "Fotos indisponíveis no momento.") : loading ? "Carregando fotos…" : "Fotos indisponíveis no momento."}
+                            </div>
                         )}
 
-                        <div className="aboutPhotosHint">Passe o mouse no canto direito para ver mais fotos.</div>
+                        {!galleryItems.length ? (
+                            <div className="aboutMuted" style={{ padding: "0 18px", fontSize: 12 }}>
+                                {useGbp ? (gbpPhotosLoading ? "Carregando fotos…" : "Mais fotos em breve.") : loading ? "Carregando fotos…" : "Mais fotos em breve."}
+                            </div>
+                        ) : null}
+                        <div className="aboutPhotosHint">Arraste, use as setas, a barra inferior ou aproxime o cursor das laterais para navegar com suavidade.</div>
                     </div>
 
                     <div className="aboutSplit">
@@ -735,13 +824,34 @@ export default function AboutUsSection() {
                                 </div>
                             </div>
 
-                            <iframe
-                                className="aboutMapFrame"
-                                title="Google Maps"
-                                src={embedUrl}
-                                loading="lazy"
-                                referrerPolicy="no-referrer-when-downgrade"
-                            />
+                            <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
+                                <div className="aboutMapStaticGlow" aria-hidden="true" />
+                                <div className="aboutMapStaticTop">
+                                    <span className="aboutMapStaticEyebrow">Localização</span>
+                                    <span className="aboutMapStaticBadge">Snapshot local</span>
+                                </div>
+                                <div className="aboutMapStaticTitle">{title}</div>
+                                {address ? <div className="aboutMapStaticAddress">{address}</div> : null}
+                                <div className="aboutMapStaticMeta">
+                                    {coordinatesLabel ? (
+                                        <div className="aboutMapStaticMetaItem">
+                                            <span>Coordenadas</span>
+                                            <strong>{coordinatesLabel}</strong>
+                                        </div>
+                                    ) : null}
+                                    <div className="aboutMapStaticMetaItem">
+                                        <span>Status</span>
+                                        <strong>Sem iframe externo</strong>
+                                    </div>
+                                </div>
+                                <div className="aboutMapStaticActions">
+                                    {mapOpenUrl ? (
+                                        <a className="aboutBtnGhost" href={mapOpenUrl} target="_blank" rel="noopener noreferrer">
+                                            Abrir rota
+                                        </a>
+                                    ) : null}
+                                </div>
+                            </div>
 
                             <div className="aboutRatingRow">
                                 {loading ? (
@@ -858,44 +968,101 @@ export default function AboutUsSection() {
                 </div>
             )}
 
-            {activePhoto ? (
+            {activeGalleryItem ? (
                 <div
-                    className="modalOverlay"
+                    className="modalOverlay aboutPhotoModalOverlay"
                     role="dialog"
                     aria-modal="true"
-                    aria-label="Foto da unidade"
+                    aria-label="Galeria da unidade"
                     onMouseDown={(e) => {
-                        if (e.target === e.currentTarget) setActivePhoto(null);
+                        if (e.target === e.currentTarget) setActivePhotoIndex(null);
                     }}
                 >
-                    <div className="modalCard photoModalCard">
-                        <div className="modalHeader">
-                            <div>
-                                <div className="modalTitle">Foto da unidade</div>
-                                {activePhoto.googleUrl ? <div className="modalSubtitle">Google Maps</div> : null}
-                            </div>
-                            <button className="modalClose" type="button" onClick={() => setActivePhoto(null)} aria-label="Fechar">
-                                ×
-                            </button>
-                        </div>
-                        <div className="modalBody photoModalBody">
-                            <Image
-                                className="photoModalImage"
-                                src={activePhoto.src}
-                                alt={activePhoto.alt}
-                                width={1600}
-                                height={900}
-                                loading="lazy"
-                                unoptimized
-                            />
-                            {activePhoto.googleUrl ? (
-                                <div className="modalActions">
-                                    <a className="btn btnPrimary" href={activePhoto.googleUrl} target="_blank" rel="noreferrer">
-                                        Abrir no Google Maps
-                                    </a>
-                                </div>
+                    <div className="aboutPhotoModalCard">
+                        <button
+                            className="aboutPhotoModalClose"
+                            type="button"
+                            onClick={() => setActivePhotoIndex(null)}
+                            aria-label="Fechar"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M7 7l10 10" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" />
+                                <path d="M17 7L7 17" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" />
+                            </svg>
+                        </button>
+
+                        {galleryItems.length > 1 ? (
+                            <>
+                                <button
+                                    className="aboutPhotoModalArrow carouselNavChrome aboutPhotoModalArrow--left"
+                                    type="button"
+                                    onClick={goToPreviousPhoto}
+                                    aria-label="Item anterior"
+                                >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                </button>
+                                <button
+                                    className="aboutPhotoModalArrow carouselNavChrome aboutPhotoModalArrow--right"
+                                    type="button"
+                                    onClick={goToNextPhoto}
+                                    aria-label="Próximo item"
+                                >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                </button>
+                            </>
+                        ) : null}
+
+                        <div
+                            className={
+                                activeGalleryCta
+                                    ? "aboutPhotoModalViewport aboutPhotoModalViewport--cta"
+                                    : "aboutPhotoModalViewport"
+                            }
+                        >
+                            {activePhoto ? (
+                                <Image
+                                    className="aboutPhotoModalImage"
+                                    src={activePhoto.fullSrc}
+                                    alt={activePhoto.alt}
+                                    width={1600}
+                                    height={900}
+                                    loading="lazy"
+                                    unoptimized
+                                />
+                            ) : null}
+
+                            {activeGalleryCta ? (
+                                <a
+                                    className="aboutPhotoModalCtaCard"
+                                    href={activeGalleryCta.href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={() =>
+                                        trackCtaInstagramClick({
+                                            placement: "about",
+                                            unitSlug: unit?.slug ?? null,
+                                            instagramUrl: unitInstagramUrl,
+                                        })
+                                    }
+                                >
+                                    <span className="aboutPhotoModalCtaPlus" aria-hidden="true">+</span>
+                                    <span className="aboutPhotoModalCtaTitle">Conheça mais</span>
+                                    {activeGalleryCta.handle ? <span className="aboutPhotoModalCtaMeta">@{activeGalleryCta.handle}</span> : null}
+                                </a>
                             ) : null}
                         </div>
+
+                        {activePhoto?.googleUrl ? (
+                            <div className="aboutPhotoModalFooter">
+                                <a className="aboutPhotoModalLink" href={activePhoto.googleUrl} target="_blank" rel="noreferrer">
+                                    Abrir no Google Maps
+                                </a>
+                            </div>
+                        ) : null}
                     </div>
                 </div>
             ) : null}

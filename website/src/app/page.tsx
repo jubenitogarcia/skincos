@@ -8,28 +8,65 @@ import AboutUsSection from "@/components/AboutUsSection";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { getSiteConfigFromHost } from "@/lib/site-config";
+import { SkincosHubPage } from "@/components/LegalContent";
 
-const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com").replace(/\/$/, "");
 export const revalidate = 300;
 
-export const metadata: Metadata = {
-  title: "Espaço Facial",
-  description: "Harmonização facial e corporal. Selecione sua unidade e agende.",
-  robots: {
-    index: true,
-    follow: true,
-  },
-  alternates: { canonical: `${siteUrl}/` },
-  openGraph: {
+export async function generateMetadata(): Promise<Metadata> {
+  const site = getSiteConfigFromHost((await headers()).get("host"));
+
+  if (site.key === "skincos") {
+    return {
+      title: "ORB by SKINCOS",
+      description:
+        "Hub institucional e jurídico do app ORB by SKINCOS para integrações e automações com Meta.",
+      robots: {
+        index: true,
+        follow: true,
+      },
+      alternates: { canonical: `${site.siteUrl}/` },
+      openGraph: {
+        title: "ORB by SKINCOS",
+        description:
+          "Hub institucional e jurídico do app ORB by SKINCOS para integrações e automações com Meta.",
+        url: `${site.siteUrl}/`,
+        type: "website",
+      },
+    };
+  }
+
+  return {
     title: "Espaço Facial",
     description: "Harmonização facial e corporal. Selecione sua unidade e agende.",
-    url: `${siteUrl}/`,
-    type: "website",
-  },
-};
+    robots: {
+      index: true,
+      follow: true,
+    },
+    alternates: { canonical: `${site.siteUrl}/` },
+    openGraph: {
+      title: "Espaço Facial",
+      description: "Harmonização facial e corporal. Selecione sua unidade e agende.",
+      url: `${site.siteUrl}/`,
+      type: "website",
+    },
+  };
+}
 
 export default async function HomePage() {
-  const ua = (await headers()).get("user-agent");
+  const requestHeaders = await headers();
+  const site = getSiteConfigFromHost(requestHeaders.get("host"));
+
+  if (site.key === "skincos") {
+    return (
+      <>
+        <SkincosHubPage />
+        <Footer siteKey="skincos" />
+      </>
+    );
+  }
+
+  const ua = requestHeaders.get("user-agent");
   const variant = heroVariantFromUserAgent(ua);
   const { items: heroItems } = await getHeroMediaItems({ variant });
 

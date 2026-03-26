@@ -155,6 +155,7 @@ const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m 
 const InstagramStudioPro = lazy(() => import('@/InstagramStudioPro').then(m => ({ default: m.InstagramStudioPro })))
 const ThreadsStudio = lazy(() => import('@/ThreadsStudio').then(m => ({ default: m.ThreadsStudio })))
 const SocialNetworksStudio = lazy(() => import('@/SocialNetworksStudio').then(m => ({ default: m.SocialNetworksStudio })))
+const MetaPagesReviewStudio = lazy(() => import('@/MetaPagesReviewStudio').then(m => ({ default: m.MetaPagesReviewStudio })))
 const WorkflowEngine = lazy(() => import('@/WorkflowEngine').then(m => ({ default: m.WorkflowEngine })))
 const ProjectManagement = lazy(() => import('@/ProjectManagement').then(m => ({ default: m.ProjectManagement })))
 const KanbanBoard = lazy(() => import('@/KanbanBoard').then(m => ({ default: m.KanbanBoard })))
@@ -218,6 +219,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'meta-command', label: 'Meta Command', icon: '🧭', component: <MetaCommandCenter /> },
     { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
     { key: 'meta-sentiment', label: 'Sentimento', icon: '🧠', component: <MetaSentimentMonitor /> },
+    { key: 'meta-pages-review', label: 'Meta Review', icon: '🧪', component: <MetaPagesReviewStudio /> },
     { key: 'instagram-studio', label: 'Redes Sociais', icon: '🌐', component: <SocialNetworksStudio /> },
     { key: 'threads-studio', label: 'Threads', icon: '🧵', component: <ThreadsStudio /> },
     { key: 'workflow', label: 'Workflows', icon: '⚙️', component: <WorkflowEngine /> },
@@ -344,7 +346,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'escala-profissionais']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'escala-profissionais']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)

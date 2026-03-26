@@ -8,7 +8,11 @@
     "quality:critical": "npm run quality:frontend && npm run quality:website && npm run quality:backend:crm-api && npm run quality:backend:python && npm run quality:security",
     "website:install": "npm --prefix website ci",
     "website:dev": "npm --prefix website run dev",
+    "website:local": "bash ./scripts/run-local-website.sh",
+    "website:snapshot:refresh": "bash ./scripts/refresh-website-snapshot.sh",
+    "website:sync:online": "node ./website/scripts/sync-online-snapshot.mjs",
     "website:build": "npm --prefix website run build",
+    "website:preview:snapshot": "npm --prefix website run preview:snapshot",
     "website:typecheck": "npm --prefix website run build && npm --prefix website run typecheck",
     "website:deploy": "npm --prefix website run deploy"
   },

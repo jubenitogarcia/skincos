@@ -382,11 +382,11 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                     <CompactDoctorTooltip
                                         avatar={
                                             <span className="bookingFlow__doctorBadgeAvatar">
-                                            {instagramHandle ? (
-                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
-                                            ) : (
-                                                <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
-                                            )}
+                                                {instagramHandle ? (
+                                                    <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
+                                                ) : (
+                                                    <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
+                                                )}
                                             </span>
                                         }
                                         doctorName={fullName}
@@ -413,9 +413,9 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
     }
 
     return (
-        <>
-            {selectedUnitSubtitle}
-            <div className="grid">
+            <>
+                {selectedUnitSubtitle}
+            <div className="grid doctorDirectoryGrid">
                 {filtered.map((d) => {
                     const fullName = d.name;
                     const handle = d.instagramHandle;
@@ -438,49 +438,52 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                     return (
                         <article
                             key={`${fullName}-${href ?? "noinsta"}`}
-                            className="card"
-                            style={{ display: "block" }}
+                            className="card doctorDirectoryCard"
                         >
-                            <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+                            <div className="doctorDirectoryCard__header">
                                 {instagramHandle ? (
                                     <button
-                                        className="doctorCardMainLink doctorCardMainButton"
+                                        className="doctorDirectoryCard__profile doctorCardMainLink doctorCardMainButton"
                                         type="button"
                                         onClick={openInstagram}
                                         aria-label={`Abrir Instagram de ${fullName}`}
                                         title="Abrir Instagram"
                                     >
-                                        <div style={{ width: 56, height: 56, borderRadius: 14, overflow: "hidden", background: "white" }}>
+                                        <div className="doctorDirectoryCard__avatar">
                                             {instagramHandle ? (
                                                 <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={56} height={56} unoptimized />
-                                            ) : null}
+                                            ) : (
+                                                <span className="doctorDirectoryCard__avatarFallback">{fullName.charAt(0).toUpperCase()}</span>
+                                            )}
                                         </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <h3 style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName}</h3>
-                                            <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{unitLabel}</p>
+                                        <div className="doctorDirectoryCard__meta">
+                                            <h3 className="doctorDirectoryCard__name" title={fullName}>{fullName}</h3>
+                                            <p className="doctorDirectoryCard__sub" title={unitLabel ?? undefined}>{unitLabel}</p>
                                         </div>
                                     </button>
                                 ) : (
-                                    <div className="doctorCardMainLink" aria-label={fullName}>
-                                        <div style={{ width: 56, height: 56, borderRadius: 14, overflow: "hidden", background: "white" }}>
+                                    <div className="doctorDirectoryCard__profile doctorCardMainLink" aria-label={fullName}>
+                                        <div className="doctorDirectoryCard__avatar">
                                             {instagramHandle ? (
                                                 <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={56} height={56} unoptimized />
-                                            ) : null}
+                                            ) : (
+                                                <span className="doctorDirectoryCard__avatarFallback">{fullName.charAt(0).toUpperCase()}</span>
+                                            )}
                                         </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <h3 style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName}</h3>
-                                            <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{unitLabel}</p>
+                                        <div className="doctorDirectoryCard__meta">
+                                            <h3 className="doctorDirectoryCard__name" title={fullName}>{fullName}</h3>
+                                            <p className="doctorDirectoryCard__sub" title={unitLabel ?? undefined}>{unitLabel}</p>
                                         </div>
                                     </div>
                                 )}
 
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                                <div className="doctorDirectoryCard__actions">
                                     {instagramHandle ? (
                                         <button
-                                            className="iconBtn"
+                                            className="iconBtn doctorDirectoryCard__instagramBtn"
                                             type="button"
                                             onClick={openInstagram}
-                                            aria-label="Instagram"
+                                            aria-label={`Instagram de ${fullName}`}
                                             title="Instagram"
                                         >
                                             <InstagramIcon />
@@ -488,7 +491,7 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                     ) : null}
 
                                     <Link
-                                        className="iconBtn"
+                                        className="doctorDirectoryCard__bookBtn"
                                         href={bookingHref}
                                         onClick={() =>
                                             trackBookingStart({
@@ -501,7 +504,8 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
                                         aria-label={`Agendar com ${fullName}`}
                                         title="Agendar"
                                     >
-                                        {bookingIcon()}
+                                        <span className="doctorDirectoryCard__bookIcon" aria-hidden="true">{bookingIcon()}</span>
+                                        <span>Agende</span>
                                     </Link>
                                 </div>
                             </div>

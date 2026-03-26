@@ -1,7 +1,7 @@
 import "server-only";
 
 import { driveListFolderFiles } from "@/lib/googleDrive";
-import { dedupeHeroMediaItems, getLocalHeroItems, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
+import { dedupeHeroMediaItems, getLocalHeroItems, type HeroMediaBookingHotspot, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
 
 function inferTypeFromMime(mimeType: string): HeroMediaItem["type"] | null {
     if (mimeType.startsWith("image/")) return "image";
@@ -81,6 +81,7 @@ async function getFromManifestUrl(manifestUrl: string | null): Promise<HeroMedia
                 type,
                 src,
                 alt: typeof obj.alt === "string" ? obj.alt : undefined,
+                bookingHotspot: parseBookingHotspot(obj.bookingHotspot),
             });
         }
 
@@ -88,6 +89,19 @@ async function getFromManifestUrl(manifestUrl: string | null): Promise<HeroMedia
     } catch {
         return [];
     }
+}
+
+function parseBookingHotspot(value: unknown): HeroMediaBookingHotspot | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const hotspot = value as Record<string, unknown>;
+    const leftPct = Number(hotspot.leftPct);
+    const topPct = Number(hotspot.topPct);
+    const widthPct = Number(hotspot.widthPct);
+    const heightPct = Number(hotspot.heightPct);
+
+    if (![leftPct, topPct, widthPct, heightPct].every(Number.isFinite)) return undefined;
+
+    return { leftPct, topPct, widthPct, heightPct };
 }
 
 type HeroCache = { items: HeroMediaItem[]; source: string; expiresAtMs: number };

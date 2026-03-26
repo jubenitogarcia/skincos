@@ -27,10 +27,10 @@ function getGoogleMapsOpenUrl(unit: Unit): string {
     return url.toString();
 }
 
-function getGoogleMapsEmbedUrl(unit: Unit): string {
-    // No API key required. Limited UI, but enough to show the pin.
-    const q = encodeURIComponent(getLatLngQuery(unit) ?? buildQuery(unit));
-    return `https://www.google.com/maps?q=${q}&z=15&output=embed`;
+function formatCoordinates(unit: Unit): string | null {
+    if (typeof unit.lat !== "number" || typeof unit.lng !== "number") return null;
+    if (!Number.isFinite(unit.lat) || !Number.isFinite(unit.lng)) return null;
+    return `${unit.lat.toFixed(5)}, ${unit.lng.toFixed(5)}`;
 }
 
 export default function UnitMapsModal({
@@ -43,7 +43,7 @@ export default function UnitMapsModal({
     onClose: () => void;
 }) {
     const openUrl = useMemo(() => (unit ? getGoogleMapsOpenUrl(unit) : ""), [unit]);
-    const embedUrl = useMemo(() => (unit ? getGoogleMapsEmbedUrl(unit) : ""), [unit]);
+    const coordinates = useMemo(() => (unit ? formatCoordinates(unit) : null), [unit]);
 
     useEffect(() => {
         if (!unit) return;
@@ -84,17 +84,31 @@ export default function UnitMapsModal({
                 </div>
 
                 <div className="modalBody">
-                    <iframe
-                        className="mapsFrame"
-                        title={`Google Maps - ${title}`}
-                        src={embedUrl}
-                        loading="lazy"
-                        referrerPolicy="no-referrer-when-downgrade"
-                    />
+                    <div className="mapsFrame mapsFrame--static" aria-label={`Resumo de localização da unidade ${title}`}>
+                        <div className="mapsFrame__glow" aria-hidden="true" />
+                        <div className="mapsFrame__eyebrowRow">
+                            <span className="mapsFrame__eyebrow">Localização</span>
+                            <span className="mapsFrame__badge">Sem embed externo</span>
+                        </div>
+                        <div className="mapsFrame__title">{title}</div>
+                        {subtitle ? <div className="mapsFrame__subtitle">{subtitle}</div> : null}
+                        <div className="mapsFrame__meta">
+                            {coordinates ? (
+                                <div className="mapsFrame__metaItem">
+                                    <span>Coordenadas</span>
+                                    <strong>{coordinates}</strong>
+                                </div>
+                            ) : null}
+                            <div className="mapsFrame__metaItem">
+                                <span>Fonte</span>
+                                <strong>Dados locais da unidade</strong>
+                            </div>
+                        </div>
+                    </div>
 
                     <div className="modalActions">
                         <a className="btn btnPrimary" href={openUrl} target="_blank" rel="noreferrer">
-                            Abrir no Google Maps (reviews e fotos)
+                            Abrir rota no mapa
                         </a>
                         {whatsappUrl ? (
                             <a className="btn btnGhost" href={whatsappUrl} target="_blank" rel="noreferrer">
@@ -104,7 +118,7 @@ export default function UnitMapsModal({
                     </div>
 
                     <div className="modalNote">
-                        Dica: no Google Maps você vê avaliações, fotos e rota.
+                        O mapa externo abre apenas sob ação do usuário, evitando requests automáticos no carregamento.
                     </div>
                 </div>
             </div>
