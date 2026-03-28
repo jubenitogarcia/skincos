@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CADASTRO_WHEEL_PRIZES } from "@/lib/cadastroWheelPrizes";
 import { issueCadastroWheelToken, verifyCadastroWheelToken } from "@/lib/cadastroWheelSecurity";
+import { assignCadastroLeadPrize, findCadastroLeadById } from "@/lib/cadastroLeadDb";
 
 const COOKIE_NAME = "ef_cadastro_wheel";
+const LEAD_COOKIE_NAME = "ef_cadastro_lead";
 const DEFAULT_LOCK_HOURS = 24;
 const MAX_LOCK_HOURS = 7 * 24;
 
@@ -55,6 +57,20 @@ async function readLockedPrize(req: NextRequest, secret: string): Promise<{
     prizeId?: number;
     expMs?: number;
 }> {
+    const leadId = req.cookies.get(LEAD_COOKIE_NAME)?.value ?? "";
+    if (leadId) {
+        const lead = await findCadastroLeadById(leadId);
+        if (lead?.prize_id) {
+            return {
+                status: "valid",
+                prizeId: lead.prize_id,
+            };
+        }
+        if (lead) {
+            return { status: "none" };
+        }
+    }
+
     const token = req.cookies.get(COOKIE_NAME)?.value ?? "";
     if (!token) return { status: "none" };
 
@@ -119,6 +135,17 @@ export async function POST(req: NextRequest) {
     const lockWindowMs = resolveLockWindowMs();
     const prizeId = drawPrizeId(CADASTRO_WHEEL_PRIZES.length);
     const expMs = Date.now() + lockWindowMs;
+    const leadId = req.cookies.get(LEAD_COOKIE_NAME)?.value ?? "";
+    if (leadId) {
+        await assignCadastroLeadPrize({ id: leadId, prizeId });
+        return withNoStore({
+            ok: true,
+            prizeId,
+            expMs,
+            replay: false,
+        });
+    }
+
     const token = await issueCadastroWheelToken({ secret, prizeId, expMs });
 
     const response = withNoStore({
