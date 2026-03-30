@@ -33,7 +33,7 @@ export async function GET(req: Request) {
 
     const cache = getCloudflareCache();
     const cacheKey = new Request(
-        `https://espacofacial.com/__cache/places/details?v=4&src=snapshot&placeId=${encodeURIComponent(placeIdParam)}&query=${encodeURIComponent(queryParam)}`,
+        `https://espacofacial.com/__cache/places/details?v=5&src=snapshot&placeId=${encodeURIComponent(placeIdParam)}&query=${encodeURIComponent(queryParam)}`,
     );
 
     if (cache) {
@@ -58,8 +58,6 @@ export async function GET(req: Request) {
         placeId: placeIdParam || null,
         query: queryParam || null,
     };
-
-    if (cache) void cache.put(cacheKey, new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } }));
 
     return jsonOk(payload, { "x-places": "snapshot_missing" });
 }
