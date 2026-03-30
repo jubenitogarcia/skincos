@@ -1,13 +1,13 @@
 "use client";
 
-import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { doctorSlugFromTeamMember } from "@/lib/doctorSlug";
 import { trackBookingStart, trackDoctorInstagramClick } from "@/lib/leadTracking";
 import DoctorInstagramModal, { InstagramIcon } from "@/components/DoctorInstagramModal";
+import UnitDoctorsCompactRail, { type UnitDoctorsCompactRailItem } from "@/components/UnitDoctorsCompactRail";
 import UnitQuickButtons from "@/components/UnitQuickButtons";
 
 type TeamMember = {
@@ -18,6 +18,12 @@ type TeamMember = {
     roles: string[];
     instagramHandle: string | null;
     instagramUrl: string | null;
+};
+
+export type BookingSelectDoctor = {
+    slug: string;
+    name: string;
+    handle: string | null;
 };
 
 function bookingIcon() {
@@ -69,6 +75,13 @@ function doctorDisplayName(name: string): string {
     return doctorBareName(name);
 }
 
+function doctorCompactSelectionName(name: string): string {
+    const bareName = doctorBareName(name);
+    const parts = bareName.split(/\s+/).filter(Boolean);
+    if (parts.length <= 2) return bareName;
+    return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
 function doctorTooltipName(name: string, nickname: string | null): string {
     const honorific = doctorHonorific(name, nickname);
     const bareName = doctorBareName(name);
@@ -76,205 +89,24 @@ function doctorTooltipName(name: string, nickname: string | null): string {
     return `${honorific} ${firstName}`;
 }
 
-type CompactDoctorTooltipProps = {
-    avatar: ReactNode;
-    doctorName: string;
-    tooltipName: string;
-    bookingHref: string;
-    unitSlug: string | null;
-    onOpenInstagram?: () => void;
-};
-
-function CompactDoctorTooltip({
-    avatar,
-    doctorName,
-    tooltipName,
-    bookingHref,
-    unitSlug,
-    onOpenInstagram,
-}: CompactDoctorTooltipProps) {
-    const [open, setOpen] = useState(false);
-    const [ready, setReady] = useState(false);
-    const [position, setPosition] = useState({ left: 0, top: 0 });
-    const triggerRef = useRef<HTMLButtonElement | null>(null);
-    const tooltipRef = useRef<HTMLDivElement | null>(null);
-    const closeTimerRef = useRef<number | null>(null);
-
-    const clearCloseTimer = useCallback(() => {
-        if (!closeTimerRef.current) return;
-        window.clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
-    }, []);
-
-    const scheduleClose = useCallback(() => {
-        clearCloseTimer();
-        closeTimerRef.current = window.setTimeout(() => {
-            setOpen(false);
-        }, 120);
-    }, [clearCloseTimer]);
-
-    const updatePosition = useCallback(() => {
-        const trigger = triggerRef.current;
-        const tooltip = tooltipRef.current;
-        if (!trigger || !tooltip) return;
-
-        const triggerRect = trigger.getBoundingClientRect();
-        const tooltipRect = tooltip.getBoundingClientRect();
-        const viewportPadding = 12;
-        const gap = 12;
-
-        const centerX = triggerRect.left + triggerRect.width / 2;
-        const halfWidth = tooltipRect.width / 2;
-        const left = Math.min(
-            window.innerWidth - viewportPadding - halfWidth,
-            Math.max(viewportPadding + halfWidth, centerX),
-        );
-
-        const spaceBelow = window.innerHeight - triggerRect.bottom;
-        const spaceAbove = triggerRect.top;
-        const openBelow = spaceBelow >= tooltipRect.height + gap || spaceBelow >= spaceAbove;
-        const top = openBelow
-            ? Math.min(window.innerHeight - viewportPadding - tooltipRect.height, triggerRect.bottom + gap)
-            : Math.max(viewportPadding, triggerRect.top - tooltipRect.height - gap);
-
-        setPosition({ left, top });
-        setReady(true);
-    }, []);
-
-    useEffect(() => {
-        if (!open) {
-            setReady(false);
-            clearCloseTimer();
-            return;
-        }
-
-        const onUpdate = () => updatePosition();
-        const raf = window.requestAnimationFrame(onUpdate);
-        window.addEventListener("resize", onUpdate);
-        window.addEventListener("scroll", onUpdate, true);
-
-        return () => {
-            window.cancelAnimationFrame(raf);
-            window.removeEventListener("resize", onUpdate);
-            window.removeEventListener("scroll", onUpdate, true);
-        };
-    }, [clearCloseTimer, open, updatePosition]);
-
-    useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
-
-    return (
-        <div className="unitDoctorsCompact__tooltipAnchor">
-            <button
-                ref={triggerRef}
-                type="button"
-                className="unitDoctorsCompact__avatarTrigger"
-                onMouseEnter={() => {
-                    clearCloseTimer();
-                    setOpen(true);
-                }}
-                onMouseLeave={scheduleClose}
-                onClick={() => {
-                    clearCloseTimer();
-                    setOpen((current) => !current);
-                }}
-                onFocus={() => {
-                    clearCloseTimer();
-                    setOpen(true);
-                }}
-                onBlur={(event) => {
-                    const next = event.relatedTarget as Node | null;
-                    const tooltip = tooltipRef.current;
-                    if (next && tooltip?.contains(next)) return;
-                    scheduleClose();
-                }}
-                aria-haspopup="true"
-                aria-expanded={open}
-                aria-label={`Abrir ações de ${doctorName}`}
-                title="Abrir ações"
-            >
-                {avatar}
-            </button>
-
-            {open && typeof document !== "undefined"
-                ? createPortal(
-                      <div
-                          ref={tooltipRef}
-                          className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
-                          role="tooltip"
-                          style={{
-                              position: "fixed",
-                              left: position.left,
-                              top: position.top,
-                              transform: "translateX(-50%)",
-                              display: "block",
-                              zIndex: 5000,
-                              opacity: ready ? 1 : 0,
-                          }}
-                          onMouseEnter={() => {
-                              clearCloseTimer();
-                              setOpen(true);
-                          }}
-                          onMouseLeave={scheduleClose}
-                      >
-                          <div className="unitDoctorsCompact__tooltipNameRow">
-                              <div className="unitDoctorsCompact__tooltipName">{tooltipName}</div>
-                              {onOpenInstagram ? (
-                                  <button
-                                      type="button"
-                                      className="unitDoctorsCompact__tooltipInstagramBtn"
-                                      onClick={() => {
-                                          clearCloseTimer();
-                                          setOpen(false);
-                                          onOpenInstagram();
-                                      }}
-                                      onBlur={(event) => {
-                                          const next = event.relatedTarget as Node | null;
-                                          if (next && tooltipRef.current?.contains(next)) return;
-                                          scheduleClose();
-                                      }}
-                                      aria-label={`Abrir Instagram de ${doctorName}`}
-                                      title="Instagram"
-                                  >
-                                      <InstagramIcon size={14} />
-                                  </button>
-                              ) : null}
-                          </div>
-
-                          <Link
-                              className="cta cta--agende unitDoctorsCompact__tooltipBookBtn"
-                              href={bookingHref}
-                              onClick={() =>
-                                  trackBookingStart({
-                                      placement: "doctor_grid",
-                                      unitSlug,
-                                      doctorName,
-                                      bookingUrl: bookingHref,
-                                  })
-                              }
-                              onMouseEnter={() => clearCloseTimer()}
-                              onBlur={(event) => {
-                                  const next = event.relatedTarget as Node | null;
-                                  if (next && tooltipRef.current?.contains(next)) return;
-                                  scheduleClose();
-                              }}
-                          >
-                              AGENDE
-                          </Link>
-                      </div>,
-                      document.body,
-                  )
-                : null}
-        </div>
-    );
-}
-
 type UnitDoctorsGridProps = {
-    variant?: "directory" | "booking-compact";
+    variant?: "directory" | "booking-compact" | "booking-select";
+    doctorSelections?: BookingSelectDoctor[] | null;
+    activeDoctorSlug?: string | null;
+    onDoctorSelect?: (doctor: BookingSelectDoctor) => void;
 };
 
-export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGridProps) {
+export default function UnitDoctorsGrid({
+    variant = "directory",
+    doctorSelections = null,
+    activeDoctorSlug = null,
+    onDoctorSelect,
+}: UnitDoctorsGridProps) {
     const unit = useCurrentUnit();
     const unitLabel = unitLabelFromSlug(unit?.slug);
+    const isBookingCompact = variant === "booking-compact";
+    const isBookingSelect = variant === "booking-select";
+    const isCompactVariant = isBookingCompact || isBookingSelect;
 
     const [members, setMembers] = useState<TeamMember[] | null>(null);
     const [membersError, setMembersError] = useState<string | null>(null);
@@ -316,6 +148,98 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
         return members.filter((m) => m.units.map((u) => u.toLowerCase()).includes(unitLabel.toLowerCase()));
     }, [members, unitLabel]);
 
+    const compactItems = useMemo<UnitDoctorsCompactRailItem[] | null>(() => {
+        if (isBookingSelect) {
+            if (doctorSelections === null) return null;
+
+            const selectionItems: UnitDoctorsCompactRailItem[] = doctorSelections.map((doctor) => ({
+                id: doctor.slug,
+                doctorName: doctor.name,
+                label: doctorCompactSelectionName(doctor.name),
+                active: activeDoctorSlug === doctor.slug,
+                ariaLabel:
+                    activeDoctorSlug === doctor.slug
+                        ? `Remover seleção de ${doctor.name}`
+                        : `Selecionar ${doctor.name}`,
+                onSelect: () => onDoctorSelect?.(doctor),
+                avatar: (
+                    <span className="bookingFlow__doctorBadgeAvatar">
+                        {doctor.handle ? (
+                            <Image src={avatarUrl(doctor.handle, doctor.name)} alt={doctor.name} width={76} height={76} unoptimized />
+                        ) : (
+                            <span className="bookingFlow__doctorBadgeFallback">{doctor.name.charAt(0).toUpperCase()}</span>
+                        )}
+                    </span>
+                ),
+            }));
+
+            selectionItems.push({
+                id: "any",
+                doctorName: "Sem Preferência",
+                label: "Sem Preferência",
+                active: activeDoctorSlug === "any",
+                ariaLabel:
+                    activeDoctorSlug === "any"
+                        ? "Remover seleção de sem preferência"
+                        : "Selecionar sem preferência de doutor",
+                onSelect: () => onDoctorSelect?.({ slug: "any", name: "Sem Preferência", handle: null }),
+                avatar: (
+                    <span className="bookingFlow__doctorBadgeAvatar bookingFlow__doctorBadgeAvatar--all">
+                        <span className="bookingFlow__doctorBadgeFallback bookingFlow__doctorBadgeFallback--all">
+                            <span>Sem</span>
+                            <span>Preferência</span>
+                        </span>
+                    </span>
+                ),
+            });
+
+            return selectionItems;
+        }
+
+        if (!filtered) return null;
+
+        return filtered.map((doctor) => {
+            const fullName = doctor.name;
+            const displayName = doctorDisplayName(doctor.name);
+            const tooltipName = doctorTooltipName(doctor.name, doctor.nickname);
+            const handle = doctor.instagramHandle;
+            const href = doctor.instagramUrl;
+            const instagramHandle = handle || extractInstagramHandle(href);
+            const doctorSlug = doctorSlugFromTeamMember({ name: fullName, instagramHandle: handle });
+            const bookingHref = unit?.slug
+                ? `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=${encodeURIComponent(doctorSlug)}`
+                : "/agendamento";
+            const openInstagram = () => {
+                if (!instagramHandle) return;
+                setActiveInstagram({ name: fullName, handle: instagramHandle });
+                trackDoctorInstagramClick({
+                    unitSlug: unit?.slug ?? null,
+                    doctorName: fullName,
+                    instagramUrl: href ?? `https://www.instagram.com/${instagramHandle}/`,
+                });
+            };
+
+            return {
+                id: `${fullName}-${href ?? "noinsta"}`,
+                doctorName: fullName,
+                label: displayName,
+                tooltipName,
+                bookingHref,
+                unitSlug: unit?.slug ?? null,
+                onOpenInstagram: instagramHandle ? openInstagram : undefined,
+                avatar: (
+                    <span className="bookingFlow__doctorBadgeAvatar">
+                        {instagramHandle ? (
+                            <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
+                        ) : (
+                            <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
+                        )}
+                    </span>
+                ),
+            };
+        });
+    }, [activeDoctorSlug, doctorSelections, filtered, isBookingSelect, onDoctorSelect, unit?.slug]);
+
     if (!unitLabel) {
         return (
             <>
@@ -325,12 +249,13 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
         );
     }
 
-    const selectedUnitSubtitle =
-        variant === "booking-compact"
-            ? <p className="sectionSub">Conheça a equipe da unidade e entre no agendamento com o doutor já definido.</p>
-            : <p className="sectionSub">Conheça nossos doutores, veja seus perfis e procedimentos realizados.</p>;
+    const selectedUnitSubtitle = isBookingCompact
+        ? <p className="sectionSub">Conheça a equipe da unidade e entre no agendamento com o doutor já definido.</p>
+        : isBookingSelect
+          ? <p className="bookingFlow__cardSub">Escolha o doutor, e verifique seus dias e horários disponíveis para atendimento.</p>
+          : <p className="sectionSub">Conheça nossos doutores, veja seus perfis e procedimentos realizados.</p>;
 
-    if (filtered === null) {
+    if (compactItems === null && isCompactVariant) {
         return (
             <>
                 {selectedUnitSubtitle}
@@ -339,7 +264,16 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
         );
     }
 
-    if (filtered.length === 0) {
+    if (!isCompactVariant && filtered === null) {
+        return (
+            <>
+                {selectedUnitSubtitle}
+                <div className="card">Carregando equipe…</div>
+            </>
+        );
+    }
+
+    if ((isCompactVariant ? compactItems?.length ?? 0 : filtered?.length ?? 0) === 0) {
         return (
             <>
                 {selectedUnitSubtitle}
@@ -350,73 +284,27 @@ export default function UnitDoctorsGrid({ variant = "directory" }: UnitDoctorsGr
         );
     }
 
-    if (variant === "booking-compact") {
+    if (isCompactVariant) {
         return (
             <>
                 {selectedUnitSubtitle}
-                <div className="card unitDoctorsCompact">
-                    <div className="unitDoctorsCompact__rail" role="list" aria-label="Lista de doutores da unidade">
-                        {filtered.map((d) => {
-                            const fullName = d.name;
-                            const displayName = doctorDisplayName(d.name);
-                            const tooltipName = doctorTooltipName(d.name, d.nickname);
-                            const handle = d.instagramHandle;
-                            const href = d.instagramUrl;
-                            const instagramHandle = handle || extractInstagramHandle(href);
-                            const doctorSlug = doctorSlugFromTeamMember({ name: fullName, instagramHandle: handle });
-                            const bookingHref = unit?.slug
-                                ? `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=${encodeURIComponent(doctorSlug)}`
-                                : "/agendamento";
-                            const openInstagram = () => {
-                                if (!instagramHandle) return;
-                                setActiveInstagram({ name: fullName, handle: instagramHandle });
-                                trackDoctorInstagramClick({
-                                    unitSlug: unit?.slug ?? null,
-                                    doctorName: fullName,
-                                    instagramUrl: href ?? `https://www.instagram.com/${instagramHandle}/`,
-                                });
-                            };
-
-                            return (
-                                <article key={`${fullName}-${href ?? "noinsta"}`} className="unitDoctorsCompact__item" role="listitem">
-                                    <CompactDoctorTooltip
-                                        avatar={
-                                            <span className="bookingFlow__doctorBadgeAvatar">
-                                                {instagramHandle ? (
-                                                    <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
-                                                ) : (
-                                                    <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
-                                                )}
-                                            </span>
-                                        }
-                                        doctorName={fullName}
-                                        tooltipName={tooltipName}
-                                        bookingHref={bookingHref}
-                                        unitSlug={unit?.slug ?? null}
-                                        onOpenInstagram={instagramHandle ? openInstagram : undefined}
-                                    />
-
-                                    <div className="unitDoctorsCompact__meta">
-                                        <div className="unitDoctorsCompact__nameRow">
-                                            <div className="unitDoctorsCompact__name">{displayName}</div>
-                                        </div>
-                                    </div>
-                                </article>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                <DoctorInstagramModal profile={activeInstagram} onClose={() => setActiveInstagram(null)} />
+                <UnitDoctorsCompactRail
+                    interactionMode={isBookingSelect ? "select" : "actions"}
+                    items={compactItems ?? []}
+                    embedded={isBookingSelect}
+                />
+                {isBookingCompact ? <DoctorInstagramModal profile={activeInstagram} onClose={() => setActiveInstagram(null)} /> : null}
             </>
         );
     }
+
+    const directoryDoctors = filtered ?? [];
 
     return (
             <>
                 {selectedUnitSubtitle}
             <div className="grid doctorDirectoryGrid">
-                {filtered.map((d) => {
+                {directoryDoctors.map((d) => {
                     const fullName = d.name;
                     const handle = d.instagramHandle;
                     const href = d.instagramUrl;
