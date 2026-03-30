@@ -25,20 +25,6 @@ type PlaceDetailsPayload = {
     reviews?: Array<{ authorName: string; rating: number | null; relativeTimeDescription: string; time: number | null; text: string }>;
 };
 
-type GbpPhotosPayload = {
-    available: boolean;
-    items?: Array<{ name: string; thumbnailUrl: string; googleUrl: string | null }>;
-    nextPageToken?: string | null;
-    error?: string;
-};
-
-type GbpReviewsPayload = {
-    available: boolean;
-    reviews?: Array<{ reviewId: string; authorName: string; rating: number | null; relativeTimeDescription: string; time: number | null; text: string }>;
-    nextPageToken?: string | null;
-    error?: string;
-};
-
 type ReviewSort = "newest" | "highest" | "lowest";
 
 type GalleryItem =
@@ -57,15 +43,6 @@ type GalleryItem =
           href: string;
           handle: string | null;
       };
-
-function shouldFallbackFromGbp(error: string | null | undefined): boolean {
-    const e = (error ?? "").trim();
-    if (!e) return false;
-    if (e.startsWith("missing_gbp_")) return true;
-    if (e === "oauth_refresh_failed") return true;
-    if (e === "missing_access_token") return true;
-    return false;
-}
 
 function buildDefaultQuery(): string {
     return "Espaço Facial";
@@ -201,17 +178,6 @@ export default function AboutUsSection() {
         fallbackStepRatio: 0.52,
     });
 
-    const [gbpPhotos, setGbpPhotos] = useState<Array<{ name: string; thumbnailUrl: string; googleUrl: string | null }>>([]);
-    const [gbpPhotosNextToken, setGbpPhotosNextToken] = useState<string | null>(null);
-    const [gbpPhotosLoading, setGbpPhotosLoading] = useState<boolean>(false);
-
-    const [gbpReviews, setGbpReviews] = useState<
-        Array<{ reviewId: string; authorName: string; rating: number | null; relativeTimeDescription: string; time: number | null; text: string }>
-    >([]);
-    const [gbpReviewsNextToken, setGbpReviewsNextToken] = useState<string | null>(null);
-    const [gbpReviewsLoading, setGbpReviewsLoading] = useState<boolean>(false);
-    const [gbpForceFallback, setGbpForceFallback] = useState<boolean>(false);
-
     const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
 
     useEffect(() => {
@@ -267,15 +233,13 @@ export default function AboutUsSection() {
     const bookingHref = hasSelectedUnit && unit?.slug ? `/agendamento?unit=${encodeURIComponent(unit.slug)}` : "/agendamento";
     const reviewUrl = hasSelectedUnit && selectedPlaceId ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(selectedPlaceId)}` : null;
 
-    const gbpLocation = hasSelectedUnit ? (unit?.gbpLocation ?? "").trim() : "";
-    const useGbp = Boolean(gbpLocation) && !gbpForceFallback;
-
     const mapOpenUrl = useMemo(() => buildOpenMapsUrl(data, unit, query), [data, unit, query]);
     const mapEmbedUrl = useMemo(() => buildGoogleEmbedUrl(data, unit, query), [data, unit, query]);
     const coordinatesLabel = useMemo(() => formatCoordinates(data?.location?.lat ?? unit?.lat, data?.location?.lng ?? unit?.lng), [data?.location?.lat, data?.location?.lng, unit?.lat, unit?.lng]);
     const isPlaceDataPending = hasSelectedUnit && (loading || data === null);
-    const isPhotoDataPending = useGbp ? gbpPhotosLoading && gbpPhotos.length === 0 : isPlaceDataPending;
-    const isReviewDataPending = useGbp ? gbpReviewsLoading && gbpReviews.length === 0 : isPlaceDataPending;
+    // Keep the unit gallery fully local so "Sobre Nós" never depends on paid Places fetches.
+    const isPhotoDataPending = isPlaceDataPending;
+    const isReviewDataPending = isPlaceDataPending;
 
     const buildPlacePhotoUrl = useCallback((ref: string, maxwidth = 1200) => {
         return `/api/places/photo?ref=${encodeURIComponent(ref)}&maxwidth=${maxwidth}`;
@@ -288,22 +252,13 @@ export default function AboutUsSection() {
     const galleryItems = useMemo<GalleryItem[]>(() => {
         if (!hasSelectedUnit) return [];
 
-        const items: GalleryItem[] = useGbp
-            ? gbpPhotos.map((photo, index) => ({
-                  id: `${photo.thumbnailUrl}-${index}`,
-                  kind: "photo",
-                  alt: "Imagem da unidade",
-                  thumbSrc: photo.thumbnailUrl,
-                  fullSrc: photo.thumbnailUrl,
-                  googleUrl: photo.googleUrl,
-              }))
-            : photos.map((photo) => ({
-                  id: photo.photoReference,
-                  kind: "photo",
-                  alt: "Imagem da unidade",
-                  thumbSrc: buildPlacePhotoUrl(photo.photoReference, 1200),
-                  fullSrc: buildPlacePhotoUrl(photo.photoReference, 1600),
-              }));
+        const items: GalleryItem[] = photos.map((photo) => ({
+            id: photo.photoReference,
+            kind: "photo",
+            alt: "Imagem da unidade",
+            thumbSrc: buildPlacePhotoUrl(photo.photoReference, 1200),
+            fullSrc: buildPlacePhotoUrl(photo.photoReference, 1600),
+        }));
 
         if (unitInstagramUrl) {
             items.push({
@@ -316,7 +271,7 @@ export default function AboutUsSection() {
         }
 
         return items;
-    }, [buildPlacePhotoUrl, gbpPhotos, hasSelectedUnit, photos, unit?.slug, unitInstagramHandle, unitInstagramUrl, useGbp]);
+    }, [buildPlacePhotoUrl, hasSelectedUnit, photos, unit?.slug, unitInstagramHandle, unitInstagramUrl]);
     const activeGalleryItem = activePhotoIndex !== null ? galleryItems[activePhotoIndex] ?? null : null;
     const activePhoto = activeGalleryItem?.kind === "photo" ? activeGalleryItem : null;
     const activeGalleryCta = activeGalleryItem?.kind === "cta" ? activeGalleryItem : null;
@@ -369,7 +324,7 @@ export default function AboutUsSection() {
 
     const baseReviews = useMemo(() => {
         if (!hasSelectedUnit) return [];
-        const all = useGbp ? gbpReviews : data?.reviews ?? [];
+        const all = data?.reviews ?? [];
 
         const normalizedSearch = search.trim().toLowerCase();
 
@@ -396,7 +351,7 @@ export default function AboutUsSection() {
         });
 
         return sorted;
-    }, [data?.reviews, gbpReviews, hasSelectedUnit, onlyWithText, ratingFilter, search, sort, useGbp]);
+    }, [data?.reviews, hasSelectedUnit, onlyWithText, ratingFilter, search, sort]);
 
     const reviews = baseReviews;
 
@@ -415,156 +370,39 @@ export default function AboutUsSection() {
         setActivePhotoIndex(null);
     }, [hasSelectedUnit, selectedPlaceId]);
 
-    useEffect(() => {
-        // Reset GBP state on unit change.
-        setGbpForceFallback(false);
-        setGbpPhotos([]);
-        setGbpPhotosNextToken(null);
-        setGbpPhotosLoading(false);
-
-        setGbpReviews([]);
-        setGbpReviewsNextToken(null);
-        setGbpReviewsLoading(false);
-    }, [gbpLocation, hasSelectedUnit]);
-
-    const fetchGbpPhotos = useCallback(
-        async (token: string | null) => {
-            if (!gbpLocation) return;
-            if (gbpForceFallback) return;
-            if (gbpPhotosLoading) return;
-            setGbpPhotosLoading(true);
-
-            try {
-                const url = new URL("/api/gbp/photos", window.location.origin);
-                url.searchParams.set("location", gbpLocation);
-                url.searchParams.set("pageSize", "12");
-                if (token) url.searchParams.set("pageToken", token);
-
-                const res = await fetch(url.toString());
-                const json = (await res.json()) as GbpPhotosPayload;
-
-                if (json?.available) {
-                    const items = json.items ?? [];
-                    setGbpPhotos((prev) => {
-                        const seen = new Set(prev.map((p) => p.thumbnailUrl));
-                        const next = items.filter((p) => !seen.has(p.thumbnailUrl));
-                        return [...prev, ...next];
-                    });
-                    setGbpPhotosNextToken((json.nextPageToken ?? null) || null);
-                } else {
-                    if (shouldFallbackFromGbp(json?.error)) {
-                        setGbpForceFallback(true);
-                        setGbpPhotos([]);
-                        setGbpPhotosNextToken(null);
-                    } else {
-                        // transient failure: keep existing photos and don't permanently disable GBP
-                        setGbpPhotosNextToken(null);
-                    }
-                }
-            } catch {
-                setGbpPhotosNextToken(null);
-            } finally {
-                setGbpPhotosLoading(false);
-            }
-        },
-        [gbpForceFallback, gbpLocation, gbpPhotosLoading],
-    );
-
-    const fetchGbpReviews = useCallback(
-        async (token: string | null) => {
-            if (!gbpLocation) return;
-            if (gbpForceFallback) return;
-            if (gbpReviewsLoading) return;
-            setGbpReviewsLoading(true);
-
-            try {
-                const url = new URL("/api/gbp/reviews", window.location.origin);
-                url.searchParams.set("location", gbpLocation);
-                url.searchParams.set("pageSize", "10");
-                if (token) url.searchParams.set("pageToken", token);
-
-                const res = await fetch(url.toString());
-                const json = (await res.json()) as GbpReviewsPayload;
-
-                if (json?.available) {
-                    const items = json.reviews ?? [];
-                    setGbpReviews((prev) => {
-                        const seen = new Set(prev.map((r) => r.reviewId || `${r.authorName}-${r.time ?? "t"}-${r.text}`));
-                        const next = items.filter((r) => !seen.has(r.reviewId || `${r.authorName}-${r.time ?? "t"}-${r.text}`));
-                        return [...prev, ...next];
-                    });
-                    setGbpReviewsNextToken((json.nextPageToken ?? null) || null);
-                } else {
-                    if (shouldFallbackFromGbp(json?.error)) {
-                        setGbpForceFallback(true);
-                        setGbpReviews([]);
-                        setGbpReviewsNextToken(null);
-                    } else {
-                        // transient failure: keep existing reviews and don't permanently disable GBP
-                        setGbpReviewsNextToken(null);
-                    }
-                }
-            } catch {
-                setGbpReviewsNextToken(null);
-            } finally {
-                setGbpReviewsLoading(false);
-            }
-        },
-        [gbpForceFallback, gbpLocation, gbpReviewsLoading],
-    );
-
-    useEffect(() => {
-        if (!useGbp) return;
-        // initial page
-        void fetchGbpPhotos(null);
-        void fetchGbpReviews(null);
-    }, [fetchGbpPhotos, fetchGbpReviews, useGbp]);
-
     const loadMoreReviews = useCallback(() => {
-        if (useGbp) {
-            if (gbpReviewsNextToken && !gbpReviewsLoading) void fetchGbpReviews(gbpReviewsNextToken);
-            return;
-        }
         setVisibleReviewsCount((c) => {
             if (c >= reviews.length) return c;
             return Math.min(reviews.length, c + 6);
         });
-    }, [fetchGbpReviews, gbpReviewsLoading, gbpReviewsNextToken, reviews.length, useGbp]);
+    }, [reviews.length]);
 
     const loadMorePhotos = useCallback(() => {
-        if (useGbp) {
-            if (gbpPhotosNextToken && !gbpPhotosLoading) void fetchGbpPhotos(gbpPhotosNextToken);
-            return;
-        }
         setVisiblePhotosCount((c) => {
             if (c >= allPhotos.length) return c;
             return Math.min(allPhotos.length, c + 4);
         });
-    }, [allPhotos.length, fetchGbpPhotos, gbpPhotosLoading, gbpPhotosNextToken, useGbp]);
+    }, [allPhotos.length]);
 
     const maybeLoadMoreReviews = useCallback(() => {
         const el = reviewsScrollRef.current;
         if (!el) return;
-        if (useGbp) {
-            if (!gbpReviewsNextToken || gbpReviewsLoading) return;
-        } else if (visibleReviewsCount >= reviews.length) {
+        if (visibleReviewsCount >= reviews.length) {
             return;
         }
         const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 220;
         if (nearBottom) loadMoreReviews();
-    }, [gbpReviewsLoading, gbpReviewsNextToken, loadMoreReviews, reviews.length, useGbp, visibleReviewsCount]);
+    }, [loadMoreReviews, reviews.length, visibleReviewsCount]);
 
     const maybeLoadMorePhotos = useCallback(() => {
         const el = photosScrollRef.current;
         if (!el) return;
-        if (useGbp) {
-            if (!gbpPhotosNextToken || gbpPhotosLoading) return;
-        } else if (visiblePhotosCount >= allPhotos.length) {
+        if (visiblePhotosCount >= allPhotos.length) {
             return;
         }
         const nearEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 260;
         if (nearEnd) loadMorePhotos();
-    }, [allPhotos.length, gbpPhotosLoading, gbpPhotosNextToken, loadMorePhotos, useGbp, visiblePhotosCount]);
+    }, [allPhotos.length, loadMorePhotos, visiblePhotosCount]);
 
     useEffect(() => {
         const el = reviewsScrollRef.current;
@@ -586,32 +424,20 @@ export default function AboutUsSection() {
         // If the list still doesn't overflow, keep loading until it does (or we reach the end).
         const el = reviewsScrollRef.current;
         if (!el) return;
-        if (useGbp) {
-            if (gbpReviewsNextToken && !gbpReviewsLoading && el.scrollHeight <= el.clientHeight + 20) {
-                loadMoreReviews();
-            }
-            return;
-        }
         if (visibleReviewsCount >= reviews.length) return;
         if (el.scrollHeight <= el.clientHeight + 20) {
             loadMoreReviews();
         }
-    }, [gbpReviewsLoading, gbpReviewsNextToken, loadMoreReviews, reviews.length, useGbp, visibleReviewsCount]);
+    }, [loadMoreReviews, reviews.length, visibleReviewsCount]);
 
     useEffect(() => {
         const el = photosScrollRef.current;
         if (!el) return;
-        if (useGbp) {
-            if (gbpPhotosNextToken && !gbpPhotosLoading && el.scrollWidth <= el.clientWidth + 20) {
-                loadMorePhotos();
-            }
-            return;
-        }
         if (visiblePhotosCount >= allPhotos.length) return;
         if (el.scrollWidth <= el.clientWidth + 20) {
             loadMorePhotos();
         }
-    }, [allPhotos.length, gbpPhotosLoading, gbpPhotosNextToken, loadMorePhotos, useGbp, visiblePhotosCount]);
+    }, [allPhotos.length, loadMorePhotos, visiblePhotosCount]);
 
     const openPhotoAtIndex = useCallback((index: number) => {
         setActivePhotoIndex(index);
