@@ -75,6 +75,9 @@ Deploy do site da Espaço Facial:
 npm run deploy
 ```
 
+Observação:
+- o deploy valida a presença de `public/production-snapshot/` antes de publicar; esse snapshot é a fonte local de fotos e avaliações da seção `Sobre Nós`, sem depender de chamadas pagas ao Google Places.
+
 Deploy do hub jurídico da SKINCOS:
 ```bash
 npm run deploy:skincos

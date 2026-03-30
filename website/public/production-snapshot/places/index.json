@@ -1,0 +1,10 @@
+{
+  "byPlaceId": {
+    "ChIJZdhuMFx5GZURql2Gm6xa8LU": "places/barrashoppingsul.json",
+    "ChIJhaCsZ9RDGZURe9I0bpIb-CM": "places/novo-hamburgo.json"
+  },
+  "byQuery": {
+    "espaco-facial-barrashoppingsul-av-diario-de-noticias-300-rs-brasil": "places/barrashoppingsul.json",
+    "espaco-facial-novo-hamburgo-av-doutor-mauricio-cardoso-1126-rs-brasil": "places/novo-hamburgo.json"
+  }
+}

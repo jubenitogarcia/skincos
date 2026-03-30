@@ -42,5 +42,6 @@ const env = {
   NEXT_PUBLIC_BUILD_TIME: getBuildTime(),
 };
 
+await run("node", ["scripts/assert-production-snapshot.mjs"], env);
 await run("npx", ["opennextjs-cloudflare", "build"], env);
 await run("npx", ["wrangler", "deploy", "-c", configPath], env);

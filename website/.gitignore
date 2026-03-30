@@ -33,7 +33,6 @@ reports/quality/*
 
 # Local production mirror data
 dev-data/
-public/production-snapshot/
 
 # Local secrets (never commit)
 sinuous-network-461317-v9-ca697f79402e.json
