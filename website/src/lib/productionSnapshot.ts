@@ -27,13 +27,16 @@ export function buildSnapshotUrl(request: Request, relativePath: string): URL {
 
 async function fetchSnapshot(request: Request, relativePath: string): Promise<Response | null> {
     const assetUrl = buildSnapshotUrl(request, relativePath);
+    const assetPathUrl = new URL(`${SNAPSHOT_BASE_PATH}/${trimLeadingSlash(relativePath)}`, request.url);
 
     try {
         const { env } = getCloudflareContext();
         const assets = (env as { ASSETS?: AssetFetcher }).ASSETS;
         if (assets) {
-            const response = await assets.fetch(new Request(assetUrl.toString()));
-            if (response.ok) return response;
+            for (const candidate of [assetPathUrl, assetUrl, new Request(assetUrl.toString())]) {
+                const response = await assets.fetch(candidate);
+                if (response.ok) return response;
+            }
         }
     } catch {
         // Ignore and fall back to network fetch.

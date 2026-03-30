@@ -33,7 +33,7 @@ export async function GET(req: Request) {
 
     const cache = getCloudflareCache();
     const cacheKey = new Request(
-        `https://espacofacial.com/__cache/places/details?v=3&src=snapshot&placeId=${encodeURIComponent(placeIdParam)}&query=${encodeURIComponent(queryParam)}`,
+        `https://espacofacial.com/__cache/places/details?v=4&src=snapshot&placeId=${encodeURIComponent(placeIdParam)}&query=${encodeURIComponent(queryParam)}`,
     );
 
     if (cache) {

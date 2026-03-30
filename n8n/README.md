@@ -13,6 +13,13 @@ Este módulo adiciona workflows n8n + schema Postgres para triagem, agendamento 
 - `N8N_PUBLIC_BASE_URL=`
 - `DATABASE_URL=postgres://...`
 
+Valores recomendados para o stack público atual:
+- `EVOLUTION_BASE_URL=https://wa.skincos.com.br`
+- `N8N_PUBLIC_BASE_URL=https://orb.skincos.com.br`
+- `GOOGLE_REDIRECT_URI=https://orb.skincos.com.br/rest/oauth2-credential/callback`
+
+Para desenvolvimento exclusivamente local, você ainda pode sobrescrever para `http://localhost:8080` e `http://localhost:5678`.
+
 Google Calendar (OAuth2):
 - `GOOGLE_CLIENT_ID=`
 - `GOOGLE_CLIENT_SECRET=`
