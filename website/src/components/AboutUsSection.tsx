@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
+import useHorizontalRail from "@/hooks/useHorizontalRail";
 import type { Unit } from "@/data/units";
 import Image from "next/image";
 import { trackEvent } from "@/lib/analytics";
@@ -100,6 +101,19 @@ function buildOpenMapsUrl(data: PlaceDetailsPayload | null, unit: Unit | null, f
     return url.toString();
 }
 
+function buildGoogleEmbedUrl(data: PlaceDetailsPayload | null, unit: Unit | null, fallbackQuery: string): string | null {
+    const lat = data?.location?.lat ?? unit?.lat ?? null;
+    const lng = data?.location?.lng ?? unit?.lng ?? null;
+    const query = typeof lat === "number" && typeof lng === "number" ? `${lat},${lng}` : fallbackQuery.trim();
+    if (!query) return null;
+
+    const url = new URL("https://www.google.com/maps");
+    url.searchParams.set("q", query);
+    url.searchParams.set("z", "15");
+    url.searchParams.set("output", "embed");
+    return url.toString();
+}
+
 function formatCoordinates(lat: number | null | undefined, lng: number | null | undefined): string | null {
     if (typeof lat !== "number" || !Number.isFinite(lat) || typeof lng !== "number" || !Number.isFinite(lng)) {
         return null;
@@ -170,9 +184,22 @@ export default function AboutUsSection() {
 
     const photosScrollRef = useRef<HTMLDivElement | null>(null);
     const [visiblePhotosCount, setVisiblePhotosCount] = useState<number>(8);
-
-    const photosAutoScrollFrameRef = useRef<number | null>(null);
-    const photosAutoScrollVelocityRef = useRef<number>(0);
+    const {
+        canScrollLeft: canScrollPhotosLeft,
+        canScrollRight: canScrollPhotosRight,
+        hoverEdge: photosHoverEdge,
+        handleEdgeMouse: handlePhotosEdgeMouse,
+        clearHoverScroll: clearPhotosHoverScroll,
+        scrollByDirection: scrollPhotosBy,
+    } = useHorizontalRail({
+        railRef: photosScrollRef,
+        itemSelector: ".aboutPhotoLink",
+        lockMs: 720,
+        baseVelocity: 0.02,
+        maxVelocity: 0.18,
+        fallbackMinStep: 180,
+        fallbackStepRatio: 0.52,
+    });
 
     const [gbpPhotos, setGbpPhotos] = useState<Array<{ name: string; thumbnailUrl: string; googleUrl: string | null }>>([]);
     const [gbpPhotosNextToken, setGbpPhotosNextToken] = useState<string | null>(null);
@@ -244,7 +271,11 @@ export default function AboutUsSection() {
     const useGbp = Boolean(gbpLocation) && !gbpForceFallback;
 
     const mapOpenUrl = useMemo(() => buildOpenMapsUrl(data, unit, query), [data, unit, query]);
+    const mapEmbedUrl = useMemo(() => buildGoogleEmbedUrl(data, unit, query), [data, unit, query]);
     const coordinatesLabel = useMemo(() => formatCoordinates(data?.location?.lat ?? unit?.lat, data?.location?.lng ?? unit?.lng), [data?.location?.lat, data?.location?.lng, unit?.lat, unit?.lng]);
+    const isPlaceDataPending = hasSelectedUnit && (loading || data === null);
+    const isPhotoDataPending = useGbp ? gbpPhotosLoading && gbpPhotos.length === 0 : isPlaceDataPending;
+    const isReviewDataPending = useGbp ? gbpReviewsLoading && gbpReviews.length === 0 : isPlaceDataPending;
 
     const buildPlacePhotoUrl = useCallback((ref: string, maxwidth = 1200) => {
         return `/api/places/photo?ref=${encodeURIComponent(ref)}&maxwidth=${maxwidth}`;
@@ -582,55 +613,6 @@ export default function AboutUsSection() {
         }
     }, [allPhotos.length, gbpPhotosLoading, gbpPhotosNextToken, loadMorePhotos, useGbp, visiblePhotosCount]);
 
-    const stopPhotosAutoScroll = useCallback(() => {
-        photosAutoScrollVelocityRef.current = 0;
-        if (photosAutoScrollFrameRef.current) {
-            window.cancelAnimationFrame(photosAutoScrollFrameRef.current);
-            photosAutoScrollFrameRef.current = null;
-        }
-    }, []);
-
-    const startPhotosAutoScroll = useCallback(
-        (velocity: number) => {
-            photosAutoScrollVelocityRef.current = velocity;
-            if (photosAutoScrollFrameRef.current) return;
-
-            const tick = () => {
-                const node = photosScrollRef.current;
-                const currentVelocity = photosAutoScrollVelocityRef.current;
-                if (!node || Math.abs(currentVelocity) < 0.01) {
-                    photosAutoScrollFrameRef.current = null;
-                    return;
-                }
-                node.scrollBy({ left: currentVelocity, behavior: "auto" });
-                maybeLoadMorePhotos();
-                photosAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
-            };
-
-            photosAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
-        },
-        [maybeLoadMorePhotos],
-    );
-
-    const updatePhotosAutoScroll = useCallback(
-        (direction: "left" | "right", event: ReactMouseEvent<HTMLDivElement>) => {
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const relativeX = event.clientX - bounds.left;
-            const progress = direction === "left" ? 1 - relativeX / bounds.width : relativeX / bounds.width;
-            const eased = Math.min(1, Math.max(0, progress)) ** 2;
-            const velocity = (0.12 + eased * 0.68) * (direction === "right" ? 1 : -1);
-            startPhotosAutoScroll(velocity);
-        },
-        [startPhotosAutoScroll],
-    );
-
-    const scrollPhotosBy = useCallback((direction: "left" | "right") => {
-        const el = photosScrollRef.current;
-        if (!el) return;
-        const amount = Math.max(180, Math.floor(el.clientWidth * 0.52));
-        el.scrollBy({ left: direction === "right" ? amount : -amount, behavior: "smooth" });
-    }, []);
-
     const openPhotoAtIndex = useCallback((index: number) => {
         setActivePhotoIndex(index);
     }, []);
@@ -648,10 +630,6 @@ export default function AboutUsSection() {
             return (current + 1) % galleryItems.length;
         });
     }, [galleryItems.length]);
-
-    useEffect(() => {
-        return () => stopPhotosAutoScroll();
-    }, [stopPhotosAutoScroll]);
 
     return (
         <section id="sobre-nos" className="pageSection" style={{ marginTop: 50 }}>
@@ -673,22 +651,25 @@ export default function AboutUsSection() {
                                         <div
                                             className="aboutPhotosEdge aboutPhotosEdge--left"
                                             aria-hidden="true"
-                                            onMouseEnter={(event) => updatePhotosAutoScroll("left", event)}
-                                            onMouseMove={(event) => updatePhotosAutoScroll("left", event)}
-                                            onMouseLeave={stopPhotosAutoScroll}
+                                            onMouseEnter={(event) => handlePhotosEdgeMouse("left", event)}
+                                            onMouseMove={(event) => handlePhotosEdgeMouse("left", event)}
+                                            onMouseLeave={() => clearPhotosHoverScroll()}
                                         />
                                         <div
                                             className="aboutPhotosEdge aboutPhotosEdge--right"
                                             aria-hidden="true"
-                                            onMouseEnter={(event) => updatePhotosAutoScroll("right", event)}
-                                            onMouseMove={(event) => updatePhotosAutoScroll("right", event)}
-                                            onMouseLeave={stopPhotosAutoScroll}
+                                            onMouseEnter={(event) => handlePhotosEdgeMouse("right", event)}
+                                            onMouseMove={(event) => handlePhotosEdgeMouse("right", event)}
+                                            onMouseLeave={() => clearPhotosHoverScroll()}
                                         />
 
                                         <button
                                             type="button"
                                             className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--left"
                                             aria-label="Fotos anteriores"
+                                            disabled={!canScrollPhotosLeft}
+                                            data-visible={canScrollPhotosLeft ? "true" : "false"}
+                                            data-hovered={photosHoverEdge === "left" ? "true" : "false"}
                                             onClick={() => scrollPhotosBy("left")}
                                         >
                                             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -699,6 +680,9 @@ export default function AboutUsSection() {
                                             type="button"
                                             className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--right"
                                             aria-label="Próximas fotos"
+                                            disabled={!canScrollPhotosRight}
+                                            data-visible={canScrollPhotosRight ? "true" : "false"}
+                                            data-hovered={photosHoverEdge === "right" ? "true" : "false"}
                                             onClick={() => scrollPhotosBy("right")}
                                         >
                                             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -767,13 +751,13 @@ export default function AboutUsSection() {
                             </div>
                         ) : (
                             <div className="aboutMuted">
-                                {useGbp ? (gbpPhotosLoading ? "Carregando fotos…" : "Fotos indisponíveis no momento.") : loading ? "Carregando fotos…" : "Fotos indisponíveis no momento."}
+                                {isPhotoDataPending ? "Carregando fotos…" : "Fotos indisponíveis no momento."}
                             </div>
                         )}
 
                         {!galleryItems.length ? (
                             <div className="aboutMuted" style={{ padding: "0 18px", fontSize: 12 }}>
-                                {useGbp ? (gbpPhotosLoading ? "Carregando fotos…" : "Mais fotos em breve.") : loading ? "Carregando fotos…" : "Mais fotos em breve."}
+                                {isPhotoDataPending ? "Carregando fotos…" : "Mais fotos em breve."}
                             </div>
                         ) : null}
                         <div className="aboutPhotosHint">Arraste, use as setas, a barra inferior ou aproxime o cursor das laterais para navegar com suavidade.</div>
@@ -824,37 +808,66 @@ export default function AboutUsSection() {
                                 </div>
                             </div>
 
-                            <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
-                                <div className="aboutMapStaticGlow" aria-hidden="true" />
-                                <div className="aboutMapStaticTop">
-                                    <span className="aboutMapStaticEyebrow">Localização</span>
-                                    <span className="aboutMapStaticBadge">Snapshot local</span>
-                                </div>
-                                <div className="aboutMapStaticTitle">{title}</div>
-                                {address ? <div className="aboutMapStaticAddress">{address}</div> : null}
-                                <div className="aboutMapStaticMeta">
-                                    {coordinatesLabel ? (
+                            {mapEmbedUrl ? (
+                                mapOpenUrl ? (
+                                    <a
+                                        className="aboutMapEmbedLink"
+                                        href={mapOpenUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        aria-label={`Abrir localização de ${title} no Google Maps`}
+                                    >
+                                        <iframe
+                                            className="aboutMapFrame aboutMapFrame--preview"
+                                            src={mapEmbedUrl}
+                                            loading="lazy"
+                                            referrerPolicy="no-referrer-when-downgrade"
+                                            title={`Mapa de ${title}`}
+                                        />
+                                        <span className="aboutMapOverlayHint">Abrir no Google Maps</span>
+                                    </a>
+                                ) : (
+                                    <iframe
+                                        className="aboutMapFrame"
+                                        src={mapEmbedUrl}
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer-when-downgrade"
+                                        title={`Mapa de ${title}`}
+                                    />
+                                )
+                            ) : (
+                                <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
+                                    <div className="aboutMapStaticGlow" aria-hidden="true" />
+                                    <div className="aboutMapStaticTop">
+                                        <span className="aboutMapStaticEyebrow">Localização</span>
+                                        <span className="aboutMapStaticBadge">Snapshot local</span>
+                                    </div>
+                                    <div className="aboutMapStaticTitle">{title}</div>
+                                    {address ? <div className="aboutMapStaticAddress">{address}</div> : null}
+                                    <div className="aboutMapStaticMeta">
+                                        {coordinatesLabel ? (
+                                            <div className="aboutMapStaticMetaItem">
+                                                <span>Coordenadas</span>
+                                                <strong>{coordinatesLabel}</strong>
+                                            </div>
+                                        ) : null}
                                         <div className="aboutMapStaticMetaItem">
-                                            <span>Coordenadas</span>
-                                            <strong>{coordinatesLabel}</strong>
+                                            <span>Status</span>
+                                            <strong>{mapEmbedUrl ? "Google Maps sob clique" : "Snapshot local"}</strong>
                                         </div>
-                                    ) : null}
-                                    <div className="aboutMapStaticMetaItem">
-                                        <span>Status</span>
-                                        <strong>Sem iframe externo</strong>
+                                    </div>
+                                    <div className="aboutMapStaticActions">
+                                        {mapOpenUrl ? (
+                                            <a className="aboutBtnGhost" href={mapOpenUrl} target="_blank" rel="noopener noreferrer">
+                                                Abrir rota
+                                            </a>
+                                        ) : null}
                                     </div>
                                 </div>
-                                <div className="aboutMapStaticActions">
-                                    {mapOpenUrl ? (
-                                        <a className="aboutBtnGhost" href={mapOpenUrl} target="_blank" rel="noopener noreferrer">
-                                            Abrir rota
-                                        </a>
-                                    ) : null}
-                                </div>
-                            </div>
+                            )}
 
                             <div className="aboutRatingRow">
-                                {loading ? (
+                                {isReviewDataPending ? (
                                     <div className="aboutMuted">Carregando avaliações…</div>
                                 ) : !hasSelectedUnit ? (
                                     <div className="aboutMuted">Selecione uma unidade para ver avaliações e fotos.</div>
@@ -873,7 +886,7 @@ export default function AboutUsSection() {
                         </div>
 
                         <div className="aboutReviewsCard">
-                            {hasSelectedUnit && (data?.available || loading) ? (
+                            {hasSelectedUnit ? (
                                 <div className="aboutReviewsSection" aria-label="Avaliações">
                                     <div className="aboutControls">
                                         <div className="aboutPills" aria-label="Filtro por nota">
@@ -927,7 +940,7 @@ export default function AboutUsSection() {
                                         />
                                     </div>
 
-                                    {loading ? (
+                                    {isReviewDataPending ? (
                                         <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
                                             Carregando avaliações…
                                         </div>

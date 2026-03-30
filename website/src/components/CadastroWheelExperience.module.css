@@ -425,6 +425,12 @@
   color: var(--ef-text-muted);
 }
 
+.resultDescription {
+  margin-bottom: 12px;
+  white-space: pre-line;
+  color: var(--ef-text-soft);
+}
+
 .ctaRow {
   display: flex;
   gap: 12px;

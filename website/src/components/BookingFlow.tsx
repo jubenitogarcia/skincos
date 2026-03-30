@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
@@ -10,11 +10,12 @@ import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { useTeamDirectory } from "@/hooks/useTeamDirectory";
 import { clearBookingDraft, persistBookingDraft, readBookingDraft, type BookingDraftState } from "@/lib/bookingDraft";
 import { doctorSlugFromTeamMember, doctorSlugMatchesQuery, normalizeDoctorSlug } from "@/lib/doctorSlug";
-import { trackBookingFunnelStep, trackBookingRequestSubmitted, trackDoctorInstagramClick } from "@/lib/leadTracking";
+import { trackBookingFunnelStep, trackBookingRequestSubmitted } from "@/lib/leadTracking";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
-import DoctorInstagramModal, { InstagramIcon, type DoctorInstagramProfile } from "@/components/DoctorInstagramModal";
 import TurnstileWidget from "@/components/TurnstileWidget";
 import UnitChooser from "@/components/UnitChooser";
+import UnitDoctorsGrid, { type BookingSelectDoctor } from "@/components/UnitDoctorsGrid";
+import useHorizontalRail from "@/hooks/useHorizontalRail";
 
 type SlotsPayload = {
     ok: true;
@@ -80,12 +81,6 @@ function findUnit(slug: string | null | undefined) {
     );
 }
 
-function avatarUrl(handle: string, name: string) {
-    const h = encodeURIComponent(handle);
-    const n = encodeURIComponent(name);
-    return `/api/instagram-avatar?handle=${h}&name=${n}`;
-}
-
 function extractInstagramHandle(url: string | null): string | null {
     if (!url) return null;
     try {
@@ -95,16 +90,6 @@ function extractInstagramHandle(url: string | null): string | null {
     } catch {
         return null;
     }
-}
-
-function initialsFromName(name: string) {
-    const letters = name
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase() ?? "")
-        .join("");
-    return letters || "EF";
 }
 
 function pad2(n: number) {
@@ -279,86 +264,35 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
 
 function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; className?: string; scrollWindowClassName?: string }) {
     const ref = useRef<HTMLDivElement | null>(null);
-    const hoverTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const [canLeft, setCanLeft] = useState(false);
-    const [canRight, setCanRight] = useState(false);
-
-    const update = () => {
-        const el = ref.current;
-        if (!el) return;
-        const left = el.scrollLeft;
-        const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
-        setCanLeft(left > 1);
-        setCanRight(left < maxLeft - 1);
-    };
-
-    useEffect(() => {
-        update();
-        const onResize = () => update();
-        window.addEventListener("resize", onResize);
-        return () => window.removeEventListener("resize", onResize);
-    }, []);
-
-    useEffect(() => {
-        const el = ref.current;
-        if (!el) return;
-
-        update();
-
-        if (typeof ResizeObserver === "undefined") return;
-
-        const observer = new ResizeObserver(() => update());
-        observer.observe(el);
-        Array.from(el.children).forEach((child) => observer.observe(child));
-        return () => observer.disconnect();
-    }, [props.children]);
-
-    const stopHoverScroll = () => {
-        if (!hoverTimerRef.current) return;
-        clearInterval(hoverTimerRef.current);
-        hoverTimerRef.current = null;
-    };
-
-    const startHoverScroll = (dir: -1 | 1) => {
-        stopHoverScroll();
-        hoverTimerRef.current = setInterval(() => {
-            const el = ref.current;
-            if (!el) return;
-            el.scrollLeft += dir * 4;
-            update();
-        }, 26);
-    };
-
-    useEffect(() => {
-        return () => {
-            if (hoverTimerRef.current) clearInterval(hoverTimerRef.current);
-        };
-    }, []);
-
-    const scrollByDir = (dir: -1 | 1) => {
-        const el = ref.current;
-        if (!el) return;
-        el.scrollBy({ left: dir * 120, behavior: "smooth" });
-    };
+    const { canScrollLeft: canLeft, canScrollRight: canRight, hoverEdge, handleContainerMouseMove, clearHoverScroll, scrollByDirection } =
+        useHorizontalRail({
+            railRef: ref,
+            itemSelector: "[role='listitem']",
+            lockMs: 720,
+            baseVelocity: 0.02,
+            maxVelocity: 0.18,
+        });
 
     return (
-        <div className={["bookingFlow__picker", props.className].filter(Boolean).join(" ")}>
+        <div
+            className={["bookingFlow__picker", props.className].filter(Boolean).join(" ")}
+            onMouseMove={handleContainerMouseMove}
+            onMouseLeave={() => {
+                clearHoverScroll();
+            }}
+        >
             <button
                 type="button"
-                className="bookingFlow__hoverZone bookingFlow__hoverZone--left"
+                className="bookingFlow__pickerArrow bookingFlow__pickerArrow--left carouselNavChrome"
                 aria-label="Mover lista para a esquerda"
                 disabled={!canLeft}
-                onMouseEnter={() => startHoverScroll(-1)}
-                onMouseLeave={stopHoverScroll}
-                onFocus={() => startHoverScroll(-1)}
-                onBlur={stopHoverScroll}
-                onClick={() => scrollByDir(-1)}
+                onClick={() => scrollByDirection("left")}
+                data-visible={canLeft ? "true" : "false"}
+                data-hovered={hoverEdge === "left" ? "true" : "false"}
             >
-                <span className="bookingFlow__scrollArrow bookingFlow__scrollArrow--left carouselNavChrome carouselNavChrome--light carouselNavChrome--compact" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="18" height="18">
-                        <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                </span>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M14.5 6.5 9 12l5.5 5.5" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
             </button>
 
             <div
@@ -366,27 +300,22 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
                 className={["bookingFlow__scrollWindow", props.scrollWindowClassName].filter(Boolean).join(" ")}
                 role="list"
                 aria-label={props.ariaLabel}
-                onScroll={update}
             >
                 {props.children}
             </div>
 
             <button
                 type="button"
-                className="bookingFlow__hoverZone bookingFlow__hoverZone--right"
+                className="bookingFlow__pickerArrow bookingFlow__pickerArrow--right carouselNavChrome"
                 aria-label="Mover lista para a direita"
                 disabled={!canRight}
-                onMouseEnter={() => startHoverScroll(1)}
-                onMouseLeave={stopHoverScroll}
-                onFocus={() => startHoverScroll(1)}
-                onBlur={stopHoverScroll}
-                onClick={() => scrollByDir(1)}
+                onClick={() => scrollByDirection("right")}
+                data-visible={canRight ? "true" : "false"}
+                data-hovered={hoverEdge === "right" ? "true" : "false"}
             >
-                <span className="bookingFlow__scrollArrow bookingFlow__scrollArrow--right carouselNavChrome carouselNavChrome--light carouselNavChrome--compact" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="18" height="18">
-                        <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                </span>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M9.5 6.5 15 12l-5.5 5.5" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
             </button>
         </div>
     );
@@ -427,7 +356,6 @@ export default function BookingFlow() {
 
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
-    const [activeInstagram, setActiveInstagram] = useState<DoctorInstagramProfile | null>(null);
     const [dateAvailability, setDateAvailability] = useState<Record<string, boolean>>({});
 
     const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } } | null>(null);
@@ -507,7 +435,6 @@ export default function BookingFlow() {
         setSlots(null);
         setSlotsError(null);
         setDateAvailability({});
-        setActiveInstagram(null);
         setPatientName("");
         setPatientGender("");
         setEmail("");
@@ -1070,17 +997,6 @@ export default function BookingFlow() {
         setStep("pick");
     }
 
-    function openDoctorInstagram(params: { name: string; handle: string | null; instagramUrl: string | null }) {
-        const handle = params.handle?.replace(/^@/, "") ?? null;
-        if (!handle) return;
-        setActiveInstagram({ name: params.name, handle });
-        trackDoctorInstagramClick({
-            unitSlug,
-            doctorName: params.name,
-            instagramUrl: params.instagramUrl ?? `https://www.instagram.com/${handle}/`,
-        });
-    }
-
     useEffect(() => {
         if (!draftReadyRef.current) return;
         if (step === "submitted") {
@@ -1169,13 +1085,7 @@ export default function BookingFlow() {
                         style={{ padding: 14 }}
                     >
                         <div className="bookingFlow__entryTitle">Escolha o seu doutor</div>
-                        {unit ? (
-                            <div className="small bookingFlow__unitStatus">
-                                Unidade: <span className="bookingFlow__unitName">{unit.name}</span>
-                            </div>
-                        ) : null}
-                        <div className="bookingFlow__cardSub">Clique e selecione um de nossos doutores para o seu atendimento.</div>
-                        <div style={{ marginTop: 6 }}>
+                        <div style={{ marginTop: 2 }}>
                             {!unitLabel ? (
                                 <div className="small bookingFlow__unitStatus bookingFlow__unitStatus--error" role="status">
                                     Selecione a unidade para liberar os doutores.
@@ -1191,129 +1101,18 @@ export default function BookingFlow() {
                                     {membersError ? "Equipe indisponível no momento. Tente novamente mais tarde." : "Nenhum doutor encontrado para esta unidade."}
                                 </div>
                             ) : (
-                                <HoverScrollPicker
-                                    ariaLabel="Lista de profissionais"
-                                    className="bookingFlow__picker--rail bookingFlow__picker--doctor"
-                                    scrollWindowClassName="bookingFlow__scrollWindow--doctor"
-                                >
-                                    <div className="bookingFlow__doctorBadgeGrid">
-                                        {doctorsForUnit.map((d) => {
-                                            const active = doctor?.slug === d.slug;
-                                            const instagramHref = d.instagramUrl ?? (d.handle ? `https://instagram.com/${d.handle.replace(/^@/, "")}` : null);
-                                            return (
-                                                <div key={d.slug} className="bookingFlow__doctorBadgeWrap" data-active={active ? "true" : "false"} role="listitem">
-                                                    <PortalTooltip
-                                                        className="bookingFlow__doctorTooltip"
-                                                        content={
-                                                            <>
-                                                                <div className="bookingFlow__doctorTooltipHeader">
-                                                                    <div className="bookingFlow__doctorTooltipName">{d.name}</div>
-                                                                    {instagramHref ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            className="bookingFlow__doctorTooltipLink"
-                                                                            aria-label={`Abrir Instagram de ${d.name}`}
-                                                                            title="Abrir Instagram"
-                                                                            onClick={(event) => {
-                                                                                event.stopPropagation();
-                                                                                openDoctorInstagram({
-                                                                                    name: d.name,
-                                                                                    handle: d.handle,
-                                                                                    instagramUrl: instagramHref,
-                                                                                });
-                                                                            }}
-                                                                        >
-                                                                            <InstagramIcon size={14} />
-                                                                        </button>
-                                                                    ) : null}
-                                                                </div>
-                                                            </>
-                                                        }
-                                                    >
-                                                        <button
-                                                            type="button"
-                                                            className="bookingFlow__doctorBadge"
-                                                            data-active={active ? "true" : "false"}
-                                                            onClick={() => selectDoctor({ slug: d.slug, name: d.name, handle: d.handle })}
-                                                            aria-label={active ? `Remover seleção de ${d.name}` : `Selecionar ${d.name}`}
-                                                            aria-pressed={active}
-                                                        >
-                                                            <span className="bookingFlow__doctorBadgeAvatar">
-                                                                {d.handle ? (
-                                                                    <Image
-                                                                        src={avatarUrl(d.handle, d.name)}
-                                                                        alt={d.name}
-                                                                        fill
-                                                                        sizes="76px"
-                                                                        style={{ objectFit: "cover" }}
-                                                                        unoptimized
-                                                                    />
-                                                                ) : (
-                                                                    <span className="bookingFlow__doctorBadgeFallback">{initialsFromName(d.name)}</span>
-                                                                )}
-                                                            </span>
-                                                        </button>
-                                                    </PortalTooltip>
-                                                    <div className="bookingFlow__doctorMeta">
-                                                        <div className="bookingFlow__doctorNameRow">
-                                                            <span className="bookingFlow__doctorNameLabel">{d.name}</span>
-                                                            {instagramHref ? (
-                                                                <button
-                                                                    type="button"
-                                                                    className="bookingFlow__doctorInstagramBtn"
-                                                                    aria-label={`Abrir Instagram de ${d.name}`}
-                                                                    title="Instagram"
-                                                                    onClick={() =>
-                                                                        openDoctorInstagram({
-                                                                            name: d.name,
-                                                                            handle: d.handle,
-                                                                            instagramUrl: instagramHref,
-                                                                        })
-                                                                    }
-                                                                >
-                                                                    <InstagramIcon size={13} />
-                                                                </button>
-                                                            ) : null}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-
-                                        <div className="bookingFlow__doctorBadgeWrap" data-active={doctor?.slug === ANY_DOCTOR.slug ? "true" : "false"} role="listitem">
-                                            <PortalTooltip
-                                                className="bookingFlow__doctorTooltip"
-                                                content={
-                                                    <>
-                                                        <div className="bookingFlow__doctorTooltipName">Sem Preferência</div>
-                                                        <div className="bookingFlow__doctorTooltipSub">Mostra a agenda mais ampla da unidade.</div>
-                                                    </>
-                                                }
-                                            >
-                                                <button
-                                                    type="button"
-                                                    className="bookingFlow__doctorBadge bookingFlow__doctorBadge--all"
-                                                    data-active={doctor?.slug === ANY_DOCTOR.slug ? "true" : "false"}
-                                                    onClick={() => selectDoctor(ANY_DOCTOR)}
-                                                    aria-label={doctor?.slug === ANY_DOCTOR.slug ? "Remover seleção de sem preferência" : "Selecionar sem preferência de doutor"}
-                                                    aria-pressed={doctor?.slug === ANY_DOCTOR.slug}
-                                                >
-                                                    <span className="bookingFlow__doctorBadgeAvatar bookingFlow__doctorBadgeAvatar--all">
-                                                        <span className="bookingFlow__doctorBadgeFallback bookingFlow__doctorBadgeFallback--all">
-                                                            <span>Sem</span>
-                                                            <span>Preferência</span>
-                                                        </span>
-                                                    </span>
-                                                </button>
-                                            </PortalTooltip>
-                                            <div className="bookingFlow__doctorMeta">
-                                                <div className="bookingFlow__doctorNameRow">
-                                                    <span className="bookingFlow__doctorNameLabel">Sem Preferência</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </HoverScrollPicker>
+                                <UnitDoctorsGrid
+                                    variant="booking-select"
+                                    doctorSelections={doctorsForUnit.map(
+                                        (doctor): BookingSelectDoctor => ({
+                                            slug: doctor.slug,
+                                            name: doctor.name,
+                                            handle: doctor.handle,
+                                        }),
+                                    )}
+                                    activeDoctorSlug={doctor?.slug ?? null}
+                                    onDoctorSelect={selectDoctor}
+                                />
                             )}
                         </div>
                     </div>
@@ -1639,9 +1438,6 @@ export default function BookingFlow() {
                     </div>
                 </div>
             )}
-
-            <DoctorInstagramModal profile={activeInstagram} onClose={() => setActiveInstagram(null)} />
-
             {showDetailsModal && unitSlug && primaryService && dateKey && timeKey ? (
                 <div
                     className="bookingFlow__modalBackdrop"
