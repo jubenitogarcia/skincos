@@ -1003,6 +1003,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                         <div className={styles.resultPanel} aria-live="polite">
                                             <span className={styles.resultEyebrow}>Prêmio restaurado</span>
                                             <h2 className={`${styles.resultTitle} ${styles.resultTitleVisible}`}>{duplicatePrize.label}</h2>
+                                            <p className={`${styles.resultText} ${styles.resultDescription}`}>{duplicatePrize.description}</p>
                                             <p className={styles.resultText}>
                                                 Localizamos um cadastro anterior com este prêmio já vinculado ao seu e-mail ou telefone.
                                             </p>
@@ -1092,6 +1093,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                             <>
                                                 <span className={styles.resultEyebrow}>Prêmio revelado</span>
                                                 <h2 className={`${styles.resultTitle} ${styles.resultTitleVisible}`}>{result.label}</h2>
+                                                <p className={`${styles.resultText} ${styles.resultDescription}`}>{result.description}</p>
                                                 <p className={styles.resultText}>
                                                     O prêmio já foi travado. Depois da vinheta, o botão de atendimento abre o WhatsApp com a
                                                     mensagem exata do prêmio sorteado.
