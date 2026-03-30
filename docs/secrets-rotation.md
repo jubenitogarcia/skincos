@@ -73,3 +73,6 @@ NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 
 ## Notas
 - Para exceções conhecidas, veja `docs/security-exceptions.md`.
+- Variables relacionadas a alerting devem permanecer em modo opt-in:
+  - `ENABLE_CLOUDFLARE_ALERTING_APPLY=true` somente se quiser execução agendada.
+  - `CLOUDFLARE_ALERT_ENABLE_EMAILS=true` somente se quiser destinos por e-mail.

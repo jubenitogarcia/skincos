@@ -86,12 +86,15 @@ Configuração (repo → Settings):
   - `CLOUDFLARE_ALERTS_API_TOKEN`
   - (opcional) `CLOUDFLARE_ALERT_WEBHOOK_URL`
 - **Variables → Actions**
-  - `CLOUDFLARE_ALERT_EMAILS` (CSV)
+  - `ENABLE_CLOUDFLARE_ALERTING_APPLY` = `true` para permitir a execução agendada
+  - `CLOUDFLARE_ALERT_ENABLE_EMAILS` = `true` para permitir destinos por e-mail
+  - `CLOUDFLARE_ALERT_EMAILS` (CSV, usado apenas quando `CLOUDFLARE_ALERT_ENABLE_EMAILS=true`)
   - (opcional) `CLOUDFLARE_PAGES_PROJECT_IDS` (CSV)
   - (opcional) `CLOUDFLARE_PAGES_ENVIRONMENTS` (CSV, default sugerido: `production,preview`)
   - (opcional) `CLOUDFLARE_PAGES_EVENTS` (CSV)
 
 Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produtos/telemetria adicionais (ex.: Workers Observability) e podem não estar disponíveis diretamente via Alerting API v3; mantenha também o `uptime-slo.yml` como monitor sintético.
+Observação 2: por segurança, o agendamento semanal e os destinos de e-mail são opt-in explícitos.
 
 ### Checklist rápido (Cloudflare)
 

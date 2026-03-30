@@ -8,6 +8,7 @@ set -euo pipefail
 #   CLOUDFLARE_ALERTS_API_TOKEN  (preferred) OR CLOUDFLARE_API_TOKEN
 #
 # Destination config (at least one is required):
+#   CLOUDFLARE_ALERT_ENABLE_EMAILS   "true" to allow email destinations from CLOUDFLARE_ALERT_EMAILS
 #   CLOUDFLARE_ALERT_EMAILS          CSV of emails (e.g. "ops@skincos.com.br,dev@skincos.com.br")
 #   CLOUDFLARE_ALERT_WEBHOOK_URL     Webhook URL (Slack/Discord/HTTP receiver)
 #
@@ -27,6 +28,7 @@ acct="${CLOUDFLARE_ACCOUNT_ID:-}"
 token="${CLOUDFLARE_ALERTS_API_TOKEN:-${CLOUDFLARE_API_TOKEN:-}}"
 
 emails_csv="${CLOUDFLARE_ALERT_EMAILS:-}"
+enable_emails_raw="${CLOUDFLARE_ALERT_ENABLE_EMAILS:-false}"
 webhook_url="${CLOUDFLARE_ALERT_WEBHOOK_URL:-}"
 webhook_name="${CLOUDFLARE_ALERT_WEBHOOK_NAME:-skincos-alerts}"
 
@@ -36,6 +38,16 @@ pages_envs_csv="${CLOUDFLARE_PAGES_ENVIRONMENTS:-production,preview}"
 pages_events_csv="${CLOUDFLARE_PAGES_EVENTS:-}"
 
 dry_run="${CLOUDFLARE_ALERTING_DRY_RUN:-false}"
+
+is_truthy() {
+  local value="${1:-}"
+  value="${value,,}"
+  [[ "${value}" == "1" || "${value}" == "true" || "${value}" == "yes" || "${value}" == "on" ]]
+}
+
+if ! is_truthy "${enable_emails_raw}"; then
+  emails_csv=""
+fi
 
 if [[ -z "${acct}" ]]; then
   echo "[cloudflare-alerting-apply] Missing CLOUDFLARE_ACCOUNT_ID" >&2
