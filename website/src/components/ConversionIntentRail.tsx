@@ -37,6 +37,7 @@ export default function ConversionIntentRail({ title, subtitle, items, className
                         <p>{item.body}</p>
                         <Link
                             href={item.href}
+                            prefetch={false}
                             className={`conversionRail__cta conversionRail__cta--${item.kind ?? "secondary"}`.trim()}
                             onClick={item.onClick}
                         >

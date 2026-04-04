@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import brazilMap from "@svg-maps/brazil";
-import { units } from "@/data/units";
+import { getDigitalJourneyUnits, units, type Unit } from "@/data/units";
 import { trackEvent } from "@/lib/analytics";
+import { getUnitHref } from "@/lib/unitRoutes";
 
 type ProjectedPoint = {
     x: number;
@@ -47,8 +48,8 @@ function projectLatLngToBrazilSvg(lat: number, lng: number): ProjectedPoint {
     };
 }
 
-function getUnitDestination(unit: (typeof units)[number]): string {
-    return `/${unit.slug}`;
+function getUnitDestination(unit: Unit): string {
+    return getUnitHref(unit);
 }
 
 function computeStatePoint(stateUnits: (typeof units)[number][]): { x: number; y: number } {
@@ -87,12 +88,6 @@ const STATE_NAME_BY_UF: Record<string, string> = {
     SP: "São Paulo",
     SE: "Sergipe",
     TO: "Tocantins",
-};
-
-const FEATURED_UNIT_SLUGS = ["novo-hamburgo", "barrashoppingsul"] as const;
-const FEATURED_UNIT_TAGS: Record<(typeof FEATURED_UNIT_SLUGS)[number], string> = {
-    "novo-hamburgo": "NH",
-    barrashoppingsul: "BSS",
 };
 
 const UF_TO_SVG_ID: Record<string, string> = {
@@ -213,8 +208,12 @@ export default function UnitsMapSection() {
     const statePathRefs = useRef<Record<string, SVGPathElement | null>>({});
 
     const [openState, setOpenState] = useState<TooltipState>(null);
+    const [renderedTooltip, setRenderedTooltip] = useState<TooltipState>(null);
+    const [tooltipVisible, setTooltipVisible] = useState(false);
     const [hoverUf, setHoverUf] = useState<string | null>(null);
     const hoverClearTimerRef = useRef<number | null>(null);
+    const tooltipExitTimerRef = useRef<number | null>(null);
+    const tooltipFrameRef = useRef<number | null>(null);
     const tooltipHoverRef = useRef(false);
     const openByKeyboardRef = useRef(false);
     const pinRefs = useRef<Record<string, SVGGElement | null>>({});
@@ -246,8 +245,43 @@ export default function UnitsMapSection() {
                 window.clearTimeout(hoverClearTimerRef.current);
                 hoverClearTimerRef.current = null;
             }
+            if (tooltipExitTimerRef.current) {
+                window.clearTimeout(tooltipExitTimerRef.current);
+                tooltipExitTimerRef.current = null;
+            }
+            if (tooltipFrameRef.current) {
+                window.cancelAnimationFrame(tooltipFrameRef.current);
+                tooltipFrameRef.current = null;
+            }
         };
     }, []);
+
+    useEffect(() => {
+        if (tooltipExitTimerRef.current) {
+            window.clearTimeout(tooltipExitTimerRef.current);
+            tooltipExitTimerRef.current = null;
+        }
+        if (tooltipFrameRef.current) {
+            window.cancelAnimationFrame(tooltipFrameRef.current);
+            tooltipFrameRef.current = null;
+        }
+
+        if (openState) {
+            setRenderedTooltip(openState);
+            tooltipFrameRef.current = window.requestAnimationFrame(() => {
+                setTooltipVisible(true);
+                tooltipFrameRef.current = null;
+            });
+            return;
+        }
+
+        if (!renderedTooltip) return;
+        setTooltipVisible(false);
+        tooltipExitTimerRef.current = window.setTimeout(() => {
+            setRenderedTooltip(null);
+            tooltipExitTimerRef.current = null;
+        }, 220);
+    }, [openState, renderedTooltip]);
 
     useEffect(() => {
         if (!openState) return;
@@ -276,9 +310,11 @@ export default function UnitsMapSection() {
         return () => window.clearTimeout(t);
     }, [openState]);
 
+    const unitsForMap = useMemo(() => units.filter((unit) => unit.slug !== "porto-alegre"), []);
+
     const stateGroups = useMemo(() => {
         const map = new Map<string, (typeof units)[number][]>();
-        for (const u of units) {
+        for (const u of unitsForMap) {
             if (!u.state) continue;
             const arr = map.get(u.state) ?? [];
             arr.push(u);
@@ -294,7 +330,7 @@ export default function UnitsMapSection() {
             .sort((a, b) => a.uf.localeCompare(b.uf));
 
         return groups;
-    }, []);
+    }, [unitsForMap]);
 
     useEffect(() => {
         const svg = svgRef.current;
@@ -425,15 +461,16 @@ export default function UnitsMapSection() {
         setOpenState({ uf, left: px, top: py, side });
     }
 
-    const activeGroup = openState ? stateGroups.find((g) => g.uf === openState.uf) ?? null : null;
+    const activeGroup = renderedTooltip ? stateGroups.find((g) => g.uf === renderedTooltip.uf) ?? null : null;
     const activeTitle = activeGroup ? STATE_NAME_BY_UF[activeGroup.uf] ?? activeGroup.uf : "";
     const activeCount = activeGroup ? formatUnitCount(activeGroup.units.length) : "";
     const featuredUnits = useMemo(
-        () =>
-            FEATURED_UNIT_SLUGS.map((slug) => units.find((u) => u.slug === slug)).filter(
-                (u): u is (typeof units)[number] => Boolean(u),
-            ),
+        () => getDigitalJourneyUnits(),
         [],
+    );
+    const stateGroupsForList = useMemo(
+        () => stateGroups.filter((group) => group.uf !== "RS"),
+        [stateGroups],
     );
 
     return (
@@ -456,7 +493,7 @@ export default function UnitsMapSection() {
 
                             {stateGroups.map((g) => {
                                 const p = pointsByUf[g.uf] ?? g.point;
-                                const isPinActive = g.uf === hoverUf || g.uf === openState?.uf;
+                                const isPinActive = g.uf === hoverUf || g.uf === openState?.uf || g.uf === renderedTooltip?.uf;
                                 return (
                                     <Pin
                                         key={g.uf}
@@ -495,14 +532,11 @@ export default function UnitsMapSection() {
                             })}
                         </svg>
 
-                        <div className="brMapHint">
-                            Passe o mouse ou use Tab/Enter no balão para ver as unidades do estado.
-                        </div>
-
-                        {openState && activeGroup ? (
+                        {renderedTooltip && activeGroup ? (
                             <div
-                                className={`brTooltip brTooltip--${openState.side}`}
-                                style={{ left: openState.left, top: openState.top }}
+                                className={`brTooltip brTooltip--${renderedTooltip.side}`}
+                                data-state={tooltipVisible ? "open" : "closed"}
+                                style={{ left: renderedTooltip.left, top: renderedTooltip.top }}
                                 onMouseEnter={() => {
                                     tooltipHoverRef.current = true;
                                 }}
@@ -551,72 +585,72 @@ export default function UnitsMapSection() {
                 </div>
 
                 <div className="unitsMapRight" aria-label="Lista de unidades por estado">
-                    <div className="unitsStatesPanel">
-                        {featuredUnits.length ? (
-                            <div className="unitsFeatured" aria-label="Nossas unidades">
-                                <div className="unitsFeaturedTitle">Nossas unidades</div>
-                                <div className="unitsFeaturedList">
-                                    {featuredUnits.map((u) => (
-                                        <button
-                                            key={u.slug}
-                                            className="unitsFeaturedItem"
-                                            onMouseEnter={() => {
-                                                if (!u.state) return;
-                                                setHoverUfDebounced(u.state);
-                                            }}
-                                            onMouseLeave={() => clearHoverUfSoon()}
-                                            onFocus={() => {
-                                                if (!u.state) return;
-                                                setHoverUfDebounced(u.state);
-                                            }}
-                                            onBlur={() => clearHoverUfSoon()}
-                                            onClick={() => {
-                                                const dest = getUnitDestination(u);
-                                                trackEvent("unit_map_click", { unitSlug: u.slug, placement: "featured_list", destination: dest });
-                                                window.location.assign(dest);
-                                            }}
-                                        >
-                                            <span className="unitsFeaturedItemTag">{FEATURED_UNIT_TAGS[u.slug as (typeof FEATURED_UNIT_SLUGS)[number]]}</span>
-                                            <span className="unitsFeaturedItemName">{u.name}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : null}
-                        <div className="unitsStatesTitle">Unidades por estado</div>
-                        <div className="unitsStatesList">
-                            {stateGroups.map((g) => (
-                                <div key={g.uf} className="unitsStateBlock">
-                                    <div
-                                        className="unitsStateHeader"
-                                        onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                    {featuredUnits.length ? (
+                        <div className="unitsFeatured" aria-label="Unidades em destaque">
+                            <div className="unitsFeaturedList">
+                                {featuredUnits.map((u) => (
+                                    <button
+                                        key={u.slug}
+                                        className="unitsFeaturedItem"
+                                        onMouseEnter={() => {
+                                            if (!u.state) return;
+                                            setHoverUfDebounced(u.state);
+                                        }}
                                         onMouseLeave={() => clearHoverUfSoon()}
+                                        onFocus={() => {
+                                            if (!u.state) return;
+                                            setHoverUfDebounced(u.state);
+                                        }}
+                                        onBlur={() => clearHoverUfSoon()}
+                                        onClick={() => {
+                                            const dest = getUnitDestination(u);
+                                            trackEvent("unit_map_click", { unitSlug: u.slug, placement: "featured_list", destination: dest });
+                                            window.location.assign(dest);
+                                        }}
                                     >
-                                        <span className="unitsStateHeaderMain">{STATE_NAME_BY_UF[g.uf] ?? g.uf}</span>
-                                        <span className="unitsStateHeaderSub">{formatUnitCount(g.units.length)}</span>
+                                        <span className="unitsFeaturedItemState">{STATE_NAME_BY_UF[u.state ?? ""] ?? u.state ?? ""}</span>
+                                        <span className="unitsFeaturedItemName">{u.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ) : null}
+                    <div className="unitsStatesTitle">Rede completa por estado</div>
+                    <div className="unitsStatesPanel">
+                        <div className="unitsStatesScroller">
+                            <div className="unitsStatesList">
+                                {stateGroupsForList.map((g) => (
+                                    <div key={g.uf} className="unitsStateBlock">
+                                        <div
+                                            className="unitsStateHeader"
+                                            onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                                            onMouseLeave={() => clearHoverUfSoon()}
+                                        >
+                                            <span className="unitsStateHeaderMain">{STATE_NAME_BY_UF[g.uf] ?? g.uf}</span>
+                                        </div>
+                                        <div className="unitsStateUnits">
+                                            {g.units
+                                                .slice()
+                                                .sort((a, b) => a.name.localeCompare(b.name))
+                                                .map((u) => (
+                                                    <button
+                                                        key={u.slug}
+                                                        className="unitsStateUnit"
+                                                        onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                                                        onMouseLeave={() => clearHoverUfSoon()}
+                                                        onClick={() => {
+                                                            const dest = getUnitDestination(u);
+                                                            trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_list", destination: dest });
+                                                            window.location.assign(dest);
+                                                        }}
+                                                    >
+                                                        {u.name}
+                                                    </button>
+                                                ))}
+                                        </div>
                                     </div>
-                                    <div className="unitsStateUnits">
-                                        {g.units
-                                            .slice()
-                                            .sort((a, b) => a.name.localeCompare(b.name))
-                                            .map((u) => (
-                                                <button
-                                                    key={u.slug}
-                                                    className="unitsStateUnit"
-                                                    onMouseEnter={() => setHoverUfDebounced(g.uf)}
-                                                    onMouseLeave={() => clearHoverUfSoon()}
-                                                    onClick={() => {
-                                                        const dest = getUnitDestination(u);
-                                                        trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_list", destination: dest });
-                                                        window.location.assign(dest);
-                                                    }}
-                                                >
-                                                    {u.name}
-                                                </button>
-                                            ))}
-                                    </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
                     </div>
                 </div>

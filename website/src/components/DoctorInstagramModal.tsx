@@ -574,7 +574,7 @@ export default function DoctorInstagramModal(props: {
 
                     {instagramHasMore ? <div className="instagramInfiniteSentinel" ref={instagramInfiniteSentinelRef} aria-hidden="true" /> : null}
                     {instagramLoadingMore ? <div className="instagramLoadingMoreInline">Carregando mais publicações…</div> : null}
-                    <div className="modalNote">Posts, reels e stories são exibidos dentro desta janela para manter você no site. Use `Esc` para fechar e as setas do teclado para navegar.</div>
+                    <div className="modalNote">Posts, reels e stories são exibidos nesta janela para você navegar sem sair da página. Use `Esc` para fechar e as setas do teclado para navegar.</div>
                 </div>
             </div>
         </div>

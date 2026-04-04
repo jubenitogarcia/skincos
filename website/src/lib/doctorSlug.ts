@@ -23,6 +23,10 @@ function normalizeSlugAlias(value: string | null | undefined): string {
         .trim();
 }
 
+function marketingDoctorMatchesQuery(queryAlias: string, doctor: { slug: string; name: string }): boolean {
+    return normalizeSlugAlias(doctor.slug) === queryAlias || normalizeNameAlias(doctor.name) === queryAlias;
+}
+
 export function doctorSlugFromTeamMember(member: DoctorSlugInput): string {
     const handle = (member.instagramHandle ?? "").trim();
     if (handle) return handle;
@@ -49,6 +53,20 @@ export function doctorSlugAliases(member: DoctorSlugInput): string[] {
     }
 
     return Array.from(aliases).filter(Boolean);
+}
+
+export function canonicalDoctorSlugForMember(member: DoctorSlugInput): string {
+    const nameAlias = normalizeNameAlias(member.name);
+    for (const doctor of marketingDoctors) {
+        if (normalizeNameAlias(doctor.name) === nameAlias) return doctor.slug;
+    }
+    return normalizeDoctorSlug(member.instagramHandle) || nameAlias;
+}
+
+export function findMarketingDoctorByQuery(query: string | null | undefined) {
+    const queryAlias = normalizeSlugAlias(query);
+    if (!queryAlias) return null;
+    return marketingDoctors.find((doctor) => marketingDoctorMatchesQuery(queryAlias, doctor)) ?? null;
 }
 
 export function doctorSlugMatchesQuery(query: string | null | undefined, member: DoctorSlugInput): boolean {

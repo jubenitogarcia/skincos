@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { units } from "@/data/units";
+import { getPersistedGbpUnitReviews } from "@/lib/gbpReviewsDb";
+import { getManualGbpUnitReviews } from "@/lib/manualGbpReviews";
 import { loadPlaceSnapshot, paginatePlaceSnapshotReviews } from "@/lib/productionSnapshot";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +19,12 @@ function parsePositiveInt(value: string | null, fallback: number): number {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.max(1, Math.floor(n));
+}
+
+function parseNonNegativeInt(value: string | null, fallback: number): number {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.floor(n));
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -44,6 +52,7 @@ export async function GET(req: Request) {
 
     const locationParam = (searchParams.get("location") ?? "").trim();
     const pageSize = clamp(parsePositiveInt(searchParams.get("pageSize"), 5), 1, 50);
+    const offset = parseNonNegativeInt(searchParams.get("pageToken"), 0);
 
     if (!locationParam) {
         return NextResponse.json({ available: false, error: "missing_location" }, { status: 400 });
@@ -57,9 +66,45 @@ export async function GET(req: Request) {
         );
     }
 
+    const persisted = await getPersistedGbpUnitReviews({ placeId, limit: pageSize, offset });
+    if (persisted) {
+        return NextResponse.json(
+            {
+                available: true,
+                reviews: persisted.reviews,
+                nextPageToken: persisted.nextPageToken,
+            },
+            {
+                status: 200,
+                headers: {
+                    "cache-control": "public, max-age=60, s-maxage=300",
+                    "x-gbp": "db",
+                },
+            },
+        );
+    }
+
+    const manual = getManualGbpUnitReviews({ placeId, limit: pageSize, offset });
+    if (manual) {
+        return NextResponse.json(
+            {
+                available: true,
+                reviews: manual.reviews,
+                nextPageToken: manual.nextPageToken,
+            },
+            {
+                status: 200,
+                headers: {
+                    "cache-control": "public, max-age=60, s-maxage=300",
+                    "x-gbp": "manual_local",
+                },
+            },
+        );
+    }
+
     const cache = getCloudflareCache();
     const cacheKey = new Request(
-        `https://espacofacial.com/__cache/gbp/reviews?v=3&src=snapshot&placeId=${encodeURIComponent(placeId)}&pageSize=${pageSize}`,
+        `https://espacofacial.com/__cache/gbp/reviews?v=4&src=snapshot&placeId=${encodeURIComponent(placeId)}&pageSize=${pageSize}&offset=${offset}`,
     );
 
     if (cache) {
@@ -77,7 +122,7 @@ export async function GET(req: Request) {
 
     const snapshot = await loadPlaceSnapshot(req, { placeId });
     if (snapshot) {
-        const payload = paginatePlaceSnapshotReviews(snapshot, { placeId, pageSize });
+        const payload = paginatePlaceSnapshotReviews(snapshot, { placeId, pageSize, offset });
         if (cache) void cache.put(cacheKey, new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } }));
         return NextResponse.json(payload, {
             status: 200,

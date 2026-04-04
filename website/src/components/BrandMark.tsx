@@ -43,7 +43,6 @@ export default function BrandMark({ className, title = "Espaço Facial", tone = 
                         return current;
                     });
                 }}
-                unoptimized
             />
         );
     }

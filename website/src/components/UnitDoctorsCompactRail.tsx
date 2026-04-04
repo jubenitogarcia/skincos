@@ -47,23 +47,34 @@ function CompactDoctorTooltip({
 }: CompactDoctorTooltipProps) {
     const [open, setOpen] = useState(false);
     const [ready, setReady] = useState(false);
+    const [mounted, setMounted] = useState(false);
     const [position, setPosition] = useState({ left: 0, top: 0 });
     const triggerRef = useRef<HTMLButtonElement | null>(null);
     const tooltipRef = useRef<HTMLDivElement | null>(null);
     const closeTimerRef = useRef<number | null>(null);
+    const exitTimerRef = useRef<number | null>(null);
 
-    const clearCloseTimer = useCallback(() => {
-        if (!closeTimerRef.current) return;
-        window.clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
+    const clearTimers = useCallback(() => {
+        if (closeTimerRef.current) {
+            window.clearTimeout(closeTimerRef.current);
+            closeTimerRef.current = null;
+        }
+        if (exitTimerRef.current) {
+            window.clearTimeout(exitTimerRef.current);
+            exitTimerRef.current = null;
+        }
     }, []);
 
     const scheduleClose = useCallback(() => {
-        clearCloseTimer();
+        clearTimers();
         closeTimerRef.current = window.setTimeout(() => {
             setOpen(false);
-        }, 120);
-    }, [clearCloseTimer]);
+            exitTimerRef.current = window.setTimeout(() => {
+                setMounted(false);
+                setReady(false);
+            }, 220);
+        }, 90);
+    }, [clearTimers]);
 
     const updatePosition = useCallback(() => {
         const trigger = triggerRef.current;
@@ -94,9 +105,8 @@ function CompactDoctorTooltip({
     }, []);
 
     useEffect(() => {
-        if (!open) {
+        if (!mounted) {
             setReady(false);
-            clearCloseTimer();
             return;
         }
 
@@ -110,9 +120,19 @@ function CompactDoctorTooltip({
             window.removeEventListener("resize", onUpdate);
             window.removeEventListener("scroll", onUpdate, true);
         };
-    }, [clearCloseTimer, open, updatePosition]);
+    }, [mounted, updatePosition]);
 
-    useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
+    useEffect(() => () => clearTimers(), [clearTimers]);
+
+    const openTooltip = useCallback(() => {
+        clearTimers();
+        if (!mounted) {
+            setMounted(true);
+            window.requestAnimationFrame(() => setOpen(true));
+            return;
+        }
+        setOpen(true);
+    }, [clearTimers, mounted]);
 
     return (
         <div className="unitDoctorsCompact__tooltipAnchor">
@@ -120,19 +140,16 @@ function CompactDoctorTooltip({
                 ref={triggerRef}
                 type="button"
                 className="unitDoctorsCompact__avatarTrigger"
-                onMouseEnter={() => {
-                    clearCloseTimer();
-                    setOpen(true);
-                }}
+                onMouseEnter={openTooltip}
                 onMouseLeave={scheduleClose}
                 onClick={() => {
-                    clearCloseTimer();
-                    setOpen((current) => !current);
+                    if (open || mounted) {
+                        scheduleClose();
+                        return;
+                    }
+                    openTooltip();
                 }}
-                onFocus={() => {
-                    clearCloseTimer();
-                    setOpen(true);
-                }}
+                onFocus={openTooltip}
                 onBlur={(event) => {
                     const next = event.relatedTarget as Node | null;
                     const tooltip = tooltipRef.current;
@@ -147,25 +164,21 @@ function CompactDoctorTooltip({
                 {avatar}
             </button>
 
-            {open && typeof document !== "undefined"
+            {mounted && typeof document !== "undefined"
                 ? createPortal(
                       <div
                           ref={tooltipRef}
                           className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
+                          data-state={open && ready ? "open" : "closed"}
                           role="tooltip"
                           style={{
                               position: "fixed",
                               left: position.left,
                               top: position.top,
-                              transform: "translateX(-50%)",
                               display: "block",
                               zIndex: 5000,
-                              opacity: ready ? 1 : 0,
                           }}
-                          onMouseEnter={() => {
-                              clearCloseTimer();
-                              setOpen(true);
-                          }}
+                          onMouseEnter={openTooltip}
                           onMouseLeave={scheduleClose}
                       >
                           <div className="unitDoctorsCompact__tooltipNameRow">
@@ -175,8 +188,10 @@ function CompactDoctorTooltip({
                                       type="button"
                                       className="unitDoctorsCompact__tooltipInstagramBtn"
                                       onClick={() => {
-                                          clearCloseTimer();
+                                          clearTimers();
                                           setOpen(false);
+                                          setMounted(false);
+                                          setReady(false);
                                           onOpenInstagram();
                                       }}
                                       onBlur={(event) => {
@@ -203,7 +218,7 @@ function CompactDoctorTooltip({
                                       bookingUrl: bookingHref,
                                   })
                               }
-                              onMouseEnter={() => clearCloseTimer()}
+                              onMouseEnter={openTooltip}
                               onBlur={(event) => {
                                   const next = event.relatedTarget as Node | null;
                                   if (next && tooltipRef.current?.contains(next)) return;

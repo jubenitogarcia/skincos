@@ -6,7 +6,7 @@ import UnitDoctorsGrid from "@/components/UnitDoctorsGrid";
 import HeroMedia from "@/components/HeroMedia";
 import UnitSelectionSync from "@/components/UnitSelectionSync";
 import AboutUsSection from "@/components/AboutUsSection";
-import { units } from "@/data/units";
+import { getCanonicalDigitalUnitSlug, getNetworkUnitHref, isDigitalJourneyUnit, isIndexableUnitPath, normalizeUnitSlug, resolveUnitFromSlug } from "@/lib/unitRoutes";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
@@ -15,12 +15,8 @@ import { headers } from "next/headers";
 const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com").replace(/\/$/, "");
 export const revalidate = 300;
 
-function normalizeSlug(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 function unitLocality(unitSlug: string): string | null {
-    const normalized = normalizeSlug(unitSlug);
+    const normalized = normalizeUnitSlug(unitSlug);
     if (normalized === "novohamburgo") return "Novo Hamburgo";
     if (normalized === "barrashoppingsul") return "Porto Alegre";
     return null;
@@ -33,28 +29,9 @@ function normalizeTelephone(value: string | undefined): string | null {
     return v;
 }
 
-function resolveUnitFromParam(param: string) {
-    const direct = units.find((u) => u.slug === param);
-    if (direct) return direct;
-
-    const normalizedParam = normalizeSlug(param);
-    return units.find((u) => normalizeSlug(u.slug) === normalizedParam) ?? null;
-}
-
-function canonicalUnitPath(unitSlug: string): string {
-    // Canonicalize Novo Hamburgo without hyphen as requested.
-    if (normalizeSlug(unitSlug) === "novohamburgo") return "novohamburgo";
-    return unitSlug;
-}
-
-function isIndexableUnitPath(path: string): boolean {
-    const normalized = normalizeSlug(path);
-    return normalized === "novohamburgo" || normalized === "barrashoppingsul";
-}
-
 export async function generateMetadata({ params }: { params: Promise<{ unit: string }> }): Promise<Metadata> {
     const { unit: unitParam } = await params;
-    const unit = resolveUnitFromParam(unitParam);
+    const unit = resolveUnitFromSlug(unitParam);
     if (!unit) {
         return {
             title: "Espaço Facial",
@@ -63,20 +40,36 @@ export async function generateMetadata({ params }: { params: Promise<{ unit: str
         };
     }
 
-    const canonicalPath = canonicalUnitPath(unit.slug);
+    if (!isDigitalJourneyUnit(unit)) {
+        const fallbackUrl = `${siteUrl}${getNetworkUnitHref(unit.slug)}`;
+        return {
+            title: `${unit.name} | Rede Espaço Facial`,
+            description: `Confirme a presença da unidade ${unit.name} na rede Espaço Facial e siga para mapa, contato ou agendamento online.`,
+            robots: { index: false, follow: true },
+            alternates: { canonical: fallbackUrl },
+            openGraph: {
+                title: `${unit.name} | Rede Espaço Facial`,
+                description: `Confirme a presença da unidade ${unit.name} na rede Espaço Facial e siga para mapa, contato ou agendamento online.`,
+                url: fallbackUrl,
+                type: "website",
+            },
+        };
+    }
+
+    const canonicalPath = getCanonicalDigitalUnitSlug(unit.slug);
     const canonicalUrl = `${siteUrl}/${canonicalPath}`;
 
     return {
-        title: `Espaço Facial — ${unit.name}`,
-        description: "Harmonização facial e corporal. Selecione sua unidade e agende.",
+        title: unit.name,
+        description: `Conheça a unidade ${unit.name}, veja equipe, localização e siga para o agendamento com mais facilidade.`,
         robots: {
             index: isIndexableUnitPath(canonicalPath),
             follow: isIndexableUnitPath(canonicalPath),
         },
         alternates: { canonical: canonicalUrl },
-        openGraph: {
-            title: `Espaço Facial — ${unit.name}`,
-            description: "Harmonização facial e corporal. Selecione sua unidade e agende.",
+            openGraph: {
+                title: unit.name,
+                description: `Conheça a unidade ${unit.name}, veja equipe, localização e siga para o agendamento com mais facilidade.`,
             url: canonicalUrl,
             type: "website",
         },
@@ -92,13 +85,17 @@ export default async function UnitHomePage({
 }) {
     const { unit: unitParam } = await params;
     const resolvedSearchParams = searchParams ? await searchParams : undefined;
-    const unit = resolveUnitFromParam(unitParam);
+    const unit = resolveUnitFromSlug(unitParam);
     if (!unit) {
         redirect("/");
     }
 
-    const canonicalPath = canonicalUnitPath(unit.slug);
-    if (normalizeSlug(unitParam) !== normalizeSlug(canonicalPath)) {
+    if (!isDigitalJourneyUnit(unit)) {
+        redirect(getNetworkUnitHref(unit.slug));
+    }
+
+    const canonicalPath = getCanonicalDigitalUnitSlug(unit.slug);
+    if (unitParam !== canonicalPath) {
         const qs = new URLSearchParams();
         for (const [key, raw] of Object.entries(resolvedSearchParams ?? {})) {
             if (typeof raw === "string") qs.set(key, raw);
@@ -169,15 +166,15 @@ export default async function UnitHomePage({
             <main className="container">
                 <AboutUsSection />
 
-                <section id="doutores" className="pageSection" style={{ marginTop: 50 }}>
-                    <h2 className="sectionTitle">Nossos Doutores</h2>
-                    <p className="sectionSub">Selecione uma unidade no cabeçalho para ver a equipe.</p>
+                <section id="doutores" className="pageSection">
+                    <h2 className="sectionTitle">Especialistas desta unidade</h2>
+                    <p className="sectionSub">Conheça quem atende nesta unidade e veja a melhor opção para o seu agendamento.</p>
                     <UnitDoctorsGrid />
                 </section>
 
-                <section id="unidades" className="pageSection" style={{ marginTop: 50 }}>
-                    <h2 className="sectionTitle">Nossas Unidades</h2>
-                    <p className="sectionSub">Clique no ponto no mapa ou no nome da unidade para abrir.</p>
+                <section id="unidades" className="pageSection">
+                    <h2 className="sectionTitle">Outras unidades</h2>
+                    <p className="sectionSub">Veja outras unidades da rede no mapa.</p>
                     <UnitsMapSection />
                 </section>
             </main>

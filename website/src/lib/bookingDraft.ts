@@ -1,5 +1,4 @@
 type BookingDraftStep = "pick" | "details";
-type BookingDraftDetailsStage = "contact" | "identity";
 
 export type BookingDraftState = {
     unitSlug: string | null;
@@ -14,22 +13,19 @@ export type BookingDraftState = {
     dateKey: string | null;
     timeKey: string | null;
     step: BookingDraftStep;
-    detailsStage: BookingDraftDetailsStage;
     patientName: string;
     patientGender: string;
     email: string;
     whatsapp: string;
-    cpf: string;
-    address: string;
     notes: string;
 };
 
 type BookingDraftPayload = BookingDraftState & {
-    v: 1;
+    v: 2;
     updatedAtMs: number;
 };
 
-const STORAGE_KEY = "ef:booking-draft:v1";
+const STORAGE_KEY = "ef:booking-draft:v2";
 const TTL_MS = 1000 * 60 * 60 * 24;
 
 function isBrowser(): boolean {
@@ -40,7 +36,7 @@ function parseDraft(raw: string | null): BookingDraftPayload | null {
     if (!raw) return null;
     try {
         const parsed = JSON.parse(raw) as BookingDraftPayload;
-        if (!parsed || parsed.v !== 1 || typeof parsed.updatedAtMs !== "number") return null;
+        if (!parsed || parsed.v !== 2 || typeof parsed.updatedAtMs !== "number") return null;
         if (Date.now() - parsed.updatedAtMs > TTL_MS) return null;
         return parsed;
     } catch {
@@ -87,13 +83,10 @@ export function readBookingDraft(): BookingDraftState | null {
         dateKey: raw.dateKey,
         timeKey: raw.timeKey,
         step: raw.step,
-        detailsStage: raw.detailsStage,
         patientName: raw.patientName,
         patientGender: typeof (raw as { patientGender?: unknown }).patientGender === "string" ? (raw as { patientGender?: string }).patientGender ?? "" : "",
         email: raw.email,
         whatsapp: raw.whatsapp,
-        cpf: raw.cpf,
-        address: raw.address,
         notes: raw.notes,
     };
 }
@@ -102,7 +95,7 @@ export function persistBookingDraft(input: BookingDraftState): void {
     if (!isBrowser()) return;
     const payload: BookingDraftPayload = {
         ...input,
-        v: 1,
+        v: 2,
         updatedAtMs: Date.now(),
     };
     const encoded = JSON.stringify(payload);

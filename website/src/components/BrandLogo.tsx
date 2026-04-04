@@ -39,7 +39,6 @@ export default function BrandLogo({ className, title = "Espaço Facial", tone = 
             onError={() => {
                 setCandidateIndex((current) => (current < candidates.length - 1 ? current + 1 : current));
             }}
-            unoptimized
         />
     );
 }

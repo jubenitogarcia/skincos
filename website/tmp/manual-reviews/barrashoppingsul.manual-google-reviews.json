@@ -1,0 +1,565 @@
+{
+  "unitSlug": "barrashoppingsul",
+  "source": "manual-google-maps-browser-export",
+  "exportedAt": "2026-04-01T22:41:25.374Z",
+  "placeName": "Espaço Facial",
+  "mapsUrl": "https://www.google.com/maps/place/Espa%C3%A7o+Facial/@-30.0846697,-51.2458384,17z/data=!4m8!3m7!1s0x9519795c306ed865:0xb5f05aac9b865daa!8m2!3d-30.0846697!4d-51.2458384!9m1!1b1!16s%2Fg%2F11vywknzbf?entry=ttu&g_ep=EgoyMDI2MDMzMC4wIKXMDSoASAFQAw%3D%3D",
+  "summary": {
+    "displayedRating": "4,6",
+    "displayedReviewCount": "61 avaliações",
+    "extractedReviewCount": 61,
+    "extractedAverageRating": 4.623,
+    "cleanedFromLoggedInSelfReview": true
+  },
+  "reviews": [
+    {
+      "index": 0,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2tkd2RtMUhVM3A2YTBKV1kzZE9iV2hHVDBwMk0xRRAB",
+      "name": "Pyetra Irassochio",
+      "rating": 1,
+      "timeText": "3 meses atrás",
+      "text": "Fui em um retorno na qual eu não contratei mais pacotes. E fui super mal tratada. Fui com meu marido e filho, afinal era um retorno, algo rápido. A secretária ofereceu água ou café. Eu aceitei a água e perguntei se meu esposo queria café  (ela não ofereceu para ele). O mesmo aceitou o café, no qual ela me deu UM copo de água e o café não foi entregue em NENHUM momento. Ou seja, eu tive que dividir o único copo de água que foi entregue com meu marido e filho (de 5 anos). Fora a cara que a secretária estava, parecia que estávamos implorando por algo. A Dra. mal olhou no meu rosto. Na penúltima consulta ela tirou um pouco de ácido do meu lábio e disse que se necessário iria repor no próximo ( eu não pedi para retirar, afinal, eu paguei). Resumido, fui mal atendida, destrataram a minha família e sai insatisfeita com meu lábio.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 1,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2tKeExXaDBZMDV5UVdGT1V6Y3RXblJOZVRnMmFVRRAB",
+      "name": "Fabíola Campos",
+      "rating": 1,
+      "timeText": "4 meses atrás",
+      "text": "Não recomendo, entrei em contato pelo WhatsApp após ver anúncios no Instagram, aonde o preenchimento estava pelo valor de 499. Pelo WhatsApp pedi mais informações e me foi enviado esse mesmo valor da propaganda do instagram, marquei horário e novamente confirmei o valor. Um pouco antes do horário agendado, quando já estava a caminho do local eles mandam uma mensagem dizendo que seria outro valor. Total descaso, falta de respeito e consideração com o cliente.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 2,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2xGV1FYaFZPRkp5VWxkaFMzSklSREZuWDFsb1pGRRAB",
+      "name": "Karina Tavares",
+      "rating": 5,
+      "timeText": "2 meses atrás",
+      "text": "Fui muito bem atendida quando cheguei, a Dra. me explicou sobre os procedimentos, já iniciei e agora seguirei com os procedimentos com as meninas",
+      "ownerResponse": ""
+    },
+    {
+      "index": 3,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2pGUWVqSkdSVTAwUVcwM1lVRjVWVk5FY25admFIYxAB",
+      "name": "Josiane Souza dos Santos",
+      "rating": 5,
+      "timeText": "4 meses atrás",
+      "text": "Apesar de terem me passado algumas informações incorretas, gostei bastante sim...\nMédica que me atendeu ótima profissional\nParabéns,😘🙌 …",
+      "ownerResponse": ""
+    },
+    {
+      "index": 4,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT25reFpFTnBTVWRCWjFOc1gyTk5PRVJKY1VSdFVGRRAB",
+      "name": "Estela Almeida",
+      "rating": 5,
+      "timeText": "Editado 4 meses atrás",
+      "text": "Atendimento maravilhoso, ambiente lindo! Procedimentos feito com segurança e excelência, parabéns ao médico e a equipe !!!",
+      "ownerResponse": ""
+    },
+    {
+      "index": 5,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2pkUFdYTlhNbTh5Wnkxd05ubHdUVlZLYUZBMGRIYxAB",
+      "name": "Cris Nicolay",
+      "rating": 5,
+      "timeText": "6 meses atrás",
+      "text": "Sempre sou muito bem atendida por todas. A Dra Marina é excepcional, confio nela e me sinto segura em fazer qualquer procedimento.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 6,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2xGT2RrZGpXSEpRWDBwdGRUaHlkblUyTkZrdFUyYxAB",
+      "name": "FABI BUZZACARO",
+      "rating": 5,
+      "timeText": "8 meses atrás",
+      "text": "Equipe muito atenciosa! Fiz botox em 2 dias já senti o resultado. Clínica tem um ótimo acolhimento.",
+      "ownerResponse": "Olá Fabi!\nQue alegria receber seu feedback! 💙 Ficamos muito felizes em saber que você sentiu o resultado do Botox tão rápido e se sentiu acolhida por nossa equipe. Trabalhamos com muito carinho para proporcionar exatamente isso: resultados eficazes e uma experiência humana, segura e acolhedora. Volte sempre que quiser, será um prazer te receber! ✨"
+    },
+    {
+      "index": 7,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT21WeVFsVkZZa0ZMVTJNNWIzbEJObEV5ZDA5b1ZWRRAB",
+      "name": "Daniely Reis",
+      "rating": 1,
+      "timeText": "5 meses atrás",
+      "text": "Péssima experiências no atendimento do estabelecimento com a profissional Gabriela, extremante despreparada, mal educada debochada e arrogante.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 8,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT21KeWFHVXhaRkIyV0hwRGVUVnZNbTg1UTJvNGRuYxAB",
+      "name": "Clau Hummes",
+      "rating": 5,
+      "timeText": "9 meses atrás",
+      "text": "Adorei tudo. A recepção é acolhedora, muito receptiva e a Dra. é maravilhosa: explica, tem mãos de fada, entrega o combinado, achei preço muito justo. Sensacional. Super indico. O espaço tem minha fidelidade.",
+      "ownerResponse": "Olá Clau!\nUau, que feedback maravilhoso! 🥰 Muito obrigado por cada palavra! Ficamos imensamente felizes em saber que você se sentiu acolhida, bem atendida e satisfeita com os resultados. Nosso maior compromisso é justamente esse: entregar excelência com transparência, carinho e responsabilidade. 💙 Saber que conquistamos sua fidelidade é uma grande honra! Estaremos sempre de braços abertos para te receber!"
+    },
+    {
+      "index": 9,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSURfMGN5ZHR3RRAB",
+      "name": "Thais Vanessa",
+      "rating": 1,
+      "timeText": "Editado 4 meses atrás",
+      "text": "Vou editar meu comentário de fevereiro, mas vou manter aqui abaixo só pra vocês terem uma ideia da decadência:\nNão gastem dinheiro com esta unidade. Já foi ótima, aparentemente tudo mudou e o botox que eles estão aplicando simplesmente não funciona nada, se é que não piora - tenho fotos de antes e depois das aplicações e posso afirmar que conseguiram afundar mais a minha glabela. É aplicado muito pouco produto com relação ao que era feito até o início do ano. Não sei o quanto é diluído. Não te é mostrado material/produto, não te falam quantidade, enfim... Acabaram com a unidade, era ótima e está péssima. Nem as meninas que me atendiam até o início do ano estão mais lá. NÃO GASTEM SEU DINHEIRO AQUI.\n\nComentário de fevereiro:\nFiz botox com a Dra Marina Lima. Quando vi a mocinha, pensei: será que essa menina com a idade da minha filha sabe o que está fazendo?\nOlha, não se enganem pela aparência jovial: a bichinha sabe exatamente o que faz.\nJá havia feito botox em outros 7 lugares, alguns de muito renome, e ninguém antes conseguiu preencher minha glabela como ela. Gratidão, Dra Marina,e parabéns pelo trabalho incrível!",
+      "ownerResponse": "Olá Thais! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 10,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2pKbmIwNU1abTR6VWw5RlJGcFRVMlZVTTBOVVlXYxAB",
+      "name": "conservationBR",
+      "rating": 3,
+      "timeText": "4 meses atrás",
+      "text": "O modo que foi aplicado o produto não me garantiu um resultado como eu esperava.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 11,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUNYcmZINHdRRRAB",
+      "name": "Kelly Rocha",
+      "rating": 1,
+      "timeText": "um ano atrás",
+      "text": "Falta de respeito é como posso definir minha experiência. Na hora de marcar avaliação pelo WhatsApp, não tinha horário nos dias que podia, encaixar a agenda foi bem complicado. Pois bem, marquei em uma terça às 20hs, fiz “hora” na rua para poder estar lá, já que largo do trabalho às 18hs. Cheguei exatamente no meu horário, recebi um tablet para preencher uma ficha, e enquanto o faço, chega uma outra cliente perguntando o valor do procedimento x, a moça responde, pergunta se ela quer fazer uma avaliação naquele momento mesmo, e simplesmente passa ela na minha frente sem preencher ficha nenhuma, enquanto eu, com meu horário marcado, tenho que ficar esperando. 15 minutos depois, a moça da avaliação continua na sala, e eu esperando. Levantei e fui embora, pois se este foi o atendimento pré avaliação, imaginem se houver algum problema depois?\nMas em resumo: quando você contata pelo WhatsApp, agem como se estivessem sendo super requisitados. Lá o que presenciei foi uma atitude desesperada de angariar uma cliente que sequer marcou hora.\nReclamei no WhatsApp e recebi um “lamentamos pelo ocorrido”, sendo que eu gastei com estacionamento e comida na rua, só para fazer hora para este atendimento.",
+      "ownerResponse": "Olá Kelly! \n\nLamentamos profundamente que sua experiência não tenha atendido às suas expectativas. O que você descreveu está longe do padrão de atendimento que nos orgulhamos em oferecer. Agradecemos por compartilhar os detalhes da situação, pois isso nos ajuda a identificar onde podemos melhorar.\n\nCom relação ao ocorrido, iremos reforçar nossos processos para garantir que nenhum cliente passe por esse tipo de situação novamente. Queremos muito reverter essa impressão negativa e proporcionar a você a experiência de qualidade que merece. Caso esteja disposta, gostaríamos de oferecer uma nova avaliação com prioridade na agenda, para que possamos corrigir o erro e prestar o serviço adequado.\n\nFicamos à sua disposição!"
+    },
+    {
+      "index": 12,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUQzMEtTTXBnRRAB",
+      "name": "Bruna H.",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Super indico!! Melhor clínica de Porto Alegre para procedimentos estéticos com produtos de qualidade e preços acessíveis. O atendimento e os preços são excelentes e o ambiente 100% acolhedor. Profissionais maravilhosos: explicam os procedimentos com clareza, sempre muito atentos aos resultados que as clientes buscam.",
+      "ownerResponse": "Olá Bruna! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 13,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUQzcDRfWWtBRRAB",
+      "name": "Erleth Nunes",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Excelente atendimento! Profissionais atenciosos e qualificados. Produtos de alta qualidade. Pontualidade no atendimento. Estou me sentindo maravilhosa, esta é a segunda vez que faço botox na Espaço Facial e  pretendo fazer outros procedimentos. Super recomendo!",
+      "ownerResponse": "Olá Erleth! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 14,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2pSNFdYTjBhVlYxTlc5UGNGaENYM0pSYm10NmNHYxAB",
+      "name": "Claudine Streb",
+      "rating": 5,
+      "timeText": "7 meses atrás",
+      "text": "Muito bem atendida pela Dra. Josiele",
+      "ownerResponse": ""
+    },
+    {
+      "index": 15,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT25kMWMyVmpiV001YTBaQ2JsSk9XVU0zUWtsUFVFRRAB",
+      "name": "Elisyduda Rodrigues",
+      "rating": 5,
+      "timeText": "8 meses atrás",
+      "text": "Aguardando resultados kkk,mas adoro o espaço e as meninas recepção, Dra todas muito queridas.",
+      "ownerResponse": "Ola Elis!\nAdoramos receber sua mensagem! 🥰 Obrigado pelo carinho com nossa equipe — é sempre um prazer te receber aqui! Estamos na torcida pelos resultados e seguimos à disposição para te acompanhar em cada etapa do seu tratamento. 💙 Até a próxima visita! …"
+    },
+    {
+      "index": 16,
+      "id": "ChdDSUhNMG9nS0VJQ0FnTUNneU9lSXRBRRAB",
+      "name": "MARILIA VARELA",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Atendimento ótimo, produtos excepcionais! profissionais bem entendidas de todos procedimentos e protocolos",
+      "ownerResponse": "Olá Marilia! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 17,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUMzbWZDTmdnRRAB",
+      "name": "Fe Vargas",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Atendimento maravilhoso, amei o resultado do meu botox e vou voltar para realizar mais. Super indico.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 18,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSURQMy1LQWdnRRAB",
+      "name": "Anna Souzza",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Excelente atendimento! Dra Rita ,está de parabéns, mãos de veludo. Super indico .",
+      "ownerResponse": "Olá Anna! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 19,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSURQeXNPOU9nEAE",
+      "name": "Jéssica Beus",
+      "rating": 5,
+      "timeText": "Editado um ano atrás",
+      "text": "A equipe é fantástica! O atendimento foi personalizado, simpático e profissional, uma experiência inesquecível! Recomendo!",
+      "ownerResponse": "Olá Jessica! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 20,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUMzbWJpODFBRRAB",
+      "name": "Vinicius Vieira",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Local com profissionais excelentes e atendimento impecavel da recepcao. Muito cuidado em todos detalhes!! Recomendo.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 21,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2xkbGNHZ3hZV1pCY1Vkc2JGZFpOVXBETmpBMFdVRRAB",
+      "name": "Michi F.",
+      "rating": 5,
+      "timeText": "7 meses atrás",
+      "text": "Excelente atendimento, produtos de qualidade, bons preços, recomendo muito!",
+      "ownerResponse": "Olá Michi!\nMuito obrigado pelo seu carinho e confiança! 💙 Ficamos felizes em saber que você gostou do nosso atendimento, da qualidade dos produtos e dos nossos preços. Trabalhamos todos os dias para oferecer uma experiência completa, segura e acolhedora. Sempre que precisar, estaremos por aqui! ✨"
+    },
+    {
+      "index": 22,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUMzLXJER19RRRAB",
+      "name": "Bruna Bengua",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "​Recomendo totalmente! Produtos de qualidade, profissionais muito qualificados e resultados excelentes.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 23,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2pOVGRIUkJaa0l4VXpad2QwRldkRTlETTNCb01XYxAB",
+      "name": "Priscilla Gomes da costa",
+      "rating": 5,
+      "timeText": "5 meses atrás",
+      "text": "Melhor experiência do mundo, super indico",
+      "ownerResponse": ""
+    },
+    {
+      "index": 24,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUNYMjlDUE9nEAE",
+      "name": "Bárbara Bengua",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Excelente! Equipe muito competente, atenciosa e profissional! Recomendo demais!",
+      "ownerResponse": "Olá Bárbara! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 25,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT214dGMyUXdlV3RKVTFCcFMwMDVNMFpaWTJkeVJHYxAB",
+      "name": "Luana e Matheus",
+      "rating": 5,
+      "timeText": "Editado 4 meses atrás",
+      "text": "🩷 …",
+      "ownerResponse": ""
+    },
+    {
+      "index": 26,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUNYNWRQb0h3EAE",
+      "name": "rejane garcia da silva",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Fui muito bem atendida com profissionais qualificados 👏 …",
+      "ownerResponse": "Olá Rejane! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 27,
+      "id": "ChdDSUhNMG9nS0VJQ0FnTURncnN2aXlBRRAB",
+      "name": "Karla oliveira",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Adorei o atendimento da Dra.. super recomendo",
+      "ownerResponse": "Olá Karla! 🥰\nMuito obrigada por sua avaliação 5 estrelas!\nFicamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEspaço Facial"
+    },
+    {
+      "index": 28,
+      "id": "ChZDSUhNMG9nS0VJQ0FnTUNRbWRIWEtBEAE",
+      "name": "Agatha Machado",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Atendimento excelente! Biomédica atenciosa e cuidadosa.",
+      "ownerResponse": ""
+    },
+    {
+      "index": 29,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUNQNXVpWGZ3EAE",
+      "name": "Talita Grati mendes",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Fui super bem recebida, simplesmente amei o atendimento",
+      "ownerResponse": "OláTalita! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 30,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT25sVFIxaG1hM05QT0MxU2FtUkVNRTlUVVU5WlUzYxAB",
+      "name": "Paloma Antonio",
+      "rating": 5,
+      "timeText": "3 meses atrás",
+      "text": "Gostei muito do atendimento!",
+      "ownerResponse": ""
+    },
+    {
+      "index": 31,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUR2Z2N6MXBBRRAB",
+      "name": "Luciana Abreu",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Primeira vez é estou amando o meu rosto e boca.",
+      "ownerResponse": "Olá Luciana! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 32,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT25BM2VYcG9aVTFaUTNkME5XSmlVbUZKWlhGWWNVRRAB",
+      "name": "Ivete Vitorino",
+      "rating": 5,
+      "timeText": "8 meses atrás",
+      "text": "Ótimo  ,obrigada ,ótima profissional  agradecida",
+      "ownerResponse": "Nós que agradecemos pelo carinho e pela confiança! 💙 Ficamos muito felizes em saber que teve uma boa experiência com nossa profissional. \nOlá Ivete!\nEstaremos sempre por aqui para te receber com o mesmo cuidado e dedicação! ✨ Até a próxima!"
+    },
+    {
+      "index": 33,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2xSS1FVSmZabGMwUVVKeVRGVktlRlowTVZaSlRXYxAB",
+      "name": "Janete Maria",
+      "rating": 5,
+      "timeText": "3 meses atrás",
+      "text": "Ótimo",
+      "ownerResponse": ""
+    },
+    {
+      "index": 34,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUMzbWJDWkp3EAE",
+      "name": "Thiago Pereira Waseluch",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Excelente espaço, profissionais! 👏🏻 …",
+      "ownerResponse": ""
+    },
+    {
+      "index": 35,
+      "id": "ChdDSUhNMG9nS0VJQ0FnTURndjhxdWdnRRAB",
+      "name": "Eliane Quanz",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Adorei a Rita!!",
+      "ownerResponse": ""
+    },
+    {
+      "index": 36,
+      "id": "ChZDSUhNMG9nS0VJQ0FnTURncnV1MWFREAE",
+      "name": "Lisane Mallet",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Atendimento, competência..",
+      "ownerResponse": "Olá Lisane! 🥰\nMuito obrigada por sua avaliação 5 estrelas!\nFicamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEspaço Facial"
+    },
+    {
+      "index": 37,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSUNYNWV6VHRBRRAB",
+      "name": "Nathalia Roos",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Excelente atendimento! 😍 …",
+      "ownerResponse": "Olá Nathalia! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 38,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUMzbWFqN0ZREAE",
+      "name": "Thamara Thay",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Ótimo atendimento ❤️",
+      "ownerResponse": ""
+    },
+    {
+      "index": 39,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUMzbWEyTUpnEAE",
+      "name": "Paula Vargas",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "Atendimento maravilhoso!!!🥰🥰🥰 …",
+      "ownerResponse": ""
+    },
+    {
+      "index": 40,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT20xNFQwdGxkRGQ1UzAxS1puRXhRWGh5WlVsTWFuYxAB",
+      "name": "Ju Trindade",
+      "rating": 5,
+      "timeText": "9 meses atrás",
+      "text": "amiiiiii",
+      "ownerResponse": "Aaaa que alegria ler isso! 🥰 Ficamos muito felizes que você amou! \nOlá Ju!\nEstaremos sempre aqui pra te receber com o mesmo carinho 💙✨ Até a próxima! …"
+    },
+    {
+      "index": 41,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2xocGVHcFhXbkZQYUUxcFdXWlVRVEpTVlRodVJFRRAB",
+      "name": "rosane paz machado",
+      "rating": 5,
+      "timeText": "3 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 42,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT205RldUZFROMGRWYnpGNFdqUmFkbW95UW1oSFlsRRAB",
+      "name": "Amanda Hagel",
+      "rating": 5,
+      "timeText": "3 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 43,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2swellVaGtNRWN4ZW5ab1NHeGhWRkJxTlRreU4xRRAB",
+      "name": "Vanessa Vanessa",
+      "rating": 5,
+      "timeText": "4 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 44,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT25aNGFYRjRWRlJYVDFSUVRGTk1VbFZDYlZKVGJIYxAB",
+      "name": "lucimar nunes da silva",
+      "rating": 5,
+      "timeText": "5 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 45,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT21scVQydERjMUZuY1Y5NVoxaFBNMEZMTUVST1NGRRAB",
+      "name": "Dilane- Coord. Cursos Rede Calábria",
+      "rating": 5,
+      "timeText": "5 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 46,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2tKNE5VbFdSazVLZEhwUFdVcDRaV2hNVG1VdGVIYxAB",
+      "name": "´Camila Rodrigues",
+      "rating": 5,
+      "timeText": "6 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 47,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2pnMVpFazJRelkwUjBkVFVtTkVhVzFZUVZCcE1tYxAB",
+      "name": "Girlene Barros",
+      "rating": 5,
+      "timeText": "7 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 48,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT210aWIwTktiVmxVZGpCeVpGUmhhR0pXUm0wM01YYxAB",
+      "name": "Elisabeth Konzen",
+      "rating": 5,
+      "timeText": "7 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 49,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT2swNFJHSTFRMDFIZWpORFgxcG9XWEpxYkZGVFkzYxAB",
+      "name": "Alessandra Taina Pellin",
+      "rating": 5,
+      "timeText": "8 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 50,
+      "id": "Ci9DQUlRQUNvZENodHljRjlvT21WZldtdEdhSE5JTjBoSmEzVTVibGxvVDBWNFJuYxAB",
+      "name": "Cris Masci",
+      "rating": 5,
+      "timeText": "8 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 51,
+      "id": "ChZDSUhNMG9nS0VJQ0FnTUNJalp6UUJ3EAE",
+      "name": "ANA PADILHA",
+      "rating": 5,
+      "timeText": "11 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 52,
+      "id": "ChZDSUhNMG9nS0VJQ0FnTUNJcWJyTVJ3EAE",
+      "name": "Joice Freitas",
+      "rating": 5,
+      "timeText": "11 meses atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 53,
+      "id": "ChdDSUhNMG9nS0VJQ0FnTUN3dXVTcG9BRRAB",
+      "name": "JÚLIA Krause",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 54,
+      "id": "ChZDSUhNMG9nS0VJQ0FnTUNRcl9TMFB3EAE",
+      "name": "Elizabet Prates",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": ""
+    },
+    {
+      "index": 55,
+      "id": "ChdDSUhNMG9nS0VJQ0FnTURnenJqYTZ3RRAB",
+      "name": "Pedro Valentim Brocker",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": "Olá Pedro! 🥰\nMuito obrigada por sua avaliação 5 estrelas!\nFicamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEspaço Facial"
+    },
+    {
+      "index": 56,
+      "id": "ChdDSUhNMG9nS0VJQ0FnTUNnN19fdG1RRRAB",
+      "name": "Pablo D'Avila",
+      "rating": 4,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": "Olá,Pablo! Valorizamos cada feedback, pois ele é essencial para continuarmos melhorando nossos serviços. 🌼 Gostaríamos de entender melhor o que poderíamos ter feito para tornar sua experiência ainda mais completa, alcançando a nota máxima. Se houver alguma sugestão ou ponto que acreditamos que poderíamos melhorar, ficaríamos gratos em ouvir.\n\nAlém disso, se após nosso bate-papo você se sentir inclinada a ajustar sua avaliação, isso certamente ajudaria outros clientes a conhecerem melhor a qualidade e o cuidado que proporcionamos aqui na Espaço Facial.\n\nEsperamos vê-la novamente em breve! 💐"
+    },
+    {
+      "index": 57,
+      "id": "ChZDSUhNMG9nS0VJQ0FnTURBdHJ5a2N3EAE",
+      "name": "Wagner Rodrigues",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": "Olá Wagner! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 58,
+      "id": "ChdDSUhNMG9nS0VJQ0FnSURfZ2E2M3JBRRAB",
+      "name": "Ana Paula Henrique Silveira",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": "Olá Ana! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 59,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUMzNDdpckpREAE",
+      "name": "Nair Ferreira",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": "Olá Nair! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    },
+    {
+      "index": 60,
+      "id": "ChZDSUhNMG9nS0VJQ0FnSUNYbGNqektnEAE",
+      "name": "Mauricio Benito",
+      "rating": 5,
+      "timeText": "um ano atrás",
+      "text": "",
+      "ownerResponse": "Olá Mauricio! 🥰\nMuito obrigada por sua avaliação de 5 estrelas! Ficamos extremamente felizes em saber que teve uma experiência tão positiva em nosso espaço.\n\nAtenciosamente,\nEquipe Espaço Facial"
+    }
+  ]
+}

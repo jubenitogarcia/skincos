@@ -1,29 +1,26 @@
 "use client";
 
-import { units } from "@/data/units";
+import { DIGITAL_JOURNEY_UNIT_BADGES, getDigitalJourneyUnits } from "@/data/units";
 import { trackEvent } from "@/lib/analytics";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
-
-const QUICK_UNIT_SLUGS = ["novo-hamburgo", "barrashoppingsul"] as const;
-const QUICK_UNIT_LABELS: Record<(typeof QUICK_UNIT_SLUGS)[number], string> = {
-    "novo-hamburgo": "NH",
-    barrashoppingsul: "BSS",
-};
 
 type UnitQuickButtonsProps = {
     placement: string;
 };
 
 export default function UnitQuickButtons({ placement }: UnitQuickButtonsProps) {
-    const items = QUICK_UNIT_SLUGS.map((slug) => {
-        const unit = units.find((u) => u.slug === slug);
-        if (!unit) return null;
-        return {
-            slug,
-            label: QUICK_UNIT_LABELS[slug],
-            name: unit.name,
-        };
-    }).filter(Boolean);
+    const items = getDigitalJourneyUnits()
+        .map((unit) => {
+            const label = DIGITAL_JOURNEY_UNIT_BADGES[unit.slug as keyof typeof DIGITAL_JOURNEY_UNIT_BADGES];
+            if (!label) return null;
+
+            return {
+                slug: unit.slug,
+                label,
+                name: unit.name,
+            };
+        })
+        .filter(Boolean);
 
     if (!items.length) return null;
 

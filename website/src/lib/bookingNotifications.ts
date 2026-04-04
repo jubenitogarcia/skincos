@@ -2,7 +2,7 @@ import { units } from "@/data/units";
 import { BOOKING_CONFIRMATION_EMAIL_TEMPLATE } from "@/lib/emailTemplates/bookingConfirmationTemplate";
 
 type NotificationStatus = "sent" | "skipped" | "failed";
-export type PatientGender = "male" | "female";
+export type PatientGender = "male" | "female" | "unspecified";
 
 export type NotificationResult = {
     ok: boolean;
@@ -149,6 +149,12 @@ function ambassadorForGender(gender: PatientGender, siteUrl: string): { name: st
     return gender === "male" ? male : female;
 }
 
+function formatGenderLabel(gender: PatientGender): string {
+    if (gender === "male") return "Masculino";
+    if (gender === "female") return "Feminino";
+    return "Prefiro não informar";
+}
+
 function renderTemplate(rawTemplate: string, placeholders: Record<string, string>): string {
     return rawTemplate.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key: string) => placeholders[key] ?? "");
 }
@@ -227,7 +233,7 @@ function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
 function buildUnitEmailText(payload: BookingNotificationPayload) {
     const unitLabel = unitLabelFromSlug(payload.unitSlug);
     const dateLabel = formatDatePtBr(payload.date);
-    const genderLabel = payload.patientGender === "male" ? "Masculino" : "Feminino";
+    const genderLabel = formatGenderLabel(payload.patientGender);
 
     return [
         "Nova reserva confirmada no site.",
@@ -252,7 +258,7 @@ function buildUnitEmailText(payload: BookingNotificationPayload) {
 function buildUnitEmailHtml(payload: BookingNotificationPayload) {
     const unitLabel = unitLabelFromSlug(payload.unitSlug);
     const dateLabel = formatDatePtBr(payload.date);
-    const genderLabel = payload.patientGender === "male" ? "Masculino" : "Feminino";
+    const genderLabel = formatGenderLabel(payload.patientGender);
 
     return `
         <div style="font-family: Arial, sans-serif; color: #111; line-height: 1.5;">

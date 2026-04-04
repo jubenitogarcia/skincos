@@ -279,3 +279,17 @@ export const units: Unit[] = [
     "lng": -43.179
   }
 ];
+
+export const DIGITAL_JOURNEY_UNIT_SLUGS = ["barrashoppingsul", "novo-hamburgo"] as const;
+export const DIGITAL_JOURNEY_UNIT_BADGES: Record<(typeof DIGITAL_JOURNEY_UNIT_SLUGS)[number], string> = {
+  barrashoppingsul: "BSS",
+  "novo-hamburgo": "NH",
+};
+
+export function isDigitalJourneyUnitSlug(slug: string | null | undefined): boolean {
+  return DIGITAL_JOURNEY_UNIT_SLUGS.includes((slug ?? "").trim() as (typeof DIGITAL_JOURNEY_UNIT_SLUGS)[number]);
+}
+
+export function getDigitalJourneyUnits(): Unit[] {
+  return units.filter((unit) => isDigitalJourneyUnitSlug(unit.slug));
+}

@@ -17,7 +17,7 @@ export default function Header() {
 
           <nav className="menu menu--center" aria-label="Menu principal">
             <Link href="/#sobre-nos">Sobre Nós</Link>
-            <Link href="/#doutores">Nossos Doutores</Link>
+            <Link href="/#doutores">Conheça a equipe</Link>
             <Link href="/#unidades">Unidades</Link>
           </nav>
 

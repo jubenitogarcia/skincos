@@ -39,3 +39,33 @@ Se precisar apontar direto para outro host, use `VITE_META_ADS_API_URL`.
 ## Observacao
 - O app usa Postgres e Redis isolados.
 - `apps/web` (Next.js) permanece apenas como referencia e nao e usado no CRM.
+
+## Ingestao Cloudflare para Performance Report
+
+O pipeline `Meta Ads - Performance Report` do n8n persiste no Cloudflare via Worker dedicado:
+
+- app: [report-ingest-worker](/Users/jubenitogarcia/Automation/skincos/backend/apps/meta-ads/apps/report-ingest-worker)
+- Worker: `skincos-meta-ads-performance-report`
+- staging: `skincos-meta-ads-performance-report-staging`
+
+Infra usada:
+
+- D1 principal para `entities`, `metric_snapshots`, `ingestion_audit`, `metric_duplication_audit`, `ingestion_runs`
+- R2 para payload bruto da Meta Graph API
+
+Operacoes principais:
+
+```bash
+cd /Users/jubenitogarcia/Automation/skincos/backend/apps/meta-ads/apps/report-ingest-worker
+wrangler d1 migrations apply skincos-meta-ads-performance-report --remote
+wrangler d1 migrations apply skincos-meta-ads-performance-report-staging --remote --env staging
+wrangler deploy
+wrangler deploy --env staging
+```
+
+Contrato HTTP:
+
+- `POST /ingest/meta-ads-performance-report`
+- auth default: `Authorization: Bearer <WORKER_API_TOKEN>`
+- health: `GET /health`
+- contrato: `GET /contract/meta-ads-performance-report`

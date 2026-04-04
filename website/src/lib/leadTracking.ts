@@ -116,6 +116,8 @@ export function trackBookingFunnelStep(params: {
     time?: string | null;
     detailsStage?: "contact" | "identity" | null;
     restored?: boolean;
+    errorReason?: string | null;
+    selectedCount?: number | null;
 }) {
     trackEvent(
         "booking_funnel_step",
@@ -129,6 +131,8 @@ export function trackBookingFunnelStep(params: {
             time: params.time ?? null,
             detailsStage: params.detailsStage ?? null,
             restored: params.restored ?? false,
+            errorReason: params.errorReason ?? null,
+            selectedCount: params.selectedCount ?? null,
         }),
     );
 }

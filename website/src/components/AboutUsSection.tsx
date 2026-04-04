@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from "react";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import useHorizontalRail from "@/hooks/useHorizontalRail";
@@ -8,7 +8,6 @@ import type { Unit } from "@/data/units";
 import Image from "next/image";
 import { trackEvent } from "@/lib/analytics";
 import { trackBookingStart, trackCtaInstagramClick } from "@/lib/leadTracking";
-import UnitQuickButtons from "@/components/UnitQuickButtons";
 
 type PlaceDetailsPayload = {
     available: boolean;
@@ -23,6 +22,22 @@ type PlaceDetailsPayload = {
     location?: { lat: number | null; lng: number | null };
     photos?: Array<{ photoReference: string; width: number | null; height: number | null }>;
     reviews?: Array<{ authorName: string; rating: number | null; relativeTimeDescription: string; time: number | null; text: string }>;
+};
+
+type ReviewPayload = {
+    reviewId: string;
+    authorName: string;
+    rating: number | null;
+    relativeTimeDescription: string;
+    time: number | null;
+    text: string;
+};
+
+type GbpReviewsPagePayload = {
+    available: boolean;
+    error?: string;
+    reviews?: ReviewPayload[];
+    nextPageToken?: string | null;
 };
 
 type ReviewSort = "newest" | "highest" | "lowest";
@@ -98,10 +113,64 @@ function formatCoordinates(lat: number | null | undefined, lng: number | null | 
     return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
-function clampRating(value: number | null | undefined): number {
-    const n = typeof value === "number" ? value : 0;
-    if (!Number.isFinite(n)) return 0;
-    return Math.max(0, Math.min(5, n));
+function formatAddressLines(title: string, rawAddress: string | null | undefined, unitSlug?: string | null): string[] {
+    if (unitSlug === "barrashoppingsul") {
+        return [
+            "Espaço Facial – BarraShoppingSul",
+            "Av. Diário de Notícias, 300.",
+            "Nível Guaíba, Loja 2093.",
+            "Porto Alegre/RS",
+            "90810-080",
+        ];
+    }
+
+    if (unitSlug === "novo-hamburgo") {
+        return [
+            "Espaço Facial – Novo Hamburgo",
+            "Av. Dr. Maurício Cardoso, 1126",
+            "Novo Hamburgo/RS",
+            "93548-515",
+        ];
+    }
+
+    const source = (rawAddress ?? "").trim();
+    if (!source) return [];
+
+    const normalizedTitle = title.trim().toLowerCase();
+    const withoutTitle = normalizedTitle
+        ? source.replace(new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*-\\s*`, "i"), "")
+        : source;
+
+    const segments = withoutTitle
+        .split(" - ")
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+
+    if (segments.length < 2) return [withoutTitle];
+
+    const last = segments[segments.length - 1] ?? "";
+    const beforeLast = segments[segments.length - 2] ?? "";
+    const earlier = segments.slice(0, -2);
+
+    const line1 = earlier.length ? earlier.join(" - ") : beforeLast;
+
+    const cityCandidate = beforeLast.includes(",")
+        ? beforeLast.split(",").map((part) => part.trim()).filter(Boolean).pop() ?? beforeLast
+        : beforeLast;
+    const stateCandidate = last.split(",")[0]?.trim() ?? "";
+    const postalCandidate = last.split(",").slice(1).join(",").trim();
+
+    const lines = [line1];
+
+    if (cityCandidate && stateCandidate) {
+        lines.push(`${cityCandidate}/${stateCandidate}`);
+    } else if (cityCandidate || stateCandidate) {
+        lines.push(cityCandidate || stateCandidate);
+    }
+
+    if (postalCandidate) lines.push(postalCandidate);
+
+    return lines.filter(Boolean);
 }
 
 function extractInstagramHandle(url: string | null | undefined): string | null {
@@ -115,49 +184,39 @@ function extractInstagramHandle(url: string | null | undefined): string | null {
     }
 }
 
-function Stars({ rating }: { rating: number | null | undefined }) {
-    const r = clampRating(rating);
-    const full = Math.floor(r);
-    const hasHalf = r - full >= 0.35 && r - full < 0.8;
-    const empty = 5 - full - (hasHalf ? 1 : 0);
+type AboutUsSectionProps = {
+    headingLevel?: 1 | 2;
+    selectedTitle?: string;
+    selectedSubtitle?: string;
+    unselectedTitle?: string;
+};
 
-    return (
-        <div className="aboutStars" aria-label={`Avaliação ${r.toFixed(1)} de 5`}>
-            {Array.from({ length: full }).map((_, i) => (
-                <span key={`f${i}`} className="star full" aria-hidden>
-                    ★
-                </span>
-            ))}
-            {hasHalf ? (
-                <span className="star half" aria-hidden>
-                    ★
-                </span>
-            ) : null}
-            {Array.from({ length: empty }).map((_, i) => (
-                <span key={`e${i}`} className="star empty" aria-hidden>
-                    ★
-                </span>
-            ))}
-        </div>
-    );
-}
-
-export default function AboutUsSection() {
+export default function AboutUsSection({
+    headingLevel = 2,
+    selectedTitle = "Conheça a unidade",
+    selectedSubtitle = "Veja algumas fotos, avaliações e como chegar na unidade.",
+    unselectedTitle = "Espaço Facial",
+}: AboutUsSectionProps = {}) {
     const unit = useCurrentUnit();
     const hasSelectedUnit = Boolean(unit);
+    const HeadingTag = `h${headingLevel}` as ElementType;
 
     const query = useMemo(() => buildQueryForUnit(unit), [unit]);
 
     const [data, setData] = useState<PlaceDetailsPayload | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
+    const [loadedReviews, setLoadedReviews] = useState<ReviewPayload[]>([]);
+    const [reviewsLoadingInitial, setReviewsLoadingInitial] = useState<boolean>(false);
+    const [reviewsLoadingMore, setReviewsLoadingMore] = useState<boolean>(false);
+    const [nextReviewsPageToken, setNextReviewsPageToken] = useState<string | null>(null);
+    const [reviewsAvailable, setReviewsAvailable] = useState<boolean>(false);
 
-    const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
-    const [onlyWithText, setOnlyWithText] = useState<boolean>(true);
+    const [ratingFilter, setRatingFilter] = useState<number | "all">(5);
     const [sort, setSort] = useState<ReviewSort>("newest");
-    const [search, setSearch] = useState<string>("");
 
     const reviewsScrollRef = useRef<HTMLDivElement | null>(null);
-    const [visibleReviewsCount, setVisibleReviewsCount] = useState<number>(6);
+    const reviewsLoadMoreRef = useRef<HTMLDivElement | null>(null);
+    const reviewsPendingRequestRef = useRef<string | null>(null);
 
     const photosScrollRef = useRef<HTMLDivElement | null>(null);
     const [visiblePhotosCount, setVisiblePhotosCount] = useState<number>(8);
@@ -224,11 +283,10 @@ export default function AboutUsSection() {
     const address = hasSelectedUnit
         ? data?.address || unit?.addressLine || ""
         : "Selecione uma unidade no cabeçalho para conhecer mais sobre ela.";
-
-    const rating = data?.rating ?? null;
-    const total = data?.userRatingsTotal ?? null;
+    const addressLines = useMemo(() => formatAddressLines(title, address, unit?.slug ?? null), [address, title, unit?.slug]);
 
     const selectedPlaceId = (data?.placeId ?? unit?.placeId ?? null)?.toString().trim() || null;
+    const reviewsLocationParam = (unit?.gbpLocation ?? selectedPlaceId ?? "").trim() || null;
     const agendarUrl = hasSelectedUnit ? unit?.contactUrl || null : null;
     const bookingHref = hasSelectedUnit && unit?.slug ? `/agendamento?unit=${encodeURIComponent(unit.slug)}` : "/agendamento";
     const reviewUrl = hasSelectedUnit && selectedPlaceId ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(selectedPlaceId)}` : null;
@@ -239,7 +297,87 @@ export default function AboutUsSection() {
     const isPlaceDataPending = hasSelectedUnit && (loading || data === null);
     // Keep the unit gallery fully local so "Sobre Nós" never depends on paid Places fetches.
     const isPhotoDataPending = isPlaceDataPending;
-    const isReviewDataPending = isPlaceDataPending;
+    const isReviewDataPending = hasSelectedUnit && reviewsLoadingInitial;
+
+    const fetchReviewsPage = useCallback(
+        async (pageToken: string | null, mode: "reset" | "append") => {
+            if (!reviewsLocationParam) return;
+            const requestKey = `${reviewsLocationParam}::${pageToken ?? "initial"}::${mode}`;
+            if (reviewsPendingRequestRef.current === requestKey) return;
+            reviewsPendingRequestRef.current = requestKey;
+
+            if (mode === "reset") {
+                setReviewsLoadingInitial(true);
+            } else {
+                setReviewsLoadingMore(true);
+            }
+
+            try {
+                const url = new URL("/api/gbp/reviews", window.location.origin);
+                url.searchParams.set("location", reviewsLocationParam);
+                url.searchParams.set("pageSize", "12");
+                if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+                const res = await fetch(url.toString(), { cache: "no-store" });
+                const json = (await res.json()) as GbpReviewsPagePayload;
+
+                if (!json.available) {
+                    setReviewsAvailable(false);
+                    if (mode === "reset") setLoadedReviews([]);
+                    setNextReviewsPageToken(null);
+                    return;
+                }
+
+                const incoming = json.reviews ?? [];
+                setReviewsAvailable(true);
+                setNextReviewsPageToken(json.nextPageToken ?? null);
+                setLoadedReviews((current) => {
+                    if (mode === "reset") return incoming;
+                    const seen = new Set(current.map((review) => review.reviewId));
+                    const merged = [...current];
+                    for (const review of incoming) {
+                        if (!seen.has(review.reviewId)) {
+                            merged.push(review);
+                            seen.add(review.reviewId);
+                        }
+                    }
+                    return merged;
+                });
+            } catch {
+                if (mode === "reset") setLoadedReviews([]);
+                setReviewsAvailable(false);
+                setNextReviewsPageToken(null);
+            } finally {
+                if (reviewsPendingRequestRef.current === requestKey) {
+                    reviewsPendingRequestRef.current = null;
+                }
+                if (mode === "reset") {
+                    setReviewsLoadingInitial(false);
+                } else {
+                    setReviewsLoadingMore(false);
+                }
+            }
+        },
+        [reviewsLocationParam],
+    );
+
+    useEffect(() => {
+        if (!hasSelectedUnit || !reviewsLocationParam) {
+            setLoadedReviews([]);
+            setNextReviewsPageToken(null);
+            setReviewsAvailable(false);
+            setReviewsLoadingInitial(false);
+            setReviewsLoadingMore(false);
+            reviewsPendingRequestRef.current = null;
+            return;
+        }
+
+        setLoadedReviews([]);
+        setNextReviewsPageToken(null);
+        setReviewsAvailable(false);
+        reviewsPendingRequestRef.current = null;
+        void fetchReviewsPage(null, "reset");
+    }, [fetchReviewsPage, hasSelectedUnit, reviewsLocationParam]);
 
     const buildPlacePhotoUrl = useCallback((ref: string, maxwidth = 1200) => {
         return `/api/places/photo?ref=${encodeURIComponent(ref)}&maxwidth=${maxwidth}`;
@@ -324,18 +462,12 @@ export default function AboutUsSection() {
 
     const baseReviews = useMemo(() => {
         if (!hasSelectedUnit) return [];
-        const all = data?.reviews ?? [];
-
-        const normalizedSearch = search.trim().toLowerCase();
+        const all = loadedReviews;
 
         const filtered = all.filter((r) => {
-            if (onlyWithText && !(r.text ?? "").trim()) return false;
             if (ratingFilter !== "all" && typeof r.rating === "number" && Math.round(r.rating) !== ratingFilter) return false;
             if (ratingFilter !== "all" && typeof r.rating !== "number") return false;
-
-            if (!normalizedSearch) return true;
-            const haystack = `${r.authorName ?? ""} ${r.text ?? ""} ${r.relativeTimeDescription ?? ""}`.toLowerCase();
-            return haystack.includes(normalizedSearch);
+            return true;
         });
 
         const sorted = [...filtered].sort((a, b) => {
@@ -351,16 +483,9 @@ export default function AboutUsSection() {
         });
 
         return sorted;
-    }, [data?.reviews, hasSelectedUnit, onlyWithText, ratingFilter, search, sort]);
+    }, [hasSelectedUnit, loadedReviews, ratingFilter, sort]);
 
     const reviews = baseReviews;
-
-    const displayedReviews = useMemo(() => reviews.slice(0, visibleReviewsCount), [reviews, visibleReviewsCount]);
-
-    useEffect(() => {
-        // Reset pagination when unit or filters change.
-        setVisibleReviewsCount(6);
-    }, [hasSelectedUnit, selectedPlaceId, ratingFilter, onlyWithText, search, sort]);
 
     useEffect(() => {
         setVisiblePhotosCount(8);
@@ -371,11 +496,9 @@ export default function AboutUsSection() {
     }, [hasSelectedUnit, selectedPlaceId]);
 
     const loadMoreReviews = useCallback(() => {
-        setVisibleReviewsCount((c) => {
-            if (c >= reviews.length) return c;
-            return Math.min(reviews.length, c + 6);
-        });
-    }, [reviews.length]);
+        if (!nextReviewsPageToken || reviewsLoadingInitial || reviewsLoadingMore) return;
+        void fetchReviewsPage(nextReviewsPageToken, "append");
+    }, [fetchReviewsPage, nextReviewsPageToken, reviewsLoadingInitial, reviewsLoadingMore]);
 
     const loadMorePhotos = useCallback(() => {
         setVisiblePhotosCount((c) => {
@@ -387,12 +510,12 @@ export default function AboutUsSection() {
     const maybeLoadMoreReviews = useCallback(() => {
         const el = reviewsScrollRef.current;
         if (!el) return;
-        if (visibleReviewsCount >= reviews.length) {
+        if (!nextReviewsPageToken || reviewsLoadingInitial || reviewsLoadingMore) {
             return;
         }
         const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 220;
         if (nearBottom) loadMoreReviews();
-    }, [loadMoreReviews, reviews.length, visibleReviewsCount]);
+    }, [loadMoreReviews, nextReviewsPageToken, reviewsLoadingInitial, reviewsLoadingMore]);
 
     const maybeLoadMorePhotos = useCallback(() => {
         const el = photosScrollRef.current;
@@ -424,11 +547,30 @@ export default function AboutUsSection() {
         // If the list still doesn't overflow, keep loading until it does (or we reach the end).
         const el = reviewsScrollRef.current;
         if (!el) return;
-        if (visibleReviewsCount >= reviews.length) return;
+        if (!nextReviewsPageToken || reviewsLoadingInitial || reviewsLoadingMore) return;
         if (el.scrollHeight <= el.clientHeight + 20) {
             loadMoreReviews();
         }
-    }, [loadMoreReviews, reviews.length, visibleReviewsCount]);
+    }, [loadMoreReviews, nextReviewsPageToken, reviewsLoadingInitial, reviewsLoadingMore, reviews.length]);
+
+    useEffect(() => {
+        const root = reviewsScrollRef.current;
+        const target = reviewsLoadMoreRef.current;
+        if (!root || !target) return;
+        if (!nextReviewsPageToken || reviewsLoadingInitial || reviewsLoadingMore) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    loadMoreReviews();
+                }
+            },
+            { root, rootMargin: "0px 0px 240px 0px", threshold: 0.01 },
+        );
+
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [loadMoreReviews, nextReviewsPageToken, reviewsLoadingInitial, reviewsLoadingMore, reviews.length]);
 
     useEffect(() => {
         const el = photosScrollRef.current;
@@ -457,18 +599,74 @@ export default function AboutUsSection() {
         });
     }, [galleryItems.length]);
 
-    return (
-        <section id="sobre-nos" className="pageSection" style={{ marginTop: 50 }}>
-            <h2 className="sectionTitle">Sobre Nós</h2>
-            <p className="sectionSub">
-                {hasSelectedUnit
-                    ? "Conheça nossa unidade, veja avaliações e algumas fotos."
-                    : "Selecione uma unidade para conhecer mais sobre nós."}
-            </p>
-            {!hasSelectedUnit ? <UnitQuickButtons placement="about_us_quick" /> : null}
+    if (!hasSelectedUnit) {
+        return (
+            <section id="sobre-nos" className="pageSection">
+                <div className="pageNarrative">
+                    <div className="pageNarrative__intro">
+                        <span className="pageNarrative__eyebrow">Nosso cuidado</span>
+                        <HeadingTag className="sectionTitle">{unselectedTitle}</HeadingTag>
+                        <p className="sectionSub pageNarrative__sub">
+                            A Espaço Facial une avaliação cuidadosa, especialistas e atendimento acolhedor
+                            para quem busca harmonização facial com resultado elegante e natural.
+                        </p>
+                    </div>
 
-            {!hasSelectedUnit ? null : (
-                <div className="aboutGrid">
+                    <div className="pageNarrative__stats" role="group" aria-label="Princípios de atendimento">
+                        <div className="pageNarrative__stat">
+                            <strong>Avaliação cuidadosa</strong>
+                            <span>Cada indicação respeita suas características e o efeito que você deseja alcançar.</span>
+                        </div>
+                        <div className="pageNarrative__stat">
+                            <strong>Naturalidade</strong>
+                            <span>O objetivo é valorizar sua beleza sem exageros e sem perder sua identidade.</span>
+                        </div>
+                        <div className="pageNarrative__stat">
+                            <strong>Segurança</strong>
+                            <span>O atendimento é pensado para orientar você com clareza em cada etapa.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="decisionCardsSection">
+                    <div className="decisionCards">
+                        <article className="decisionCard">
+                            <div className="decisionCard__eyebrow">Avaliação</div>
+                            <h2>Cada atendimento começa entendendo o que faz sentido para você.</h2>
+                            <p>
+                                Antes de qualquer procedimento, o mais importante é entender seu objetivo
+                                e indicar o melhor caminho para o seu caso.
+                            </p>
+                        </article>
+
+                        <article className="decisionCard">
+                            <div className="decisionCard__eyebrow">Escolha com tranquilidade</div>
+                            <h2>Conheça especialistas, unidades e reserve quando se sentir seguro.</h2>
+                            <p>
+                                Você pode conhecer as unidades, comparar especialistas e reservar quando quiser.
+                            </p>
+                        </article>
+                    </div>
+                </div>
+
+                <div className="decisionCard__linksRow decisionCard__linksRow--spaced">
+                    <Link className="decisionCard__primary" href="/agendamento">
+                        Agendar avaliação
+                    </Link>
+                    <Link className="decisionCard__secondary" href="/unidades">
+                        Ver unidades
+                    </Link>
+                </div>
+            </section>
+        );
+    }
+
+    return (
+        <section id="sobre-nos" className="pageSection">
+            <HeadingTag className="sectionTitle">{selectedTitle}</HeadingTag>
+            <p className="sectionSub">{selectedSubtitle}</p>
+
+            <div className="aboutGrid">
                     <div className="aboutPhotosRow" aria-label="Fotos da unidade">
                         {galleryItems.length ? (
                             <div className="aboutPhotosScrollerWrap">
@@ -537,6 +735,7 @@ export default function AboutUsSection() {
                                                         width={520}
                                                         height={488}
                                                         sizes="25vw"
+                                                        priority={index === 0}
                                                         unoptimized
                                                         style={{ objectFit: "cover" }}
                                                     />
@@ -577,235 +776,232 @@ export default function AboutUsSection() {
                             </div>
                         ) : (
                             <div className="aboutMuted">
-                                {isPhotoDataPending ? "Carregando fotos…" : "Fotos indisponíveis no momento."}
+                                {isPhotoDataPending ? "Preparando fotos da unidade…" : "As fotos desta unidade voltam a aparecer em breve."}
                             </div>
                         )}
 
                         {!galleryItems.length ? (
                             <div className="aboutMuted" style={{ padding: "0 18px", fontSize: 12 }}>
-                                {isPhotoDataPending ? "Carregando fotos…" : "Mais fotos em breve."}
+                                {isPhotoDataPending ? "Preparando fotos da unidade…" : "Novas fotos da unidade aparecem aqui em breve."}
                             </div>
                         ) : null}
-                        <div className="aboutPhotosHint">Arraste, use as setas, a barra inferior ou aproxime o cursor das laterais para navegar com suavidade.</div>
+                        <div className="aboutPhotosHint">Arraste a barra inferior ou use as setas para navegar com suavidade.</div>
                     </div>
 
                     <div className="aboutSplit">
-                        <div className="aboutMapCard">
-                            <div className="aboutMapHeader">
-                                <div>
-                                    <div className="aboutPlaceTitle">{title}</div>
-                                    {address ? <div className="aboutPlaceSub">{address}</div> : null}
-                                </div>
-
-                                <div className="aboutHeaderActions" aria-label="Ações">
-                                    {agendarUrl ? (
-                                        <Link
-                                            className="aboutBtnPrimary"
-                                            href={bookingHref}
-                                            onClick={() =>
-                                                trackBookingStart({
-                                                    placement: "about",
-                                                    unitSlug: unit?.slug ?? null,
-                                                    bookingUrl: bookingHref,
-                                                })
-                                            }
-                                        >
-                                            Agendar
-                                        </Link>
-                                    ) : null}
-
-                                    {reviewUrl ? (
-                                        <a
-                                            className="aboutBtnGhost"
-                                            href={reviewUrl}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={() =>
-                                                trackEvent("cta_review_click", {
-                                                    placement: "about",
-                                                    unitSlug: unit?.slug ?? null,
-                                                    placeId: selectedPlaceId,
-                                                })
-                                            }
-                                        >
-                                            Fazer review
-                                        </a>
-                                    ) : null}
+                        <div className="aboutSplitIntro">
+                            <div className="aboutReviewsIntro">
+                                <h3 className="sectionTitle sectionTitle--display aboutReviewsIntro__title">Confira comentários de pacientes da unidade.</h3>
+                                <div className="sectionCopyPair aboutReviewsIntro__body">
+                                    <p className="sectionLead">Os trechos abaixo vêm de avaliações públicas reais.</p>
                                 </div>
                             </div>
+                        </div>
 
-                            {mapEmbedUrl ? (
-                                mapOpenUrl ? (
-                                    <a
-                                        className="aboutMapEmbedLink"
-                                        href={mapOpenUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        aria-label={`Abrir localização de ${title} no Google Maps`}
-                                    >
+                        <div className="aboutSplitColumn aboutSplitColumn--map">
+                            <div className="aboutMapCard">
+                                <div className="aboutMapHeader">
+                                    <div>
+                                        <div className="aboutPlaceTitle">{title}</div>
+                                        {addressLines.length ? (
+                                            <div className="aboutPlaceSub">
+                                                {addressLines.map((line) => (
+                                                    <span key={line}>{line}</span>
+                                                ))}
+                                            </div>
+                                        ) : null}
+                                    </div>
+
+                                    <div className="aboutHeaderActions" aria-label="Ações">
+                                        {agendarUrl ? (
+                                            <Link
+                                                className="aboutBtnPrimary"
+                                                href={bookingHref}
+                                                onClick={() =>
+                                                    trackBookingStart({
+                                                        placement: "about",
+                                                        unitSlug: unit?.slug ?? null,
+                                                        bookingUrl: bookingHref,
+                                                    })
+                                                }
+                                            >
+                                                Agendar
+                                            </Link>
+                                        ) : null}
+
+                                        {reviewUrl ? (
+                                            <a
+                                                className="aboutBtnGhost"
+                                                href={reviewUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={() =>
+                                                    trackEvent("cta_review_click", {
+                                                        placement: "about",
+                                                        unitSlug: unit?.slug ?? null,
+                                                        placeId: selectedPlaceId,
+                                                    })
+                                                }
+                                            >
+                                                Fazer review
+                                            </a>
+                                        ) : null}
+                                    </div>
+                                </div>
+
+                                {mapEmbedUrl ? (
+                                    mapOpenUrl ? (
+                                        <a
+                                            className="aboutMapEmbedLink"
+                                            href={mapOpenUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            aria-label={`Abrir localização de ${title} no Google Maps`}
+                                        >
+                                            <iframe
+                                                className="aboutMapFrame aboutMapFrame--preview"
+                                                src={mapEmbedUrl}
+                                                loading="lazy"
+                                                referrerPolicy="no-referrer-when-downgrade"
+                                                title={`Mapa de ${title}`}
+                                            />
+                                            <span className="aboutMapOverlayHint">Abrir no Google Maps</span>
+                                        </a>
+                                    ) : (
                                         <iframe
-                                            className="aboutMapFrame aboutMapFrame--preview"
+                                            className="aboutMapFrame"
                                             src={mapEmbedUrl}
                                             loading="lazy"
                                             referrerPolicy="no-referrer-when-downgrade"
                                             title={`Mapa de ${title}`}
                                         />
-                                        <span className="aboutMapOverlayHint">Abrir no Google Maps</span>
-                                    </a>
+                                    )
                                 ) : (
-                                    <iframe
-                                        className="aboutMapFrame"
-                                        src={mapEmbedUrl}
-                                        loading="lazy"
-                                        referrerPolicy="no-referrer-when-downgrade"
-                                        title={`Mapa de ${title}`}
-                                    />
-                                )
-                            ) : (
-                                <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
-                                    <div className="aboutMapStaticGlow" aria-hidden="true" />
-                                    <div className="aboutMapStaticTop">
-                                        <span className="aboutMapStaticEyebrow">Localização</span>
-                                        <span className="aboutMapStaticBadge">Snapshot local</span>
-                                    </div>
-                                    <div className="aboutMapStaticTitle">{title}</div>
-                                    {address ? <div className="aboutMapStaticAddress">{address}</div> : null}
-                                    <div className="aboutMapStaticMeta">
-                                        {coordinatesLabel ? (
-                                            <div className="aboutMapStaticMetaItem">
-                                                <span>Coordenadas</span>
-                                                <strong>{coordinatesLabel}</strong>
-                                            </div>
-                                        ) : null}
-                                        <div className="aboutMapStaticMetaItem">
-                                            <span>Status</span>
-                                            <strong>{mapEmbedUrl ? "Google Maps sob clique" : "Snapshot local"}</strong>
+                                    <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
+                                        <div className="aboutMapStaticGlow" aria-hidden="true" />
+                                        <div className="aboutMapStaticTop">
+                                            <span className="aboutMapStaticEyebrow">Localização</span>
+                                            <span className="aboutMapStaticBadge">Snapshot local</span>
                                         </div>
-                                    </div>
-                                    <div className="aboutMapStaticActions">
-                                        {mapOpenUrl ? (
-                                            <a className="aboutBtnGhost" href={mapOpenUrl} target="_blank" rel="noopener noreferrer">
-                                                Abrir rota
-                                            </a>
-                                        ) : null}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="aboutRatingRow">
-                                {isReviewDataPending ? (
-                                    <div className="aboutMuted">Carregando avaliações…</div>
-                                ) : !hasSelectedUnit ? (
-                                    <div className="aboutMuted">Selecione uma unidade para ver avaliações e fotos.</div>
-                                ) : data?.available ? (
-                                    <>
-                                        <Stars rating={rating} />
-                                        <div className="aboutRatingText">
-                                            <strong>{clampRating(rating).toFixed(1)}</strong>
-                                            {typeof total === "number" ? <span className="aboutMuted">({total} avaliações)</span> : null}
-                                        </div>
-                                    </>
-                                ) : (
-                                    <div className="aboutMuted">Avaliações indisponíveis no momento.</div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="aboutReviewsCard">
-                            {hasSelectedUnit ? (
-                                <div className="aboutReviewsSection" aria-label="Avaliações">
-                                    <div className="aboutControls">
-                                        <div className="aboutPills" aria-label="Filtro por nota">
-                                            <button
-                                                type="button"
-                                                className={ratingFilter === "all" ? "aboutPill active" : "aboutPill"}
-                                                onClick={() => setRatingFilter("all")}
-                                            >
-                                                Todas
-                                            </button>
-                                            {[5, 4, 3, 2, 1].map((n) => (
-                                                <button
-                                                    key={n}
-                                                    type="button"
-                                                    className={ratingFilter === n ? "aboutPill active" : "aboutPill"}
-                                                    onClick={() => setRatingFilter(n)}
-                                                >
-                                                    {n}★
-                                                </button>
-                                            ))}
-                                        </div>
-
-                                        <div className="aboutControlsRow">
-                                            <label className="aboutToggle">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={onlyWithText}
-                                                    onChange={(e) => setOnlyWithText(e.target.checked)}
-                                                />
-                                                Apenas com comentário
-                                            </label>
-
-                                            <select
-                                                className="aboutSelect"
-                                                value={sort}
-                                                onChange={(e) => setSort(e.target.value as ReviewSort)}
-                                                aria-label="Ordenação"
-                                            >
-                                                <option value="newest">Mais recentes</option>
-                                                <option value="highest">Maior nota</option>
-                                                <option value="lowest">Menor nota</option>
-                                            </select>
-                                        </div>
-
-                                        <input
-                                            className="aboutInput"
-                                            value={search}
-                                            onChange={(e) => setSearch(e.target.value)}
-                                            placeholder="Buscar nas avaliações…"
-                                            aria-label="Buscar avaliações"
-                                        />
-                                    </div>
-
-                                    {isReviewDataPending ? (
-                                        <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
-                                            Carregando avaliações…
-                                        </div>
-                                    ) : reviews.length ? (
-                                        <div className="aboutReviewsScroll" ref={reviewsScrollRef}>
-                                            <div className="aboutReviews">
-                                                {displayedReviews.map((r, idx) => (
-                                                    <div key={`${r.authorName}-${r.time ?? "t"}-${idx}`} className="aboutReview">
-                                                        <div className="aboutReviewTop">
-                                                            <div className="aboutReviewAuthor">{r.authorName || "Avaliação"}</div>
-                                                            <div className="aboutReviewMeta">
-                                                                {typeof r.rating === "number" ? <span>{r.rating.toFixed(1)}★</span> : null}
-                                                                {r.relativeTimeDescription ? <span>{r.relativeTimeDescription}</span> : null}
-                                                            </div>
-                                                        </div>
-                                                        {r.text ? <div className="aboutReviewText">{r.text}</div> : null}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                            {displayedReviews.length < reviews.length ? (
-                                                <div className="aboutLoadMore">
-                                                    Mostrando {displayedReviews.length} de {reviews.length}.{" "}
-                                                    <button type="button" className="aboutLoadMoreBtn" onClick={loadMoreReviews}>
-                                                        + Avaliações
-                                                    </button>
+                                        <div className="aboutMapStaticTitle">{title}</div>
+                                        {address ? <div className="aboutMapStaticAddress">{address}</div> : null}
+                                        <div className="aboutMapStaticMeta">
+                                            {coordinatesLabel ? (
+                                                <div className="aboutMapStaticMetaItem">
+                                                    <span>Coordenadas</span>
+                                                    <strong>{coordinatesLabel}</strong>
                                                 </div>
                                             ) : null}
+                                            <div className="aboutMapStaticMetaItem">
+                                                <span>Status</span>
+                                                <strong>{mapEmbedUrl ? "Google Maps sob clique" : "Snapshot local"}</strong>
+                                            </div>
                                         </div>
-                                    ) : (
-                                        <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
-                                            Nenhuma avaliação encontrada com esses filtros.
+                                        <div className="aboutMapStaticActions">
+                                            {mapOpenUrl ? (
+                                                <a className="aboutBtnGhost" href={mapOpenUrl} target="_blank" rel="noopener noreferrer">
+                                                    Abrir rota
+                                                </a>
+                                            ) : null}
                                         </div>
-                                    )}
-                                </div>
-                            ) : null}
+                                    </div>
+                                )}
+                            </div>
+
+                            <p className="small aboutSplitNote aboutSplitNote--map">
+                                Clique no mapa para ser redirecionado para saber <strong>Como Chegar</strong> na unidade.
+                            </p>
+                        </div>
+
+                        <div className="aboutSplitColumn aboutSplitColumn--reviews">
+                            <div className="aboutReviewsCard">
+                                {hasSelectedUnit ? (
+                                    <div className="aboutReviewsSection" aria-label="Avaliações">
+                                        <div className="aboutControls">
+                                            <div className="aboutControlsRow aboutControlsRow--top">
+                                                <div className="aboutPills" aria-label="Filtro por nota">
+                                                    <button
+                                                        type="button"
+                                                        className={ratingFilter === "all" ? "aboutPill active" : "aboutPill"}
+                                                        onClick={() => setRatingFilter("all")}
+                                                    >
+                                                        Todas
+                                                    </button>
+                                                    {[5, 4, 3, 2, 1].map((n) => (
+                                                        <button
+                                                            key={n}
+                                                            type="button"
+                                                            className={ratingFilter === n ? "aboutPill active" : "aboutPill"}
+                                                            onClick={() => setRatingFilter(n)}
+                                                        >
+                                                            {n}★
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <select
+                                                    className="aboutSelect"
+                                                    value={sort}
+                                                    onChange={(e) => setSort(e.target.value as ReviewSort)}
+                                                    aria-label="Ordenação"
+                                                >
+                                                    <option value="newest">Mais recentes</option>
+                                                    <option value="highest">Maior nota</option>
+                                                    <option value="lowest">Menor nota</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {isReviewDataPending ? (
+                                            <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
+                                                Preparando avaliações da unidade…
+                                            </div>
+                                        ) : reviews.length ? (
+                                            <div className="aboutReviewsScroll" ref={reviewsScrollRef}>
+                                                <div className="aboutReviews">
+                                                    {reviews.map((r, idx) => (
+                                                        <div key={r.reviewId || `${r.authorName}-${r.time ?? "t"}-${idx}`} className="aboutReview">
+                                                            <div className="aboutReviewTop">
+                                                                <div className="aboutReviewAuthor">{r.authorName || "Avaliação"}</div>
+                                                                <div className="aboutReviewMeta">
+                                                                    {typeof r.rating === "number" ? <span>{r.rating.toFixed(1)}★</span> : null}
+                                                                    {r.relativeTimeDescription ? <span>{r.relativeTimeDescription}</span> : null}
+                                                                </div>
+                                                            </div>
+                                                            {r.text ? <div className="aboutReviewText">{r.text}</div> : null}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                {reviewsLoadingMore ? (
+                                                    <div className="aboutLoadMore">
+                                                        Carregando mais comentários…
+                                                    </div>
+                                                ) : nextReviewsPageToken ? (
+                                                    <div className="aboutLoadMore">
+                                                        Role para carregar mais avaliações.
+                                                        <button type="button" className="aboutLoadMoreBtn" onClick={loadMoreReviews}>
+                                                            + Avaliações
+                                                        </button>
+                                                    </div>
+                                                ) : null}
+                                                <div ref={reviewsLoadMoreRef} aria-hidden="true" style={{ height: 1 }} />
+                                            </div>
+                                        ) : (
+                                            <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
+                                                {reviewsAvailable
+                                                    ? "Nenhuma avaliação encontrada com esses filtros."
+                                                    : "As avaliações públicas desta unidade aparecem aqui em breve."}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : null}
+                            </div>
+
+                            <p className="small aboutSplitNote aboutSplitNote--reviews">
+                                Role até o final da lista para carregar de forma dinâmica comentários adicionais.
+                            </p>
                         </div>
                     </div>
                 </div>
-            )}
 
             {activeGalleryItem ? (
                 <div
