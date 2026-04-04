@@ -1,0 +1,13 @@
+{
+  "name": "@meta/report-ingest-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "d1:migrate": "wrangler d1 migrations apply skincos-meta-ads-performance-report --remote",
+    "d1:migrate:staging": "wrangler d1 migrations apply skincos-meta-ads-performance-report-staging --remote --env staging"
+  }
+}

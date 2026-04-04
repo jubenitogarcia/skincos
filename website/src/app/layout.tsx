@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { headers } from "next/headers";
+import { Oxanium, Urbanist } from "next/font/google";
 import CookieBanner from "@/components/CookieBanner";
 import Analytics from "@/components/Analytics";
 import MarketingPixels from "@/components/MarketingPixels";
@@ -11,6 +12,20 @@ import { getSiteConfigFromHost } from "@/lib/site-config";
 
 const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA ?? "";
 const buildTime = process.env.NEXT_PUBLIC_BUILD_TIME ?? "";
+
+const brandUiFont = Oxanium({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-brand-ui-loaded",
+  weight: ["400", "500", "600", "700", "800"],
+});
+
+const brandTextFont = Urbanist({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-brand-text-loaded",
+  weight: ["300", "400", "500", "600", "700", "800"],
+});
 
 export async function generateMetadata(): Promise<Metadata> {
   const site = getSiteConfigFromHost((await headers()).get("host"));
@@ -104,7 +119,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         };
 
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" className={`${brandUiFont.variable} ${brandTextFont.variable}`}>
       <head>
         {buildSha ? <meta name="x-app-build" content={buildSha} /> : null}
         {buildTime ? <meta name="x-app-build-time" content={buildTime} /> : null}

@@ -628,9 +628,6 @@ export function EspacofacialPrivacyContent() {
 
       <p className="small" style={{ marginTop: 14 }}>
         Ultima atualizacao: 02/03/2026.
-        <br />
-        Nota: este texto e um resumo operacional e deve ser revisado/ajustado pelo responsavel
-        juridico do projeto.
       </p>
     </main>
   );
@@ -668,11 +665,6 @@ export function EspacofacialTermsContent() {
         </p>
       </div>
 
-      <p className="small" style={{ marginTop: 14 }}>
-        Nota: este texto e um resumo operacional e deve ser revisado/ajustado pelo responsavel
-        juridico do projeto.
-      </p>
     </main>
   );
 }
-

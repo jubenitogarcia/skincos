@@ -1318,6 +1318,77 @@ def _run_recorder(headless: bool, output_dir: Path, persist_session: bool) -> in
             pass
 
 
+def _run_procedures(headless: bool, output_dir: Path, persist_session: bool) -> int:
+    started_at = datetime.now()
+    email, password = _get_credentials(persist_session=persist_session)
+    if (not email or not password) and not persist_session:
+        print("Credenciais não informadas. Abortando.")
+        _write_run_summary(
+            mode="procedures",
+            unit_name="",
+            output_dir=output_dir,
+            status="failed",
+            started_at=started_at,
+            ended_at=datetime.now(),
+            details={"reason": "missing_credentials"},
+        )
+        return 2
+
+    _set_runtime_env(email, password, output_dir, headless, unit_name="", persist_session=persist_session)
+
+    from espacofacial.auth import Credentials, configure_file_logging, log, log_exception
+    from espacofacial.core import load_config
+    from espacofacial.procedures import run_with_runtime
+
+    cfg = load_config()
+    configure_file_logging(cfg.output_dir, prefix="menu_procedures")
+    if cfg.persist_session and cfg.chrome_user_data_dir is not None:
+        log(f"Chrome profile: {cfg.chrome_user_data_dir}")
+
+    try:
+        records, summary = run_with_runtime(
+            base_url=cfg.base_url,
+            creds=Credentials(cfg.email, cfg.password),
+            output_dir=cfg.output_dir,
+            debug_dir=cfg.debug_dir,
+            headless=cfg.headless,
+            user_data_dir=cfg.chrome_user_data_dir,
+            timeout_seconds=cfg.timeout_seconds,
+        )
+        outputs = summary.get("outputs") if isinstance(summary, dict) else None
+        output_list = []
+        if isinstance(outputs, dict):
+            output_list = [str(path) for path in outputs.values()]
+        details = {
+            "units": summary.get("units", {}),
+            "totals": summary.get("totals", {}),
+            "rows": len(records),
+        }
+        _write_run_summary(
+            mode="procedures",
+            unit_name="",
+            output_dir=output_dir,
+            status="success",
+            started_at=started_at,
+            ended_at=datetime.now(),
+            details=details,
+            outputs=output_list,
+        )
+        return 0
+    except Exception as e:
+        log_exception("ERROR: Procedures export failed", e)
+        _write_run_summary(
+            mode="procedures",
+            unit_name="",
+            output_dir=output_dir,
+            status="failed",
+            started_at=started_at,
+            ended_at=datetime.now(),
+            details={"error": str(e)},
+        )
+        return 1
+
+
 def _run_selftest(headless: bool, output_dir: Path) -> int:
     started_at = datetime.now()
     # Self-test does not log in, but it may open Chrome.
@@ -1399,7 +1470,7 @@ def main() -> int:
     mode = os.getenv("EF_MODE", "").strip().lower()
     if not mode:
         print("EF_MODE não definido. Configure uma ação no Codex.")
-        print("Valores aceitos: agenda | agenda_index | agenda_delta | caixa | recorder | selftest | booking_api | menu")
+        print("Valores aceitos: agenda | agenda_index | agenda_delta | caixa | procedures | recorder | selftest | booking_api | menu")
         return 2
 
     unit_name = os.getenv("EF_UNIT_NAME", "").strip()
@@ -1436,6 +1507,10 @@ def main() -> int:
         rc = _run_cash_combined(headless=headless, output_dir=output_dir, unit_name=unit_name, persist_session=persist_session)
         _maybe_print_log_path()
         return rc
+    if mode in {"procedures", "clientes_procedures", "client_procedures"}:
+        rc = _run_procedures(headless=headless, output_dir=output_dir, persist_session=persist_session)
+        _maybe_print_log_path()
+        return rc
     if mode in {"recorder", "record"}:
         rc = _run_recorder(headless=headless, output_dir=output_dir, persist_session=persist_session)
         _maybe_print_log_path()
@@ -1467,10 +1542,11 @@ def main() -> int:
         print("2) Extrair agendamentos (INDEX - Data/Horário)")
         print("3) Extrair agendamentos (DELTA - somente mudanças)")
         print("4) Extrair caixa (Resumo + Clientes - XLSX)")
-        print("5) Recorder: abrir navegador e gravar cliques/preenchimentos")
-        print("6) Booking API (listener HTTP para reservas)")
-        print("7) Self-test (verifica ambiente/Chrome/export)")
-        print("8) Sair")
+        print("5) Exportar procedimentos realizados dos clientes (todas as unidades)")
+        print("6) Recorder: abrir navegador e gravar cliques/preenchimentos")
+        print("7) Booking API (listener HTTP para reservas)")
+        print("8) Self-test (verifica ambiente/Chrome/export)")
+        print("9) Sair")
 
         choice = input("> ").strip()
         if choice == "1":
@@ -1508,10 +1584,14 @@ def main() -> int:
             _maybe_print_log_path()
             return rc
         if choice == "5":
-            rc = _run_recorder(headless=headless, output_dir=output_dir, persist_session=persist_session)
+            rc = _run_procedures(headless=headless, output_dir=output_dir, persist_session=persist_session)
             _maybe_print_log_path()
             return rc
         if choice == "6":
+            rc = _run_recorder(headless=headless, output_dir=output_dir, persist_session=persist_session)
+            _maybe_print_log_path()
+            return rc
+        if choice == "7":
             from espacofacial.booking_server import run_booking_server
 
             _load_booking_env_file()
@@ -1520,11 +1600,11 @@ def main() -> int:
             rc = run_booking_server()
             _maybe_print_log_path()
             return rc
-        if choice == "7":
+        if choice == "8":
             rc = _run_selftest(headless=headless, output_dir=default_debug_dir())
             _maybe_print_log_path()
             return rc
-        if choice == "8":
+        if choice == "9":
             print("Saindo.")
             return 0
         print("Opção inválida.")

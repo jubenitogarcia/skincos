@@ -3,14 +3,25 @@ import { getSiteConfigFromHost } from "@/lib/site-config";
 
 export function GET(request: Request) {
   const site = getSiteConfigFromHost(new URL(request.url).host);
-  const lines = [
-    "User-agent: *",
-    "Allow: /",
-    "Disallow: /api/",
-    "Disallow: /_next/",
-    `Sitemap: ${site.siteUrl}/sitemap.xml`,
-    "",
-  ];
+  const lines =
+    site.allowedPaths.has("*")
+      ? [
+          "User-agent: *",
+          "Allow: /",
+          "Disallow: /api/",
+          "Disallow: /_next/",
+          `Sitemap: ${site.siteUrl}/sitemap.xml`,
+          "",
+        ]
+      : [
+          "User-agent: *",
+          "Disallow: /",
+          ...[...site.allowedPaths]
+            .filter((path) => path !== "*")
+            .map((path) => `Allow: ${path}`),
+          `Sitemap: ${site.siteUrl}/sitemap.xml`,
+          "",
+        ];
 
   return new NextResponse(lines.join("\n"), {
     headers: {

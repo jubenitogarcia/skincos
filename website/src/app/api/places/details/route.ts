@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { units } from "@/data/units";
+import { getPersistedGbpPlacePayload } from "@/lib/gbpReviewsDb";
 import { loadPlaceSnapshot } from "@/lib/productionSnapshot";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +24,22 @@ function jsonOk(body: unknown, headers?: HeadersInit) {
     });
 }
 
+function resolveUnitForFallback(placeId: string, query: string) {
+    const byPlaceId = (placeId ?? "").trim()
+        ? units.find((unit) => (unit.placeId ?? "").trim() === (placeId ?? "").trim()) ?? null
+        : null;
+    if (byPlaceId) return byPlaceId;
+
+    const normalizedQuery = (query ?? "").trim().toLowerCase();
+    if (!normalizedQuery) return null;
+    return (
+        units.find((unit) => {
+            const haystack = [unit.name, unit.addressLine, unit.state].filter(Boolean).join(" ").toLowerCase();
+            return haystack.includes(normalizedQuery);
+        }) ?? null
+    );
+}
+
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const placeIdParam = (searchParams.get("placeId") ?? "").trim();
@@ -29,6 +47,33 @@ export async function GET(req: Request) {
 
     if (!placeIdParam && !queryParam) {
         return NextResponse.json({ available: false, error: "missing_placeId_or_query" }, { status: 400 });
+    }
+
+    const persisted = placeIdParam ? await getPersistedGbpPlacePayload(placeIdParam) : null;
+    const snapshotPayload = await loadPlaceSnapshot(req, { placeId: placeIdParam, query: queryParam });
+
+    if (persisted) {
+        const fallbackUnit = resolveUnitForFallback(placeIdParam, queryParam);
+        const mergedPayload = {
+            available: true,
+            ...(snapshotPayload ?? {}),
+            name: snapshotPayload?.name ?? fallbackUnit?.name ?? null,
+            address: snapshotPayload?.address ?? fallbackUnit?.addressLine ?? null,
+            mapsUrl: snapshotPayload?.mapsUrl ?? fallbackUnit?.maps ?? null,
+            location: snapshotPayload?.location ?? {
+                lat: fallbackUnit?.lat ?? null,
+                lng: fallbackUnit?.lng ?? null,
+            },
+            placeId: snapshotPayload?.placeId ?? placeIdParam ?? null,
+            rating: persisted.rating,
+            userRatingsTotal: persisted.userRatingsTotal,
+            reviews: persisted.reviews,
+        };
+
+        return jsonOk(mergedPayload, {
+            "cache-control": "public, max-age=60, s-maxage=300",
+            "x-places": "db",
+        });
     }
 
     const cache = getCloudflareCache();
@@ -46,7 +91,6 @@ export async function GET(req: Request) {
         }
     }
 
-    const snapshotPayload = await loadPlaceSnapshot(req, { placeId: placeIdParam, query: queryParam });
     if (snapshotPayload) {
         if (cache) void cache.put(cacheKey, new Response(JSON.stringify(snapshotPayload), { headers: { "content-type": "application/json" } }));
         return jsonOk(snapshotPayload, { "x-places": "snapshot_only" });

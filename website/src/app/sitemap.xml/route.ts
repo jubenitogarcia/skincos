@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { units } from "@/data/units";
-import { doctors } from "@/data/doctors";
+import { getDigitalJourneyUnits } from "@/data/units";
 import { getSiteConfigFromHost } from "@/lib/site-config";
 
 function toXml(urls: string[]) {
@@ -21,6 +20,7 @@ function toXml(urls: string[]) {
 export function GET(request: Request) {
   const site = getSiteConfigFromHost(new URL(request.url).host);
   const baseUrl = site.siteUrl.replace(/\/$/, "");
+  const digitalUnits = getDigitalJourneyUnits();
 
   const urls =
     site.key === "skincos"
@@ -36,8 +36,7 @@ export function GET(request: Request) {
           `${baseUrl}/sobre`,
           `${baseUrl}/privacidade`,
           `${baseUrl}/termos`,
-          ...units.map((unit) => `${baseUrl}/${unit.slug}`),
-          ...doctors.map((doctor) => `${baseUrl}/doutores/${doctor.slug}`),
+          ...digitalUnits.map((unit) => `${baseUrl}/${unit.slug.replace("novo-hamburgo", "novohamburgo")}`),
         ];
 
   return new NextResponse(toXml([...new Set(urls)]), {

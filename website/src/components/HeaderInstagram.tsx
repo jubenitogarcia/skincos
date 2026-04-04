@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
-import { units } from "@/data/units";
+import { getDigitalJourneyUnits } from "@/data/units";
 import { trackHeaderInstagramClick, trackHeaderInstagramOpen } from "@/lib/leadTracking";
-
-const ALLOWED_UNIT_SLUGS = ["barrashoppingsul", "novo-hamburgo"] as const;
 
 function instagramIcon() {
     return (
@@ -19,7 +17,7 @@ function instagramIcon() {
 }
 
 function allowedUnits() {
-    return units.filter((u) => (ALLOWED_UNIT_SLUGS as readonly string[]).includes(u.slug));
+    return getDigitalJourneyUnits();
 }
 
 export default function HeaderInstagram() {

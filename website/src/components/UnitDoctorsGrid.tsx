@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
-import { doctorSlugFromTeamMember } from "@/lib/doctorSlug";
+import { canonicalDoctorSlugForMember } from "@/lib/doctorSlug";
 import { trackBookingStart, trackDoctorInstagramClick } from "@/lib/leadTracking";
 import DoctorInstagramModal, { InstagramIcon } from "@/components/DoctorInstagramModal";
 import UnitDoctorsCompactRail, { type UnitDoctorsCompactRailItem } from "@/components/UnitDoctorsCompactRail";
@@ -94,6 +94,7 @@ type UnitDoctorsGridProps = {
     doctorSelections?: BookingSelectDoctor[] | null;
     activeDoctorSlug?: string | null;
     onDoctorSelect?: (doctor: BookingSelectDoctor) => void;
+    showAllWhenNoUnitSelected?: boolean;
 };
 
 export default function UnitDoctorsGrid({
@@ -101,12 +102,14 @@ export default function UnitDoctorsGrid({
     doctorSelections = null,
     activeDoctorSlug = null,
     onDoctorSelect,
+    showAllWhenNoUnitSelected = false,
 }: UnitDoctorsGridProps) {
     const unit = useCurrentUnit();
     const unitLabel = unitLabelFromSlug(unit?.slug);
     const isBookingCompact = variant === "booking-compact";
     const isBookingSelect = variant === "booking-select";
     const isCompactVariant = isBookingCompact || isBookingSelect;
+    const showAllDirectoryWithoutUnit = !unitLabel && variant === "directory" && showAllWhenNoUnitSelected;
 
     const [members, setMembers] = useState<TeamMember[] | null>(null);
     const [membersError, setMembersError] = useState<string | null>(null);
@@ -143,10 +146,11 @@ export default function UnitDoctorsGrid({
 
     const filtered = useMemo(() => {
         if (!members) return null;
+        if (showAllDirectoryWithoutUnit) return members;
         if (!unitLabel) return [];
 
         return members.filter((m) => m.units.map((u) => u.toLowerCase()).includes(unitLabel.toLowerCase()));
-    }, [members, unitLabel]);
+    }, [members, showAllDirectoryWithoutUnit, unitLabel]);
 
     const compactItems = useMemo<UnitDoctorsCompactRailItem[] | null>(() => {
         if (isBookingSelect) {
@@ -205,7 +209,7 @@ export default function UnitDoctorsGrid({
             const handle = doctor.instagramHandle;
             const href = doctor.instagramUrl;
             const instagramHandle = handle || extractInstagramHandle(href);
-            const doctorSlug = doctorSlugFromTeamMember({ name: fullName, instagramHandle: handle });
+            const doctorSlug = canonicalDoctorSlugForMember({ name: fullName, instagramHandle: handle });
             const bookingHref = unit?.slug
                 ? `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=${encodeURIComponent(doctorSlug)}`
                 : "/agendamento";
@@ -240,26 +244,44 @@ export default function UnitDoctorsGrid({
         });
     }, [activeDoctorSlug, doctorSelections, filtered, isBookingSelect, onDoctorSelect, unit?.slug]);
 
-    if (!unitLabel) {
+    if (!unitLabel && !showAllDirectoryWithoutUnit) {
         return (
             <>
-                <p className="sectionSub">Selecione a unidade para conhecer nossos doutores.</p>
+                <p className="sectionSub">
+                    Escolha uma unidade para ver a equipe daquele local ou abra a página de especialistas para comparar os perfis com calma.
+                </p>
                 <UnitQuickButtons placement="doctors_quick" />
+                <div className="decisionCard__linksRow decisionCard__linksRow--spaced">
+                    <Link className="decisionCard__secondary" href="/doutores">
+                        Ver especialistas
+                    </Link>
+                    <Link className="decisionCard__primary" href="/agendamento">
+                        Ir para o agendamento
+                    </Link>
+                </div>
             </>
         );
     }
 
-    const selectedUnitSubtitle = isBookingCompact
-        ? <p className="sectionSub">Conheça a equipe da unidade e entre no agendamento com o doutor já definido.</p>
+    const selectedUnitSubtitle = showAllDirectoryWithoutUnit
+        ? <p className="sectionSub">Veja em quais unidades cada doutor atende e siga para o agendamento quando encontrar a melhor opção para você.</p>
+        : isBookingCompact
+        ? null
         : isBookingSelect
-          ? <p className="bookingFlow__cardSub">Escolha o doutor, e verifique seus dias e horários disponíveis para atendimento.</p>
-          : <p className="sectionSub">Conheça nossos doutores, veja seus perfis e procedimentos realizados.</p>;
+          ? <p className="bookingFlow__cardSub">Escolha o especialista e veja os dias e horários disponíveis para atendimento.</p>
+          : <p className="sectionSub">Conheça nossos especialistas, veja os perfis e escolha com mais tranquilidade.</p>;
 
     if (compactItems === null && isCompactVariant) {
         return (
             <>
                 {selectedUnitSubtitle}
-                <div className="card">Carregando equipe…</div>
+                <div className="card doctorGridLoading" aria-hidden="true">
+                    <span className="doctorGridLoading__avatar" />
+                    <div className="doctorGridLoading__copy">
+                        <span className="doctorGridLoading__line doctorGridLoading__line--title" />
+                        <span className="doctorGridLoading__line" />
+                    </div>
+                </div>
             </>
         );
     }
@@ -268,7 +290,13 @@ export default function UnitDoctorsGrid({
         return (
             <>
                 {selectedUnitSubtitle}
-                <div className="card">Carregando equipe…</div>
+                <div className="card doctorGridLoading" aria-hidden="true">
+                    <span className="doctorGridLoading__avatar" />
+                    <div className="doctorGridLoading__copy">
+                        <span className="doctorGridLoading__line doctorGridLoading__line--title" />
+                        <span className="doctorGridLoading__line" />
+                    </div>
+                </div>
             </>
         );
     }
@@ -278,7 +306,7 @@ export default function UnitDoctorsGrid({
             <>
                 {selectedUnitSubtitle}
                 <div className="card">
-                    {membersError ? "Não foi possível carregar a equipe no momento." : `Nenhum doutor encontrado para ${unitLabel}.`}
+                    {membersError ? "Os especialistas desta unidade voltam a aparecer em instantes." : `Nenhum especialista encontrado para ${unitLabel}.`}
                 </div>
             </>
         );
@@ -309,10 +337,15 @@ export default function UnitDoctorsGrid({
                     const handle = d.instagramHandle;
                     const href = d.instagramUrl;
                     const instagramHandle = handle || extractInstagramHandle(href);
-                    const doctorSlug = doctorSlugFromTeamMember({ name: fullName, instagramHandle: handle });
+                    const doctorSlug = canonicalDoctorSlugForMember({ name: fullName, instagramHandle: handle });
+                    const profileHref = `/doutores/${encodeURIComponent(doctorSlug)}`;
                     const bookingHref = unit?.slug
                         ? `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=${encodeURIComponent(doctorSlug)}`
-                        : "/agendamento";
+                        : `/agendamento?doctor=${encodeURIComponent(doctorSlug)}`;
+                    const directoryUnitLabel = showAllDirectoryWithoutUnit
+                        ? d.units.filter(Boolean).join(" • ") || "Rede Espaço Facial"
+                        : unitLabel;
+                    const directoryUnitTitle = directoryUnitLabel ?? undefined;
                     const openInstagram = () => {
                         if (!instagramHandle) return;
                         setActiveInstagram({ name: fullName, handle: instagramHandle });
@@ -346,7 +379,7 @@ export default function UnitDoctorsGrid({
                                         </div>
                                         <div className="doctorDirectoryCard__meta">
                                             <h3 className="doctorDirectoryCard__name" title={fullName}>{fullName}</h3>
-                                            <p className="doctorDirectoryCard__sub" title={unitLabel ?? undefined}>{unitLabel}</p>
+                                            <p className="doctorDirectoryCard__sub" title={directoryUnitTitle}>{directoryUnitLabel}</p>
                                         </div>
                                     </button>
                                 ) : (
@@ -360,12 +393,20 @@ export default function UnitDoctorsGrid({
                                         </div>
                                         <div className="doctorDirectoryCard__meta">
                                             <h3 className="doctorDirectoryCard__name" title={fullName}>{fullName}</h3>
-                                            <p className="doctorDirectoryCard__sub" title={unitLabel ?? undefined}>{unitLabel}</p>
+                                            <p className="doctorDirectoryCard__sub" title={directoryUnitTitle}>{directoryUnitLabel}</p>
                                         </div>
                                     </div>
                                 )}
 
                                 <div className="doctorDirectoryCard__actions">
+                                    <Link
+                                        className="doctorDirectoryCard__profileLink"
+                                        href={profileHref}
+                                        aria-label={`Ver perfil de ${fullName}`}
+                                        title="Ver perfil"
+                                    >
+                                        Perfil
+                                    </Link>
                                     {instagramHandle ? (
                                         <button
                                             className="iconBtn doctorDirectoryCard__instagramBtn"

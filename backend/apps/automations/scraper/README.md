@@ -30,13 +30,16 @@ Runner único via ações do Codex (sem menu).
 - `EF_LOG_DIR` (default: `./debug`)
 - `EF_CHROME_USER_DATA_DIR` (default: `./chrome_profile` quando sessão persistente estiver ativa)
 - `HEADLESS` (`1`/`0`)
-- `EF_MODE` (`agenda`, `caixa`, `recorder`, `selftest`, `booking_api`)
+- `EF_MODE` (`agenda`, `caixa`, `procedures`, `recorder`, `selftest`, `booking_api`)
 - `EF_DRY_RUN` (`1`/`0`)
 - `EF_DEBUG_RETENTION_DAYS` (default: `7`)
 - `EF_DATE_RANGE_MODE` (`prev_month`)
 - `EF_INDEX_WEEK_WINDOW_WEEKS` (opcional; limita agenda/index para a semana atual + próximas semanas, ex.: `4` para totalizar 28 dias a partir do início da semana atual)
 - `EF_INDEX_FUTURE_DAYS` (opcional; limita agenda/index para janela móvel a partir de hoje, ex.: `28`)
 - `EF_RECORDER_PURGE` (`1`/`0`)
+- `EF_UNITS` (opcional; lista separada por vírgula para modos multiunidade, ex.: `BarraShoppingSul,Novo Hamburgo`)
+- `EF_PROCEDURES_MAX_PAGES` (opcional; limita páginas no modo `procedures`, útil para smoke test)
+- `EF_PROCEDURES_MAX_CLIENTS_PER_UNIT` (opcional; limita clientes por unidade no modo `procedures`, útil para smoke test)
 - `EF_AGENDA_SYNC_URL` (endpoint de sync, ex.: `https://espacofacial.com/api/agenda/sync`)
 - `EF_AGENDA_SYNC_TOKEN` (Bearer token do endpoint de sync)
 - `EF_BOOKING_API_HOST` (default: `127.0.0.1`)
@@ -107,6 +110,22 @@ Você pode criar um `.env` (não commitado) neste diretório. Use como base o `.
 ## Google Sheets (Caixa)
 
 - Coloque o service account em `secrets/ef_service_account.json` (já está no `.gitignore`).
+
+## Export de procedimentos dos clientes
+
+- Export completo: `EF_MODE=procedures HEADLESS=1 ./.venv/bin/python run_scraper.py`
+- Smoke test curto: `EF_MODE=procedures HEADLESS=1 EF_PROCEDURES_MAX_PAGES=1 EF_PROCEDURES_MAX_CLIENTS_PER_UNIT=2 ./.venv/bin/python run_scraper.py`
+
+Saídas:
+
+- `report/procedimentos_clientes_espacofacial.csv`
+- `report/procedimentos_clientes_espacofacial.xlsx`
+- `report/procedimentos_clientes_espacofacial_resumo.json`
+
+Observações:
+
+- O modo `procedures` atualiza os arquivos parciais durante a execução, para não perder progresso se houver falha.
+- Erros pontuais por cliente são registrados no JSON de resumo em `client_errors`, sem interromper o restante do lote.
 
 ## Self-test
 

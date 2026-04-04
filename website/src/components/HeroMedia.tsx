@@ -149,7 +149,6 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
                         fill
                         priority={opts.kind === "active"}
                         sizes="100vw"
-                        unoptimized
                         onError={() => {
                             if (items.length <= 1) return;
                             if (opts.kind !== "active") return;

@@ -39,6 +39,7 @@ function normalizePatientGender(raw: string): PatientGender | "" {
     if (!value) return "";
     if (value === "male" || value === "masculino" || value === "masc" || value === "m") return "male";
     if (value === "female" || value === "feminino" || value === "fem" || value === "f") return "female";
+    if (value === "unspecified" || value === "prefer_not_to_say" || value === "nao informar" || value === "não informar") return "unspecified";
     return "";
 }
 
@@ -136,7 +137,7 @@ async function expireStaleOverlaps(db: Awaited<ReturnType<typeof getBookingDb>>,
 
 async function upsertCustomer(
     db: Awaited<ReturnType<typeof getBookingDb>>,
-    params: { name: string; email: string; whatsapp: string; cpf: string; address: string; now: number },
+    params: { name: string; email: string; whatsapp: string; cpf: string | null; address: string | null; now: number },
 ) {
     const existing = await db
         .prepare("SELECT id FROM booking_customers WHERE email = ? OR (cpf IS NOT NULL AND cpf = ?) LIMIT 1")
@@ -230,8 +231,8 @@ export async function POST(request: Request) {
     const patientGender = normalizePatientGender(body.patientGender ?? "");
     const email = normalizeEmail(body.email ?? "");
     const whatsapp = normalizePhone(body.whatsapp ?? "");
-    const cpf = normalizeCpf(body.cpf ?? "");
-    const address = clampText(sanitizeOneLine(body.address ?? ""), 160);
+    const cpf = normalizeCpf(body.cpf ?? "") || null;
+    const address = clampText(sanitizeOneLine(body.address ?? ""), 160) || null;
 
     // Optional field, but avoid sensitive prompts.
     const rawNotes = clampText((body.notes ?? "").trim(), 300) || null;
@@ -262,14 +263,6 @@ export async function POST(request: Request) {
 
     if (!whatsapp) {
         return json({ ok: false, error: "invalid_whatsapp" }, { status: 400 });
-    }
-
-    if (!cpf) {
-        return json({ ok: false, error: "invalid_cpf" }, { status: 400 });
-    }
-
-    if (!address) {
-        return json({ ok: false, error: "missing_address" }, { status: 400 });
     }
 
     const service =
@@ -360,8 +353,7 @@ export async function POST(request: Request) {
     const requireTurnstile =
         requireTurnstileRaw === "1" ||
         requireTurnstileRaw === "true" ||
-        requireTurnstileRaw === "yes" ||
-        (requireTurnstileRaw === "" && process.env.NODE_ENV === "production");
+        requireTurnstileRaw === "yes";
     if (requireTurnstile && !turnstileSecret) {
         return json({ ok: false, error: "turnstile_unavailable" }, { status: 503 });
     }
@@ -564,8 +556,8 @@ export async function POST(request: Request) {
                 patientGender,
                 email,
                 whatsapp,
-                cpf,
-                address,
+                cpf: cpf ?? undefined,
+                address: address ?? undefined,
                 doctorName: safeDoctorName,
             })
             : {

@@ -140,7 +140,7 @@ export function paginatePlaceSnapshotPhotos(
 
 export function paginatePlaceSnapshotReviews(
     snapshot: PlaceSnapshotPayload,
-    params: { placeId: string; pageSize: number },
+    params: { placeId: string; pageSize: number; offset?: number | null },
 ): {
     available: true;
     reviews: Array<{
@@ -152,12 +152,14 @@ export function paginatePlaceSnapshotReviews(
         relativeTimeDescription: string;
         time: number | null;
     }>;
-    nextPageToken: null;
+    nextPageToken: string | null;
 } {
     const placeId = String(params.placeId ?? "").trim();
+    const offset = Math.max(0, Math.floor(params.offset ?? 0));
     const pageSize = Math.max(1, Math.floor(params.pageSize));
-    const reviews = (snapshot.reviews ?? []).slice(0, pageSize).map((review, index) => ({
-        reviewId: `${placeId}_${review.time ?? index}`,
+    const allReviews = snapshot.reviews ?? [];
+    const reviews = allReviews.slice(offset, offset + pageSize).map((review, index) => ({
+        reviewId: `${placeId}_${review.time ?? offset + index}`,
         authorName: review.authorName ?? "",
         profilePhotoUrl: null,
         rating: typeof review.rating === "number" ? review.rating : null,
@@ -165,11 +167,12 @@ export function paginatePlaceSnapshotReviews(
         relativeTimeDescription: review.relativeTimeDescription ?? "",
         time: typeof review.time === "number" ? review.time : null,
     }));
+    const nextOffset = offset + pageSize;
 
     return {
         available: true,
         reviews,
-        nextPageToken: null,
+        nextPageToken: nextOffset < allReviews.length ? String(nextOffset) : null,
     };
 }
 

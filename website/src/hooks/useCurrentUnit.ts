@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { units, type Unit } from "@/data/units";
+import { normalizeUnitSlug } from "@/lib/unitRoutes";
 import { getStoredUnitSlug, setStoredUnitSlug } from "@/lib/unitSelection";
 
 function findUnitBySlug(slug: string | null | undefined): Unit | null {
@@ -10,15 +11,11 @@ function findUnitBySlug(slug: string | null | undefined): Unit | null {
     return units.find((u) => u.slug === slug) ?? null;
 }
 
-function normalizeSlug(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 function findUnitBySlugOrAlias(slug: string | null | undefined): Unit | null {
     if (!slug) return null;
     return (
         units.find((u) => u.slug === slug) ??
-        units.find((u) => normalizeSlug(u.slug) === normalizeSlug(slug)) ??
+        units.find((u) => normalizeUnitSlug(u.slug) === normalizeUnitSlug(slug)) ??
         null
     );
 }

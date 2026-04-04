@@ -106,7 +106,16 @@ export async function GET(req: Request) {
                 includeStories,
             });
             if (!liveFallback) {
-                return NextResponse.json({ ok: false, error: "feed_unavailable" }, { status: 502 });
+                return NextResponse.json(
+                    { ok: false, error: "feed_unavailable" },
+                    {
+                        status: 200,
+                        headers: {
+                            "cache-control": "public, max-age=30, s-maxage=30",
+                            "x-instagram-feed-source": "unavailable",
+                        },
+                    },
+                );
             }
             return NextResponse.json(liveFallback, {
                 status: 200,
@@ -140,6 +149,15 @@ export async function GET(req: Request) {
             },
         });
     } catch {
-        return NextResponse.json({ ok: false, error: "instagram_feed_error" }, { status: 500 });
+        return NextResponse.json(
+            { ok: false, error: "instagram_feed_error" },
+            {
+                status: 200,
+                headers: {
+                    "cache-control": "no-store",
+                    "x-instagram-feed-source": "exception",
+                },
+            },
+        );
     }
 }

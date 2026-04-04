@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { units } from "@/data/units";
+import { getDigitalJourneyUnits } from "@/data/units";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackEvent } from "@/lib/analytics";
 
-const ALLOWED_UNIT_SLUGS = ["barrashoppingsul", "novo-hamburgo"] as const;
-
 function getAllowedUnits() {
-    return units.filter((u) => (ALLOWED_UNIT_SLUGS as readonly string[]).includes(u.slug));
+    return getDigitalJourneyUnits();
 }
 
 export default function UnitChooser() {

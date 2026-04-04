@@ -7,14 +7,14 @@ import AboutUsSection from "@/components/AboutUsSection";
 const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com").replace(/\/$/, "");
 
 export const metadata: Metadata = {
-  title: "Sobre a Espaço Facial",
+  title: "Sobre",
   description:
-    "Conheça a história da Espaço Facial, nossa equipe e a abordagem de harmonização facial e corporal.",
+    "Conheça a Espaço Facial, nossa forma de atendimento e o cuidado por trás de cada avaliação.",
   alternates: { canonical: `${siteUrl}/sobre` },
   openGraph: {
-    title: "Sobre a Espaço Facial",
+    title: "Sobre | Espaço Facial",
     description:
-      "Conheça a história da Espaço Facial, nossa equipe e a abordagem de harmonização facial e corporal.",
+      "Conheça a Espaço Facial, nossa forma de atendimento e o cuidado por trás de cada avaliação.",
     url: `${siteUrl}/sobre`,
     type: "website",
   },
@@ -25,10 +25,12 @@ export default function AboutPage() {
     <>
       <Header />
       <main className="container">
-        <section className="pageSection" style={{ marginTop: 40 }}>
-          <h1 className="sectionTitle">Sobre Nós</h1>
-          <AboutUsSection />
-        </section>
+        <AboutUsSection
+          headingLevel={1}
+          selectedTitle="Conheça a unidade"
+          selectedSubtitle="Veja localização, fotos, avaliações e formas de contato antes de agendar."
+          unselectedTitle="Espaço Facial"
+        />
       </main>
       <Footer />
       <FloatingContact />

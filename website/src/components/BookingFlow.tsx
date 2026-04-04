@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { units } from "@/data/units";
+import { getDigitalJourneyUnits, units } from "@/data/units";
 import { services, type Service } from "@/data/services";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { useTeamDirectory } from "@/hooks/useTeamDirectory";
@@ -50,7 +51,6 @@ type BookingStatus = {
 };
 
 type StatusResponse = { ok: true; booking: BookingStatus } | { ok: false; error: string };
-type DetailsStage = "contact" | "identity";
 type DoctorSelection = { slug: string; name: string; handle: string | null };
 
 const ANY_DOCTOR: DoctorSelection = { slug: "any", name: "Sem Preferência", handle: null };
@@ -136,18 +136,11 @@ function formatBrPhone(input: string): string {
     return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-function formatCpf(input: string): string {
-    const digits = (input ?? "").replace(/\D/g, "").slice(0, 11);
-    if (digits.length <= 3) return digits;
-    if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
-    if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
-    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
-}
-
-function normalizePatientGender(input: string): "female" | "male" | "" {
+function normalizePatientGender(input: string): "female" | "male" | "unspecified" | "" {
     const value = (input ?? "").trim().toLowerCase();
     if (value === "female" || value === "feminino" || value === "f") return "female";
     if (value === "male" || value === "masculino" || value === "m") return "male";
+    if (value === "unspecified" || value === "prefer_not_to_say" || value === "nao informar" || value === "não informar") return "unspecified";
     return "";
 }
 
@@ -171,25 +164,42 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
     const anchorRef = useRef<HTMLDivElement | null>(null);
     const tooltipRef = useRef<HTMLDivElement | null>(null);
     const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [mounted, setMounted] = useState(false);
     const [open, setOpen] = useState(false);
     const [position, setPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
 
-    const clearCloseTimer = useCallback(() => {
-        if (!closeTimerRef.current) return;
-        clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
+    const clearTimers = useCallback(() => {
+        if (closeTimerRef.current) {
+            clearTimeout(closeTimerRef.current);
+            closeTimerRef.current = null;
+        }
+        if (exitTimerRef.current) {
+            clearTimeout(exitTimerRef.current);
+            exitTimerRef.current = null;
+        }
     }, []);
 
     const openTooltip = useCallback(() => {
         if (props.disabled) return;
-        clearCloseTimer();
+        clearTimers();
+        if (!mounted) {
+            setMounted(true);
+            requestAnimationFrame(() => setOpen(true));
+            return;
+        }
         setOpen(true);
-    }, [clearCloseTimer, props.disabled]);
+    }, [clearTimers, mounted, props.disabled]);
 
     const scheduleClose = useCallback(() => {
-        clearCloseTimer();
-        closeTimerRef.current = setTimeout(() => setOpen(false), 120);
-    }, [clearCloseTimer]);
+        clearTimers();
+        closeTimerRef.current = setTimeout(() => {
+            setOpen(false);
+            exitTimerRef.current = setTimeout(() => {
+                setMounted(false);
+            }, 220);
+        }, 90);
+    }, [clearTimers]);
 
     const updatePosition = useCallback(() => {
         const anchor = anchorRef.current;
@@ -207,12 +217,12 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
     }, []);
 
     useLayoutEffect(() => {
-        if (!open) return;
+        if (!mounted) return;
         updatePosition();
-    }, [open, updatePosition, props.content]);
+    }, [mounted, open, updatePosition, props.content]);
 
     useEffect(() => {
-        if (!open) return;
+        if (!mounted) return;
         const onWindowChange = () => updatePosition();
         window.addEventListener("resize", onWindowChange);
         window.addEventListener("scroll", onWindowChange, true);
@@ -220,11 +230,11 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
             window.removeEventListener("resize", onWindowChange);
             window.removeEventListener("scroll", onWindowChange, true);
         };
-    }, [open, updatePosition]);
+    }, [mounted, updatePosition]);
 
     useEffect(() => {
-        return () => clearCloseTimer();
-    }, [clearCloseTimer]);
+        return () => clearTimers();
+    }, [clearTimers]);
 
     return (
         <div
@@ -236,17 +246,17 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
             onBlurCapture={scheduleClose}
         >
             {props.children}
-            {open && typeof document !== "undefined"
+            {mounted && typeof document !== "undefined"
                 ? createPortal(
                       <div
                           ref={tooltipRef}
                           className={props.className}
+                          data-state={open ? "open" : "closed"}
                           role="tooltip"
                           style={{
                               position: "fixed",
                               left: position.left,
                               top: position.top,
-                              transform: "translateX(-50%)",
                               display: "block",
                               zIndex: 5000,
                           }}
@@ -328,7 +338,6 @@ export default function BookingFlow() {
     const { members, error: membersError, loading: membersLoading } = useTeamDirectory();
 
     const [step, setStep] = useState<"pick" | "details" | "submitted">("pick");
-    const [detailsStage, setDetailsStage] = useState<DetailsStage>("contact");
 
     const [doctor, setDoctor] = useState<DoctorSelection | null>(null);
     const [selectedServices, setSelectedServices] = useState<Service[]>([]);
@@ -342,11 +351,9 @@ export default function BookingFlow() {
     const [slotsError, setSlotsError] = useState<string | null>(null);
 
     const [patientName, setPatientName] = useState("");
-    const [patientGender, setPatientGender] = useState<"female" | "male" | "">("");
+    const [patientGender, setPatientGender] = useState<"female" | "male" | "unspecified" | "">("");
     const [email, setEmail] = useState("");
     const [whatsapp, setWhatsapp] = useState("");
-    const [cpf, setCpf] = useState("");
-    const [address, setAddress] = useState("");
     const [notes, setNotes] = useState("");
 
     const [detailsStartedAtMs, setDetailsStartedAtMs] = useState<number | null>(null);
@@ -360,6 +367,7 @@ export default function BookingFlow() {
 
     const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } } | null>(null);
     const [status, setStatus] = useState<BookingStatus | null>(null);
+    const patientNameInputRef = useRef<HTMLInputElement | null>(null);
     const draftToRestoreRef = useRef<BookingDraftState | null>(null);
     const draftAppliedRef = useRef(false);
     const draftReadyRef = useRef(false);
@@ -368,7 +376,7 @@ export default function BookingFlow() {
         return value === "none" || value === "clear";
     }, [searchParams]);
 
-    const allowedUnitSlugs = useMemo(() => new Set(["barrashoppingsul", "novo-hamburgo"]), []);
+    const allowedUnitSlugs = useMemo(() => new Set(getDigitalJourneyUnits().map((unit) => unit.slug)), []);
 
     useEffect(() => {
         const draft = readBookingDraft();
@@ -417,6 +425,12 @@ export default function BookingFlow() {
     useEffect(() => {
         const prev = lastUnitSlugRef.current;
         if (prev === unitSlug) return;
+        if (unitSlug) {
+            trackBookingFunnelStep({
+                step: "unit_selected",
+                unitSlug,
+            });
+        }
         lastUnitSlugRef.current = unitSlug;
         appliedDoctorQueryRef.current = null;
         appliedServiceQueryRef.current = null;
@@ -427,7 +441,6 @@ export default function BookingFlow() {
         setDateTouched(false);
         setTimeKey(null);
         setStep("pick");
-        setDetailsStage("contact");
         setDetailsStartedAtMs(null);
         setHoneypot("");
         setTurnstileToken(null);
@@ -439,12 +452,8 @@ export default function BookingFlow() {
         setPatientGender("");
         setEmail("");
         setWhatsapp("");
-        setCpf("");
-        setAddress("");
         setNotes("");
     }, [unitSlug]);
-
-    const unit = useMemo(() => findUnit(unitSlug), [unitSlug]);
 
     useEffect(() => {
         if (draftAppliedRef.current) return;
@@ -472,12 +481,9 @@ export default function BookingFlow() {
         setPatientGender(normalizePatientGender(draft.patientGender));
         setEmail(draft.email);
         setWhatsapp(draft.whatsapp);
-        setCpf(draft.cpf);
-        setAddress(draft.address);
         setNotes(draft.notes);
         const canRestoreDetails = draft.step === "details" && restoredServiceIds.length > 0 && !!draft.dateKey && !!draft.timeKey;
         setStep(canRestoreDetails ? "details" : "pick");
-        setDetailsStage(canRestoreDetails ? draft.detailsStage : "contact");
         if (canRestoreDetails) setDetailsStartedAtMs(Date.now());
 
         trackBookingFunnelStep({
@@ -488,7 +494,7 @@ export default function BookingFlow() {
             serviceId: draft.serviceId,
             date: draft.dateKey,
             time: draft.timeKey,
-            detailsStage: draft.detailsStage,
+            detailsStage: "contact",
         });
 
         draftAppliedRef.current = true;
@@ -645,7 +651,7 @@ export default function BookingFlow() {
                 if (!res.ok || !json || !isOkResponse(json)) {
                     const err = (json && !isOkResponse(json) && "error" in json && typeof json.error === "string" && json.error) || "Não foi possível carregar horários.";
                     if (err === "doctors_unavailable") {
-                        setSlotsError("Equipe indisponível no momento. Tente novamente mais tarde.");
+                        setSlotsError("A agenda desta unidade está sendo atualizada. Tente novamente em instantes.");
                     } else {
                         setSlotsError(err);
                     }
@@ -668,42 +674,46 @@ export default function BookingFlow() {
 
         if (!unitSlug) {
             setSubmitError("Selecione a unidade no topo para agendar.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "missing_unit", unitSlug: null });
             return;
         }
         if (!primaryService || !dateKey || !timeKey) {
             setSubmitError("Selecione procedimento, data e horário.");
+            trackBookingFunnelStep({
+                step: "submit_error",
+                errorReason: "missing_selection",
+                unitSlug,
+                doctorSlug: effectiveDoctor.slug,
+                serviceId: primaryService?.id ?? null,
+                date: dateKey,
+                time: timeKey,
+                detailsStage: "contact",
+            });
             return;
         }
         if (durationMinutes <= 0) {
             setSubmitError("Selecione ao menos um tipo de atendimento (tempo).");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "missing_duration", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
             return;
         }
         if (!patientName.trim()) {
             setSubmitError("Informe seu nome.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "missing_name", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
             return;
         }
         if (!patientGender) {
             setSubmitError("Selecione o gênero.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "missing_gender", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
             return;
         }
         if (!emailValue || !emailSeemsValid) {
             setSubmitError("Informe um e-mail válido.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "invalid_email", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
             return;
         }
         if (!whatsapp.trim()) {
             setSubmitError("Informe seu WhatsApp.");
-            return;
-        }
-        if (!cpfDigits || !cpfSeemsValid) {
-            setSubmitError("Informe um CPF válido.");
-            return;
-        }
-        if (!address.trim()) {
-            setSubmitError("Informe seu endereço completo.");
-            return;
-        }
-        if (turnstileSiteKey && !turnstileToken) {
-            setSubmitError("Confirme que você não é um robô.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "missing_whatsapp", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
             return;
         }
 
@@ -730,8 +740,6 @@ export default function BookingFlow() {
                     patientGender,
                     email: emailValue,
                     whatsapp,
-                    cpf: cpfDigits,
-                    address: address.trim(),
                     notes,
                     hp: honeypot,
                     formStartedAtMs: detailsStartedAtMs,
@@ -745,57 +753,61 @@ export default function BookingFlow() {
                 const err = (json && "error" in json && json.error) || "Não foi possível enviar seu pedido.";
                 if (err === "slot_in_review") {
                     setSubmitError("Esse horário acabou de entrar em análise. Escolha outro horário.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "no_availability") {
                     setSubmitError("Esse horário não está mais disponível. Escolha outro horário.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "no_doctors_for_unit") {
                     setSubmitError("Não foi possível selecionar um profissional para esta unidade. Tente escolher um profissional específico.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "doctors_unavailable") {
-                    setSubmitError("Equipe indisponível no momento. Tente novamente mais tarde.");
+                    setSubmitError("A agenda desta unidade está sendo atualizada. Tente novamente em instantes.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "rate_limited") {
                     setSubmitError("Muitas tentativas em sequência. Aguarde alguns segundos e tente novamente.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "too_fast") {
                     setSubmitError("Muito rápido. Aguarde um instante e tente novamente.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "spam_detected") {
                     setSubmitError("Não foi possível enviar. Recarregue a página e tente novamente.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "invalid_email") {
                     setSubmitError("Informe um e-mail válido.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "invalid_gender") {
                     setSubmitError("Selecione o gênero.");
-                    return;
-                }
-                if (err === "invalid_cpf") {
-                    setSubmitError("Informe um CPF válido.");
-                    return;
-                }
-                if (err === "missing_address") {
-                    setSubmitError("Informe seu endereço completo.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "turnstile_failed") {
                     setSubmitError("Falha na verificação anti-robô. Recarregue a página e tente novamente.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 if (err === "turnstile_unavailable") {
-                    setSubmitError("Verificação anti-robô indisponível no momento. Tente novamente em instantes.");
+                    setSubmitError("A confirmação do envio ficou temporariamente indisponível. Recarregue a página e tente novamente.");
+                    trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                     return;
                 }
                 setSubmitError("Não foi possível enviar seu pedido. Tente novamente.");
+                trackBookingFunnelStep({ step: "submit_error", errorReason: err, unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
                 return;
             }
 
@@ -819,6 +831,7 @@ export default function BookingFlow() {
             setStep("submitted");
         } catch {
             setSubmitError("Falha de rede ao enviar.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "network_failure", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
         } finally {
             setSubmitting(false);
         }
@@ -903,7 +916,6 @@ export default function BookingFlow() {
         ensureDefaultSelections();
         setTimeKey(nextTime);
         setStep("details");
-        setDetailsStage("contact");
         setDetailsStartedAtMs(Date.now());
         setTurnstileToken(null);
         setTurnstileHadError(false);
@@ -919,30 +931,17 @@ export default function BookingFlow() {
         });
     }
 
-    const showSensitiveHint = true;
     const emailValue = email.trim().toLowerCase();
     const emailSeemsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
     const whatsappDigits = whatsapp.replace(/\D/g, "");
     const whatsappSeemsValid = whatsappDigits.length >= 10;
-    const cpfDigits = cpf.replace(/\D/g, "");
-    const cpfSeemsValid = cpfDigits.length === 11;
-    const addressSeemsValid = address.trim().length >= 6;
-    const turnstileRequired = !!turnstileSiteKey;
-    const canAdvanceIdentity =
-        !!selectedSlot &&
-        !!patientName.trim() &&
-        !!patientGender &&
-        emailSeemsValid &&
-        whatsappSeemsValid;
+    const hasTurnstileWidget = !!turnstileSiteKey;
     const canSubmit =
         !!selectedSlot &&
         !!patientName.trim() &&
         !!patientGender &&
         emailSeemsValid &&
-        whatsappSeemsValid &&
-        cpfSeemsValid &&
-        addressSeemsValid &&
-        (!turnstileRequired || !!turnstileToken);
+        whatsappSeemsValid;
 
     const showDetailsModal = step === "details" && !!unitSlug && !!primaryService && !!dateKey && !!timeKey;
 
@@ -957,22 +956,41 @@ export default function BookingFlow() {
 
     useEffect(() => {
         if (!showDetailsModal) return;
+        const timer = window.setTimeout(() => {
+            patientNameInputRef.current?.focus();
+        }, 0);
         const onKey = (event: KeyboardEvent) => {
             if (event.key === "Escape") {
+                trackBookingFunnelStep({
+                    step: "details_closed",
+                    unitSlug,
+                    doctorSlug: effectiveDoctorSlug,
+                    serviceId: effectiveServiceId,
+                    date: dateKey,
+                    time: timeKey,
+                    detailsStage: "contact",
+                });
                 setStep("pick");
-                setDetailsStage("contact");
                 setSubmitError(null);
                 setTurnstileToken(null);
                 setTurnstileHadError(false);
             }
         };
         window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [showDetailsModal]);
+        return () => {
+            window.clearTimeout(timer);
+            window.removeEventListener("keydown", onKey);
+        };
+    }, [dateKey, effectiveDoctorSlug, effectiveServiceId, showDetailsModal, timeKey, unitSlug]);
 
     function selectDoctor(nextDoctor: DoctorSelection | null) {
         const nextSelection = doctor?.slug === nextDoctor?.slug ? null : nextDoctor;
         if (!doctor && !nextSelection) return;
+        trackBookingFunnelStep({
+            step: nextSelection ? "doctor_selected" : "doctor_cleared",
+            unitSlug,
+            doctorSlug: nextSelection?.slug ?? null,
+        });
         setDoctor(nextSelection);
         setDateKey(null);
         setDateTouched(false);
@@ -984,12 +1002,27 @@ export default function BookingFlow() {
         setSelectedServices((current) => {
             const exists = current.some((item) => item.id === nextService.id);
             if (nextService.id === OTHER_SERVICE.id) {
-                return exists ? [] : [OTHER_SERVICE];
+                const nextSelection = exists ? [] : [OTHER_SERVICE];
+                trackBookingFunnelStep({
+                    step: nextSelection.length ? "service_selected" : "service_cleared",
+                    unitSlug,
+                    doctorSlug: effectiveDoctorSlug,
+                    serviceId: nextSelection[0]?.id ?? null,
+                    selectedCount: nextSelection.length,
+                });
+                return nextSelection;
             }
 
             const withoutOther = current.filter((item) => item.id !== OTHER_SERVICE.id);
-            if (exists) return withoutOther.filter((item) => item.id !== nextService.id);
-            return [...withoutOther, nextService];
+            const nextSelection = exists ? withoutOther.filter((item) => item.id !== nextService.id) : [...withoutOther, nextService];
+            trackBookingFunnelStep({
+                step: nextSelection.length ? "service_selected" : "service_cleared",
+                unitSlug,
+                doctorSlug: effectiveDoctorSlug,
+                serviceId: nextService.id,
+                selectedCount: nextSelection.length,
+            });
+            return nextSelection;
         });
         setDateKey(null);
         setDateTouched(false);
@@ -1014,8 +1047,6 @@ export default function BookingFlow() {
                 patientGender ||
                 email.trim() ||
                 whatsapp.trim() ||
-                cpf.trim() ||
-                address.trim() ||
                 notes.trim(),
         );
 
@@ -1037,20 +1068,14 @@ export default function BookingFlow() {
             dateKey,
             timeKey,
             step: step === "details" ? "details" : "pick",
-            detailsStage,
             patientName,
             patientGender,
             email,
             whatsapp,
-            cpf,
-            address,
             notes,
         });
     }, [
-        address,
-        cpf,
         dateKey,
-        detailsStage,
         doctor?.handle,
         doctor?.name,
         doctor?.slug,
@@ -1087,8 +1112,18 @@ export default function BookingFlow() {
                         <div className="bookingFlow__entryTitle">Escolha o seu doutor</div>
                         <div style={{ marginTop: 2 }}>
                             {!unitLabel ? (
-                                <div className="small bookingFlow__unitStatus bookingFlow__unitStatus--error" role="status">
-                                    Selecione a unidade para liberar os doutores.
+                                <div className="bookingFlow__emptyState" role="status">
+                                    <span className="bookingFlow__emptyEyebrow">Primeiro passo</span>
+                                    <strong className="bookingFlow__emptyTitle">A equipe aparece depois da unidade.</strong>
+                                    <p className="bookingFlow__emptyBody">
+                                        Depois de escolher a unidade, mostramos os especialistas disponíveis naquele local.
+                                        Se preferir comparar os perfis antes, abra a página de especialistas.
+                                    </p>
+                                    <div className="bookingFlow__emptyActions">
+                                        <Link className="decisionCard__secondary" href="/doutores">
+                                            Ver especialistas
+                                        </Link>
+                                    </div>
                                 </div>
                             ) : doctorsForUnit === null || membersLoading ? (
                                 <div className="bookingFlow__doctorLoading" aria-hidden="true">
@@ -1098,7 +1133,7 @@ export default function BookingFlow() {
                                 </div>
                             ) : doctorsForUnit.length === 0 ? (
                                 <div className="small">
-                                    {membersError ? "Equipe indisponível no momento. Tente novamente mais tarde." : "Nenhum doutor encontrado para esta unidade."}
+                                    {membersError ? "A agenda desta unidade está sendo atualizada. Tente novamente em instantes." : "Nenhum doutor encontrado para esta unidade."}
                                 </div>
                             ) : (
                                 <UnitDoctorsGrid
@@ -1117,103 +1152,110 @@ export default function BookingFlow() {
                         </div>
                     </div>
 
-                    <div className={`card bookingFlow__cardProcedure ${unitSlug ? "bookingFlow__cardProcedure--half" : "bookingFlow__cardProcedure--full"} ${canPickProcedure ? "" : "bookingFlow__card--locked"}`.trim()} style={{ padding: 14 }}>
+                    <div className={`card bookingFlow__cardProcedure ${unitSlug ? "bookingFlow__cardProcedure--half" : "bookingFlow__cardProcedure--full"}`.trim()} style={{ padding: 14 }}>
                         <div className="bookingFlow__entryTitle">Escolha os procedimentos</div>
                         <div className="bookingFlow__cardSub">Selecione um ou mais procedimentos para o seu atendimento.</div>
                         {!canPickProcedure ? (
-                            <div className="bookingFlow__lockOverlay" aria-hidden="true">
-                                <div className="bookingFlow__lockText">Selecione a unidade no topo para continuar.</div>
+                            <div className="bookingFlow__emptyState" role="status">
+                                <span className="bookingFlow__emptyEyebrow">Como continuar</span>
+                                <strong className="bookingFlow__emptyTitle">Os procedimentos aparecem depois da unidade.</strong>
+                                <p className="bookingFlow__emptyBody">
+                                    Primeiro escolha a unidade. Depois você pode selecionar o procedimento
+                                    ou seguir mesmo se ainda quiser orientação.
+                                </p>
                             </div>
-                        ) : null}
-                        <HoverScrollPicker ariaLabel="Lista de procedimentos" className="bookingFlow__picker--rail">
-                            <div className="bookingFlow__procedureBadgeGrid">
-                                {services.map((s) => {
-                                    const active = selectedServices.some((item) => item.id === s.id);
-                                    return (
-                                        <div key={s.id} className="bookingFlow__procedureBadgeWrap" role="listitem" data-active={active ? "true" : "false"}>
-                                            <PortalTooltip
-                                                className="bookingFlow__procedureTooltip"
-                                                disabled={!s.subtitle}
-                                                content={s.subtitle ?? ""}
-                                            >
-                                                <button
-                                                    type="button"
-                                                    disabled={!canPickProcedure}
-                                                    className="bookingFlow__procedureBadge"
-                                                    data-active={active ? "true" : "false"}
-                                                    onClick={() => toggleProcedure(s)}
+                        ) : (
+                            <HoverScrollPicker ariaLabel="Lista de procedimentos" className="bookingFlow__picker--rail">
+                                <div className="bookingFlow__procedureBadgeGrid">
+                                    {services.map((s) => {
+                                        const active = selectedServices.some((item) => item.id === s.id);
+                                        return (
+                                            <div key={s.id} className="bookingFlow__procedureBadgeWrap" role="listitem" data-active={active ? "true" : "false"}>
+                                                <PortalTooltip
+                                                    className="bookingFlow__procedureTooltip"
+                                                    disabled={!s.subtitle}
+                                                    content={s.subtitle ?? ""}
                                                 >
-                                                    <span className="bookingFlow__procedureBadgeAvatar">
-                                                        {s.highlightImage ? (
-                                                            <Image
-                                                                src={s.highlightImage}
-                                                                alt=""
-                                                                fill
-                                                                sizes="76px"
-                                                                style={{ objectFit: "cover" }}
-                                                                unoptimized
-                                                                aria-hidden="true"
-                                                            />
-                                                        ) : (
-                                                            <span className="bookingFlow__procedureBadgeFallback">EF</span>
-                                                        )}
-                                                    </span>
-                                                    <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
-                                                </button>
-                                            </PortalTooltip>
-                                        </div>
-                                    );
-                                })}
+                                                    <button
+                                                        type="button"
+                                                        className="bookingFlow__procedureBadge"
+                                                        data-active={active ? "true" : "false"}
+                                                        onClick={() => toggleProcedure(s)}
+                                                    >
+                                                        <span className="bookingFlow__procedureBadgeAvatar">
+                                                            {s.highlightImage ? (
+                                                                <Image
+                                                                    src={s.highlightImage}
+                                                                    alt=""
+                                                                    fill
+                                                                    sizes="76px"
+                                                                    style={{ objectFit: "cover" }}
+                                                                    unoptimized
+                                                                    aria-hidden="true"
+                                                                />
+                                                            ) : (
+                                                                <span className="bookingFlow__procedureBadgeFallback">EF</span>
+                                                            )}
+                                                        </span>
+                                                        <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
+                                                    </button>
+                                                </PortalTooltip>
+                                            </div>
+                                        );
+                                    })}
 
-                                <div
-                                    className="bookingFlow__procedureBadgeWrap"
-                                    role="listitem"
-                                    data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
-                                >
-                                    <PortalTooltip className="bookingFlow__procedureTooltip" content="Outro procedimento ou combinação">
-                                        <button
-                                            type="button"
-                                            disabled={!canPickProcedure}
-                                            className="bookingFlow__procedureBadge"
-                                            data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
-                                            onClick={() => toggleProcedure(OTHER_SERVICE)}
-                                        >
-                                            <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
-                                                <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
-                                            </span>
-                                            <span className="bookingFlow__procedureBadgeLabel">Outro</span>
-                                        </button>
-                                    </PortalTooltip>
+                                    <div
+                                        className="bookingFlow__procedureBadgeWrap"
+                                        role="listitem"
+                                        data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
+                                    >
+                                        <PortalTooltip className="bookingFlow__procedureTooltip" content="Outro procedimento ou combinação">
+                                            <button
+                                                type="button"
+                                                className="bookingFlow__procedureBadge"
+                                                data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
+                                                onClick={() => toggleProcedure(OTHER_SERVICE)}
+                                            >
+                                                <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
+                                                    <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
+                                                </span>
+                                                <span className="bookingFlow__procedureBadgeLabel">Outro</span>
+                                            </button>
+                                        </PortalTooltip>
+                                    </div>
                                 </div>
-                            </div>
-                        </HoverScrollPicker>
+                            </HoverScrollPicker>
+                        )}
                     </div>
 
-                    <div className={`card bookingFlow__cardFull bookingFlow__cardDateTime ${canPick ? "" : "bookingFlow__card--locked"}`.trim()} style={{ padding: 14 }}>
+                    <div className="card bookingFlow__cardFull bookingFlow__cardDateTime" style={{ padding: 14 }}>
                         <div className="bookingFlow__cardHeader">
                             <div>
                                 <div className="bookingFlow__entryTitle">Data e horário</div>
                                 <div className="bookingFlow__cardSub">Selecione uma data e verifique os horários disponíveis.</div>
                             </div>
-                            <div className="bookingFlow__legend" aria-hidden="true">
-                                <div className="bookingFlow__legendItem">
-                                    <span className="bookingFlow__legendSwatch bookingFlow__legendSwatch--past" />
-                                    Passou
+                            {canPick ? (
+                                <div className="bookingFlow__legend" aria-hidden="true">
+                                    <div className="bookingFlow__legendItem">
+                                        <span className="bookingFlow__legendSwatch bookingFlow__legendSwatch--past" />
+                                        Passou
+                                    </div>
+                                    <div className="bookingFlow__legendItem">
+                                        <span className="bookingFlow__legendSwatch bookingFlow__legendSwatch--occupied" />
+                                        Ocupado
+                                    </div>
                                 </div>
-                                <div className="bookingFlow__legendItem">
-                                    <span className="bookingFlow__legendSwatch bookingFlow__legendSwatch--occupied" />
-                                    Ocupado
-                                </div>
-                            </div>
+                            ) : null}
                         </div>
                         {!canPick ? (
-                            <div className="bookingFlow__lockOverlay" aria-hidden="true">
-                                <div className="bookingFlow__lockText">
-                                    Selecione a unidade no topo para ver horários.
-                                </div>
+                            <div className="bookingFlow__emptyState bookingFlow__emptyState--wide" role="status" style={{ marginTop: 12 }}>
+                                <span className="bookingFlow__emptyEyebrow">Agenda real</span>
+                                <strong className="bookingFlow__emptyTitle">Os horários aparecem quando a unidade estiver definida.</strong>
+                                <p className="bookingFlow__emptyBody">
+                                    Ao escolher a unidade, mostramos as datas e os horários disponíveis para aquele atendimento.
+                                </p>
                             </div>
-                        ) : null}
-
+                        ) : (
                         <div className="bookingFlow__datetimeGrid" style={{ marginTop: 12 }}>
                             <div>
                                 <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
@@ -1237,12 +1279,26 @@ export default function BookingFlow() {
                                                             ensureDefaultSelections();
                                                             setDateTouched(true);
                                                             if (active) {
+                                                                trackBookingFunnelStep({
+                                                                    step: "date_cleared",
+                                                                    unitSlug,
+                                                                    doctorSlug: effectiveDoctorSlug,
+                                                                    serviceId: effectiveServiceId,
+                                                                    date: d,
+                                                                });
                                                                 setDateKey(null);
                                                                 setTimeKey(null);
                                                                 setStep("pick");
                                                                 return;
                                                             }
 
+                                                            trackBookingFunnelStep({
+                                                                step: "date_selected",
+                                                                unitSlug,
+                                                                doctorSlug: effectiveDoctorSlug,
+                                                                serviceId: effectiveServiceId,
+                                                                date: d,
+                                                            });
                                                             setDateKey(d);
                                                             setTimeKey(null);
                                                             setStep("pick");
@@ -1321,18 +1377,41 @@ export default function BookingFlow() {
                                                             if (ariaDisabled) return;
                                                             if (active) {
                                                                 if (step !== "details") {
+                                                                    trackBookingFunnelStep({
+                                                                        step: "time_selected",
+                                                                        unitSlug,
+                                                                        doctorSlug: effectiveDoctorSlug,
+                                                                        serviceId: effectiveServiceId,
+                                                                        date: dateKey,
+                                                                        time: s.time,
+                                                                    });
                                                                     openDetailsModal(s.time);
                                                                     return;
                                                                 }
+                                                                trackBookingFunnelStep({
+                                                                    step: "time_cleared",
+                                                                    unitSlug,
+                                                                    doctorSlug: effectiveDoctorSlug,
+                                                                    serviceId: effectiveServiceId,
+                                                                    date: dateKey,
+                                                                    time: s.time,
+                                                                });
                                                                 setTimeKey(null);
                                                                 setStep("pick");
-                                                                setDetailsStage("contact");
                                                                 setDetailsStartedAtMs(null);
                                                                 setTurnstileToken(null);
                                                                 setTurnstileHadError(false);
                                                                 setSubmitError(null);
                                                                 return;
                                                             }
+                                                            trackBookingFunnelStep({
+                                                                step: "time_selected",
+                                                                unitSlug,
+                                                                doctorSlug: effectiveDoctorSlug,
+                                                                serviceId: effectiveServiceId,
+                                                                date: dateKey,
+                                                                time: s.time,
+                                                            });
                                                             openDetailsModal(s.time);
                                                         }}
                                                         tabIndex={ariaDisabled ? -1 : 0}
@@ -1355,8 +1434,8 @@ export default function BookingFlow() {
                                 </div>
                             </div>
                         </div>
+                        )}
                     </div>
-
                 </div>
             ) : (
                 <div className="bookingFlow__grid">
@@ -1420,14 +1499,14 @@ export default function BookingFlow() {
                                     setPatientGender("");
                                     setEmail("");
                                     setWhatsapp("");
-                                    setCpf("");
-                                    setAddress("");
                                     setNotes("");
                                     setSlots(null);
                                     setSubmitted(null);
                                     setStatus(null);
                                     setSubmitError(null);
-                                    setDetailsStage("contact");
+                                    setDetailsStartedAtMs(null);
+                                    setTurnstileToken(null);
+                                    setTurnstileHadError(false);
                                     clearBookingDraft();
                                 }}
                                 style={{ cursor: "pointer" }}
@@ -1445,8 +1524,16 @@ export default function BookingFlow() {
                     aria-modal="true"
                     onClick={(event) => {
                         if (event.target !== event.currentTarget) return;
+                        trackBookingFunnelStep({
+                            step: "details_closed",
+                            unitSlug,
+                            doctorSlug: effectiveDoctorSlug,
+                            serviceId: effectiveServiceId,
+                            date: dateKey,
+                            time: timeKey,
+                            detailsStage: "contact",
+                        });
                         setStep("pick");
-                        setDetailsStage("contact");
                         setSubmitError(null);
                         setTurnstileToken(null);
                         setTurnstileHadError(false);
@@ -1465,8 +1552,16 @@ export default function BookingFlow() {
                                 className="bookingFlow__modalClose"
                                 aria-label="Fechar"
                                 onClick={() => {
+                                    trackBookingFunnelStep({
+                                        step: "details_closed",
+                                        unitSlug,
+                                        doctorSlug: effectiveDoctorSlug,
+                                        serviceId: effectiveServiceId,
+                                        date: dateKey,
+                                        time: timeKey,
+                                        detailsStage: "contact",
+                                    });
                                     setStep("pick");
-                                    setDetailsStage("contact");
                                     setSubmitError(null);
                                     setTurnstileToken(null);
                                     setTurnstileHadError(false);
@@ -1500,212 +1595,129 @@ export default function BookingFlow() {
                                 </label>
                             </div>
 
-                            <div className="bookingFlow__modalHint">
-                                Etapa {detailsStage === "contact" ? "1 de 2" : "2 de 2"} · o fluxo salva automaticamente para continuar depois.
+                            <div className="bookingFlow__formGrid">
+                                <label className="bookingFlow__field">
+                                    <span>Nome</span>
+                                    <input
+                                        ref={patientNameInputRef}
+                                        value={patientName}
+                                        onChange={(e) => setPatientName(e.target.value)}
+                                        placeholder="Seu nome"
+                                        autoComplete="name"
+                                        className="bookingFlow__input"
+                                    />
+                                </label>
+
+                                <label className="bookingFlow__field">
+                                    <span>Gênero</span>
+                                    <select
+                                        value={patientGender}
+                                        onChange={(e) => setPatientGender(normalizePatientGender(e.target.value))}
+                                        className="bookingFlow__input"
+                                        aria-invalid={patientGender === "" && (patientName.length > 0 || email.length > 0 || whatsapp.length > 0)}
+                                    >
+                                        <option value="">Selecione</option>
+                                        <option value="female">Feminino</option>
+                                        <option value="male">Masculino</option>
+                                        <option value="unspecified">Prefiro não informar</option>
+                                    </select>
+                                </label>
+
+                                <label className="bookingFlow__field">
+                                    <span>E-mail</span>
+                                    <input
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        placeholder="voce@email.com"
+                                        autoComplete="email"
+                                        inputMode="email"
+                                        className="bookingFlow__input"
+                                        aria-invalid={email.length > 0 && !emailSeemsValid}
+                                    />
+                                </label>
+
+                                <label className="bookingFlow__field">
+                                    <span>WhatsApp</span>
+                                    <input
+                                        value={whatsapp}
+                                        onChange={(e) => setWhatsapp(formatBrPhone(e.target.value))}
+                                        placeholder="(DDD) 9xxxx-xxxx"
+                                        inputMode="tel"
+                                        autoComplete="tel"
+                                        aria-invalid={whatsapp.length > 0 && !whatsappSeemsValid}
+                                        className="bookingFlow__input"
+                                    />
+                                </label>
+
+                                <label className="bookingFlow__field" style={{ gridColumn: "1 / -1" }}>
+                                    <span>Informações</span>
+                                    <textarea
+                                        value={notes}
+                                        onChange={(e) => setNotes(e.target.value)}
+                                        placeholder="Observações relevantes para o seu atendimento (opcional)."
+                                        rows={3}
+                                        className="bookingFlow__textarea"
+                                    />
+                                </label>
                             </div>
+                            {email.length > 0 && !emailSeemsValid ? (
+                                <div className="bookingFlow__fieldError">Informe um e-mail válido.</div>
+                            ) : null}
+                            {patientGender === "" && (patientName.length > 0 || email.length > 0 || whatsapp.length > 0) ? (
+                                <div className="bookingFlow__fieldError">Selecione o gênero.</div>
+                            ) : null}
+                            {!whatsappSeemsValid && whatsapp.length > 0 ? (
+                                <div className="bookingFlow__fieldError">Informe DDD + número (ex.: (51) 99999-9999).</div>
+                            ) : null}
 
-                            <div className="bookingFlow__stageRow" role="list" aria-label="Etapas de confirmação">
-                                <div className="bookingFlow__stagePill" role="listitem" data-state={detailsStage === "contact" ? "active" : "done"}>
-                                    1. Contato
-                                </div>
-                                <div className="bookingFlow__stagePill" role="listitem" data-state={detailsStage === "identity" ? "active" : "pending"}>
-                                    2. Dados de confirmação
-                                </div>
-                            </div>
-
-                            {detailsStage === "contact" ? (
-                                <>
-                                    <div className="bookingFlow__formGrid">
-                                        <label className="bookingFlow__field">
-                                            <span>Nome</span>
-                                            <input
-                                                value={patientName}
-                                                onChange={(e) => setPatientName(e.target.value)}
-                                                placeholder="Seu nome"
-                                                autoComplete="name"
-                                                className="bookingFlow__input"
-                                            />
-                                        </label>
-
-                                        <label className="bookingFlow__field">
-                                            <span>Gênero</span>
-                                            <select
-                                                value={patientGender}
-                                                onChange={(e) => setPatientGender(normalizePatientGender(e.target.value))}
-                                                className="bookingFlow__input"
-                                                aria-invalid={patientGender === "" && (patientName.length > 0 || email.length > 0 || whatsapp.length > 0)}
-                                            >
-                                                <option value="">Selecione</option>
-                                                <option value="female">Feminino</option>
-                                                <option value="male">Masculino</option>
-                                            </select>
-                                        </label>
-
-                                        <label className="bookingFlow__field">
-                                            <span>E-mail</span>
-                                            <input
-                                                value={email}
-                                                onChange={(e) => setEmail(e.target.value)}
-                                                placeholder="voce@email.com"
-                                                autoComplete="email"
-                                                inputMode="email"
-                                                className="bookingFlow__input"
-                                                aria-invalid={email.length > 0 && !emailSeemsValid}
-                                            />
-                                        </label>
-                                    </div>
-                                    {email.length > 0 && !emailSeemsValid ? (
-                                        <div className="bookingFlow__fieldError">Informe um e-mail válido.</div>
-                                    ) : null}
-                                    {patientGender === "" && (patientName.length > 0 || email.length > 0 || whatsapp.length > 0) ? (
-                                        <div className="bookingFlow__fieldError">Selecione o gênero.</div>
-                                    ) : null}
-
-                                    <label className="bookingFlow__field">
-                                        <span>WhatsApp</span>
-                                        <input
-                                            value={whatsapp}
-                                            onChange={(e) => setWhatsapp(formatBrPhone(e.target.value))}
-                                            placeholder="(DDD) 9xxxx-xxxx"
-                                            inputMode="tel"
-                                            autoComplete="tel"
-                                            aria-invalid={whatsapp.length > 0 && !whatsappSeemsValid}
-                                            className="bookingFlow__input"
-                                        />
-                                    </label>
-                                    {!whatsappSeemsValid && whatsapp.length > 0 ? (
-                                        <div className="bookingFlow__fieldError">Informe DDD + número (ex.: (51) 99999-9999).</div>
-                                    ) : null}
-
-                                    <div className="bookingFlow__modalActions">
-                                        <button
-                                            type="button"
-                                            className="bookingFlow__primaryBtn"
-                                            disabled={!canAdvanceIdentity}
-                                            onClick={() => {
-                                                setDetailsStage("identity");
-                                                setSubmitError(null);
-                                                trackBookingFunnelStep({
-                                                    step: "identity_opened",
-                                                    unitSlug,
-                                                    doctorSlug: effectiveDoctorSlug,
-                                                    serviceId: primaryService.id,
-                                                    date: dateKey,
-                                                    time: timeKey,
-                                                    detailsStage: "identity",
-                                                });
-                                            }}
-                                        >
-                                            Continuar para confirmação
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="bookingFlow__ghostBtn"
-                                            onClick={() => {
-                                                setStep("pick");
-                                                setDetailsStage("contact");
-                                                setSubmitError(null);
-                                                setTurnstileToken(null);
-                                                setTurnstileHadError(false);
-                                            }}
-                                        >
-                                            Voltar para agenda
-                                        </button>
-                                    </div>
-                                </>
-                            ) : (
-                                <>
-                                    <div className="bookingFlow__formGrid">
-                                        <label className="bookingFlow__field">
-                                            <span>CPF</span>
-                                            <input
-                                                value={cpf}
-                                                onChange={(e) => setCpf(formatCpf(e.target.value))}
-                                                placeholder="000.000.000-00"
-                                                inputMode="numeric"
-                                                autoComplete="off"
-                                                aria-invalid={cpf.length > 0 && !cpfSeemsValid}
-                                                className="bookingFlow__input"
-                                            />
-                                        </label>
-
-                                        <label className="bookingFlow__field">
-                                            <span>Endereço completo</span>
-                                            <textarea
-                                                value={address}
-                                                onChange={(e) => setAddress(e.target.value)}
-                                                placeholder="Rua, número, bairro, cidade e CEP"
-                                                rows={2}
-                                                className="bookingFlow__textarea"
-                                            />
-                                        </label>
-                                    </div>
-                                    {!cpfSeemsValid && cpf.length > 0 ? (
-                                        <div className="bookingFlow__fieldError">Informe um CPF válido.</div>
-                                    ) : null}
-                                    {!addressSeemsValid && address.length > 0 ? (
-                                        <div className="bookingFlow__fieldError">Informe o endereço completo.</div>
-                                    ) : null}
-
-                                    {turnstileRequired ? (
-                                        <div style={{ display: "grid", gap: 8 }}>
-                                            <TurnstileWidget
-                                                siteKey={turnstileSiteKey}
-                                                onToken={setTurnstileToken}
-                                                onError={() => setTurnstileHadError(true)}
-                                            />
-                                            {!turnstileToken ? (
-                                                <div className="small" style={{ color: turnstileHadError ? "#b91c1c" : "var(--muted)" }}>
-                                                    {turnstileHadError ? "Não foi possível carregar a verificação anti-robô." : "Confirme que você não é um robô para enviar."}
-                                                </div>
-                                            ) : null}
+                            {hasTurnstileWidget ? (
+                                <div style={{ display: "grid", gap: 8 }}>
+                                    <TurnstileWidget
+                                        siteKey={turnstileSiteKey}
+                                        onToken={setTurnstileToken}
+                                        onError={() => setTurnstileHadError(true)}
+                                    />
+                                    {!turnstileToken ? (
+                                        <div className="small" style={{ color: turnstileHadError ? "#b91c1c" : "var(--muted)" }}>
+                                            {turnstileHadError
+                                                ? "A verificação anti-robô não carregou, mas você pode continuar e tentar enviar mesmo assim."
+                                                : "Se a verificação aparecer, conclua-a antes de enviar."}
                                         </div>
                                     ) : null}
+                                </div>
+                            ) : null}
 
-                                    <label className="bookingFlow__field">
-                                        <span>Observações (opcional)</span>
-                                        <textarea
-                                            value={notes}
-                                            onChange={(e) => setNotes(e.target.value)}
-                                            placeholder={showSensitiveHint ? "Opcional. Evite informações sensíveis; use apenas preferências (ex.: melhor horário)." : "Opcional"}
-                                            rows={3}
-                                            className="bookingFlow__textarea"
-                                        />
-                                    </label>
-
-                                    <div className="bookingFlow__modalActions">
-                                        <button
-                                            type="button"
-                                            onClick={submit}
-                                            disabled={submitting || !canSubmit}
-                                            className="bookingFlow__primaryBtn"
-                                        >
-                                            {submitting ? "Confirmando…" : "Confirmar reserva"}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="bookingFlow__ghostBtn"
-                                            onClick={() => {
-                                                setDetailsStage("contact");
-                                                setSubmitError(null);
-                                                setTurnstileToken(null);
-                                                setTurnstileHadError(false);
-                                                trackBookingFunnelStep({
-                                                    step: "contact_reopened",
-                                                    unitSlug,
-                                                    doctorSlug: effectiveDoctorSlug,
-                                                    serviceId: primaryService.id,
-                                                    date: dateKey,
-                                                    time: timeKey,
-                                                    detailsStage: "contact",
-                                                });
-                                            }}
-                                        >
-                                            Voltar para contato
-                                        </button>
-                                    </div>
-                                </>
-                            )}
+                            <div className="bookingFlow__modalActions">
+                                <button
+                                    type="button"
+                                    onClick={submit}
+                                    disabled={submitting || !canSubmit}
+                                    className="bookingFlow__primaryBtn"
+                                >
+                                    {submitting ? "Confirmando…" : "Confirmar reserva"}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="bookingFlow__ghostBtn"
+                                    onClick={() => {
+                                        trackBookingFunnelStep({
+                                            step: "details_closed",
+                                            unitSlug,
+                                            doctorSlug: effectiveDoctorSlug,
+                                            serviceId: effectiveServiceId,
+                                            date: dateKey,
+                                            time: timeKey,
+                                            detailsStage: "contact",
+                                        });
+                                        setStep("pick");
+                                        setSubmitError(null);
+                                        setTurnstileToken(null);
+                                        setTurnstileHadError(false);
+                                    }}
+                                >
+                                    Voltar para agenda
+                                </button>
+                            </div>
 
                             {submitError ? (
                                 <div role="status" className="bookingFlow__fieldError">

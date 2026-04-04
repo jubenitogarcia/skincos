@@ -45,7 +45,7 @@ function readCookie(name: string): string | null {
         .map((c) => c.trim())
         .find((c) => c.startsWith(`${name}=`));
     if (!entry) return null;
-    return entry.split("=")[1]?.trim() ?? null;
+    return entry.slice(name.length + 1).trim() || null;
 }
 
 function writeCookie(name: string, value: string, maxAgeSeconds: number): void {
