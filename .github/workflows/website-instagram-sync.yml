@@ -60,7 +60,7 @@ jobs:
             0|false|no) stories_bool="false" ;;
           esac
 
-          payload=$(printf '{"force":%s,"includeStories":%s,"maxFeedItems":72,"concurrency":3,"maxHandleRetries":2,"retryDelayMs":1200,"source":"github_actions_schedule"}' \
+          payload=$(printf '{"force":%s,"includeStories":%s,"maxFeedItems":120,"concurrency":3,"maxHandleRetries":2,"retryDelayMs":1200,"source":"github_actions_schedule_enriched"}' \
             "${force_bool}" "${stories_bool}")
 
           max_http_attempts=3

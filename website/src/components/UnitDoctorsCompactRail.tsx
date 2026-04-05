@@ -166,70 +166,70 @@ function CompactDoctorTooltip({
 
             {mounted && typeof document !== "undefined"
                 ? createPortal(
-                      <div
-                          ref={tooltipRef}
-                          className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
-                          data-state={open && ready ? "open" : "closed"}
-                          role="tooltip"
-                          style={{
-                              position: "fixed",
-                              left: position.left,
-                              top: position.top,
-                              display: "block",
-                              zIndex: 5000,
-                          }}
-                          onMouseEnter={openTooltip}
-                          onMouseLeave={scheduleClose}
-                      >
-                          <div className="unitDoctorsCompact__tooltipNameRow">
-                              <div className="unitDoctorsCompact__tooltipName">{tooltipName}</div>
-                              {onOpenInstagram ? (
-                                  <button
-                                      type="button"
-                                      className="unitDoctorsCompact__tooltipInstagramBtn"
-                                      onClick={() => {
-                                          clearTimers();
-                                          setOpen(false);
-                                          setMounted(false);
-                                          setReady(false);
-                                          onOpenInstagram();
-                                      }}
-                                      onBlur={(event) => {
-                                          const next = event.relatedTarget as Node | null;
-                                          if (next && tooltipRef.current?.contains(next)) return;
-                                          scheduleClose();
-                                      }}
-                                      aria-label={`Abrir Instagram de ${doctorName}`}
-                                      title="Instagram"
-                                  >
-                                      <InstagramIcon size={14} />
-                                  </button>
-                              ) : null}
-                          </div>
+                    <div
+                        ref={tooltipRef}
+                        className="bookingFlow__doctorTooltip unitDoctorsCompact__tooltip"
+                        data-state={open && ready ? "open" : "closed"}
+                        role="tooltip"
+                        style={{
+                            position: "fixed",
+                            left: position.left,
+                            top: position.top,
+                            display: "block",
+                            zIndex: 5000,
+                        }}
+                        onMouseEnter={openTooltip}
+                        onMouseLeave={scheduleClose}
+                    >
+                        <div className="unitDoctorsCompact__tooltipNameRow">
+                            <div className="unitDoctorsCompact__tooltipName">{tooltipName}</div>
+                            {onOpenInstagram ? (
+                                <button
+                                    type="button"
+                                    className="unitDoctorsCompact__tooltipInstagramBtn"
+                                    onClick={() => {
+                                        clearTimers();
+                                        setOpen(false);
+                                        setMounted(false);
+                                        setReady(false);
+                                        onOpenInstagram();
+                                    }}
+                                    onBlur={(event) => {
+                                        const next = event.relatedTarget as Node | null;
+                                        if (next && tooltipRef.current?.contains(next)) return;
+                                        scheduleClose();
+                                    }}
+                                    aria-label={`Abrir Instagram de ${doctorName}`}
+                                    title="Instagram"
+                                >
+                                    <InstagramIcon size={14} />
+                                </button>
+                            ) : null}
+                        </div>
 
-                          <Link
-                              className="cta cta--agende unitDoctorsCompact__tooltipBookBtn"
-                              href={bookingHref}
-                              onClick={() =>
-                                  trackBookingStart({
-                                      placement: "doctor_grid",
-                                      unitSlug,
-                                      doctorName,
-                                      bookingUrl: bookingHref,
-                                  })
-                              }
-                              onMouseEnter={openTooltip}
-                              onBlur={(event) => {
-                                  const next = event.relatedTarget as Node | null;
-                                  if (next && tooltipRef.current?.contains(next)) return;
-                                  scheduleClose();
-                              }}
-                          >
-                              AGENDE
-                          </Link>
-                      </div>,
-                      document.body,
-                  )
+                        <Link
+                            className="cta cta--agende unitDoctorsCompact__tooltipBookBtn"
+                            href={bookingHref}
+                            onClick={() =>
+                                trackBookingStart({
+                                    placement: "doctor_grid",
+                                    unitSlug,
+                                    doctorName,
+                                    bookingUrl: bookingHref,
+                                })
+                            }
+                            onMouseEnter={openTooltip}
+                            onBlur={(event) => {
+                                const next = event.relatedTarget as Node | null;
+                                if (next && tooltipRef.current?.contains(next)) return;
+                                scheduleClose();
+                            }}
+                        >
+                            AGENDE
+                        </Link>
+                    </div>,
+                    document.body,
+                )
                 : null}
         </div>
     );
@@ -248,6 +248,27 @@ export default function UnitDoctorsCompactRail({
             baseVelocity: 0.02,
             maxVelocity: 0.18,
         });
+
+    useEffect(() => {
+        if (interactionMode !== "select") return;
+        const rail = railRef.current;
+        if (!rail) return;
+
+        const activeItem = rail.querySelector(".unitDoctorsCompact__item[data-active='true']") as HTMLElement | null;
+        if (!activeItem) return;
+
+        const railRect = rail.getBoundingClientRect();
+        const activeRect = activeItem.getBoundingClientRect();
+        const isOutOfView = activeRect.left < railRect.left + 10 || activeRect.right > railRect.right - 10;
+        if (!isOutOfView) return;
+
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        activeItem.scrollIntoView({
+            behavior: reduceMotion ? "auto" : "smooth",
+            block: "nearest",
+            inline: "center",
+        });
+    }, [interactionMode, items, railRef]);
 
     return (
         <div

@@ -9,12 +9,22 @@ type InstagramMedia = {
     code: string | null;
     mediaType: "image" | "video" | "carousel";
     isReel: boolean;
-    isStory?: boolean;
+    isStory: boolean;
     caption: string | null;
+    likeCount?: number | null;
+    commentCount?: number | null;
+    playCount?: number | null;
+    viewCount?: number | null;
+    durationSeconds?: number | null;
+    locationName?: string | null;
+    productType?: string | null;
+    resourcesCount?: number | null;
+    isPinned?: boolean;
     takenAtMs: number | null;
     thumbnailUrl: string;
     videoUrl: string | null;
     permalink?: string | null;
+    payloadJson?: string | null;
 };
 
 type InstagramFeedResponse =
@@ -28,6 +38,14 @@ type InstagramFeedResponse =
             followersCount?: number | null;
             followingCount?: number | null;
             mediaCount?: number | null;
+            isVerified?: boolean | null;
+            isPrivate?: boolean | null;
+            isBusiness?: boolean | null;
+            isProfessional?: boolean | null;
+            categoryName?: string | null;
+            externalUrl?: string | null;
+            publicEmail?: string | null;
+            publicPhone?: string | null;
         };
         items: InstagramMedia[];
         hasMore: boolean;
@@ -123,6 +141,20 @@ function formatSocialCount(value: number | null | undefined): string {
     return `${(value / 1000000).toFixed(value >= 10000000 ? 0 : 1)} mi`;
 }
 
+function formatMediaMetric(value: number | null | undefined, label: string): string | null {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return `${formatSocialCount(value)} ${label}`;
+}
+
+function formatDuration(seconds: number | null | undefined): string | null {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return null;
+    const total = Math.max(0, Math.floor(seconds));
+    const minutes = Math.floor(total / 60);
+    const remain = total % 60;
+    if (minutes <= 0) return `${remain}s`;
+    return `${minutes}m ${remain.toString().padStart(2, "0")}s`;
+}
+
 export function InstagramIcon(props: { size?: number }) {
     const size = props.size ?? 16;
     return (
@@ -147,6 +179,11 @@ export default function DoctorInstagramModal(props: {
     const [instagramFollowersCount, setInstagramFollowersCount] = useState<number | null>(null);
     const [instagramFollowingCount, setInstagramFollowingCount] = useState<number | null>(null);
     const [instagramMediaCount, setInstagramMediaCount] = useState<number | null>(null);
+    const [instagramIsPrivate, setInstagramIsPrivate] = useState<boolean | null>(null);
+    const [instagramIsBusiness, setInstagramIsBusiness] = useState<boolean | null>(null);
+    const [instagramCategoryName, setInstagramCategoryName] = useState<string | null>(null);
+    const [instagramPublicEmail, setInstagramPublicEmail] = useState<string | null>(null);
+    const [instagramPublicPhone, setInstagramPublicPhone] = useState<string | null>(null);
     const [instagramNextCursor, setInstagramNextCursor] = useState<string | null>(null);
     const [instagramHasMore, setInstagramHasMore] = useState(false);
     const [instagramLoading, setInstagramLoading] = useState(false);
@@ -207,6 +244,11 @@ export default function DoctorInstagramModal(props: {
             setInstagramFollowersCount(null);
             setInstagramFollowingCount(null);
             setInstagramMediaCount(null);
+            setInstagramIsPrivate(null);
+            setInstagramIsBusiness(null);
+            setInstagramCategoryName(null);
+            setInstagramPublicEmail(null);
+            setInstagramPublicPhone(null);
             setInstagramNextCursor(null);
             setInstagramHasMore(false);
             setActiveInstagramMediaId(null);
@@ -232,6 +274,11 @@ export default function DoctorInstagramModal(props: {
                 setInstagramFollowersCount(typeof json.user?.followersCount === "number" ? json.user.followersCount : null);
                 setInstagramFollowingCount(typeof json.user?.followingCount === "number" ? json.user.followingCount : null);
                 setInstagramMediaCount(typeof json.user?.mediaCount === "number" ? json.user.mediaCount : null);
+                setInstagramIsPrivate(typeof json.user?.isPrivate === "boolean" ? json.user.isPrivate : null);
+                setInstagramIsBusiness(typeof json.user?.isBusiness === "boolean" ? json.user.isBusiness : null);
+                setInstagramCategoryName(typeof json.user?.categoryName === "string" && json.user.categoryName.trim() ? json.user.categoryName.trim() : null);
+                setInstagramPublicEmail(typeof json.user?.publicEmail === "string" && json.user.publicEmail.trim() ? json.user.publicEmail.trim() : null);
+                setInstagramPublicPhone(typeof json.user?.publicPhone === "string" && json.user.publicPhone.trim() ? json.user.publicPhone.trim() : null);
                 setInstagramNextCursor(json.nextCursor ?? null);
                 setInstagramHasMore(Boolean(json.hasMore && json.nextCursor));
             } catch {
@@ -258,6 +305,25 @@ export default function DoctorInstagramModal(props: {
         return instagramItems[activeInstagramMediaIndex] ?? null;
     }, [activeInstagramMediaIndex, instagramItems]);
     const activeInstagramMediaDate = useMemo(() => formatInstagramDate(activeInstagramMedia?.takenAtMs ?? null), [activeInstagramMedia?.takenAtMs]);
+    const activeInstagramMediaFacts = useMemo(() => {
+        if (!activeInstagramMedia) return [];
+
+        const facts = [
+            formatMediaMetric(activeInstagramMedia.likeCount, "curtidas"),
+            formatMediaMetric(activeInstagramMedia.commentCount, "comentários"),
+            formatMediaMetric(activeInstagramMedia.viewCount, "visualizações"),
+            formatMediaMetric(activeInstagramMedia.playCount, "reproduções"),
+            activeInstagramMedia.resourcesCount && activeInstagramMedia.resourcesCount > 1
+                ? `${activeInstagramMedia.resourcesCount} mídias no carrossel`
+                : null,
+            formatDuration(activeInstagramMedia.durationSeconds),
+            activeInstagramMedia.locationName ?? null,
+            activeInstagramMedia.productType ? `tipo: ${activeInstagramMedia.productType}` : null,
+            activeInstagramMedia.isPinned ? "post fixado" : null,
+        ].filter((entry): entry is string => Boolean(entry));
+
+        return facts;
+    }, [activeInstagramMedia]);
 
     const hasPrevInstagramMedia = activeInstagramMediaIndex > 0;
     const hasNextInstagramMedia = activeInstagramMediaIndex >= 0 && activeInstagramMediaIndex < instagramItems.length - 1;
@@ -358,9 +424,6 @@ export default function DoctorInstagramModal(props: {
     }, [instagramHasMore, instagramItems.length, instagramLoading, instagramLoadingMore, loadMoreInstagram, profile]);
 
     if (!profile) return null;
-
-    const profileUrl = `https://www.instagram.com/${profile.handle}/`;
-    const activeInstagramMediaUrl = activeInstagramMedia?.permalink || profileUrl;
 
     return (
         <div
@@ -490,15 +553,15 @@ export default function DoctorInstagramModal(props: {
                                                 Sem legenda pública nesta publicação.
                                             </p>
                                         )}
-                                    </div>
-
-                                    <div className="modalActions">
-                                        <a className="btn btnPrimary" href={activeInstagramMediaUrl} target="_blank" rel="noreferrer">
-                                            Ver no Instagram
-                                        </a>
-                                        <a className="btn btnGhost" href={profileUrl} target="_blank" rel="noreferrer">
-                                            Abrir perfil
-                                        </a>
+                                        {activeInstagramMediaFacts.length ? (
+                                            <div className="instagramViewerFacts" aria-label="Métricas e metadados da publicação">
+                                                {activeInstagramMediaFacts.map((fact) => (
+                                                    <span className="instagramViewerFact" key={fact}>
+                                                        {fact}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        ) : null}
                                     </div>
 
                                     <div className="instagramViewerThumbs" aria-label="Outras publicações">
@@ -534,11 +597,16 @@ export default function DoctorInstagramModal(props: {
                         <>
                             <div className="instagramGalleryIntro">
                                 <div className="instagramGalleryIntroCopy">
-                                    <div className="instagramGalleryEyebrow">Galeria do Instagram</div>
-                                    <p className="instagramGalleryLead">
-                                        Toque em qualquer publicação para abrir um viewer com navegação lateral, atalhos de teclado e acesso direto ao Instagram.
-                                    </p>
                                     {instagramUserBio ? <p className="instagramGalleryBio">{instagramUserBio}</p> : null}
+                                    {instagramCategoryName || instagramPublicEmail || instagramPublicPhone || instagramIsPrivate != null || instagramIsBusiness != null ? (
+                                        <div className="instagramGalleryFacts" aria-label="Metadados do perfil">
+                                            {instagramCategoryName ? <span className="instagramGalleryFact">categoria: {instagramCategoryName}</span> : null}
+                                            {instagramIsPrivate === true ? <span className="instagramGalleryFact">perfil privado</span> : null}
+                                            {instagramIsBusiness === true ? <span className="instagramGalleryFact">conta business</span> : null}
+                                            {instagramPublicEmail ? <span className="instagramGalleryFact">{instagramPublicEmail}</span> : null}
+                                            {instagramPublicPhone ? <span className="instagramGalleryFact">{instagramPublicPhone}</span> : null}
+                                        </div>
+                                    ) : null}
                                 </div>
                                 <div className="instagramGalleryStats" aria-label="Resumo do perfil">
                                     <div className="instagramGalleryStat">
@@ -553,10 +621,6 @@ export default function DoctorInstagramModal(props: {
                                         <strong>{formatSocialCount(instagramFollowingCount)}</strong>
                                         <span>seguindo</span>
                                     </div>
-                                    <div className="instagramGalleryStat">
-                                        <strong>{instagramHasMore ? "Ao vivo" : "Completo"}</strong>
-                                        <span>{instagramHasMore ? "mais publicações disponíveis" : "feed carregado"}</span>
-                                    </div>
                                 </div>
                             </div>
 
@@ -564,6 +628,14 @@ export default function DoctorInstagramModal(props: {
                                 {instagramItems.map((item) => {
                                     const label = getInstagramMediaLabel(item);
                                     const itemDate = formatInstagramDate(item.takenAtMs);
+                                    const mediaMetrics = [
+                                        formatMediaMetric(item.likeCount, "curtidas"),
+                                        formatMediaMetric(item.commentCount, "comentários"),
+                                        formatMediaMetric(item.viewCount, "views"),
+                                        formatMediaMetric(item.playCount, "plays"),
+                                    ]
+                                        .filter((entry): entry is string => Boolean(entry))
+                                        .slice(0, 2);
                                     return (
                                         <button
                                             key={item.id}
@@ -583,9 +655,12 @@ export default function DoctorInstagramModal(props: {
                                             />
                                             <span className="instagramMediaOverlay" aria-hidden="true">
                                                 <span className="instagramMediaOverlayLabel">{label}</span>
+                                                {mediaMetrics.length ? <span className="instagramMediaOverlayMeta">{mediaMetrics.join(" · ")}</span> : null}
                                                 <span className="instagramMediaOverlayAction">Abrir</span>
                                             </span>
-                                            {label !== "Post" ? <span className="instagramMediaBadge">{label}</span> : null}
+                                            {label !== "Post" || item.isPinned ? (
+                                                <span className="instagramMediaBadge">{item.isPinned ? `${label} · fixado` : label}</span>
+                                            ) : null}
                                             {itemDate ? <span className="instagramMediaDate">{itemDate}</span> : null}
                                         </button>
                                     );
@@ -612,7 +687,6 @@ export default function DoctorInstagramModal(props: {
 
                     {instagramHasMore ? <div className="instagramInfiniteSentinel" ref={instagramInfiniteSentinelRef} aria-hidden="true" /> : null}
                     {instagramLoadingMore ? <div className="instagramLoadingMoreInline">Carregando mais publicações…</div> : null}
-                    <div className="modalNote">Posts, reels e stories são exibidos nesta janela para você navegar sem sair da página. Use `Esc` para fechar e as setas do teclado para navegar.</div>
                 </div>
             </div>
         </div>

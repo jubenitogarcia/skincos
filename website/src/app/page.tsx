@@ -5,6 +5,7 @@ import UnitsMapSection from "@/components/UnitsMapSection";
 import UnitDoctorsGrid from "@/components/UnitDoctorsGrid";
 import AboutUsSection from "@/components/AboutUsSection";
 import HomeHeroExperience from "@/components/HomeHeroExperience";
+import HomeHashScroller from "@/components/HomeHashScroller";
 import TrustEvidenceSection from "@/components/TrustEvidenceSection";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import type { Metadata } from "next";
@@ -77,6 +78,7 @@ export default async function HomePage() {
     <>
       <Header />
       <main>
+        <HomeHashScroller />
         <HomeHeroExperience heroItems={heroItems} initialMediaVariant={variant} />
         <TrustEvidenceSection context="home" />
 

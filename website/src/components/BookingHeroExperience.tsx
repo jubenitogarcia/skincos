@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import ExperienceTracker from "@/components/ExperienceTracker";
 import PageTitleBand from "@/components/PageTitleBand";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
@@ -11,6 +12,7 @@ const EXPERIENCE_VARIANT = "canonical";
 
 export default function BookingHeroExperience() {
     const unit = useCurrentUnit();
+    const searchParams = useSearchParams();
 
     const bookingQuery = new URLSearchParams({
         doctor: "any",
@@ -25,15 +27,19 @@ export default function BookingHeroExperience() {
     const shortcuts = [
         {
             title: "Primeiro Horário Disponível",
+            description: "Sem preferência por especialista e indicação de procedimento.",
             href: `/agendamento?${bookingQuery.toString()}#booking-flow`,
             kind: "primary" as const,
         },
         {
             title: "Ver Especialistas",
+            description: "Conheça a equipe e veja seus procedimentos.",
             href: doctorsQuery.toString() ? `/?${doctorsQuery.toString()}#doutores` : "/#doutores",
             kind: "secondary" as const,
         },
     ];
+
+    const firstSlotSelected = (searchParams?.get("autopick") ?? "").toLowerCase() === "first";
 
     return (
         <>
@@ -54,23 +60,26 @@ export default function BookingHeroExperience() {
                         <div className="bookingHero__panel" role="group" aria-label="Atalhos do agendamento">
                             <div className="bookingHero__shortcutGrid bookingHero__shortcutGrid--inline">
                                 {shortcuts.map((item) => (
-                                    <Link
-                                        key={item.title}
-                                        href={item.href}
-                                        className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
-                                        onClick={() =>
-                                            trackExperienceShortcutClick({
-                                                page: "/agendamento",
-                                                shortcut: item.title,
-                                                destination: item.href,
-                                                placement: "booking_page",
-                                                experience: EXPERIENCE_KEY,
-                                                variant: EXPERIENCE_VARIANT,
-                                            })
-                                        }
-                                    >
-                                        <strong>{item.title}</strong>
-                                    </Link>
+                                    <div key={item.title} className="bookingHero__shortcutItem">
+                                        <Link
+                                            href={item.href}
+                                            className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
+                                            data-selected={item.kind === "primary" && firstSlotSelected ? "true" : "false"}
+                                            onClick={() =>
+                                                trackExperienceShortcutClick({
+                                                    page: "/agendamento",
+                                                    shortcut: item.title,
+                                                    destination: item.href,
+                                                    placement: "booking_page",
+                                                    experience: EXPERIENCE_KEY,
+                                                    variant: EXPERIENCE_VARIANT,
+                                                })
+                                            }
+                                        >
+                                            <strong>{item.title}</strong>
+                                        </Link>
+                                        <p className="bookingHero__shortcutNote">{item.description}</p>
+                                    </div>
                                 ))}
                             </div>
 
