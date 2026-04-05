@@ -18,9 +18,19 @@ type CloudflareEnv = {
 export type InstagramCachedProfile = {
     handle: string;
     user_id: string | null;
+    username: string | null;
     full_name: string | null;
     biography: string | null;
     avatar_url: string | null;
+    is_verified: number | null;
+    is_private: number | null;
+    is_business: number | null;
+    is_professional: number | null;
+    external_url: string | null;
+    category_name: string | null;
+    public_email: string | null;
+    public_phone: string | null;
+    profile_payload_json: string | null;
     last_success_sync_ms: number;
     last_attempt_sync_ms: number;
     last_error: string | null;
@@ -45,6 +55,15 @@ export type InstagramCachedMediaRow = {
     is_reel: number;
     is_story: number;
     caption: string | null;
+    like_count: number | null;
+    comment_count: number | null;
+    play_count: number | null;
+    view_count: number | null;
+    duration_seconds: number | null;
+    location_name: string | null;
+    product_type: string | null;
+    resources_count: number | null;
+    is_pinned: number;
     taken_at_ms: number | null;
     thumbnail_url: string | null;
     video_url: string | null;
@@ -57,9 +76,19 @@ export type InstagramCachedMediaRow = {
 export type UpsertProfileInput = {
     handle: string;
     userId: string | null;
+    username: string | null;
     fullName: string | null;
     biography: string | null;
     avatarUrl: string | null;
+    isVerified: boolean | null;
+    isPrivate: boolean | null;
+    isBusiness: boolean | null;
+    isProfessional: boolean | null;
+    externalUrl: string | null;
+    categoryName: string | null;
+    publicEmail: string | null;
+    publicPhone: string | null;
+    profilePayloadJson: string | null;
     lastError?: string | null;
     syncedAtMs: number;
 };
@@ -81,6 +110,15 @@ export type UpsertMediaInput = {
     isReel: boolean;
     isStory: boolean;
     caption: string | null;
+    likeCount: number | null;
+    commentCount: number | null;
+    playCount: number | null;
+    viewCount: number | null;
+    durationSeconds: number | null;
+    locationName: string | null;
+    productType: string | null;
+    resourcesCount: number | null;
+    isPinned: boolean;
     takenAtMs: number | null;
     thumbnailUrl: string | null;
     videoUrl: string | null;
@@ -90,6 +128,18 @@ export type UpsertMediaInput = {
 };
 
 let ensured = false;
+
+async function runSchemaStatement(db: D1DatabaseLike, query: string, ignoredErrors: string[] = []): Promise<void> {
+    try {
+        await db.prepare(query).run();
+    } catch (error) {
+        const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+        if (ignoredErrors.some((entry) => message.includes(entry.toLowerCase()))) {
+            return;
+        }
+        throw error;
+    }
+}
 
 function getDbOrNull(): D1DatabaseLike | null {
     try {
@@ -112,26 +162,35 @@ export async function getInstagramCacheDb(): Promise<D1DatabaseLike | null> {
 }
 
 async function ensureSchema(db: D1DatabaseLike): Promise<void> {
-    await db
-        .prepare(
-            `CREATE TABLE IF NOT EXISTS instagram_profiles (
+    await runSchemaStatement(
+        db,
+        `CREATE TABLE IF NOT EXISTS instagram_profiles (
                 handle TEXT PRIMARY KEY,
                 user_id TEXT,
+                username TEXT,
                 full_name TEXT,
                 biography TEXT,
                 avatar_url TEXT,
+                is_verified INTEGER,
+                is_private INTEGER,
+                is_business INTEGER,
+                is_professional INTEGER,
+                external_url TEXT,
+                category_name TEXT,
+                public_email TEXT,
+                public_phone TEXT,
+                profile_payload_json TEXT,
                 last_success_sync_ms INTEGER NOT NULL DEFAULT 0,
                 last_attempt_sync_ms INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );`,
-        )
-        .run();
+    );
 
-    await db
-        .prepare(
-            `CREATE TABLE IF NOT EXISTS instagram_media (
+    await runSchemaStatement(
+        db,
+        `CREATE TABLE IF NOT EXISTS instagram_media (
                 id TEXT PRIMARY KEY,
                 handle TEXT NOT NULL,
                 media_id TEXT NOT NULL,
@@ -140,6 +199,15 @@ async function ensureSchema(db: D1DatabaseLike): Promise<void> {
                 is_reel INTEGER NOT NULL DEFAULT 0,
                 is_story INTEGER NOT NULL DEFAULT 0,
                 caption TEXT,
+                like_count INTEGER,
+                comment_count INTEGER,
+                play_count INTEGER,
+                view_count INTEGER,
+                duration_seconds REAL,
+                location_name TEXT,
+                product_type TEXT,
+                resources_count INTEGER,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
                 taken_at_ms INTEGER,
                 thumbnail_url TEXT,
                 video_url TEXT,
@@ -149,19 +217,17 @@ async function ensureSchema(db: D1DatabaseLike): Promise<void> {
                 updated_at_ms INTEGER NOT NULL,
                 UNIQUE(handle, media_id, is_story)
             );`,
-        )
-        .run();
+    );
 
-    await db
-        .prepare(
-            `CREATE INDEX IF NOT EXISTS idx_instagram_media_handle_taken
+    await runSchemaStatement(
+        db,
+        `CREATE INDEX IF NOT EXISTS idx_instagram_media_handle_taken
              ON instagram_media(handle, is_story, taken_at_ms DESC, updated_at_ms DESC);`,
-        )
-        .run();
+    );
 
-    await db
-        .prepare(
-            `CREATE TABLE IF NOT EXISTS instagram_sync_runs (
+    await runSchemaStatement(
+        db,
+        `CREATE TABLE IF NOT EXISTS instagram_sync_runs (
                 id TEXT PRIMARY KEY,
                 source TEXT,
                 handle TEXT,
@@ -173,27 +239,46 @@ async function ensureSchema(db: D1DatabaseLike): Promise<void> {
                 upserted_items INTEGER NOT NULL DEFAULT 0,
                 error TEXT
             );`,
-        )
-        .run();
+    );
 
-    await db
-        .prepare(
-            `CREATE INDEX IF NOT EXISTS idx_instagram_sync_runs_handle_started
+    await runSchemaStatement(
+        db,
+        `CREATE INDEX IF NOT EXISTS idx_instagram_sync_runs_handle_started
              ON instagram_sync_runs(handle, started_at_ms DESC);`,
-        )
-        .run();
+    );
 
-    await db
-        .prepare(
-            `CREATE TABLE IF NOT EXISTS instagram_profile_stats (
+    await runSchemaStatement(
+        db,
+        `CREATE TABLE IF NOT EXISTS instagram_profile_stats (
                 handle TEXT PRIMARY KEY,
                 followers_count INTEGER,
                 following_count INTEGER,
                 media_count INTEGER,
                 updated_at_ms INTEGER NOT NULL
             );`,
-        )
-        .run();
+    );
+
+    // Online evolution for workers that already have the base tables from previous deployments.
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN username TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN is_verified INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN is_private INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN is_business INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN is_professional INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN external_url TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN category_name TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN public_email TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN public_phone TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_profiles ADD COLUMN profile_payload_json TEXT;", ["duplicate column name"]);
+
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN like_count INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN comment_count INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN play_count INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN view_count INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN duration_seconds REAL;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN location_name TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN product_type TEXT;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN resources_count INTEGER;", ["duplicate column name"]);
+    await runSchemaStatement(db, "ALTER TABLE instagram_media ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;", ["duplicate column name"]);
 }
 
 export async function getInstagramCachedProfile(handle: string): Promise<InstagramCachedProfile | null> {
@@ -201,7 +286,9 @@ export async function getInstagramCachedProfile(handle: string): Promise<Instagr
     if (!db) return null;
     return db
         .prepare(
-            `SELECT handle, user_id, full_name, biography, avatar_url,
+            `SELECT handle, user_id, username, full_name, biography, avatar_url,
+                is_verified, is_private, is_business, is_professional,
+                external_url, category_name, public_email, public_phone, profile_payload_json,
                     last_success_sync_ms, last_attempt_sync_ms, last_error, created_at_ms, updated_at_ms
              FROM instagram_profiles
              WHERE handle = ?
@@ -219,15 +306,27 @@ export async function upsertInstagramCachedProfile(input: UpsertProfileInput): P
     await db
         .prepare(
             `INSERT INTO instagram_profiles (
-                handle, user_id, full_name, biography, avatar_url,
+                handle, user_id, username, full_name, biography, avatar_url,
+                is_verified, is_private, is_business, is_professional,
+                external_url, category_name, public_email, public_phone, profile_payload_json,
                 last_success_sync_ms, last_attempt_sync_ms, last_error,
                 created_at_ms, updated_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(handle) DO UPDATE SET
                 user_id = excluded.user_id,
+                username = excluded.username,
                 full_name = excluded.full_name,
                 biography = excluded.biography,
                 avatar_url = excluded.avatar_url,
+                is_verified = excluded.is_verified,
+                is_private = excluded.is_private,
+                is_business = excluded.is_business,
+                is_professional = excluded.is_professional,
+                external_url = excluded.external_url,
+                category_name = excluded.category_name,
+                public_email = excluded.public_email,
+                public_phone = excluded.public_phone,
+                profile_payload_json = excluded.profile_payload_json,
                 last_success_sync_ms = excluded.last_success_sync_ms,
                 last_attempt_sync_ms = excluded.last_attempt_sync_ms,
                 last_error = excluded.last_error,
@@ -236,9 +335,19 @@ export async function upsertInstagramCachedProfile(input: UpsertProfileInput): P
         .bind(
             input.handle,
             input.userId,
+            input.username,
             input.fullName,
             input.biography,
             input.avatarUrl,
+            input.isVerified == null ? null : input.isVerified ? 1 : 0,
+            input.isPrivate == null ? null : input.isPrivate ? 1 : 0,
+            input.isBusiness == null ? null : input.isBusiness ? 1 : 0,
+            input.isProfessional == null ? null : input.isProfessional ? 1 : 0,
+            input.externalUrl,
+            input.categoryName,
+            input.publicEmail,
+            input.publicPhone,
+            input.profilePayloadJson,
             now,
             now,
             input.lastError ?? null,
@@ -322,9 +431,11 @@ export async function upsertInstagramMediaBatch(items: UpsertMediaInput[]): Prom
             .prepare(
                 `INSERT INTO instagram_media (
                     id, handle, media_id, code, media_type, is_reel, is_story, caption,
+                    like_count, comment_count, play_count, view_count,
+                    duration_seconds, location_name, product_type, resources_count, is_pinned,
                     taken_at_ms, thumbnail_url, video_url, permalink, payload_json,
                     created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     handle = excluded.handle,
                     media_id = excluded.media_id,
@@ -333,6 +444,15 @@ export async function upsertInstagramMediaBatch(items: UpsertMediaInput[]): Prom
                     is_reel = excluded.is_reel,
                     is_story = excluded.is_story,
                     caption = excluded.caption,
+                        like_count = excluded.like_count,
+                        comment_count = excluded.comment_count,
+                        play_count = excluded.play_count,
+                        view_count = excluded.view_count,
+                        duration_seconds = excluded.duration_seconds,
+                        location_name = excluded.location_name,
+                        product_type = excluded.product_type,
+                        resources_count = excluded.resources_count,
+                        is_pinned = excluded.is_pinned,
                     taken_at_ms = excluded.taken_at_ms,
                     thumbnail_url = excluded.thumbnail_url,
                     video_url = excluded.video_url,
@@ -349,6 +469,15 @@ export async function upsertInstagramMediaBatch(items: UpsertMediaInput[]): Prom
                 item.isReel ? 1 : 0,
                 item.isStory ? 1 : 0,
                 item.caption,
+                item.likeCount,
+                item.commentCount,
+                item.playCount,
+                item.viewCount,
+                item.durationSeconds,
+                item.locationName,
+                item.productType,
+                item.resourcesCount,
+                item.isPinned ? 1 : 0,
                 item.takenAtMs,
                 item.thumbnailUrl,
                 item.videoUrl,
@@ -375,6 +504,8 @@ export async function listInstagramCachedMedia(params: {
     const rows = await db
         .prepare(
             `SELECT id, handle, media_id, code, media_type, is_reel, is_story, caption,
+                    like_count, comment_count, play_count, view_count,
+                    duration_seconds, location_name, product_type, resources_count, is_pinned,
                     taken_at_ms, thumbnail_url, video_url, permalink, payload_json,
                     created_at_ms, updated_at_ms
              FROM instagram_media

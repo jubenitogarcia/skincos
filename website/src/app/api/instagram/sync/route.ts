@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 
     const includeStories = normalizeBool(payload.includeStories, true);
     const force = normalizeBool(payload.force, false);
-    const maxFeedItems = normalizePositiveInt(payload.maxFeedItems, 72, 9, 120);
+    const maxFeedItems = normalizePositiveInt(payload.maxFeedItems, 120, 9, 180);
     const concurrency = normalizePositiveInt(payload.concurrency, 3, 1, 8);
     const maxHandleRetries = normalizePositiveInt(payload.maxHandleRetries, 2, 0, 4);
     const retryDelayMs = normalizePositiveInt(payload.retryDelayMs, 1200, 250, 10000);
@@ -184,7 +184,8 @@ export async function POST(request: Request) {
     });
 
     const okCount = results.filter((r) => r.ok).length;
-    const failCount = results.length - okCount;
+    const profileNotFoundCount = results.filter((r) => !r.ok && r.error === "profile_not_found").length;
+    const hardFailCount = results.filter((r) => !r.ok && r.error !== "profile_not_found").length;
 
     return json({
         ok: true,
@@ -194,7 +195,8 @@ export async function POST(request: Request) {
         scheduledHandles: targetHandles.length,
         syncedHandles: results.length,
         successCount: okCount,
-        failureCount: failCount,
+        failureCount: hardFailCount,
+        profileNotFoundCount,
         staleTtlMs: INSTAGRAM_SYNC_TTL_MS,
         options: {
             includeStories,

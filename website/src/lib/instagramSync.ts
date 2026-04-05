@@ -16,7 +16,9 @@ const INSTAGRAM_APP_ID = "936619743392459";
 const FEED_PAGE_SIZE = 24;
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 250;
-const MAX_FEED_PAGES = 4;
+const MAX_FEED_PAGES = 14;
+const MAX_PROFILE_PAYLOAD_CHARS = 180_000;
+const MAX_MEDIA_PAYLOAD_CHARS = 240_000;
 
 export const INSTAGRAM_SYNC_TTL_MS = 30 * 60 * 1000;
 export const INSTAGRAM_KEEP_POSTS_PER_HANDLE = 180;
@@ -30,6 +32,14 @@ export type InstagramApiUser = {
     followersCount?: number | null;
     followingCount?: number | null;
     mediaCount?: number | null;
+    isVerified?: boolean | null;
+    isPrivate?: boolean | null;
+    isBusiness?: boolean | null;
+    isProfessional?: boolean | null;
+    categoryName?: string | null;
+    externalUrl?: string | null;
+    publicEmail?: string | null;
+    publicPhone?: string | null;
 };
 
 export type InstagramApiMedia = {
@@ -39,10 +49,20 @@ export type InstagramApiMedia = {
     isReel: boolean;
     isStory: boolean;
     caption: string | null;
+    likeCount: number | null;
+    commentCount: number | null;
+    playCount: number | null;
+    viewCount: number | null;
+    durationSeconds: number | null;
+    locationName: string | null;
+    productType: string | null;
+    resourcesCount: number | null;
+    isPinned: boolean;
     takenAtMs: number | null;
     thumbnailUrl: string;
     videoUrl: string | null;
     permalink: string | null;
+    payloadJson?: string | null;
 };
 
 export type InstagramFeedPage = {
@@ -62,6 +82,14 @@ type InstagramProfileResponse = {
             biography?: string;
             profile_pic_url_hd?: string;
             profile_pic_url?: string;
+            is_verified?: boolean;
+            is_private?: boolean;
+            is_business?: boolean;
+            is_professional_account?: boolean;
+            category_name?: string;
+            external_url?: string;
+            public_email?: string;
+            public_phone_number?: string;
             follower_count?: number;
             following_count?: number;
             media_count?: number;
@@ -92,7 +120,14 @@ type InstagramFeedItem = {
     code?: string;
     media_type?: number;
     product_type?: string;
+    is_pinned?: boolean;
     taken_at?: number;
+    like_count?: number;
+    comment_count?: number;
+    view_count?: number;
+    play_count?: number;
+    video_duration?: number;
+    location?: { name?: string | null } | null;
     caption?: { text?: string | null } | null;
     image_versions2?: { candidates?: InstagramFeedImageCandidate[] } | null;
     video_versions?: InstagramFeedVideoVersion[] | null;
@@ -138,6 +173,52 @@ function normalizeCount(value: unknown): number | null {
     return out;
 }
 
+function normalizeBool(value: unknown): boolean | null {
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1") return true;
+    if (value === 0 || value === "0") return false;
+    return null;
+}
+
+function normalizeText(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim();
+    return normalized ? normalized : null;
+}
+
+function normalizeDuration(value: unknown): number | null {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.round(n * 100) / 100;
+}
+
+function serializePayload(value: unknown, maxChars: number): string | null {
+    try {
+        const raw = JSON.stringify(value);
+        if (!raw) return null;
+        if (raw.length <= maxChars) return raw;
+
+        return JSON.stringify({
+            truncated: true,
+            originalSize: raw.length,
+            preview: raw.slice(0, maxChars),
+        });
+    } catch {
+        return null;
+    }
+}
+
+function parsePayloadObject(raw: string | null | undefined): Record<string, unknown> | null {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+        return parsed as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+}
+
 function extractProfileStats(profile: InstagramProfileUser | null): {
     followersCount: number | null;
     followingCount: number | null;
@@ -155,6 +236,41 @@ function extractProfileStats(profile: InstagramProfileUser | null): {
         followersCount: normalizeCount(profile.follower_count ?? profile.edge_followed_by?.count),
         followingCount: normalizeCount(profile.following_count ?? profile.edge_follow?.count),
         mediaCount: normalizeCount(profile.media_count ?? profile.edge_owner_to_timeline_media?.count),
+    };
+}
+
+function extractProfileExtended(profile: InstagramProfileUser | null): {
+    isVerified: boolean | null;
+    isPrivate: boolean | null;
+    isBusiness: boolean | null;
+    isProfessional: boolean | null;
+    categoryName: string | null;
+    externalUrl: string | null;
+    publicEmail: string | null;
+    publicPhone: string | null;
+} {
+    if (!profile) {
+        return {
+            isVerified: null,
+            isPrivate: null,
+            isBusiness: null,
+            isProfessional: null,
+            categoryName: null,
+            externalUrl: null,
+            publicEmail: null,
+            publicPhone: null,
+        };
+    }
+
+    return {
+        isVerified: normalizeBool(profile.is_verified),
+        isPrivate: normalizeBool(profile.is_private),
+        isBusiness: normalizeBool(profile.is_business),
+        isProfessional: normalizeBool(profile.is_professional_account),
+        categoryName: normalizeText(profile.category_name),
+        externalUrl: normalizeText(profile.external_url),
+        publicEmail: normalizeText(profile.public_email),
+        publicPhone: normalizeText(profile.public_phone_number),
     };
 }
 
@@ -299,6 +415,7 @@ function normalizeItem(params: {
     const mediaTypeNumber = item.media_type ?? 1;
     const isCarousel = mediaTypeNumber === 8;
     const isVideo = mediaTypeNumber === 2;
+    const resourcesCount = isCarousel && Array.isArray(item.carousel_media) ? item.carousel_media.length : null;
 
     let imageUrl = pickLargestImage(item.image_versions2?.candidates);
     let videoUrl = pickLargestVideo(item.video_versions);
@@ -312,6 +429,13 @@ function normalizeItem(params: {
     if (!imageUrl && !videoUrl) return null;
 
     const isReel = item.product_type === "clips";
+    const likeCount = normalizeCount(item.like_count);
+    const commentCount = normalizeCount(item.comment_count);
+    const viewCount = normalizeCount(item.view_count);
+    const playCount = normalizeCount(item.play_count);
+    const locationName = normalizeText(item.location?.name ?? null);
+    const durationSeconds = normalizeDuration(item.video_duration);
+    const isPinned = normalizeBool(item.is_pinned) ?? false;
     const permalink = (() => {
         if (isStory) {
             const storyPk = `${item.pk ?? item.id ?? ""}`.trim();
@@ -328,18 +452,29 @@ function normalizeItem(params: {
         isReel,
         isStory,
         caption: typeof item.caption?.text === "string" && item.caption.text.trim() ? item.caption.text.trim() : null,
+        likeCount,
+        commentCount,
+        playCount,
+        viewCount,
+        durationSeconds,
+        locationName,
+        productType: normalizeText(item.product_type),
+        resourcesCount,
+        isPinned,
         takenAtMs: typeof item.taken_at === "number" ? item.taken_at * 1000 : null,
         thumbnailUrl: imageUrl ?? videoUrl ?? "",
         videoUrl: videoUrl ?? null,
         permalink,
+        payloadJson: serializePayload(item, MAX_MEDIA_PAYLOAD_CHARS),
     };
 }
 
 async function fetchFeedItems(userId: string, maxItems: number): Promise<InstagramFeedItem[]> {
     const items: InstagramFeedItem[] = [];
     let cursor: string | null = null;
+    const maxPages = Math.max(1, Math.min(MAX_FEED_PAGES, Math.ceil(maxItems / FEED_PAGE_SIZE) + 2));
 
-    for (let page = 0; page < MAX_FEED_PAGES; page++) {
+    for (let page = 0; page < maxPages; page++) {
         if (items.length >= maxItems) break;
 
         const pageSize = Math.max(1, Math.min(FEED_PAGE_SIZE, maxItems - items.length));
@@ -402,6 +537,18 @@ export async function getCachedInstagramFeed(params: {
             const thumbnailUrl = (row.thumbnail_url ?? "").trim();
             if (!thumbnailUrl) return null;
 
+            const payload = parsePayloadObject(row.payload_json);
+            const payloadLikeCount = normalizeCount(payload?.like_count);
+            const payloadCommentCount = normalizeCount(payload?.comment_count);
+            const payloadPlayCount = normalizeCount(payload?.play_count);
+            const payloadViewCount = normalizeCount(payload?.view_count);
+            const payloadDurationSeconds = normalizeDuration(payload?.video_duration);
+            const payloadLocationName = normalizeText((payload?.location as { name?: unknown } | null | undefined)?.name);
+            const payloadProductType = normalizeText(payload?.product_type);
+            const payloadCarousel = payload?.carousel_media;
+            const payloadResourcesCount = Array.isArray(payloadCarousel) ? payloadCarousel.length : null;
+            const payloadPinned = normalizeBool(payload?.is_pinned);
+
             return {
                 id: row.id,
                 code: row.code,
@@ -409,6 +556,15 @@ export async function getCachedInstagramFeed(params: {
                 isReel: row.is_reel === 1,
                 isStory: row.is_story === 1,
                 caption: row.caption,
+                likeCount: row.like_count ?? payloadLikeCount,
+                commentCount: row.comment_count ?? payloadCommentCount,
+                playCount: row.play_count ?? payloadPlayCount,
+                viewCount: row.view_count ?? payloadViewCount,
+                durationSeconds: row.duration_seconds ?? payloadDurationSeconds,
+                locationName: row.location_name ?? payloadLocationName,
+                productType: row.product_type ?? payloadProductType,
+                resourcesCount: row.resources_count ?? payloadResourcesCount,
+                isPinned: row.is_pinned === 1 || payloadPinned === true,
                 takenAtMs: row.taken_at_ms,
                 thumbnailUrl,
                 videoUrl: row.video_url,
@@ -430,6 +586,14 @@ export async function getCachedInstagramFeed(params: {
             followersCount: stats?.followers_count ?? null,
             followingCount: stats?.following_count ?? null,
             mediaCount: stats?.media_count ?? null,
+            isVerified: profile?.is_verified == null ? null : profile.is_verified === 1,
+            isPrivate: profile?.is_private == null ? null : profile.is_private === 1,
+            isBusiness: profile?.is_business == null ? null : profile.is_business === 1,
+            isProfessional: profile?.is_professional == null ? null : profile.is_professional === 1,
+            categoryName: profile?.category_name ?? null,
+            externalUrl: profile?.external_url ?? null,
+            publicEmail: profile?.public_email ?? null,
+            publicPhone: profile?.public_phone ?? null,
         },
         items,
         hasMore,
@@ -450,6 +614,7 @@ export async function fetchLiveInstagramFeedPage(params: {
     const userId = sanitizeUserId(profile?.id ?? "");
     if (!userId) return null;
     const stats = extractProfileStats(profile);
+    const extended = extractProfileExtended(profile);
 
     const feed = await fetchFeedPage({
         userId,
@@ -473,7 +638,10 @@ export async function fetchLiveInstagramFeedPage(params: {
 
     const uniqueById = new Map<string, InstagramApiMedia>();
     for (const item of [...stories, ...feedItems]) uniqueById.set(item.id, item);
-    const items = [...uniqueById.values()];
+    const items = [...uniqueById.values()].map((item) => ({
+        ...item,
+        payloadJson: null,
+    }));
 
     const nextCursor = typeof feed.next_max_id === "string" && feed.next_max_id.trim() ? feed.next_max_id : null;
     const hasMore = Boolean(feed.more_available && nextCursor);
@@ -488,6 +656,14 @@ export async function fetchLiveInstagramFeedPage(params: {
             followersCount: stats.followersCount,
             followingCount: stats.followingCount,
             mediaCount: stats.mediaCount,
+            isVerified: extended.isVerified,
+            isPrivate: extended.isPrivate,
+            isBusiness: extended.isBusiness,
+            isProfessional: extended.isProfessional,
+            categoryName: extended.categoryName,
+            externalUrl: extended.externalUrl,
+            publicEmail: extended.publicEmail,
+            publicPhone: extended.publicPhone,
         },
         items,
         hasMore,
@@ -560,9 +736,10 @@ export async function syncInstagramHandle(handleRaw: string, opts?: {
             };
         }
 
-        const maxFeedItems = Math.max(FEED_PAGE_SIZE, Math.min(120, opts?.maxFeedItems ?? 54));
+        const maxFeedItems = Math.max(FEED_PAGE_SIZE, Math.min(180, opts?.maxFeedItems ?? 72));
         const includeStories = opts?.includeStories ?? true;
         const stats = extractProfileStats(profile);
+        const extended = extractProfileExtended(profile);
 
         const [feedItems, storyItems] = await Promise.all([
             fetchFeedItems(userId, maxFeedItems),
@@ -587,9 +764,19 @@ export async function syncInstagramHandle(handleRaw: string, opts?: {
         await upsertInstagramCachedProfile({
             handle,
             userId,
+            username: profile?.username?.trim() || handle,
             fullName: profile?.full_name?.trim() || null,
             biography: profile?.biography?.trim() || null,
             avatarUrl: profile?.profile_pic_url_hd ?? profile?.profile_pic_url ?? null,
+            isVerified: extended.isVerified,
+            isPrivate: extended.isPrivate,
+            isBusiness: extended.isBusiness,
+            isProfessional: extended.isProfessional,
+            externalUrl: extended.externalUrl,
+            categoryName: extended.categoryName,
+            publicEmail: extended.publicEmail,
+            publicPhone: extended.publicPhone,
+            profilePayloadJson: serializePayload(profile, MAX_PROFILE_PAYLOAD_CHARS),
             lastError: null,
             syncedAtMs,
         });
@@ -612,11 +799,20 @@ export async function syncInstagramHandle(handleRaw: string, opts?: {
                 isReel: item.isReel,
                 isStory: item.isStory,
                 caption: item.caption,
+                likeCount: item.likeCount,
+                commentCount: item.commentCount,
+                playCount: item.playCount,
+                viewCount: item.viewCount,
+                durationSeconds: item.durationSeconds,
+                locationName: item.locationName,
+                productType: item.productType,
+                resourcesCount: item.resourcesCount,
+                isPinned: item.isPinned,
                 takenAtMs: item.takenAtMs,
                 thumbnailUrl: item.thumbnailUrl,
                 videoUrl: item.videoUrl,
                 permalink: item.permalink,
-                payloadJson: null,
+                payloadJson: item.payloadJson ?? null,
                 updatedAtMs: syncedAtMs,
             })),
         );

@@ -777,14 +777,21 @@ button:focus-visible {
 }
 
 .bookingFlowSection {
-  padding-top: clamp(18px, 3vw, 34px);
-  padding-bottom: clamp(52px, 6vw, 88px);
+  --booking-flow-gap: clamp(16px, 2.2vw, 24px);
+  padding-top: var(--booking-flow-gap);
+  padding-bottom: var(--booking-flow-gap);
 }
 
 .bookingHero__shortcutGrid {
   display: grid;
   gap: var(--space-3);
   width: 100%;
+}
+
+.bookingHero__shortcutItem {
+  display: grid;
+  gap: 8px;
+  align-content: start;
 }
 
 .bookingHero__shortcutGrid--inline {
@@ -821,9 +828,14 @@ button:focus-visible {
   text-wrap: balance;
 }
 
-.bookingHero__shortcut span {
-  color: rgba(17, 17, 17, .72);
-  line-height: 1.5;
+.bookingHero__shortcutNote {
+  margin: 0 auto;
+  max-width: min(100%, 920px);
+  padding: 0 18px;
+  color: rgba(0, 0, 0, .55);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .bookingHero__shortcut:hover,
@@ -835,20 +847,36 @@ button:focus-visible {
 }
 
 .bookingHero__shortcut--primary {
-  border-color: rgba(17, 17, 17, .16);
+  border-color: rgba(0, 0, 0, .84);
   background: #111;
   color: #fff;
 }
 
-.bookingHero__shortcut--primary span {
-  color: rgba(255, 255, 255, .74);
+.bookingHero__shortcut--primary strong {
+  color: #fff;
 }
 
 .bookingHero__shortcut--primary:hover,
 .bookingHero__shortcut--primary:focus-visible {
-  background: #000;
-  border-color: #000;
-  box-shadow: var(--interactive-shadow-strong);
+  background: #666;
+  border-color: #666;
+  color: #fff;
+}
+
+.bookingHero__shortcut--primary:active,
+.bookingHero__shortcut--primary[data-selected="true"],
+.bookingHero__shortcut--primary[data-selected="true"]:hover,
+.bookingHero__shortcut--primary[data-selected="true"]:focus-visible {
+  background: #fff;
+  border-color: rgba(17, 17, 17, .78);
+  color: #111;
+}
+
+.bookingHero__shortcut--primary:active strong,
+.bookingHero__shortcut--primary[data-selected="true"] strong,
+.bookingHero__shortcut--primary[data-selected="true"]:hover strong,
+.bookingHero__shortcut--primary[data-selected="true"]:focus-visible strong {
+  color: #111;
 }
 
 .bookingHero__story {
@@ -1461,7 +1489,7 @@ button:focus-visible {
 }
 
 .bookingFlow__grid {
-  margin-top: 18px;
+  margin-top: 0;
   display: grid;
   gap: 18px;
   grid-template-columns: 1fr;
@@ -1922,6 +1950,7 @@ button:focus-visible {
 
 .bookingFlow__doctorBadgeAvatar--all {
   background: #111;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
 .bookingFlow__doctorBadgeFallback--all {
@@ -1936,6 +1965,7 @@ button:focus-visible {
   letter-spacing: -0.05em;
   color: #fff;
   text-align: center;
+  transition: color 160ms ease;
 }
 
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap {
@@ -2161,7 +2191,7 @@ button:focus-visible {
 
 .bookingFlow__procedureBadgeAvatar--all {
   background: #111;
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
 .bookingFlow__procedureBadgeFallback {
@@ -2178,6 +2208,24 @@ button:focus-visible {
 .bookingFlow__procedureBadgeFallback--all {
   color: #fff;
   font-size: 16px;
+  transition: color 160ms ease;
+}
+
+.bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
+.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar--all {
+  background: #666;
+  border-color: #666;
+}
+
+.bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar--all,
+.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar--all {
+  background: #fff;
+  border-color: rgba(17, 17, 17, .84);
+}
+
+.bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeFallback--all,
+.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeFallback--all {
+  color: #111;
 }
 
 .bookingFlow__procedureBadgeLabel {
@@ -3505,30 +3553,66 @@ video.heroMediaEl {
   white-space: pre-wrap;
 }
 
+.instagramGalleryFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.instagramGalleryFact {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.instagramGalleryFact--link {
+  text-decoration: none;
+}
+
+.instagramGalleryFact--link:hover,
+.instagramGalleryFact--link:focus-visible {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .instagramGalleryStats {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .instagramGalleryStat {
-  min-width: 132px;
-  display: grid;
-  gap: 2px;
-  padding: 12px 14px;
+  min-width: 0;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.10);
   background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
 }
 
 .instagramGalleryStat strong {
-  font-size: 18px;
-  line-height: 1.1;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .instagramGalleryStat span {
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1;
   color: rgba(255, 255, 255, 0.62);
 }
 
@@ -3585,10 +3669,16 @@ video.heroMediaEl {
 
 .instagramMediaOverlayLabel,
 .instagramMediaOverlayAction,
-.instagramMediaDate {
+.instagramMediaDate,
+.instagramMediaOverlayMeta {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
+}
+
+.instagramMediaOverlayMeta {
+  color: rgba(255, 255, 255, 0.78);
+  margin-left: auto;
 }
 
 .instagramMediaOverlayAction {
@@ -3815,6 +3905,25 @@ video.heroMediaEl {
   color: rgba(255, 255, 255, 0.86);
   white-space: pre-wrap;
   margin: 0;
+}
+
+.instagramViewerFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.instagramViewerFact {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .instagramViewerCaption--muted {
@@ -4155,8 +4264,7 @@ video.heroMediaEl {
   }
 
   .instagramGalleryStat {
-    min-width: 0;
-    flex: 1 1 0;
+    flex: 0 0 auto;
   }
 
   .aboutPhotoModalCard {
@@ -4219,6 +4327,7 @@ video.heroMediaEl {
 
   .instagramGalleryStats {
     justify-content: stretch;
+    overflow-x: auto;
   }
 
   .instagramViewerShell {
@@ -4286,6 +4395,10 @@ video.heroMediaEl {
 
   .bookingHero__shortcut strong {
     font-size: 17px;
+  }
+
+  .bookingHero__shortcutNote {
+    padding: 0 8px;
   }
 
   .bookingHero__shortcutGrid--inline {
@@ -6222,6 +6335,30 @@ video.heroMediaEl {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
 }
 
+.unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeFallback--all,
+.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeFallback--all,
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeFallback--all,
+.unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
+  transform: translateY(-1px);
+}
+
+.unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeAvatar--all,
+.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar--all {
+  background: #666;
+  border-color: #666;
+}
+
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeAvatar--all,
+.unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeAvatar--all {
+  background: #fff;
+  border-color: rgba(17, 17, 17, .84);
+}
+
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeFallback--all,
+.unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
+  color: #111;
+}
+
 .unitDoctorsCompact__avatarTrigger .bookingFlow__doctorBadgeAvatar {
   width: 108px;
   height: 108px;
@@ -7182,6 +7319,10 @@ video.heroMediaEl {
   color: rgba(255, 255, 255, .86);
   font-size: 13px;
   border-top: 1px solid rgba(255, 255, 255, .10)
+}
+
+.bookingPage+.footer {
+  margin-top: 0;
 }
 
 .footerInner {

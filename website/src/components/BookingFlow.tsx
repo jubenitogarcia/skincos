@@ -54,7 +54,7 @@ type StatusResponse = { ok: true; booking: BookingStatus } | { ok: false; error:
 type DoctorSelection = { slug: string; name: string; handle: string | null };
 
 const ANY_DOCTOR: DoctorSelection = { slug: "any", name: "Sem Preferência", handle: null };
-const OTHER_SERVICE: Service = { id: "any", name: "Outro", subtitle: "Outro procedimento ou combinação" };
+const OTHER_SERVICE: Service = { id: "any", name: "Outros", subtitle: "Outros procedimentos ou combinação" };
 const BOOKING_WINDOW_WEEKS = 4;
 
 function isOkResponse(value: unknown): value is { ok: true } {
@@ -272,8 +272,21 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
     );
 }
 
-function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; className?: string; scrollWindowClassName?: string }) {
+function HoverScrollPicker(props: {
+    ariaLabel: string;
+    children: ReactNode;
+    className?: string;
+    scrollWindowClassName?: string;
+    scrollWindowRef?: { current: HTMLDivElement | null };
+}) {
     const ref = useRef<HTMLDivElement | null>(null);
+    const setScrollWindowRef = useCallback(
+        (node: HTMLDivElement | null) => {
+            ref.current = node;
+            if (props.scrollWindowRef) props.scrollWindowRef.current = node;
+        },
+        [props.scrollWindowRef],
+    );
     const { canScrollLeft: canLeft, canScrollRight: canRight, hoverEdge, handleContainerMouseMove, clearHoverScroll, scrollByDirection } =
         useHorizontalRail({
             railRef: ref,
@@ -306,7 +319,7 @@ function HoverScrollPicker(props: { ariaLabel: string; children: ReactNode; clas
             </button>
 
             <div
-                ref={ref}
+                ref={setScrollWindowRef}
                 className={["bookingFlow__scrollWindow", props.scrollWindowClassName].filter(Boolean).join(" ")}
                 role="list"
                 aria-label={props.ariaLabel}
@@ -367,6 +380,8 @@ export default function BookingFlow() {
 
     const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } } | null>(null);
     const [status, setStatus] = useState<BookingStatus | null>(null);
+    const procedureScrollWindowRef = useRef<HTMLDivElement | null>(null);
+    const autoPickMotionDoneRef = useRef(false);
     const patientNameInputRef = useRef<HTMLInputElement | null>(null);
     const draftToRestoreRef = useRef<BookingDraftState | null>(null);
     const draftAppliedRef = useRef(false);
@@ -571,7 +586,38 @@ export default function BookingFlow() {
 
     useEffect(() => {
         autoPickConsumedRef.current = false;
+        autoPickMotionDoneRef.current = false;
     }, [autoPickQuery, unitSlug]);
+
+    useEffect(() => {
+        if (autoPickQuery !== "first") return;
+        if (!unitSlug) return;
+
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const behavior: ScrollBehavior = reduceMotion ? "auto" : "smooth";
+
+        if (!autoPickMotionDoneRef.current) {
+            document.getElementById("booking-flow")?.scrollIntoView({ behavior, block: "start" });
+            autoPickMotionDoneRef.current = true;
+        }
+
+        const procedureRail = procedureScrollWindowRef.current;
+        if (!procedureRail) return;
+
+        const activeProcedure = procedureRail.querySelector(".bookingFlow__procedureBadgeWrap[data-active='true']") as HTMLElement | null;
+        if (!activeProcedure) return;
+
+        const railRect = procedureRail.getBoundingClientRect();
+        const activeRect = activeProcedure.getBoundingClientRect();
+        const isOutOfView = activeRect.left < railRect.left + 10 || activeRect.right > railRect.right - 10;
+        if (!isOutOfView) return;
+
+        activeProcedure.scrollIntoView({
+            behavior,
+            block: "nearest",
+            inline: "center",
+        });
+    }, [autoPickQuery, selectedServiceIds, unitSlug]);
 
     const upcomingWeeks = useMemo(() => {
         const out: string[][] = [];
@@ -1189,7 +1235,11 @@ export default function BookingFlow() {
                                 </p>
                             </div>
                         ) : (
-                            <HoverScrollPicker ariaLabel="Lista de procedimentos" className="bookingFlow__picker--rail">
+                            <HoverScrollPicker
+                                ariaLabel="Lista de procedimentos"
+                                className="bookingFlow__picker--rail"
+                                scrollWindowRef={procedureScrollWindowRef}
+                            >
                                 <div className="bookingFlow__procedureBadgeGrid">
                                     {services.map((s) => {
                                         const active = selectedServices.some((item) => item.id === s.id);
@@ -1233,7 +1283,7 @@ export default function BookingFlow() {
                                         role="listitem"
                                         data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
                                     >
-                                        <PortalTooltip className="bookingFlow__procedureTooltip" content="Outro procedimento ou combinação">
+                                        <PortalTooltip className="bookingFlow__procedureTooltip" content="Outros procedimentos ou combinação">
                                             <button
                                                 type="button"
                                                 className="bookingFlow__procedureBadge"
@@ -1241,9 +1291,9 @@ export default function BookingFlow() {
                                                 onClick={() => toggleProcedure(OTHER_SERVICE)}
                                             >
                                                 <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
-                                                    <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outro</span>
+                                                    <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outros</span>
                                                 </span>
-                                                <span className="bookingFlow__procedureBadgeLabel">Outro</span>
+                                                <span className="bookingFlow__procedureBadgeLabel">Outros</span>
                                             </button>
                                         </PortalTooltip>
                                     </div>
