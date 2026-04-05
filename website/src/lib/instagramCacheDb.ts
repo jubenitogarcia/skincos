@@ -28,6 +28,14 @@ export type InstagramCachedProfile = {
     updated_at_ms: number;
 };
 
+export type InstagramCachedProfileStats = {
+    handle: string;
+    followers_count: number | null;
+    following_count: number | null;
+    media_count: number | null;
+    updated_at_ms: number;
+};
+
 export type InstagramCachedMediaRow = {
     id: string;
     handle: string;
@@ -53,6 +61,14 @@ export type UpsertProfileInput = {
     biography: string | null;
     avatarUrl: string | null;
     lastError?: string | null;
+    syncedAtMs: number;
+};
+
+export type UpsertProfileStatsInput = {
+    handle: string;
+    followersCount: number | null;
+    followingCount: number | null;
+    mediaCount: number | null;
     syncedAtMs: number;
 };
 
@@ -166,6 +182,18 @@ async function ensureSchema(db: D1DatabaseLike): Promise<void> {
              ON instagram_sync_runs(handle, started_at_ms DESC);`,
         )
         .run();
+
+    await db
+        .prepare(
+            `CREATE TABLE IF NOT EXISTS instagram_profile_stats (
+                handle TEXT PRIMARY KEY,
+                followers_count INTEGER,
+                following_count INTEGER,
+                media_count INTEGER,
+                updated_at_ms INTEGER NOT NULL
+            );`,
+        )
+        .run();
 }
 
 export async function getInstagramCachedProfile(handle: string): Promise<InstagramCachedProfile | null> {
@@ -216,6 +244,46 @@ export async function upsertInstagramCachedProfile(input: UpsertProfileInput): P
             input.lastError ?? null,
             now,
             now,
+        )
+        .run();
+}
+
+export async function getInstagramCachedProfileStats(handle: string): Promise<InstagramCachedProfileStats | null> {
+    const db = await getInstagramCacheDb();
+    if (!db) return null;
+
+    return db
+        .prepare(
+            `SELECT handle, followers_count, following_count, media_count, updated_at_ms
+             FROM instagram_profile_stats
+             WHERE handle = ?
+             LIMIT 1;`,
+        )
+        .bind(handle)
+        .first<InstagramCachedProfileStats>();
+}
+
+export async function upsertInstagramCachedProfileStats(input: UpsertProfileStatsInput): Promise<void> {
+    const db = await getInstagramCacheDb();
+    if (!db) return;
+
+    await db
+        .prepare(
+            `INSERT INTO instagram_profile_stats (
+                handle, followers_count, following_count, media_count, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(handle) DO UPDATE SET
+                followers_count = excluded.followers_count,
+                following_count = excluded.following_count,
+                media_count = excluded.media_count,
+                updated_at_ms = excluded.updated_at_ms;`,
+        )
+        .bind(
+            input.handle,
+            input.followersCount,
+            input.followingCount,
+            input.mediaCount,
+            input.syncedAtMs,
         )
         .run();
 }

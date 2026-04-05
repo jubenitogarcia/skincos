@@ -105,6 +105,7 @@ export async function GET(req: Request) {
                 count,
                 includeStories,
             });
+
             if (!liveFallback) {
                 return NextResponse.json(
                     { ok: false, error: "feed_unavailable" },
@@ -117,6 +118,7 @@ export async function GET(req: Request) {
                     },
                 );
             }
+
             return NextResponse.json(liveFallback, {
                 status: 200,
                 headers: {

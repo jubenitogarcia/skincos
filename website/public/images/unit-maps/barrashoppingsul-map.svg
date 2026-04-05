@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e3e5e8"/>
+      <stop offset="1" stop-color="#d6d9de"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <path d="M0 126C172 108 270 154 394 210C546 278 650 286 770 244C938 184 1090 174 1280 198" stroke="#b7bcc4" stroke-width="38" stroke-linecap="round"/>
+  <path d="M-20 458C148 486 280 436 412 384C558 326 670 334 812 386C968 444 1106 484 1300 462" stroke="#c1c6ce" stroke-width="30" stroke-linecap="round"/>
+  <path d="M126 740C214 624 286 516 366 396C434 294 530 214 622 130" stroke="#c9ced5" stroke-width="24" stroke-linecap="round"/>
+  <path d="M970 -30C910 98 850 198 758 286C670 370 590 438 498 526" stroke="#c9ced5" stroke-width="20" stroke-linecap="round"/>
+  <path d="M104 290C246 330 420 310 568 258" stroke="#adb3bc" stroke-width="12" stroke-linecap="round" stroke-dasharray="1 26"/>
+  <path d="M722 442C888 438 1064 388 1200 308" stroke="#adb3bc" stroke-width="12" stroke-linecap="round" stroke-dasharray="1 24"/>
+  <rect x="880" y="66" width="322" height="132" rx="22" fill="#c8cdd4"/>
+  <text x="914" y="120" fill="#7a828d" font-family="Arial, sans-serif" font-size="30" font-weight="700">Porto Alegre</text>
+  <text x="914" y="162" fill="#8c939d" font-family="Arial, sans-serif" font-size="20">BarraShoppingSul</text>
+  <circle cx="606" cy="352" r="14" fill="#9aa3af"/>
+</svg>

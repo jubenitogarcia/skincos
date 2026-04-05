@@ -588,34 +588,41 @@ export default function UnitsMapSection() {
                     {featuredUnits.length ? (
                         <div className="unitsFeatured" aria-label="Unidades em destaque">
                             <div className="unitsFeaturedList">
-                                {featuredUnits.map((u) => (
-                                    <button
-                                        key={u.slug}
-                                        className="unitsFeaturedItem"
-                                        onMouseEnter={() => {
-                                            if (!u.state) return;
-                                            setHoverUfDebounced(u.state);
-                                        }}
-                                        onMouseLeave={() => clearHoverUfSoon()}
-                                        onFocus={() => {
-                                            if (!u.state) return;
-                                            setHoverUfDebounced(u.state);
-                                        }}
-                                        onBlur={() => clearHoverUfSoon()}
-                                        onClick={() => {
-                                            const dest = getUnitDestination(u);
-                                            trackEvent("unit_map_click", { unitSlug: u.slug, placement: "featured_list", destination: dest });
-                                            window.location.assign(dest);
-                                        }}
-                                    >
-                                        <span className="unitsFeaturedItemState">{STATE_NAME_BY_UF[u.state ?? ""] ?? u.state ?? ""}</span>
-                                        <span className="unitsFeaturedItemName">{u.name}</span>
-                                    </button>
-                                ))}
+                                {featuredUnits.map((u, idx) => {
+                                    const prevState = idx > 0 ? featuredUnits[idx - 1]?.state : null;
+                                    const showStateHeader = Boolean(u.state) && u.state !== prevState;
+
+                                    return (
+                                        <div key={u.slug} className="unitsFeaturedEntry">
+                                            {showStateHeader ? (
+                                                <div className="unitsFeaturedStateHeader">{STATE_NAME_BY_UF[u.state ?? ""] ?? u.state}</div>
+                                            ) : null}
+                                            <button
+                                                className="unitsFeaturedItem"
+                                                onMouseEnter={() => {
+                                                    if (!u.state) return;
+                                                    setHoverUfDebounced(u.state);
+                                                }}
+                                                onMouseLeave={() => clearHoverUfSoon()}
+                                                onFocus={() => {
+                                                    if (!u.state) return;
+                                                    setHoverUfDebounced(u.state);
+                                                }}
+                                                onBlur={() => clearHoverUfSoon()}
+                                                onClick={() => {
+                                                    const dest = getUnitDestination(u);
+                                                    trackEvent("unit_map_click", { unitSlug: u.slug, placement: "featured_list", destination: dest });
+                                                    window.location.assign(dest);
+                                                }}
+                                            >
+                                                <span className="unitsFeaturedItemName">{u.name}</span>
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
                     ) : null}
-                    <div className="unitsStatesTitle">Rede completa por estado</div>
                     <div className="unitsStatesPanel">
                         <div className="unitsStatesScroller">
                             <div className="unitsStatesList">

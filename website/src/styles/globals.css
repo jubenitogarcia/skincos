@@ -254,7 +254,7 @@ button:focus-visible {
   margin-top: var(--stack-editorial-break);
 }
 
-.pageSection + .pageSection {
+.pageSection+.pageSection {
   margin-top: var(--stack-editorial-break);
 }
 
@@ -315,7 +315,7 @@ button:focus-visible {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  width: min(360px, calc(100vw - 40px));
+  width: min(180px, calc(100vw - 40px));
   background: rgba(255, 255, 255, .98);
   border: 1px solid rgba(0, 0, 0, .12);
   border-radius: 16px;
@@ -333,7 +333,7 @@ button:focus-visible {
   border-radius: 14px;
   padding: 10px 12px;
   cursor: pointer;
-  text-align: left;
+  text-align: right;
   transition:
     transform 180ms ease,
     background 180ms ease,
@@ -352,6 +352,7 @@ button:focus-visible {
 .unitChooserItemTitle {
   font-weight: 900;
   font-size: 13px;
+  text-align: right;
 }
 
 .unitChooserItemSub {
@@ -509,6 +510,15 @@ button:focus-visible {
   font-weight: 900;
   letter-spacing: .2px;
   line-height: 1;
+}
+
+.brand--header {
+  transition: transform 260ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.brand--header:hover,
+.brand--header:focus-visible {
+  transform: translateY(-1px) scale(1.012);
 }
 
 .brandLogo {
@@ -767,7 +777,8 @@ button:focus-visible {
 }
 
 .bookingFlowSection {
-  padding-bottom: var(--space-6);
+  padding-top: clamp(18px, 3vw, 34px);
+  padding-bottom: clamp(52px, 6vw, 88px);
 }
 
 .bookingHero__shortcutGrid {
@@ -1549,7 +1560,7 @@ button:focus-visible {
   margin-top: 12px;
   border-radius: 18px;
   border: 1px solid rgba(17, 17, 17, .08);
-  background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(246, 243, 237, .92));
+  background: linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(246, 243, 237, .92));
   box-shadow: 0 14px 30px rgba(0, 0, 0, .05);
 }
 
@@ -1830,11 +1841,11 @@ button:focus-visible {
   min-width: 100%;
 }
 
-.bookingFlow__doctorBadgeGrid > :first-child {
+.bookingFlow__doctorBadgeGrid> :first-child {
   margin-left: 0;
 }
 
-.bookingFlow__doctorBadgeGrid > :last-child {
+.bookingFlow__doctorBadgeGrid> :last-child {
   margin-right: 0;
 }
 
@@ -2412,7 +2423,8 @@ button:focus-visible {
   }
 }
 
-@media (hover: none), (pointer: coarse) {
+@media (hover: none),
+(pointer: coarse) {
   .bookingFlow__picker .bookingFlow__scrollWindow {
     width: 100%;
     margin-left: 0;
@@ -2539,6 +2551,9 @@ button:focus-visible {
 }
 
 .cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 10px 14px;
   border-radius: 999px;
   background: var(--brand);
@@ -2555,10 +2570,15 @@ button:focus-visible {
 
 .cta--agende {
   padding: 12px 22px;
+  min-width: 132px;
   background: #16a34a;
   color: #062814;
   box-shadow: 0 10px 26px rgba(22, 163, 74, .22);
   letter-spacing: .06em;
+}
+
+.headerActions .cta--agende {
+  min-width: 142px;
 }
 
 .cta--agende:hover,
@@ -2955,8 +2975,7 @@ video.heroMediaEl {
   transition: transform 180ms ease;
 }
 
-.heroDot::before {
-  content: "";
+.heroDot__core {
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -2971,19 +2990,59 @@ video.heroMediaEl {
   transform: translateY(-1px);
 }
 
-.heroDot:hover::before,
-.heroDot:focus-visible::before {
+.heroDot:hover .heroDot__core,
+.heroDot:focus-visible .heroDot__core {
   transform: scale(1.55);
   background: rgba(244, 231, 214, 0.98);
   border-color: rgba(255, 255, 255, 0.98);
   box-shadow: 0 0 0 5px rgba(255, 248, 240, 0.18), 0 10px 26px rgba(0, 0, 0, 0.24);
 }
 
-.heroDot--active::before {
+.heroDot--active .heroDot__core {
   transform: scale(1.35);
   background: rgba(255, 255, 255, 0.98);
   border-color: rgba(255, 255, 255, 0.98);
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.14), 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.heroDotProgress {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.heroDotProgress svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.heroDotProgress__track,
+.heroDotProgress__value {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.heroDotProgress__track {
+  stroke: rgba(255, 255, 255, 0.22);
+}
+
+.heroDotProgress__value {
+  stroke: rgba(255, 248, 240, 0.96);
+  stroke-dasharray: 50.265;
+  stroke-dashoffset: 50.265;
+  animation: heroDotProgress var(--hero-dot-progress-ms, 6000ms) linear forwards;
+}
+
+@keyframes heroDotProgress {
+  from {
+    stroke-dashoffset: 50.265;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 .carouselNavChrome {
@@ -3166,7 +3225,9 @@ video.heroMediaEl {
   }
 }
 
-@media (hover: none), (pointer: coarse) {
+@media (hover: none),
+(pointer: coarse) {
+
   .heroHoverZone,
   .aboutPhotosEdge {
     display: none;
@@ -3902,7 +3963,7 @@ video.heroMediaEl {
     radial-gradient(circle at 50% 42%, rgba(246, 241, 235, 0.12) 0%, rgba(246, 241, 235, 0.06) 36%, rgba(246, 241, 235, 0) 74%);
 }
 
-.aboutPhotoModalCard > * {
+.aboutPhotoModalCard>* {
   position: relative;
   z-index: 1;
 }
@@ -4176,6 +4237,7 @@ video.heroMediaEl {
 }
 
 @media (max-width: 900px) {
+
   .bookingHero__shell,
   .bookingFlow__summaryGrid,
   .heroContent {
@@ -4591,7 +4653,7 @@ video.heroMediaEl {
   transform: translateY(-50%) scale(0.96);
   z-index: 4;
   cursor: pointer;
-  opacity: 0.18;
+  opacity: 0.72;
   transition: opacity 180ms ease, transform 180ms ease;
 }
 
@@ -4616,8 +4678,8 @@ video.heroMediaEl {
 
 .aboutPhotosArrow:disabled,
 .aboutPhotosArrow[data-visible="false"] {
-  opacity: 0;
-  visibility: hidden;
+  opacity: 0.34;
+  visibility: visible;
   pointer-events: none;
 }
 
@@ -4815,8 +4877,37 @@ video.heroMediaEl {
   cursor: pointer;
 }
 
+.aboutMapEmbedLink::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, .12), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(10, 10, 12, .24), rgba(10, 10, 12, .48));
+  pointer-events: none;
+}
+
 .aboutMapFrame--preview {
   pointer-events: none;
+}
+
+.aboutMapPreviewPin {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  z-index: 2;
+  width: 34px;
+  height: 44px;
+  transform: translate(-50%, -100%);
+  filter: drop-shadow(0 12px 20px rgba(0, 0, 0, .34));
+  pointer-events: none;
+}
+
+.aboutMapPreviewPin svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .aboutMapOverlayHint {
@@ -4830,10 +4921,10 @@ video.heroMediaEl {
   min-height: 38px;
   padding: 0 14px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, .36);
-  background: rgba(17, 17, 17, .68);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, .22);
-  color: rgba(255, 255, 255, .96);
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(8, 8, 10, .76);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, .28);
+  color: rgba(255, 255, 255, .92);
   font-size: 12px;
   font-weight: 900;
   letter-spacing: .03em;
@@ -4856,34 +4947,194 @@ video.heroMediaEl {
 .aboutMapFrame--static {
   position: relative;
   overflow: hidden;
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  padding: 22px;
+  display: block;
+  padding: 0;
   border-bottom: 1px solid var(--border);
-  background:
-    radial-gradient(circle at top right, rgba(216, 179, 93, 0.22), transparent 30%),
-    linear-gradient(135deg, rgba(20, 20, 22, 0.98), rgba(44, 31, 24, 0.94));
-  color: #fff;
+  background: #d9dde3;
 }
 
-.aboutMapStaticGlow {
+.aboutMapStaticLink {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 340px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.aboutMapStaticImage {
+  object-fit: cover;
+  filter: grayscale(1) saturate(.15) contrast(1.06) brightness(1.03);
+}
+
+.aboutMapStaticFallback {
+  width: 100%;
+  min-height: 340px;
+  background:
+    radial-gradient(circle at 20% 16%, rgba(255, 255, 255, .65), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(145deg, #e3e6ea, #cfd5dc);
+}
+
+.aboutMapStaticOverlay {
   position: absolute;
-  inset: auto -14% -28% auto;
-  width: 240px;
-  height: 240px;
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0));
+  inset: 0;
+  background:
+    radial-gradient(circle at 88% 12%, rgba(255, 255, 255, .48), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(23, 27, 33, .12), rgba(23, 27, 33, .24));
   pointer-events: none;
 }
 
-.aboutMapStaticActions {
+.aboutMapStaticPin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: 40px;
+  height: 52px;
+  display: inline-flex;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+}
+
+.aboutMapStaticPinMotion {
+  display: inline-flex;
+  animation: aboutMapStaticPinFloat 2.2s cubic-bezier(.22, 1, .36, 1) infinite alternate;
+}
+
+.aboutMapStaticPinGlyph {
+  display: inline-flex;
+  transform-origin: 50% 100%;
+  transform: scale(.78);
+  transition: transform 160ms ease;
+  will-change: transform;
+  filter: drop-shadow(0 14px 20px rgba(0, 0, 0, .34));
+}
+
+.aboutMapStaticPin svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.aboutMapStaticPinShell,
+.aboutMapStaticPinCore,
+.aboutMapStaticPinMark {
+  transition: fill 160ms ease, stroke 160ms ease;
+}
+
+.aboutMapStaticPinShell {
+  fill: rgba(255, 255, 255, .92);
+  stroke: rgba(0, 0, 0, .2);
+}
+
+.aboutMapStaticPinCore {
+  fill: #111111;
+}
+
+.aboutMapStaticPinMark {
+  fill: #ffffff;
+}
+
+.aboutMapStaticLink:hover .aboutMapStaticPinGlyph,
+.aboutMapStaticLink:focus-visible .aboutMapStaticPinGlyph {
+  transform: scale(.92);
+}
+
+.aboutMapStaticLink:hover .aboutMapStaticPinShell,
+.aboutMapStaticLink:focus-visible .aboutMapStaticPinShell {
+  fill: rgba(17, 17, 17, .92);
+  stroke: rgba(255, 255, 255, .3);
+}
+
+.aboutMapStaticLink:hover .aboutMapStaticPinCore,
+.aboutMapStaticLink:focus-visible .aboutMapStaticPinCore {
+  fill: #ffffff;
+}
+
+.aboutMapStaticLink:hover .aboutMapStaticPinMark,
+.aboutMapStaticLink:focus-visible .aboutMapStaticPinMark {
+  fill: #111111;
+}
+
+@keyframes aboutMapStaticPinFloat {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(-3px);
+  }
+}
+
+.aboutMapStaticEyebrow {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 17, 17, .12);
+  background: rgba(255, 255, 255, .78);
+  color: rgba(17, 17, 17, .72);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.aboutMapStaticTop {
   position: relative;
-  z-index: 1;
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: flex-start;
+  z-index: 2;
+  padding: 14px;
+}
+
+.aboutMapStaticBadge {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 2;
+  max-width: calc(100% - 130px);
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(17, 17, 17, .66);
+  color: rgba(255, 255, 255, .92);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.15;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.aboutMapStaticHint {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(17, 17, 17, .72);
+  color: rgba(255, 255, 255, .92);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: transform .22s ease, box-shadow .22s ease, background .22s ease;
+}
+
+.aboutMapStaticLink:hover .aboutMapStaticHint,
+.aboutMapStaticLink:focus-visible .aboutMapStaticHint {
+  transform: translateY(-1px);
+  background: rgba(17, 17, 17, .84);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, .2);
 }
 
 .aboutRatingText {
@@ -5242,7 +5493,7 @@ video.heroMediaEl {
 
 .unitsMapRight {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   align-content: stretch;
   height: var(--unitsSplitHeight);
@@ -5417,7 +5668,7 @@ video.heroMediaEl {
   border: 1px solid rgba(17, 17, 17, .9);
   border-radius: 16px;
   padding: 10px;
-  background: #111;
+  background: #232a32;
   margin-bottom: 12px;
 }
 
@@ -5425,6 +5676,11 @@ video.heroMediaEl {
   display: grid;
   gap: 8px;
   grid-template-columns: 1fr;
+}
+
+.unitsFeaturedEntry {
+  display: grid;
+  gap: 4px;
 }
 
 .unitsFeaturedItem {
@@ -5449,14 +5705,15 @@ video.heroMediaEl {
   background: #fff;
 }
 
-.unitsFeaturedItemState {
+.unitsFeaturedStateHeader {
   font-family: var(--font-brand-ui);
   font-weight: 900;
   font-size: var(--type-label);
   line-height: 1.2;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #8a5f2a;
+  color: #d9dee5;
+  text-align: center;
 }
 
 .unitsFeaturedItemName {
@@ -5522,7 +5779,7 @@ video.heroMediaEl {
   line-height: 1.2;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #8a5f2a;
+  color: #6e7a88;
   text-align: center;
 }
 

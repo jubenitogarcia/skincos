@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { canonicalDoctorSlugForMember } from "@/lib/doctorSlug";
+import { resolveDoctorAvatarUrl } from "@/lib/doctorAvatar";
 import { trackBookingStart, trackDoctorInstagramClick } from "@/lib/leadTracking";
 import DoctorInstagramModal, { InstagramIcon } from "@/components/DoctorInstagramModal";
 import UnitDoctorsCompactRail, { type UnitDoctorsCompactRailItem } from "@/components/UnitDoctorsCompactRail";
@@ -45,9 +46,7 @@ function unitLabelFromSlug(slug: string | null | undefined): string | null {
 }
 
 function avatarUrl(handle: string, name: string) {
-    const h = encodeURIComponent(handle);
-    const n = encodeURIComponent(name);
-    return `/api/instagram-avatar?handle=${h}&name=${n}`;
+    return resolveDoctorAvatarUrl(handle, name);
 }
 
 function extractInstagramHandle(url: string | null): string | null {
@@ -266,10 +265,10 @@ export default function UnitDoctorsGrid({
     const selectedUnitSubtitle = showAllDirectoryWithoutUnit
         ? <p className="sectionSub">Veja em quais unidades cada doutor atende e siga para o agendamento quando encontrar a melhor opção para você.</p>
         : isBookingCompact
-        ? null
-        : isBookingSelect
-          ? <p className="bookingFlow__cardSub">Escolha o especialista e veja os dias e horários disponíveis para atendimento.</p>
-          : <p className="sectionSub">Conheça nossos especialistas, veja os perfis e escolha com mais tranquilidade.</p>;
+            ? null
+            : isBookingSelect
+                ? <p className="bookingFlow__cardSub">Escolha o especialista e veja os dias e horários disponíveis para atendimento.</p>
+                : <p className="sectionSub">Conheça nossos especialistas, veja os perfis e escolha com mais tranquilidade.</p>;
 
     if (compactItems === null && isCompactVariant) {
         return (
@@ -329,8 +328,8 @@ export default function UnitDoctorsGrid({
     const directoryDoctors = filtered ?? [];
 
     return (
-            <>
-                {selectedUnitSubtitle}
+        <>
+            {selectedUnitSubtitle}
             <div className="grid doctorDirectoryGrid">
                 {directoryDoctors.map((d) => {
                     const fullName = d.name;

@@ -1,12 +1,14 @@
 import { fetchActiveInjectors } from "@/lib/injectorsDirectory";
 import {
     getInstagramCachedProfile,
+    getInstagramCachedProfileStats,
     insertInstagramSyncRun,
     listInstagramCachedMedia,
     markInstagramSyncAttempt,
     newInstagramSyncRunId,
     pruneInstagramCache,
     upsertInstagramCachedProfile,
+    upsertInstagramCachedProfileStats,
     upsertInstagramMediaBatch,
 } from "@/lib/instagramCacheDb";
 
@@ -25,6 +27,9 @@ export type InstagramApiUser = {
     handle: string;
     name: string | null;
     bio: string | null;
+    followersCount?: number | null;
+    followingCount?: number | null;
+    mediaCount?: number | null;
 };
 
 export type InstagramApiMedia = {
@@ -57,6 +62,12 @@ type InstagramProfileResponse = {
             biography?: string;
             profile_pic_url_hd?: string;
             profile_pic_url?: string;
+            follower_count?: number;
+            following_count?: number;
+            media_count?: number;
+            edge_followed_by?: { count?: number };
+            edge_follow?: { count?: number };
+            edge_owner_to_timeline_media?: { count?: number };
         };
     };
 };
@@ -118,6 +129,33 @@ function sanitizeHandle(input: string): string {
 
 function sanitizeUserId(input: string): string {
     return (input ?? "").trim().replace(/[^0-9]/g, "");
+}
+
+function normalizeCount(value: unknown): number | null {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const out = Math.max(0, Math.floor(n));
+    return out;
+}
+
+function extractProfileStats(profile: InstagramProfileUser | null): {
+    followersCount: number | null;
+    followingCount: number | null;
+    mediaCount: number | null;
+} {
+    if (!profile) {
+        return {
+            followersCount: null,
+            followingCount: null,
+            mediaCount: null,
+        };
+    }
+
+    return {
+        followersCount: normalizeCount(profile.follower_count ?? profile.edge_followed_by?.count),
+        followingCount: normalizeCount(profile.following_count ?? profile.edge_follow?.count),
+        mediaCount: normalizeCount(profile.media_count ?? profile.edge_owner_to_timeline_media?.count),
+    };
 }
 
 function parseCursorOffset(cursor: string | null | undefined): number {
@@ -345,6 +383,7 @@ export async function getCachedInstagramFeed(params: {
     const includeStories = params.includeStories ?? true;
 
     const profile = await getInstagramCachedProfile(handle);
+    const stats = await getInstagramCachedProfileStats(handle);
     const rows = await listInstagramCachedMedia({
         handle,
         includeStories,
@@ -388,6 +427,9 @@ export async function getCachedInstagramFeed(params: {
             handle,
             name: profile?.full_name ?? null,
             bio: profile?.biography ?? null,
+            followersCount: stats?.followers_count ?? null,
+            followingCount: stats?.following_count ?? null,
+            mediaCount: stats?.media_count ?? null,
         },
         items,
         hasMore,
@@ -407,6 +449,7 @@ export async function fetchLiveInstagramFeedPage(params: {
     const profile = await fetchProfile(handle);
     const userId = sanitizeUserId(profile?.id ?? "");
     if (!userId) return null;
+    const stats = extractProfileStats(profile);
 
     const feed = await fetchFeedPage({
         userId,
@@ -442,6 +485,9 @@ export async function fetchLiveInstagramFeedPage(params: {
             handle: profile?.username?.trim() || handle,
             name: profile?.full_name?.trim() || null,
             bio: profile?.biography?.trim() || null,
+            followersCount: stats.followersCount,
+            followingCount: stats.followingCount,
+            mediaCount: stats.mediaCount,
         },
         items,
         hasMore,
@@ -516,6 +562,7 @@ export async function syncInstagramHandle(handleRaw: string, opts?: {
 
         const maxFeedItems = Math.max(FEED_PAGE_SIZE, Math.min(120, opts?.maxFeedItems ?? 54));
         const includeStories = opts?.includeStories ?? true;
+        const stats = extractProfileStats(profile);
 
         const [feedItems, storyItems] = await Promise.all([
             fetchFeedItems(userId, maxFeedItems),
@@ -544,6 +591,14 @@ export async function syncInstagramHandle(handleRaw: string, opts?: {
             biography: profile?.biography?.trim() || null,
             avatarUrl: profile?.profile_pic_url_hd ?? profile?.profile_pic_url ?? null,
             lastError: null,
+            syncedAtMs,
+        });
+
+        await upsertInstagramCachedProfileStats({
+            handle,
+            followersCount: stats.followersCount,
+            followingCount: stats.followingCount,
+            mediaCount: stats.mediaCount,
             syncedAtMs,
         });
 
@@ -652,7 +707,7 @@ export async function syncInstagramHandlesBatch(params: {
     const results: SyncHandleResult[] = [];
 
     async function worker(): Promise<void> {
-        for (;;) {
+        for (; ;) {
             const next = queue.shift();
             if (!next) return;
             const result = await syncInstagramHandle(next, {

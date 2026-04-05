@@ -3,25 +3,38 @@
 import Link from "next/link";
 import ExperienceTracker from "@/components/ExperienceTracker";
 import PageTitleBand from "@/components/PageTitleBand";
+import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackExperienceShortcutClick } from "@/lib/leadTracking";
 
 const EXPERIENCE_KEY = "booking_public_v1";
 const EXPERIENCE_VARIANT = "canonical";
 
-const SHORTCUTS = [
-    {
-        title: "Primeiro Horário Disponível",
-        href: "/agendamento?doctor=any#booking-flow",
-        kind: "primary" as const,
-    },
-    {
-        title: "Ver Especialistas",
-        href: "/#doutores",
-        kind: "secondary" as const,
-    },
-];
-
 export default function BookingHeroExperience() {
+    const unit = useCurrentUnit();
+
+    const bookingQuery = new URLSearchParams({
+        doctor: "any",
+        service: "any",
+        autopick: "first",
+    });
+    if (unit?.slug) bookingQuery.set("unit", unit.slug);
+
+    const doctorsQuery = new URLSearchParams();
+    if (unit?.slug) doctorsQuery.set("unit", unit.slug);
+
+    const shortcuts = [
+        {
+            title: "Primeiro Horário Disponível",
+            href: `/agendamento?${bookingQuery.toString()}#booking-flow`,
+            kind: "primary" as const,
+        },
+        {
+            title: "Ver Especialistas",
+            href: doctorsQuery.toString() ? `/?${doctorsQuery.toString()}#doutores` : "/#doutores",
+            kind: "secondary" as const,
+        },
+    ];
+
     return (
         <>
             <ExperienceTracker page="/agendamento" experience={EXPERIENCE_KEY} variant={EXPERIENCE_VARIANT} />
@@ -40,7 +53,7 @@ export default function BookingHeroExperience() {
 
                         <div className="bookingHero__panel" role="group" aria-label="Atalhos do agendamento">
                             <div className="bookingHero__shortcutGrid bookingHero__shortcutGrid--inline">
-                                {SHORTCUTS.map((item) => (
+                                {shortcuts.map((item) => (
                                     <Link
                                         key={item.title}
                                         href={item.href}
