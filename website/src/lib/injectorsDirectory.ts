@@ -296,6 +296,44 @@ function normalizeInstagramHandle(value: string): string | null {
     return cleaned ? cleaned : null;
 }
 
+const INSTAGRAM_HANDLE_OVERRIDES_BY_NAME: Record<string, string> = {
+    "raul rosario junior": "raulrosariojunior",
+    "raul junior": "raulrosariojunior",
+};
+
+function normalizePersonName(value: string): string {
+    return (value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\b(dr\.?|dra\.?|doutor|doutora)\b/g, " ")
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function resolveInstagramHandleWithOverrides(params: {
+    name: string;
+    nickname: string | null;
+    currentHandle: string | null;
+}): string | null {
+    const normalizedName = normalizePersonName(params.name);
+    const normalizedNickname = normalizePersonName(params.nickname ?? "");
+    const normalizedComposite = normalizePersonName(`${params.nickname ?? ""} ${params.name}`);
+
+    const override =
+        INSTAGRAM_HANDLE_OVERRIDES_BY_NAME[normalizedComposite] ??
+        INSTAGRAM_HANDLE_OVERRIDES_BY_NAME[normalizedName] ??
+        INSTAGRAM_HANDLE_OVERRIDES_BY_NAME[normalizedNickname] ??
+        null;
+
+    // Overrides must win even if source data brings a stale/wrong handle.
+    if (override) return override;
+    if (params.currentHandle) return params.currentHandle;
+
+    return null;
+}
+
 function normalizeUnits(value: string): string[] {
     const v = value.trim();
     if (!v) return [];
@@ -328,122 +366,130 @@ export async function fetchActiveInjectorsResult(): Promise<InjectorsResult> {
     if (inflightInjectorsLoad) return inflightInjectorsLoad;
 
     inflightInjectorsLoad = (async () => {
-    try {
-        // Prefer CRM escala D1 when bound to the website worker.
-        const escalaProfessionals = await fetchEscalaProfessionals(null);
-        if (escalaProfessionals) {
-            const members = escalaProfessionals
-                .map((row) => {
-                    const roleRaw = (row.role ?? "").trim();
-                    const roles = normalizeRoles(roleRaw);
-                    const isInjector = roles.length ? roles.some((r) => r.toLowerCase() === "injetor") : true;
-                    if (!isInjector) return null;
+        try {
+            // Prefer CRM escala D1 when bound to the website worker.
+            const escalaProfessionals = await fetchEscalaProfessionals(null);
+            if (escalaProfessionals) {
+                const members = escalaProfessionals
+                    .map((row) => {
+                        const roleRaw = (row.role ?? "").trim();
+                        const roles = normalizeRoles(roleRaw);
+                        const isInjector = roles.length ? roles.some((r) => r.toLowerCase() === "injetor") : true;
+                        if (!isInjector) return null;
 
-                    const instagramHandle = normalizeInstagramHandle(row.instagram ?? "");
-                    const instagramUrl = instagramHandle ? `https://www.instagram.com/${instagramHandle}/` : null;
+                        const instagramHandle = resolveInstagramHandleWithOverrides({
+                            name: row.name,
+                            nickname: row.nickname,
+                            currentHandle: normalizeInstagramHandle(row.instagram ?? ""),
+                        });
+                        const instagramUrl = instagramHandle ? `https://www.instagram.com/${instagramHandle}/` : null;
 
-                    return {
-                        name: row.name,
-                        nickname: row.nickname,
-                        units: row.units,
-                        role: roles.length ? roles.join(", ") : roleRaw,
-                        roles,
-                        instagramHandle,
-                        instagramUrl,
-                    } satisfies TeamMember;
-                })
-                .filter((member): member is TeamMember => !!member);
+                        return {
+                            name: row.name,
+                            nickname: row.nickname,
+                            units: row.units,
+                            role: roles.length ? roles.join(", ") : roleRaw,
+                            roles,
+                            instagramHandle,
+                            instagramUrl,
+                        } satisfies TeamMember;
+                    })
+                    .filter((member): member is TeamMember => !!member);
 
+                members.sort((a, b) => (a.nickname ?? a.name).localeCompare(b.nickname ?? b.name));
+
+                return { ok: true, members };
+            }
+
+            const env = getEnv();
+            const serviceAccountJson = (env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON ?? env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+            const sheetId = (env.GOOGLE_SHEETS_SHEET_ID ?? SHEET_ID).trim();
+            const gidEquipe = (env.GOOGLE_SHEETS_GID_EQUIPE ?? GID_EQUIPE).trim();
+
+            let rows: string[][] = [];
+
+            if (serviceAccountJson) {
+                try {
+                    rows = await fetchSheetRowsViaApi({ serviceAccountJson, sheetId, gidEquipe });
+                } catch (e) {
+                    if (e instanceof Error && e.message === "auth_invalid_json") return { ok: false, members: [], error: { code: "auth_invalid_json" } };
+                    if (e instanceof Error && e.message === "auth_missing_fields") return { ok: false, members: [], error: { code: "auth_missing_fields" } };
+                    if (e instanceof GidError && e.message === "sheet_not_found") return { ok: false, members: [], error: { code: "sheet_not_found", gid: e.gid } };
+                    if (e instanceof StatusError && e.message === "auth_token_failed") return { ok: false, members: [], error: { code: "auth_token_failed", status: e.status } };
+                    if (e instanceof StatusError && e.message === "sheets_api_failed") return { ok: false, members: [], error: { code: "sheets_api_failed", status: e.status } };
+                    return { ok: false, members: [], error: { code: "exception" } };
+                }
+            } else {
+                // Fallback to public CSV fetch (only works if the sheet is public).
+                const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${GID_EQUIPE}`;
+                const res = await fetch(url, {
+                    // Cache at the edge for a while; Google Sheets doesn’t change every second.
+                    next: { revalidate: 60 * 30 },
+                });
+
+                if (!res.ok) {
+                    return { ok: false, members: [], error: { code: "http_error", status: res.status } };
+                }
+
+                const contentType = res.headers.get("content-type");
+                if (contentType && !contentType.toLowerCase().includes("text/csv")) {
+                    return { ok: false, members: [], error: { code: "unexpected_content_type", contentType } };
+                }
+
+                const csv = await res.text();
+                if (/^\s*</.test(csv)) {
+                    return { ok: false, members: [], error: { code: "html_response" } };
+                }
+
+                rows = parseCsv(csv);
+            }
+
+            const members: TeamMember[] = [];
+
+            for (const row of rows) {
+                const name = (row[0] ?? "").trim();
+                const status = (row[1] ?? "").trim().toLowerCase();
+                const unitCell = (row[2] ?? "").trim();
+                const role = (row[3] ?? "").trim();
+                const nickname = (row[5] ?? "").trim();
+                const instagram = (row[8] ?? "").trim();
+
+                // Skip header-ish rows
+                if (!name || name.toLowerCase() === "nome") continue;
+                if (status !== "ativo") continue;
+
+                const roles = normalizeRoles(role);
+                const isInjector = roles.length
+                    ? roles.some((r) => r.toLowerCase() === "injetor")
+                    : role.toLowerCase() === "injetor";
+                if (!isInjector) continue;
+
+                const units = normalizeUnits(unitCell);
+                const instagramHandle = resolveInstagramHandleWithOverrides({
+                    name,
+                    nickname: nickname || null,
+                    currentHandle: normalizeInstagramHandle(instagram),
+                });
+                const instagramUrl = instagramHandle ? `https://www.instagram.com/${instagramHandle}/` : null;
+
+                members.push({
+                    name,
+                    nickname: nickname || null,
+                    units,
+                    role: roles.length ? roles.join(", ") : role,
+                    roles,
+                    instagramHandle,
+                    instagramUrl,
+                });
+            }
+
+            // Deterministic output
             members.sort((a, b) => (a.nickname ?? a.name).localeCompare(b.nickname ?? b.name));
 
             return { ok: true, members };
+        } catch {
+            return { ok: false, members: [], error: { code: "exception" } };
         }
-
-        const env = getEnv();
-        const serviceAccountJson = (env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON ?? env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
-        const sheetId = (env.GOOGLE_SHEETS_SHEET_ID ?? SHEET_ID).trim();
-        const gidEquipe = (env.GOOGLE_SHEETS_GID_EQUIPE ?? GID_EQUIPE).trim();
-
-        let rows: string[][] = [];
-
-        if (serviceAccountJson) {
-            try {
-                rows = await fetchSheetRowsViaApi({ serviceAccountJson, sheetId, gidEquipe });
-            } catch (e) {
-                if (e instanceof Error && e.message === "auth_invalid_json") return { ok: false, members: [], error: { code: "auth_invalid_json" } };
-                if (e instanceof Error && e.message === "auth_missing_fields") return { ok: false, members: [], error: { code: "auth_missing_fields" } };
-                if (e instanceof GidError && e.message === "sheet_not_found") return { ok: false, members: [], error: { code: "sheet_not_found", gid: e.gid } };
-                if (e instanceof StatusError && e.message === "auth_token_failed") return { ok: false, members: [], error: { code: "auth_token_failed", status: e.status } };
-                if (e instanceof StatusError && e.message === "sheets_api_failed") return { ok: false, members: [], error: { code: "sheets_api_failed", status: e.status } };
-                return { ok: false, members: [], error: { code: "exception" } };
-            }
-        } else {
-            // Fallback to public CSV fetch (only works if the sheet is public).
-            const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${GID_EQUIPE}`;
-            const res = await fetch(url, {
-                // Cache at the edge for a while; Google Sheets doesn’t change every second.
-                next: { revalidate: 60 * 30 },
-            });
-
-            if (!res.ok) {
-                return { ok: false, members: [], error: { code: "http_error", status: res.status } };
-            }
-
-            const contentType = res.headers.get("content-type");
-            if (contentType && !contentType.toLowerCase().includes("text/csv")) {
-                return { ok: false, members: [], error: { code: "unexpected_content_type", contentType } };
-            }
-
-            const csv = await res.text();
-            if (/^\s*</.test(csv)) {
-                return { ok: false, members: [], error: { code: "html_response" } };
-            }
-
-            rows = parseCsv(csv);
-        }
-
-        const members: TeamMember[] = [];
-
-        for (const row of rows) {
-            const name = (row[0] ?? "").trim();
-            const status = (row[1] ?? "").trim().toLowerCase();
-            const unitCell = (row[2] ?? "").trim();
-            const role = (row[3] ?? "").trim();
-            const nickname = (row[5] ?? "").trim();
-            const instagram = (row[8] ?? "").trim();
-
-            // Skip header-ish rows
-            if (!name || name.toLowerCase() === "nome") continue;
-            if (status !== "ativo") continue;
-
-            const roles = normalizeRoles(role);
-            const isInjector = roles.length
-                ? roles.some((r) => r.toLowerCase() === "injetor")
-                : role.toLowerCase() === "injetor";
-            if (!isInjector) continue;
-
-            const units = normalizeUnits(unitCell);
-            const instagramHandle = normalizeInstagramHandle(instagram);
-            const instagramUrl = instagramHandle ? `https://www.instagram.com/${instagramHandle}/` : null;
-
-            members.push({
-                name,
-                nickname: nickname || null,
-                units,
-                role: roles.length ? roles.join(", ") : role,
-                roles,
-                instagramHandle,
-                instagramUrl,
-            });
-        }
-
-        // Deterministic output
-        members.sort((a, b) => (a.nickname ?? a.name).localeCompare(b.nickname ?? b.name));
-
-        return { ok: true, members };
-    } catch {
-        return { ok: false, members: [], error: { code: "exception" } };
-    }
     })();
 
     try {

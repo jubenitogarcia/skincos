@@ -130,7 +130,6 @@ export default function UnitChooser() {
                             }}
                         >
                             <div className="unitChooserItemTitle">{u.name}</div>
-                            {u.addressLine ? <div className="unitChooserItemSub">{u.addressLine}</div> : null}
                         </button>
                     ))}
                 </div>

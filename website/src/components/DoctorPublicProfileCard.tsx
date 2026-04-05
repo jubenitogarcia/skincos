@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
+import { resolveDoctorAvatarUrl } from "@/lib/doctorAvatar";
 import { trackDoctorInstagramClick } from "@/lib/leadTracking";
 
 type InstagramMedia = {
@@ -27,7 +28,7 @@ type DoctorPublicProfileCardProps = {
 };
 
 function avatarUrl(handle: string, name: string) {
-    return `/api/instagram-avatar?handle=${encodeURIComponent(handle)}&name=${encodeURIComponent(name)}`;
+    return resolveDoctorAvatarUrl(handle, name);
 }
 
 export default function DoctorPublicProfileCard({
@@ -60,10 +61,10 @@ export default function DoctorPublicProfileCard({
                 });
                 const json = (await response.json().catch(() => null)) as
                     | {
-                          ok: true;
-                          user?: { bio?: string | null };
-                          items?: Array<{ id: string; thumbnailUrl: string; permalink?: string | null }>;
-                      }
+                        ok: true;
+                        user?: { bio?: string | null };
+                        items?: Array<{ id: string; thumbnailUrl: string; permalink?: string | null }>;
+                    }
                     | { ok: false; error?: string }
                     | null;
 
@@ -75,13 +76,13 @@ export default function DoctorPublicProfileCard({
 
                 const items = Array.isArray(json.items)
                     ? json.items
-                          .filter((item) => item && typeof item.thumbnailUrl === "string" && item.thumbnailUrl.trim())
-                          .slice(0, 3)
-                          .map((item) => ({
-                              id: item.id,
-                              thumbnailUrl: item.thumbnailUrl,
-                              permalink: item.permalink ?? null,
-                          }))
+                        .filter((item) => item && typeof item.thumbnailUrl === "string" && item.thumbnailUrl.trim())
+                        .slice(0, 3)
+                        .map((item) => ({
+                            id: item.id,
+                            thumbnailUrl: item.thumbnailUrl,
+                            permalink: item.permalink ?? null,
+                        }))
                     : [];
 
                 setState({
@@ -137,8 +138,8 @@ export default function DoctorPublicProfileCard({
                             {state.bio
                                 ? state.bio
                                 : state.loading
-                                  ? "Carregando informações do especialista."
-                                  : "Se o conteúdo do perfil não estiver disponível agora, você ainda pode conhecer este especialista pelo Instagram ou seguir para o agendamento."}
+                                    ? "Carregando informações do especialista."
+                                    : "Se o conteúdo do perfil não estiver disponível agora, você ainda pode conhecer este especialista pelo Instagram ou seguir para o agendamento."}
                         </p>
                     </div>
                 </div>

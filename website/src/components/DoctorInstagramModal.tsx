@@ -19,12 +19,20 @@ type InstagramMedia = {
 
 type InstagramFeedResponse =
     | {
-          ok: true;
-          user: { id: string; handle: string; name: string | null; bio: string | null };
-          items: InstagramMedia[];
-          hasMore: boolean;
-          nextCursor: string | null;
-      }
+        ok: true;
+        user: {
+            id: string;
+            handle: string;
+            name: string | null;
+            bio: string | null;
+            followersCount?: number | null;
+            followingCount?: number | null;
+            mediaCount?: number | null;
+        };
+        items: InstagramMedia[];
+        hasMore: boolean;
+        nextCursor: string | null;
+    }
     | { ok: false; error: string };
 
 export type DoctorInstagramProfile = {
@@ -60,6 +68,7 @@ async function fetchInstagramFeed(params: {
     cursor?: string | null;
     count?: number;
     attempts?: number;
+    forceRefreshOnLastAttempt?: boolean;
 }): Promise<InstagramFeedResponse | null> {
     const attempts = Math.max(1, params.attempts ?? 3);
     for (let i = 0; i < attempts; i++) {
@@ -70,6 +79,10 @@ async function fetchInstagramFeed(params: {
             if (typeof params.count === "number" && Number.isFinite(params.count)) {
                 qs.set("count", String(Math.max(1, Math.floor(params.count))));
             }
+            const shouldForceRefresh = Boolean(
+                params.forceRefreshOnLastAttempt && !params.cursor && i === attempts - 1,
+            );
+            if (shouldForceRefresh) qs.set("refresh", "1");
             const res = await fetch(`/api/instagram-feed?${qs.toString()}`, { cache: "no-store" });
             const json = (await res.json().catch(() => null)) as InstagramFeedResponse | null;
             if (json && json.ok) return json;
@@ -103,6 +116,13 @@ function formatInstagramDate(timestampMs: number | null): string | null {
     }
 }
 
+function formatSocialCount(value: number | null | undefined): string {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+    if (value < 1000) return String(value);
+    if (value < 1000000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} mil`;
+    return `${(value / 1000000).toFixed(value >= 10000000 ? 0 : 1)} mi`;
+}
+
 export function InstagramIcon(props: { size?: number }) {
     const size = props.size ?? 16;
     return (
@@ -124,6 +144,9 @@ export default function DoctorInstagramModal(props: {
     const [instagramUserId, setInstagramUserId] = useState<string | null>(null);
     const [instagramUserName, setInstagramUserName] = useState<string | null>(null);
     const [instagramUserBio, setInstagramUserBio] = useState<string | null>(null);
+    const [instagramFollowersCount, setInstagramFollowersCount] = useState<number | null>(null);
+    const [instagramFollowingCount, setInstagramFollowingCount] = useState<number | null>(null);
+    const [instagramMediaCount, setInstagramMediaCount] = useState<number | null>(null);
     const [instagramNextCursor, setInstagramNextCursor] = useState<string | null>(null);
     const [instagramHasMore, setInstagramHasMore] = useState(false);
     const [instagramLoading, setInstagramLoading] = useState(false);
@@ -181,6 +204,9 @@ export default function DoctorInstagramModal(props: {
             setInstagramUserId(null);
             setInstagramUserName(null);
             setInstagramUserBio(null);
+            setInstagramFollowersCount(null);
+            setInstagramFollowingCount(null);
+            setInstagramMediaCount(null);
             setInstagramNextCursor(null);
             setInstagramHasMore(false);
             setActiveInstagramMediaId(null);
@@ -191,6 +217,7 @@ export default function DoctorInstagramModal(props: {
                     handle: currentProfile.handle,
                     count: INSTAGRAM_PAGE_SIZE,
                     attempts: 3,
+                    forceRefreshOnLastAttempt: true,
                 });
                 if (cancelled) return;
                 if (!json || !json.ok) {
@@ -202,6 +229,9 @@ export default function DoctorInstagramModal(props: {
                 setInstagramUserId(json.user?.id || null);
                 setInstagramUserName(json.user?.name || null);
                 setInstagramUserBio(json.user?.bio || null);
+                setInstagramFollowersCount(typeof json.user?.followersCount === "number" ? json.user.followersCount : null);
+                setInstagramFollowingCount(typeof json.user?.followingCount === "number" ? json.user.followingCount : null);
+                setInstagramMediaCount(typeof json.user?.mediaCount === "number" ? json.user.mediaCount : null);
                 setInstagramNextCursor(json.nextCursor ?? null);
                 setInstagramHasMore(Boolean(json.hasMore && json.nextCursor));
             } catch {
@@ -512,8 +542,16 @@ export default function DoctorInstagramModal(props: {
                                 </div>
                                 <div className="instagramGalleryStats" aria-label="Resumo do perfil">
                                     <div className="instagramGalleryStat">
-                                        <strong>{instagramItems.length}</strong>
-                                        <span>itens carregados</span>
+                                        <strong>{formatSocialCount(instagramMediaCount ?? instagramItems.length)}</strong>
+                                        <span>publicações</span>
+                                    </div>
+                                    <div className="instagramGalleryStat">
+                                        <strong>{formatSocialCount(instagramFollowersCount)}</strong>
+                                        <span>seguidores</span>
+                                    </div>
+                                    <div className="instagramGalleryStat">
+                                        <strong>{formatSocialCount(instagramFollowingCount)}</strong>
+                                        <span>seguindo</span>
                                     </div>
                                     <div className="instagramGalleryStat">
                                         <strong>{instagramHasMore ? "Ao vivo" : "Completo"}</strong>

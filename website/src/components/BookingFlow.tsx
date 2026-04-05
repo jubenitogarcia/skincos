@@ -248,25 +248,25 @@ function PortalTooltip(props: { content: ReactNode; children: ReactNode; classNa
             {props.children}
             {mounted && typeof document !== "undefined"
                 ? createPortal(
-                      <div
-                          ref={tooltipRef}
-                          className={props.className}
-                          data-state={open ? "open" : "closed"}
-                          role="tooltip"
-                          style={{
-                              position: "fixed",
-                              left: position.left,
-                              top: position.top,
-                              display: "block",
-                              zIndex: 5000,
-                          }}
-                          onMouseEnter={openTooltip}
-                          onMouseLeave={scheduleClose}
-                      >
-                          {props.content}
-                      </div>,
-                      document.body,
-                  )
+                    <div
+                        ref={tooltipRef}
+                        className={props.className}
+                        data-state={open ? "open" : "closed"}
+                        role="tooltip"
+                        style={{
+                            position: "fixed",
+                            left: position.left,
+                            top: position.top,
+                            display: "block",
+                            zIndex: 5000,
+                        }}
+                        onMouseEnter={openTooltip}
+                        onMouseLeave={scheduleClose}
+                    >
+                        {props.content}
+                    </div>,
+                    document.body,
+                )
                 : null}
         </div>
     );
@@ -518,6 +518,8 @@ export default function BookingFlow() {
 
     const doctorQuery = useMemo(() => normalizeDoctorSlug(searchParams?.get("doctor") ?? ""), [searchParams]);
     const serviceQuery = useMemo(() => normalizeDoctorSlug(searchParams?.get("service") ?? ""), [searchParams]);
+    const autoPickQuery = useMemo(() => normalizeDoctorSlug(searchParams?.get("autopick") ?? ""), [searchParams]);
+    const autoPickConsumedRef = useRef(false);
 
     useEffect(() => {
         if (!unitSlug || !doctorsForUnit || doctorsForUnit.length === 0) return;
@@ -566,6 +568,10 @@ export default function BookingFlow() {
         setSelectedServices([match]);
         appliedServiceQueryRef.current = serviceQuery;
     }, [serviceQuery, unitSlug]);
+
+    useEffect(() => {
+        autoPickConsumedRef.current = false;
+    }, [autoPickQuery, unitSlug]);
 
     const upcomingWeeks = useMemo(() => {
         const out: string[][] = [];
@@ -907,6 +913,24 @@ export default function BookingFlow() {
         return slots.slots.find((s) => s.time === timeKey) ?? null;
     }, [slots?.slots, timeKey]);
 
+    const homeDoctorsHref = useMemo(() => {
+        if (!unitSlug) return "/#doutores";
+        return `/?unit=${encodeURIComponent(unitSlug)}#doutores`;
+    }, [unitSlug]);
+
+    useEffect(() => {
+        if (autoPickQuery !== "first") return;
+        if (autoPickConsumedRef.current) return;
+        if (!unitSlug || !dateKey || step !== "pick" || slotsLoading) return;
+        if (!slots?.slots?.length) return;
+
+        const firstAvailableSlot = slots.slots.find((slot) => slot.available);
+        if (!firstAvailableSlot) return;
+
+        autoPickConsumedRef.current = true;
+        openDetailsModal(firstAvailableSlot.time);
+    }, [autoPickQuery, dateKey, effectiveDoctorSlug, effectiveServiceId, slots?.slots, slotsLoading, step, unitSlug]);
+
     function ensureDefaultSelections() {
         if (!doctor) setDoctor(ANY_DOCTOR);
         if (selectedServices.length === 0) setSelectedServices([OTHER_SERVICE]);
@@ -1039,15 +1063,15 @@ export default function BookingFlow() {
 
         const hasData = Boolean(
             unitSlug ||
-                doctor?.slug ||
-                selectedServiceIds.length > 0 ||
-                dateKey ||
-                timeKey ||
-                patientName.trim() ||
-                patientGender ||
-                email.trim() ||
-                whatsapp.trim() ||
-                notes.trim(),
+            doctor?.slug ||
+            selectedServiceIds.length > 0 ||
+            dateKey ||
+            timeKey ||
+            patientName.trim() ||
+            patientGender ||
+            email.trim() ||
+            whatsapp.trim() ||
+            notes.trim(),
         );
 
         if (!hasData) {
@@ -1120,7 +1144,7 @@ export default function BookingFlow() {
                                         Se preferir comparar os perfis antes, abra a página de especialistas.
                                     </p>
                                     <div className="bookingFlow__emptyActions">
-                                        <Link className="decisionCard__secondary" href="/doutores">
+                                        <Link className="decisionCard__secondary" href={homeDoctorsHref}>
                                             Ver especialistas
                                         </Link>
                                     </div>
@@ -1256,184 +1280,184 @@ export default function BookingFlow() {
                                 </p>
                             </div>
                         ) : (
-                        <div className="bookingFlow__datetimeGrid" style={{ marginTop: 12 }}>
-                            <div>
-                                <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
-                                    Datas
-                                </div>
-                                <div className="bookingFlow__dateWeeks">
-                                    {visibleUpcomingWeeks.map((week) => (
-                                        <div key={week[0]} className="bookingFlow__dateWeekRow">
-                                            {week.map((d) => {
-                                                const active = dateKey === d;
-                                                const unavailable = canPick && hasResolvedDateAvailability && dateAvailability[d] === false;
-                                                return (
-                                                    <button
-                                                        key={d}
-                                                        type="button"
-                                                        disabled={!canPick || unavailable}
-                                                        className="bookingFlow__selectItem bookingFlow__dateBtn"
-                                                        data-active={active ? "true" : "false"}
-                                                        data-unavailable={unavailable ? "true" : "false"}
-                                                        onClick={() => {
-                                                            ensureDefaultSelections();
-                                                            setDateTouched(true);
-                                                            if (active) {
+                            <div className="bookingFlow__datetimeGrid" style={{ marginTop: 12 }}>
+                                <div>
+                                    <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
+                                        Datas
+                                    </div>
+                                    <div className="bookingFlow__dateWeeks">
+                                        {visibleUpcomingWeeks.map((week) => (
+                                            <div key={week[0]} className="bookingFlow__dateWeekRow">
+                                                {week.map((d) => {
+                                                    const active = dateKey === d;
+                                                    const unavailable = canPick && hasResolvedDateAvailability && dateAvailability[d] === false;
+                                                    return (
+                                                        <button
+                                                            key={d}
+                                                            type="button"
+                                                            disabled={!canPick || unavailable}
+                                                            className="bookingFlow__selectItem bookingFlow__dateBtn"
+                                                            data-active={active ? "true" : "false"}
+                                                            data-unavailable={unavailable ? "true" : "false"}
+                                                            onClick={() => {
+                                                                ensureDefaultSelections();
+                                                                setDateTouched(true);
+                                                                if (active) {
+                                                                    trackBookingFunnelStep({
+                                                                        step: "date_cleared",
+                                                                        unitSlug,
+                                                                        doctorSlug: effectiveDoctorSlug,
+                                                                        serviceId: effectiveServiceId,
+                                                                        date: d,
+                                                                    });
+                                                                    setDateKey(null);
+                                                                    setTimeKey(null);
+                                                                    setStep("pick");
+                                                                    return;
+                                                                }
+
                                                                 trackBookingFunnelStep({
-                                                                    step: "date_cleared",
+                                                                    step: "date_selected",
                                                                     unitSlug,
                                                                     doctorSlug: effectiveDoctorSlug,
                                                                     serviceId: effectiveServiceId,
                                                                     date: d,
                                                                 });
-                                                                setDateKey(null);
+                                                                setDateKey(d);
                                                                 setTimeKey(null);
                                                                 setStep("pick");
-                                                                return;
-                                                            }
-
-                                                            trackBookingFunnelStep({
-                                                                step: "date_selected",
-                                                                unitSlug,
-                                                                doctorSlug: effectiveDoctorSlug,
-                                                                serviceId: effectiveServiceId,
-                                                                date: d,
-                                                            });
-                                                            setDateKey(d);
-                                                            setTimeKey(null);
-                                                            setStep("pick");
-                                                        }}
-                                                        style={{
-                                                            opacity: canPick ? 1 : 0.5,
-                                                            fontWeight: 900,
-                                                            borderRadius: 12,
-                                                            padding: "10px 8px",
-                                                            textAlign: "center",
-                                                            display: "grid",
-                                                            gap: 2,
-                                                        }}
-                                                    >
-                                                        <div style={{ fontSize: 11, fontWeight: 800, opacity: active ? 0.9 : 0.75 }}>
-                                                            {weekdayPtBrShort(d)}
-                                                        </div>
-                                                        <div style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.2px" }}>
-                                                            {parseLocalDateKey(d)?.getDate()}
-                                                        </div>
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    ))}
-                                </div>
-                                {!canPick ? (
-                                    <div className="small" style={{ marginTop: 10 }}>
-                                        Selecione a unidade no topo para liberar as datas.
+                                                            }}
+                                                            style={{
+                                                                opacity: canPick ? 1 : 0.5,
+                                                                fontWeight: 900,
+                                                                borderRadius: 12,
+                                                                padding: "10px 8px",
+                                                                textAlign: "center",
+                                                                display: "grid",
+                                                                gap: 2,
+                                                            }}
+                                                        >
+                                                            <div style={{ fontSize: 11, fontWeight: 800, opacity: active ? 0.9 : 0.75 }}>
+                                                                {weekdayPtBrShort(d)}
+                                                            </div>
+                                                            <div style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.2px" }}>
+                                                                {parseLocalDateKey(d)?.getDate()}
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        ))}
                                     </div>
-                                ) : null}
-                            </div>
-
-                            <div>
-                                <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
-                                    Horários
+                                    {!canPick ? (
+                                        <div className="small" style={{ marginTop: 10 }}>
+                                            Selecione a unidade no topo para liberar as datas.
+                                        </div>
+                                    ) : null}
                                 </div>
-                                <div style={{ minHeight: 44 }}>
-                                    {!dateKey ? (
-                                        <div className="small">Escolha uma data para ver horários.</div>
-                                    ) : slotsLoading ? (
-                                        <div className="small">Carregando horários…</div>
-                                    ) : slotsError ? (
-                                        <div className="small">{slotsError}</div>
-                                    ) : slots ? (
-                                        <div className="bookingFlow__timeGrid">
-                                            {slots.slots.map((s) => {
-                                                const active = timeKey === s.time;
-                                                const isPast = s.reason === "past";
-                                                const isAgenda = s.reason === "agenda";
-                                                const hasTooltip = isPast || isAgenda;
-                                                const tooltip = isPast ? "horário já passou" : isAgenda ? "horário ocupado" : "";
-                                                const ariaDisabled = !s.available;
-                                                const nativeDisabled = !s.available && !hasTooltip;
-                                                const label =
-                                                    isPast || isAgenda
-                                                        ? ""
-                                                        : s.reason === "booked"
-                                                            ? "Indisponível"
-                                                            : s.reason === "in_review"
-                                                                ? "Em análise"
-                                                                : "";
 
-                                                return (
-                                                    <button
-                                                        key={s.time}
-                                                        type="button"
-                                                        disabled={nativeDisabled}
-                                                        aria-disabled={ariaDisabled ? "true" : "false"}
-                                                        data-reason={s.reason ?? ""}
-                                                        data-locked={hasTooltip ? "true" : "false"}
-                                                        data-tooltip={hasTooltip ? tooltip : undefined}
-                                                        className="bookingFlow__selectItem bookingFlow__timeBtn"
-                                                        data-active={active ? "true" : "false"}
-                                                        onClick={() => {
-                                                            if (ariaDisabled) return;
-                                                            if (active) {
-                                                                if (step !== "details") {
+                                <div>
+                                    <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
+                                        Horários
+                                    </div>
+                                    <div style={{ minHeight: 44 }}>
+                                        {!dateKey ? (
+                                            <div className="small">Escolha uma data para ver horários.</div>
+                                        ) : slotsLoading ? (
+                                            <div className="small">Carregando horários…</div>
+                                        ) : slotsError ? (
+                                            <div className="small">{slotsError}</div>
+                                        ) : slots ? (
+                                            <div className="bookingFlow__timeGrid">
+                                                {slots.slots.map((s) => {
+                                                    const active = timeKey === s.time;
+                                                    const isPast = s.reason === "past";
+                                                    const isAgenda = s.reason === "agenda";
+                                                    const hasTooltip = isPast || isAgenda;
+                                                    const tooltip = isPast ? "horário já passou" : isAgenda ? "horário ocupado" : "";
+                                                    const ariaDisabled = !s.available;
+                                                    const nativeDisabled = !s.available && !hasTooltip;
+                                                    const label =
+                                                        isPast || isAgenda
+                                                            ? ""
+                                                            : s.reason === "booked"
+                                                                ? "Indisponível"
+                                                                : s.reason === "in_review"
+                                                                    ? "Em análise"
+                                                                    : "";
+
+                                                    return (
+                                                        <button
+                                                            key={s.time}
+                                                            type="button"
+                                                            disabled={nativeDisabled}
+                                                            aria-disabled={ariaDisabled ? "true" : "false"}
+                                                            data-reason={s.reason ?? ""}
+                                                            data-locked={hasTooltip ? "true" : "false"}
+                                                            data-tooltip={hasTooltip ? tooltip : undefined}
+                                                            className="bookingFlow__selectItem bookingFlow__timeBtn"
+                                                            data-active={active ? "true" : "false"}
+                                                            onClick={() => {
+                                                                if (ariaDisabled) return;
+                                                                if (active) {
+                                                                    if (step !== "details") {
+                                                                        trackBookingFunnelStep({
+                                                                            step: "time_selected",
+                                                                            unitSlug,
+                                                                            doctorSlug: effectiveDoctorSlug,
+                                                                            serviceId: effectiveServiceId,
+                                                                            date: dateKey,
+                                                                            time: s.time,
+                                                                        });
+                                                                        openDetailsModal(s.time);
+                                                                        return;
+                                                                    }
                                                                     trackBookingFunnelStep({
-                                                                        step: "time_selected",
+                                                                        step: "time_cleared",
                                                                         unitSlug,
                                                                         doctorSlug: effectiveDoctorSlug,
                                                                         serviceId: effectiveServiceId,
                                                                         date: dateKey,
                                                                         time: s.time,
                                                                     });
-                                                                    openDetailsModal(s.time);
+                                                                    setTimeKey(null);
+                                                                    setStep("pick");
+                                                                    setDetailsStartedAtMs(null);
+                                                                    setTurnstileToken(null);
+                                                                    setTurnstileHadError(false);
+                                                                    setSubmitError(null);
                                                                     return;
                                                                 }
                                                                 trackBookingFunnelStep({
-                                                                    step: "time_cleared",
+                                                                    step: "time_selected",
                                                                     unitSlug,
                                                                     doctorSlug: effectiveDoctorSlug,
                                                                     serviceId: effectiveServiceId,
                                                                     date: dateKey,
                                                                     time: s.time,
                                                                 });
-                                                                setTimeKey(null);
-                                                                setStep("pick");
-                                                                setDetailsStartedAtMs(null);
-                                                                setTurnstileToken(null);
-                                                                setTurnstileHadError(false);
-                                                                setSubmitError(null);
-                                                                return;
-                                                            }
-                                                            trackBookingFunnelStep({
-                                                                step: "time_selected",
-                                                                unitSlug,
-                                                                doctorSlug: effectiveDoctorSlug,
-                                                                serviceId: effectiveServiceId,
-                                                                date: dateKey,
-                                                                time: s.time,
-                                                            });
-                                                            openDetailsModal(s.time);
-                                                        }}
-                                                        tabIndex={ariaDisabled ? -1 : 0}
-                                                        style={{
-                                                            padding: "10px 8px",
-                                                            borderRadius: 12,
-                                                            fontWeight: 900,
-                                                            textAlign: "center",
-                                                        }}
-                                                    >
-                                                        <div className="bookingFlow__timeBtnText">{s.time}</div>
-                                                        {label ? <div className="bookingFlow__timeBtnSub">{label}</div> : null}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <div className="small">Selecione uma data para ver os horários disponíveis.</div>
-                                    )}
+                                                                openDetailsModal(s.time);
+                                                            }}
+                                                            tabIndex={ariaDisabled ? -1 : 0}
+                                                            style={{
+                                                                padding: "10px 8px",
+                                                                borderRadius: 12,
+                                                                fontWeight: 900,
+                                                                textAlign: "center",
+                                                            }}
+                                                        >
+                                                            <div className="bookingFlow__timeBtnText">{s.time}</div>
+                                                            {label ? <div className="bookingFlow__timeBtnSub">{label}</div> : null}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div className="small">Selecione uma data para ver os horários disponíveis.</div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
                         )}
                     </div>
                 </div>

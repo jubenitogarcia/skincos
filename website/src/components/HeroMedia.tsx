@@ -11,6 +11,8 @@ type HeroMediaProps = {
     initialVariant?: HeroMediaVariant;
 };
 
+const HERO_AUTOPLAY_MS = 6000;
+
 export default function HeroMedia({ initialItems, initialVariant }: HeroMediaProps) {
     const unit = useCurrentUnit();
     const [index, setIndex] = useState(0);
@@ -82,16 +84,17 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
     }, [prevIndex]);
 
     useEffect(() => {
-        if (items.length <= 1) return;
-        if (item.type !== "image") return;
-        if (effectiveVariant === "mobile") return;
+        const canAutoAdvance = items.length > 1 && item.type === "image" && effectiveVariant !== "mobile";
+        if (!canAutoAdvance) return;
 
         const t = window.setTimeout(() => {
             goNext();
-        }, 6000);
+        }, HERO_AUTOPLAY_MS);
 
         return () => window.clearTimeout(t);
     }, [effectiveVariant, goNext, items.length, item.type]);
+
+    const canAutoAdvance = items.length > 1 && item.type === "image" && effectiveVariant !== "mobile";
 
     const style = useMemo<HeroStyle>(() => {
         const hotspot = item.bookingHotspot;
@@ -216,7 +219,21 @@ export default function HeroMedia({ initialItems, initialVariant }: HeroMediaPro
                                 aria-label={`Ir para ${i + 1} de ${items.length}`}
                                 aria-pressed={active}
                                 onClick={() => goTo(i)}
-                            />
+                            >
+                                <span className="heroDot__core" aria-hidden="true" />
+                                {active && canAutoAdvance ? (
+                                    <span
+                                        className="heroDotProgress"
+                                        aria-hidden="true"
+                                        style={{ "--hero-dot-progress-ms": `${HERO_AUTOPLAY_MS}ms` } as CSSProperties}
+                                    >
+                                        <svg viewBox="0 0 20 20" aria-hidden="true">
+                                            <circle className="heroDotProgress__track" cx="10" cy="10" r="8" />
+                                            <circle className="heroDotProgress__value" cx="10" cy="10" r="8" />
+                                        </svg>
+                                    </span>
+                                ) : null}
+                            </button>
                         );
                     })}
                 </div>

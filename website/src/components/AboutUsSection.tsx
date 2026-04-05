@@ -44,20 +44,20 @@ type ReviewSort = "newest" | "highest" | "lowest";
 
 type GalleryItem =
     | {
-          id: string;
-          kind: "photo";
-          alt: string;
-          thumbSrc: string;
-          fullSrc: string;
-          googleUrl?: string | null;
-      }
+        id: string;
+        kind: "photo";
+        alt: string;
+        thumbSrc: string;
+        fullSrc: string;
+        googleUrl?: string | null;
+    }
     | {
-          id: string;
-          kind: "cta";
-          alt: string;
-          href: string;
-          handle: string | null;
-      };
+        id: string;
+        kind: "cta";
+        alt: string;
+        href: string;
+        handle: string | null;
+    };
 
 function buildDefaultQuery(): string {
     return "Espaço Facial";
@@ -91,26 +91,6 @@ function buildOpenMapsUrl(data: PlaceDetailsPayload | null, unit: Unit | null, f
     url.searchParams.set("api", "1");
     url.searchParams.set("query", query);
     return url.toString();
-}
-
-function buildGoogleEmbedUrl(data: PlaceDetailsPayload | null, unit: Unit | null, fallbackQuery: string): string | null {
-    const lat = data?.location?.lat ?? unit?.lat ?? null;
-    const lng = data?.location?.lng ?? unit?.lng ?? null;
-    const query = typeof lat === "number" && typeof lng === "number" ? `${lat},${lng}` : fallbackQuery.trim();
-    if (!query) return null;
-
-    const url = new URL("https://www.google.com/maps");
-    url.searchParams.set("q", query);
-    url.searchParams.set("z", "15");
-    url.searchParams.set("output", "embed");
-    return url.toString();
-}
-
-function formatCoordinates(lat: number | null | undefined, lng: number | null | undefined): string | null {
-    if (typeof lat !== "number" || !Number.isFinite(lat) || typeof lng !== "number" || !Number.isFinite(lng)) {
-        return null;
-    }
-    return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 function formatAddressLines(title: string, rawAddress: string | null | undefined, unitSlug?: string | null): string[] {
@@ -184,6 +164,44 @@ function extractInstagramHandle(url: string | null | undefined): string | null {
     }
 }
 
+function UnitMapPin({ className }: { className: string }) {
+    const targetWidth = 24;
+    const scale = targetWidth / 484;
+    const targetHeight = 432 * scale;
+    const left = 43 - targetWidth / 2;
+    const top = 40 - targetHeight / 2;
+
+    return (
+        <span className={className} aria-hidden="true">
+            <span className="aboutMapStaticPinMotion">
+                <span className="aboutMapStaticPinGlyph">
+                    <svg viewBox="0 0 86 112" focusable="false" aria-hidden="true">
+                        <path
+                            className="aboutMapStaticPinShell"
+                            d="M43 0C19.3 0 0 19.3 0 43c0 27.6 28.4 52.1 37.9 60.1 3 2.5 7.3 2.5 10.3 0C57.6 95.1 86 70.6 86 43 86 19.3 66.7 0 43 0z"
+                            fill="rgba(255,255,255,0.92)"
+                            stroke="rgba(0,0,0,0.2)"
+                            strokeWidth="2"
+                        />
+                        <circle className="aboutMapStaticPinCore" cx="43" cy="40" r="24" fill="#111111" />
+                        <g className="aboutMapStaticPinMark" transform={`translate(${left} ${top}) scale(${scale})`} fill="#ffffff" aria-hidden="true">
+                            <rect x="0" y="0" width="484" height="62" />
+                            <rect x="0" y="184" width="484" height="63" />
+                            <rect x="0" y="184" width="63" height="248" />
+                            <rect x="196" y="370" width="288" height="62" />
+                        </g>
+                    </svg>
+                </span>
+            </span>
+        </span>
+    );
+}
+
+const UNIT_STATIC_MAP_ART: Record<string, string> = {
+    barrashoppingsul: "/images/unit-maps/barrashoppingsul-map.png",
+    "novo-hamburgo": "/images/unit-maps/novo-hamburgo-map.png",
+};
+
 type AboutUsSectionProps = {
     headingLevel?: 1 | 2;
     selectedTitle?: string;
@@ -227,6 +245,7 @@ export default function AboutUsSection({
         handleEdgeMouse: handlePhotosEdgeMouse,
         clearHoverScroll: clearPhotosHoverScroll,
         scrollByDirection: scrollPhotosBy,
+        updateScrollState: updatePhotosScrollState,
     } = useHorizontalRail({
         railRef: photosScrollRef,
         itemSelector: ".aboutPhotoLink",
@@ -292,8 +311,7 @@ export default function AboutUsSection({
     const reviewUrl = hasSelectedUnit && selectedPlaceId ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(selectedPlaceId)}` : null;
 
     const mapOpenUrl = useMemo(() => buildOpenMapsUrl(data, unit, query), [data, unit, query]);
-    const mapEmbedUrl = useMemo(() => buildGoogleEmbedUrl(data, unit, query), [data, unit, query]);
-    const coordinatesLabel = useMemo(() => formatCoordinates(data?.location?.lat ?? unit?.lat, data?.location?.lng ?? unit?.lng), [data?.location?.lat, data?.location?.lng, unit?.lat, unit?.lng]);
+    const mapArtSrc = unit?.slug ? UNIT_STATIC_MAP_ART[unit.slug] ?? null : null;
     const isPlaceDataPending = hasSelectedUnit && (loading || data === null);
     // Keep the unit gallery fully local so "Sobre Nós" never depends on paid Places fetches.
     const isPhotoDataPending = isPlaceDataPending;
@@ -495,6 +513,15 @@ export default function AboutUsSection({
         setActivePhotoIndex(null);
     }, [hasSelectedUnit, selectedPlaceId]);
 
+    useEffect(() => {
+        const raf = window.requestAnimationFrame(() => updatePhotosScrollState());
+        const timer = window.setTimeout(() => updatePhotosScrollState(), 220);
+        return () => {
+            window.cancelAnimationFrame(raf);
+            window.clearTimeout(timer);
+        };
+    }, [galleryItems.length, updatePhotosScrollState, visiblePhotosCount]);
+
     const loadMoreReviews = useCallback(() => {
         if (!nextReviewsPageToken || reviewsLoadingInitial || reviewsLoadingMore) return;
         void fetchReviewsPage(nextReviewsPageToken, "append");
@@ -667,341 +694,317 @@ export default function AboutUsSection({
             <p className="sectionSub">{selectedSubtitle}</p>
 
             <div className="aboutGrid">
-                    <div className="aboutPhotosRow" aria-label="Fotos da unidade">
-                        {galleryItems.length ? (
-                            <div className="aboutPhotosScrollerWrap">
-                                {galleryItems.length > 1 ? (
-                                    <>
-                                        <div
-                                            className="aboutPhotosEdge aboutPhotosEdge--left"
-                                            aria-hidden="true"
-                                            onMouseEnter={(event) => handlePhotosEdgeMouse("left", event)}
-                                            onMouseMove={(event) => handlePhotosEdgeMouse("left", event)}
-                                            onMouseLeave={() => clearPhotosHoverScroll()}
-                                        />
-                                        <div
-                                            className="aboutPhotosEdge aboutPhotosEdge--right"
-                                            aria-hidden="true"
-                                            onMouseEnter={(event) => handlePhotosEdgeMouse("right", event)}
-                                            onMouseMove={(event) => handlePhotosEdgeMouse("right", event)}
-                                            onMouseLeave={() => clearPhotosHoverScroll()}
-                                        />
+                <div className="aboutPhotosRow" aria-label="Fotos da unidade">
+                    {galleryItems.length ? (
+                        <div className="aboutPhotosScrollerWrap">
+                            {galleryItems.length > 1 ? (
+                                <>
+                                    <div
+                                        className="aboutPhotosEdge aboutPhotosEdge--left"
+                                        aria-hidden="true"
+                                        onMouseEnter={(event) => handlePhotosEdgeMouse("left", event)}
+                                        onMouseMove={(event) => handlePhotosEdgeMouse("left", event)}
+                                        onMouseLeave={() => clearPhotosHoverScroll()}
+                                    />
+                                    <div
+                                        className="aboutPhotosEdge aboutPhotosEdge--right"
+                                        aria-hidden="true"
+                                        onMouseEnter={(event) => handlePhotosEdgeMouse("right", event)}
+                                        onMouseMove={(event) => handlePhotosEdgeMouse("right", event)}
+                                        onMouseLeave={() => clearPhotosHoverScroll()}
+                                    />
 
-                                        <button
-                                            type="button"
-                                            className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--left"
-                                            aria-label="Fotos anteriores"
-                                            disabled={!canScrollPhotosLeft}
-                                            data-visible={canScrollPhotosLeft ? "true" : "false"}
-                                            data-hovered={photosHoverEdge === "left" ? "true" : "false"}
-                                            onClick={() => scrollPhotosBy("left")}
-                                        >
-                                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                                <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                            </svg>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--right"
-                                            aria-label="Próximas fotos"
-                                            disabled={!canScrollPhotosRight}
-                                            data-visible={canScrollPhotosRight ? "true" : "false"}
-                                            data-hovered={photosHoverEdge === "right" ? "true" : "false"}
-                                            onClick={() => scrollPhotosBy("right")}
-                                        >
-                                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                                <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                            </svg>
-                                        </button>
-                                    </>
-                                ) : null}
+                                    <button
+                                        type="button"
+                                        className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--left"
+                                        aria-label="Fotos anteriores"
+                                        disabled={!canScrollPhotosLeft}
+                                        data-visible={canScrollPhotosLeft ? "true" : "false"}
+                                        data-hovered={photosHoverEdge === "left" ? "true" : "false"}
+                                        onClick={() => scrollPhotosBy("left")}
+                                    >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="aboutPhotosArrow carouselNavChrome aboutPhotosArrow--right"
+                                        aria-label="Próximas fotos"
+                                        disabled={!canScrollPhotosRight}
+                                        data-visible={canScrollPhotosRight ? "true" : "false"}
+                                        data-hovered={photosHoverEdge === "right" ? "true" : "false"}
+                                        onClick={() => scrollPhotosBy("right")}
+                                    >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                    </button>
+                                </>
+                            ) : null}
 
-                                <div className="aboutPhotosScroller" ref={photosScrollRef}>
-                                    {galleryItems.map((item, index) => {
-                                        if (item.kind === "photo") {
-                                            return (
-                                                <button
-                                                    key={item.id}
-                                                    type="button"
-                                                    className="aboutPhotoLink aboutPhotoButton"
-                                                    aria-label="Ampliar imagem da unidade"
-                                                    data-active={activePhotoIndex === index ? "true" : "false"}
-                                                    onClick={() => openPhotoAtIndex(index)}
-                                                >
-                                                    <Image
-                                                        className="aboutPhotoItem"
-                                                        src={item.thumbSrc}
-                                                        alt={item.alt}
-                                                        width={520}
-                                                        height={488}
-                                                        sizes="25vw"
-                                                        priority={index === 0}
-                                                        unoptimized
-                                                        style={{ objectFit: "cover" }}
-                                                    />
-                                                    <span className="aboutPhotoOverlay" aria-hidden="true" />
-                                                </button>
-                                            );
-                                        }
-
+                            <div className="aboutPhotosScroller" ref={photosScrollRef}>
+                                {galleryItems.map((item, index) => {
+                                    if (item.kind === "photo") {
                                         return (
-                                            <a
+                                            <button
                                                 key={item.id}
-                                                className="aboutPhotoLink aboutPhotoLink--cta"
-                                                href={item.href}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                aria-label={item.alt}
+                                                type="button"
+                                                className="aboutPhotoLink aboutPhotoButton"
+                                                aria-label="Ampliar imagem da unidade"
                                                 data-active={activePhotoIndex === index ? "true" : "false"}
-                                                onClick={() =>
-                                                    trackCtaInstagramClick({
-                                                        placement: "about",
-                                                        unitSlug: unit?.slug ?? null,
-                                                        instagramUrl: unitInstagramUrl,
-                                                    })
-                                                }
+                                                onClick={() => openPhotoAtIndex(index)}
                                             >
-                                                <span className="aboutPhotoCtaGlow" aria-hidden="true" />
-                                                <span className="aboutPhotoOverlay aboutPhotoOverlay--cta" aria-hidden="true" />
-                                                <span className="aboutPhotoCtaContent">
-                                                    <span className="aboutPhotoCtaPlus" aria-hidden="true">+</span>
-                                                    <span className="aboutPhotoCtaTitle">Conheça mais</span>
-                                                    {item.handle ? <span className="aboutPhotoCtaMeta">@{item.handle}</span> : null}
-                                                </span>
-                                            </a>
+                                                <Image
+                                                    className="aboutPhotoItem"
+                                                    src={item.thumbSrc}
+                                                    alt={item.alt}
+                                                    width={520}
+                                                    height={488}
+                                                    sizes="25vw"
+                                                    priority={index === 0}
+                                                    unoptimized
+                                                    style={{ objectFit: "cover" }}
+                                                />
+                                                <span className="aboutPhotoOverlay" aria-hidden="true" />
+                                            </button>
                                         );
-                                    })}
+                                    }
 
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="aboutMuted">
-                                {isPhotoDataPending ? "Preparando fotos da unidade…" : "As fotos desta unidade voltam a aparecer em breve."}
-                            </div>
-                        )}
-
-                        {!galleryItems.length ? (
-                            <div className="aboutMuted" style={{ padding: "0 18px", fontSize: 12 }}>
-                                {isPhotoDataPending ? "Preparando fotos da unidade…" : "Novas fotos da unidade aparecem aqui em breve."}
-                            </div>
-                        ) : null}
-                        <div className="aboutPhotosHint">Arraste a barra inferior ou use as setas para navegar com suavidade.</div>
-                    </div>
-
-                    <div className="aboutSplit">
-                        <div className="aboutSplitIntro">
-                            <div className="aboutReviewsIntro">
-                                <h3 className="sectionTitle sectionTitle--display aboutReviewsIntro__title">Confira comentários de pacientes da unidade.</h3>
-                                <div className="sectionCopyPair aboutReviewsIntro__body">
-                                    <p className="sectionLead">Os trechos abaixo vêm de avaliações públicas reais.</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="aboutSplitColumn aboutSplitColumn--map">
-                            <div className="aboutMapCard">
-                                <div className="aboutMapHeader">
-                                    <div>
-                                        <div className="aboutPlaceTitle">{title}</div>
-                                        {addressLines.length ? (
-                                            <div className="aboutPlaceSub">
-                                                {addressLines.map((line) => (
-                                                    <span key={line}>{line}</span>
-                                                ))}
-                                            </div>
-                                        ) : null}
-                                    </div>
-
-                                    <div className="aboutHeaderActions" aria-label="Ações">
-                                        {agendarUrl ? (
-                                            <Link
-                                                className="aboutBtnPrimary"
-                                                href={bookingHref}
-                                                onClick={() =>
-                                                    trackBookingStart({
-                                                        placement: "about",
-                                                        unitSlug: unit?.slug ?? null,
-                                                        bookingUrl: bookingHref,
-                                                    })
-                                                }
-                                            >
-                                                Agendar
-                                            </Link>
-                                        ) : null}
-
-                                        {reviewUrl ? (
-                                            <a
-                                                className="aboutBtnGhost"
-                                                href={reviewUrl}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                onClick={() =>
-                                                    trackEvent("cta_review_click", {
-                                                        placement: "about",
-                                                        unitSlug: unit?.slug ?? null,
-                                                        placeId: selectedPlaceId,
-                                                    })
-                                                }
-                                            >
-                                                Fazer review
-                                            </a>
-                                        ) : null}
-                                    </div>
-                                </div>
-
-                                {mapEmbedUrl ? (
-                                    mapOpenUrl ? (
+                                    return (
                                         <a
-                                            className="aboutMapEmbedLink"
-                                            href={mapOpenUrl}
+                                            key={item.id}
+                                            className="aboutPhotoLink aboutPhotoLink--cta"
+                                            href={item.href}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            aria-label={`Abrir localização de ${title} no Google Maps`}
+                                            aria-label={item.alt}
+                                            data-active={activePhotoIndex === index ? "true" : "false"}
+                                            onClick={() =>
+                                                trackCtaInstagramClick({
+                                                    placement: "about",
+                                                    unitSlug: unit?.slug ?? null,
+                                                    instagramUrl: unitInstagramUrl,
+                                                })
+                                            }
                                         >
-                                            <iframe
-                                                className="aboutMapFrame aboutMapFrame--preview"
-                                                src={mapEmbedUrl}
-                                                loading="lazy"
-                                                referrerPolicy="no-referrer-when-downgrade"
-                                                title={`Mapa de ${title}`}
-                                            />
-                                            <span className="aboutMapOverlayHint">Abrir no Google Maps</span>
+                                            <span className="aboutPhotoCtaGlow" aria-hidden="true" />
+                                            <span className="aboutPhotoOverlay aboutPhotoOverlay--cta" aria-hidden="true" />
+                                            <span className="aboutPhotoCtaContent">
+                                                <span className="aboutPhotoCtaPlus" aria-hidden="true">+</span>
+                                                <span className="aboutPhotoCtaTitle">Conheça mais</span>
+                                                {item.handle ? <span className="aboutPhotoCtaMeta">@{item.handle}</span> : null}
+                                            </span>
                                         </a>
-                                    ) : (
-                                        <iframe
-                                            className="aboutMapFrame"
-                                            src={mapEmbedUrl}
-                                            loading="lazy"
-                                            referrerPolicy="no-referrer-when-downgrade"
-                                            title={`Mapa de ${title}`}
-                                        />
-                                    )
+                                    );
+                                })}
+
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="aboutMuted">
+                            {isPhotoDataPending ? "Preparando fotos da unidade…" : "As fotos desta unidade voltam a aparecer em breve."}
+                        </div>
+                    )}
+
+                    {!galleryItems.length ? (
+                        <div className="aboutMuted" style={{ padding: "0 18px", fontSize: 12 }}>
+                            {isPhotoDataPending ? "Preparando fotos da unidade…" : "Novas fotos da unidade aparecem aqui em breve."}
+                        </div>
+                    ) : null}
+                    <div className="aboutPhotosHint">Arraste a barra inferior ou use as setas para navegar com suavidade.</div>
+                </div>
+
+                <div className="aboutSplit">
+                    <div className="aboutSplitIntro">
+                        <div className="aboutReviewsIntro">
+                            <h3 className="sectionTitle sectionTitle--display aboutReviewsIntro__title">Confira comentários de pacientes da unidade.</h3>
+                            <div className="sectionCopyPair aboutReviewsIntro__body">
+                                <p className="sectionLead">Os trechos abaixo vêm de avaliações públicas reais.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="aboutSplitColumn aboutSplitColumn--map">
+                        <div className="aboutMapCard">
+                            <div className="aboutMapHeader">
+                                <div>
+                                    <div className="aboutPlaceTitle">{title}</div>
+                                    {addressLines.length ? (
+                                        <div className="aboutPlaceSub">
+                                            {addressLines.map((line) => (
+                                                <span key={line}>{line}</span>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </div>
+
+                                <div className="aboutHeaderActions" aria-label="Ações">
+                                    {agendarUrl ? (
+                                        <Link
+                                            className="aboutBtnPrimary"
+                                            href={bookingHref}
+                                            onClick={() =>
+                                                trackBookingStart({
+                                                    placement: "about",
+                                                    unitSlug: unit?.slug ?? null,
+                                                    bookingUrl: bookingHref,
+                                                })
+                                            }
+                                        >
+                                            Agendar
+                                        </Link>
+                                    ) : null}
+
+                                    {reviewUrl ? (
+                                        <a
+                                            className="aboutBtnGhost"
+                                            href={reviewUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={() =>
+                                                trackEvent("cta_review_click", {
+                                                    placement: "about",
+                                                    unitSlug: unit?.slug ?? null,
+                                                    placeId: selectedPlaceId,
+                                                })
+                                            }
+                                        >
+                                            Fazer review
+                                        </a>
+                                    ) : null}
+                                </div>
+                            </div>
+
+                            <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
+                                {mapOpenUrl ? (
+                                    <a className="aboutMapStaticLink" href={mapOpenUrl} target="_blank" rel="noopener noreferrer" aria-label={`Abrir rota para ${title}`}>
+                                        {mapArtSrc ? (
+                                            <Image
+                                                src={mapArtSrc}
+                                                alt={`Mapa de localização da unidade ${title}`}
+                                                fill
+                                                sizes="(max-width: 900px) 100vw, 50vw"
+                                                className="aboutMapStaticImage"
+                                            />
+                                        ) : (
+                                            <div className="aboutMapStaticFallback" aria-hidden="true" />
+                                        )}
+                                        <UnitMapPin className="aboutMapStaticPin" />
+                                    </a>
                                 ) : (
-                                    <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
-                                        <div className="aboutMapStaticGlow" aria-hidden="true" />
-                                        <div className="aboutMapStaticTop">
-                                            <span className="aboutMapStaticEyebrow">Localização</span>
-                                            <span className="aboutMapStaticBadge">Snapshot local</span>
-                                        </div>
-                                        <div className="aboutMapStaticTitle">{title}</div>
-                                        {address ? <div className="aboutMapStaticAddress">{address}</div> : null}
-                                        <div className="aboutMapStaticMeta">
-                                            {coordinatesLabel ? (
-                                                <div className="aboutMapStaticMetaItem">
-                                                    <span>Coordenadas</span>
-                                                    <strong>{coordinatesLabel}</strong>
-                                                </div>
-                                            ) : null}
-                                            <div className="aboutMapStaticMetaItem">
-                                                <span>Status</span>
-                                                <strong>{mapEmbedUrl ? "Google Maps sob clique" : "Snapshot local"}</strong>
-                                            </div>
-                                        </div>
-                                        <div className="aboutMapStaticActions">
-                                            {mapOpenUrl ? (
-                                                <a className="aboutBtnGhost" href={mapOpenUrl} target="_blank" rel="noopener noreferrer">
-                                                    Abrir rota
-                                                </a>
-                                            ) : null}
-                                        </div>
+                                    <div className="aboutMapStaticLink" aria-hidden="true">
+                                        {mapArtSrc ? (
+                                            <Image
+                                                src={mapArtSrc}
+                                                alt={`Mapa de localização da unidade ${title}`}
+                                                fill
+                                                sizes="(max-width: 900px) 100vw, 50vw"
+                                                className="aboutMapStaticImage"
+                                            />
+                                        ) : (
+                                            <div className="aboutMapStaticFallback" aria-hidden="true" />
+                                        )}
+                                        <UnitMapPin className="aboutMapStaticPin" />
                                     </div>
                                 )}
                             </div>
-
-                            <p className="small aboutSplitNote aboutSplitNote--map">
-                                Clique no mapa para ser redirecionado para saber <strong>Como Chegar</strong> na unidade.
-                            </p>
                         </div>
 
-                        <div className="aboutSplitColumn aboutSplitColumn--reviews">
-                            <div className="aboutReviewsCard">
-                                {hasSelectedUnit ? (
-                                    <div className="aboutReviewsSection" aria-label="Avaliações">
-                                        <div className="aboutControls">
-                                            <div className="aboutControlsRow aboutControlsRow--top">
-                                                <div className="aboutPills" aria-label="Filtro por nota">
-                                                    <button
-                                                        type="button"
-                                                        className={ratingFilter === "all" ? "aboutPill active" : "aboutPill"}
-                                                        onClick={() => setRatingFilter("all")}
-                                                    >
-                                                        Todas
-                                                    </button>
-                                                    {[5, 4, 3, 2, 1].map((n) => (
-                                                        <button
-                                                            key={n}
-                                                            type="button"
-                                                            className={ratingFilter === n ? "aboutPill active" : "aboutPill"}
-                                                            onClick={() => setRatingFilter(n)}
-                                                        >
-                                                            {n}★
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                                <select
-                                                    className="aboutSelect"
-                                                    value={sort}
-                                                    onChange={(e) => setSort(e.target.value as ReviewSort)}
-                                                    aria-label="Ordenação"
+                        <p className="small aboutSplitNote aboutSplitNote--map">
+                            Clique no mapa para ser redirecionado para saber <strong>Como Chegar</strong> na unidade.
+                        </p>
+                    </div>
+
+                    <div className="aboutSplitColumn aboutSplitColumn--reviews">
+                        <div className="aboutReviewsCard">
+                            {hasSelectedUnit ? (
+                                <div className="aboutReviewsSection" aria-label="Avaliações">
+                                    <div className="aboutControls">
+                                        <div className="aboutControlsRow aboutControlsRow--top">
+                                            <div className="aboutPills" aria-label="Filtro por nota">
+                                                <button
+                                                    type="button"
+                                                    className={ratingFilter === "all" ? "aboutPill active" : "aboutPill"}
+                                                    onClick={() => setRatingFilter("all")}
                                                 >
-                                                    <option value="newest">Mais recentes</option>
-                                                    <option value="highest">Maior nota</option>
-                                                    <option value="lowest">Menor nota</option>
-                                                </select>
+                                                    Todas
+                                                </button>
+                                                {[5, 4, 3, 2, 1].map((n) => (
+                                                    <button
+                                                        key={n}
+                                                        type="button"
+                                                        className={ratingFilter === n ? "aboutPill active" : "aboutPill"}
+                                                        onClick={() => setRatingFilter(n)}
+                                                    >
+                                                        {n}★
+                                                    </button>
+                                                ))}
                                             </div>
+                                            <select
+                                                className="aboutSelect"
+                                                value={sort}
+                                                onChange={(e) => setSort(e.target.value as ReviewSort)}
+                                                aria-label="Ordenação"
+                                            >
+                                                <option value="newest">Mais recentes</option>
+                                                <option value="highest">Maior nota</option>
+                                                <option value="lowest">Menor nota</option>
+                                            </select>
                                         </div>
-
-                                        {isReviewDataPending ? (
-                                            <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
-                                                Preparando avaliações da unidade…
-                                            </div>
-                                        ) : reviews.length ? (
-                                            <div className="aboutReviewsScroll" ref={reviewsScrollRef}>
-                                                <div className="aboutReviews">
-                                                    {reviews.map((r, idx) => (
-                                                        <div key={r.reviewId || `${r.authorName}-${r.time ?? "t"}-${idx}`} className="aboutReview">
-                                                            <div className="aboutReviewTop">
-                                                                <div className="aboutReviewAuthor">{r.authorName || "Avaliação"}</div>
-                                                                <div className="aboutReviewMeta">
-                                                                    {typeof r.rating === "number" ? <span>{r.rating.toFixed(1)}★</span> : null}
-                                                                    {r.relativeTimeDescription ? <span>{r.relativeTimeDescription}</span> : null}
-                                                                </div>
-                                                            </div>
-                                                            {r.text ? <div className="aboutReviewText">{r.text}</div> : null}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                {reviewsLoadingMore ? (
-                                                    <div className="aboutLoadMore">
-                                                        Carregando mais comentários…
-                                                    </div>
-                                                ) : nextReviewsPageToken ? (
-                                                    <div className="aboutLoadMore">
-                                                        Role para carregar mais avaliações.
-                                                        <button type="button" className="aboutLoadMoreBtn" onClick={loadMoreReviews}>
-                                                            + Avaliações
-                                                        </button>
-                                                    </div>
-                                                ) : null}
-                                                <div ref={reviewsLoadMoreRef} aria-hidden="true" style={{ height: 1 }} />
-                                            </div>
-                                        ) : (
-                                            <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
-                                                {reviewsAvailable
-                                                    ? "Nenhuma avaliação encontrada com esses filtros."
-                                                    : "As avaliações públicas desta unidade aparecem aqui em breve."}
-                                            </div>
-                                        )}
                                     </div>
-                                ) : null}
-                            </div>
 
-                            <p className="small aboutSplitNote aboutSplitNote--reviews">
-                                Role até o final da lista para carregar de forma dinâmica comentários adicionais.
-                            </p>
+                                    {isReviewDataPending ? (
+                                        <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
+                                            Preparando avaliações da unidade…
+                                        </div>
+                                    ) : reviews.length ? (
+                                        <div className="aboutReviewsScroll" ref={reviewsScrollRef}>
+                                            <div className="aboutReviews">
+                                                {reviews.map((r, idx) => (
+                                                    <div key={r.reviewId || `${r.authorName}-${r.time ?? "t"}-${idx}`} className="aboutReview">
+                                                        <div className="aboutReviewTop">
+                                                            <div className="aboutReviewAuthor">{r.authorName || "Avaliação"}</div>
+                                                            <div className="aboutReviewMeta">
+                                                                {typeof r.rating === "number" ? <span>{r.rating.toFixed(1)}★</span> : null}
+                                                                {r.relativeTimeDescription ? <span>{r.relativeTimeDescription}</span> : null}
+                                                            </div>
+                                                        </div>
+                                                        {r.text ? <div className="aboutReviewText">{r.text}</div> : null}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {reviewsLoadingMore ? (
+                                                <div className="aboutLoadMore">
+                                                    Carregando mais comentários…
+                                                </div>
+                                            ) : nextReviewsPageToken ? (
+                                                <div className="aboutLoadMore">
+                                                    Role para carregar mais avaliações.
+                                                    <button type="button" className="aboutLoadMoreBtn" onClick={loadMoreReviews}>
+                                                        + Avaliações
+                                                    </button>
+                                                </div>
+                                            ) : null}
+                                            <div ref={reviewsLoadMoreRef} aria-hidden="true" style={{ height: 1 }} />
+                                        </div>
+                                    ) : (
+                                        <div className="aboutMuted" style={{ padding: "0 14px 14px" }}>
+                                            {reviewsAvailable
+                                                ? "Nenhuma avaliação encontrada com esses filtros."
+                                                : "As avaliações públicas desta unidade aparecem aqui em breve."}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : null}
                         </div>
+
+                        <p className="small aboutSplitNote aboutSplitNote--reviews">
+                            Role até o final da lista para carregar de forma dinâmica comentários adicionais.
+                        </p>
                     </div>
                 </div>
+            </div>
 
             {activeGalleryItem ? (
                 <div

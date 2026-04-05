@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackBookingStart, trackCtaInstagramClick } from "@/lib/leadTracking";
+import DoctorInstagramModal, { type DoctorInstagramProfile } from "@/components/DoctorInstagramModal";
 
 function instagramIcon() {
   return (
@@ -16,26 +18,43 @@ function instagramIcon() {
 
 export default function FloatingContact() {
   const unit = useCurrentUnit();
-  const href = unit?.contactUrl;
   const instagram = unit?.instagram;
   const bookingHref = unit?.slug ? `/agendamento?unit=${encodeURIComponent(unit.slug)}` : "/agendamento";
+  const [instagramProfile, setInstagramProfile] = useState<DoctorInstagramProfile | null>(null);
 
-  if (!href && !instagram) return null;
+  const instagramHandle = (() => {
+    if (!instagram) return null;
+    try {
+      const pathname = new URL(instagram).pathname;
+      const handle = pathname.split("/").filter(Boolean)[0] ?? "";
+      return handle.replace(/^@/, "") || null;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <div className="fabDock" aria-label="Ações rápidas">
       {instagram ? (
-        <a
+        <button
           className="iconBtn fabInsta"
-          href={instagram}
-          target="_blank"
-          rel="noopener noreferrer"
+          type="button"
           aria-label="Instagram"
           title="Instagram"
-          onClick={() => trackCtaInstagramClick({ placement: "floating", unitSlug: unit?.slug ?? null, instagramUrl: instagram })}
+          onClick={() => {
+            trackCtaInstagramClick({ placement: "floating", unitSlug: unit?.slug ?? null, instagramUrl: instagram });
+            if (instagramHandle) {
+              setInstagramProfile({
+                name: unit?.name ?? "Espaço Facial",
+                handle: instagramHandle,
+              });
+              return;
+            }
+            window.open(instagram, "_blank", "noopener,noreferrer");
+          }}
         >
           {instagramIcon()}
-        </a>
+        </button>
       ) : null}
 
       <a
@@ -44,8 +63,10 @@ export default function FloatingContact() {
         aria-label="Agendar"
         onClick={() => trackBookingStart({ placement: "floating", unitSlug: unit?.slug ?? null, bookingUrl: bookingHref })}
       >
-        💬 <span>Agendar</span>
+        <span>AGENDE</span>
       </a>
+
+      <DoctorInstagramModal profile={instagramProfile} onClose={() => setInstagramProfile(null)} />
     </div>
   );
 }
