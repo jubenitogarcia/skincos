@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { canonicalDoctorSlugForMember } from "@/lib/doctorSlug";
-import { resolveDoctorAvatarUrl } from "@/lib/doctorAvatar";
+import { resolveDoctorAvatarPresentation, resolveDoctorAvatarUrl, resolveDoctorPublicName } from "@/lib/doctorAvatar";
 import { trackBookingStart, trackDoctorInstagramClick } from "@/lib/leadTracking";
 import DoctorInstagramModal, { InstagramIcon } from "@/components/DoctorInstagramModal";
 import UnitDoctorsCompactRail, { type UnitDoctorsCompactRailItem } from "@/components/UnitDoctorsCompactRail";
@@ -49,6 +49,16 @@ function avatarUrl(handle: string, name: string) {
     return resolveDoctorAvatarUrl(handle, name);
 }
 
+function doctorAvatarStyle(name: string): CSSProperties {
+    const presentation = resolveDoctorAvatarPresentation(name);
+
+    return {
+        ["--doctor-avatar-position" as string]: presentation.objectPosition,
+        ["--doctor-avatar-scale" as string]: `${presentation.scale}`,
+        ["--doctor-avatar-hover-scale" as string]: `${presentation.scale + 0.03}`,
+    };
+}
+
 function extractInstagramHandle(url: string | null): string | null {
     if (!url) return null;
     try {
@@ -67,7 +77,7 @@ function doctorHonorific(name: string, nickname: string | null): "Dr." | "Dra." 
 }
 
 function doctorBareName(name: string): string {
-    return name.replace(/^\s*(dr\.?|dra\.?|doutor|doutora)\s+/i, "").trim();
+    return resolveDoctorPublicName(name).replace(/^\s*(dr\.?|dra\.?|doutor|doutora)\s+/i, "").trim();
 }
 
 function doctorDisplayName(name: string): string {
@@ -168,7 +178,7 @@ export default function UnitDoctorsGrid({
                 avatar: (
                     <span className="bookingFlow__doctorBadgeAvatar">
                         {doctor.handle ? (
-                            <Image src={avatarUrl(doctor.handle, doctor.name)} alt={doctor.name} width={76} height={76} unoptimized />
+                            <Image src={avatarUrl(doctor.handle, doctor.name)} alt={doctor.name} width={76} height={76} unoptimized style={doctorAvatarStyle(doctor.name)} />
                         ) : (
                             <span className="bookingFlow__doctorBadgeFallback">{doctor.name.charAt(0).toUpperCase()}</span>
                         )}
@@ -203,6 +213,7 @@ export default function UnitDoctorsGrid({
 
         return filtered.map((doctor) => {
             const fullName = doctor.name;
+            const publicName = resolveDoctorPublicName(fullName);
             const displayName = doctorDisplayName(doctor.name);
             const tooltipName = doctorTooltipName(doctor.name, doctor.nickname);
             const handle = doctor.instagramHandle;
@@ -233,7 +244,7 @@ export default function UnitDoctorsGrid({
                 avatar: (
                     <span className="bookingFlow__doctorBadgeAvatar">
                         {instagramHandle ? (
-                            <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={76} height={76} unoptimized />
+                            <Image src={avatarUrl(instagramHandle, fullName)} alt={publicName} width={76} height={76} unoptimized style={doctorAvatarStyle(fullName)} />
                         ) : (
                             <span className="bookingFlow__doctorBadgeFallback">{fullName.charAt(0).toUpperCase()}</span>
                         )}
@@ -267,7 +278,7 @@ export default function UnitDoctorsGrid({
         : isBookingCompact
             ? null
             : isBookingSelect
-                ? <p className="bookingFlow__cardSub">Escolha o especialista e veja os dias e horários disponíveis para atendimento.</p>
+                ? null
                 : <p className="sectionSub">Conheça nossos especialistas, veja os perfis e escolha com mais tranquilidade.</p>;
 
     if (compactItems === null && isCompactVariant) {
@@ -341,6 +352,7 @@ export default function UnitDoctorsGrid({
                     const bookingHref = unit?.slug
                         ? `/agendamento?unit=${encodeURIComponent(unit.slug)}&doctor=${encodeURIComponent(doctorSlug)}`
                         : `/agendamento?doctor=${encodeURIComponent(doctorSlug)}`;
+                    const publicName = resolveDoctorPublicName(fullName);
                     const directoryUnitLabel = showAllDirectoryWithoutUnit
                         ? d.units.filter(Boolean).join(" • ") || "Rede Espaço Facial"
                         : unitLabel;
@@ -371,27 +383,27 @@ export default function UnitDoctorsGrid({
                                     >
                                         <div className="doctorDirectoryCard__avatar">
                                             {instagramHandle ? (
-                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={56} height={56} unoptimized />
+                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={publicName} width={56} height={56} unoptimized style={doctorAvatarStyle(fullName)} />
                                             ) : (
                                                 <span className="doctorDirectoryCard__avatarFallback">{fullName.charAt(0).toUpperCase()}</span>
                                             )}
                                         </div>
                                         <div className="doctorDirectoryCard__meta">
-                                            <h3 className="doctorDirectoryCard__name" title={fullName}>{fullName}</h3>
+                                            <h3 className="doctorDirectoryCard__name" title={publicName}>{publicName}</h3>
                                             <p className="doctorDirectoryCard__sub" title={directoryUnitTitle}>{directoryUnitLabel}</p>
                                         </div>
                                     </button>
                                 ) : (
-                                    <div className="doctorDirectoryCard__profile doctorCardMainLink" aria-label={fullName}>
+                                    <div className="doctorDirectoryCard__profile doctorCardMainLink" aria-label={publicName}>
                                         <div className="doctorDirectoryCard__avatar">
                                             {instagramHandle ? (
-                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={fullName} width={56} height={56} unoptimized />
+                                                <Image src={avatarUrl(instagramHandle, fullName)} alt={publicName} width={56} height={56} unoptimized style={doctorAvatarStyle(fullName)} />
                                             ) : (
                                                 <span className="doctorDirectoryCard__avatarFallback">{fullName.charAt(0).toUpperCase()}</span>
                                             )}
                                         </div>
                                         <div className="doctorDirectoryCard__meta">
-                                            <h3 className="doctorDirectoryCard__name" title={fullName}>{fullName}</h3>
+                                            <h3 className="doctorDirectoryCard__name" title={publicName}>{publicName}</h3>
                                             <p className="doctorDirectoryCard__sub" title={directoryUnitTitle}>{directoryUnitLabel}</p>
                                         </div>
                                     </div>

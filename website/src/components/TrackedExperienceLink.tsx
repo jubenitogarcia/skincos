@@ -1,7 +1,8 @@
 "use client";
 
-import Link, { type LinkProps } from "next/link";
+import { type LinkProps } from "next/link";
 import { type MouseEventHandler, type ReactNode } from "react";
+import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import { trackExperienceShortcutClick, type LeadPlacement } from "@/lib/leadTracking";
 
 type TrackedExperienceLinkProps = LinkProps & {
@@ -34,7 +35,7 @@ export default function TrackedExperienceLink({
     const resolvedDestination = destination ?? (typeof href === "string" ? href : page);
 
     return (
-        <Link
+        <SmoothAnchorLink
             {...rest}
             href={href}
             className={className}
@@ -52,6 +53,6 @@ export default function TrackedExperienceLink({
             }}
         >
             {children}
-        </Link>
+        </SmoothAnchorLink>
     );
 }

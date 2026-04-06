@@ -33,7 +33,9 @@ export default function AgendamentoPage() {
             <main className="bookingPage">
                 <BookingHeroExperience />
                 <section id="booking-flow" className="bookingFlowSection">
-                    <BookingFlow />
+                    <div className="container">
+                        <BookingFlow />
+                    </div>
                 </section>
             </main>
             <Footer />

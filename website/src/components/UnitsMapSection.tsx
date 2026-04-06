@@ -586,79 +586,85 @@ export default function UnitsMapSection() {
 
                 <div className="unitsMapRight" aria-label="Lista de unidades por estado">
                     {featuredUnits.length ? (
-                        <div className="unitsFeatured" aria-label="Unidades em destaque">
-                            <div className="unitsFeaturedList">
-                                {featuredUnits.map((u, idx) => {
-                                    const prevState = idx > 0 ? featuredUnits[idx - 1]?.state : null;
-                                    const showStateHeader = Boolean(u.state) && u.state !== prevState;
+                        <div className="unitsPanelGroup unitsPanelGroup--featured">
+                            <div className="unitsFeatured" aria-label="Unidades em destaque">
+                                <div className="unitsFeaturedList">
+                                    {featuredUnits.map((u, idx) => {
+                                        const prevState = idx > 0 ? featuredUnits[idx - 1]?.state : null;
+                                        const showStateHeader = Boolean(u.state) && u.state !== prevState;
 
-                                    return (
-                                        <div key={u.slug} className="unitsFeaturedEntry">
-                                            {showStateHeader ? (
-                                                <div className="unitsFeaturedStateHeader">{STATE_NAME_BY_UF[u.state ?? ""] ?? u.state}</div>
-                                            ) : null}
-                                            <button
-                                                className="unitsFeaturedItem"
-                                                onMouseEnter={() => {
-                                                    if (!u.state) return;
-                                                    setHoverUfDebounced(u.state);
-                                                }}
-                                                onMouseLeave={() => clearHoverUfSoon()}
-                                                onFocus={() => {
-                                                    if (!u.state) return;
-                                                    setHoverUfDebounced(u.state);
-                                                }}
-                                                onBlur={() => clearHoverUfSoon()}
-                                                onClick={() => {
-                                                    const dest = getUnitDestination(u);
-                                                    trackEvent("unit_map_click", { unitSlug: u.slug, placement: "featured_list", destination: dest });
-                                                    window.location.assign(dest);
-                                                }}
-                                            >
-                                                <span className="unitsFeaturedItemName">{u.name}</span>
-                                            </button>
-                                        </div>
-                                    );
-                                })}
+                                        return (
+                                            <div key={u.slug} className="unitsFeaturedEntry">
+                                                {showStateHeader ? (
+                                                    <div className="unitsFeaturedStateHeader">{STATE_NAME_BY_UF[u.state ?? ""] ?? u.state}</div>
+                                                ) : null}
+                                                <button
+                                                    className="unitsFeaturedItem"
+                                                    onMouseEnter={() => {
+                                                        if (!u.state) return;
+                                                        setHoverUfDebounced(u.state);
+                                                    }}
+                                                    onMouseLeave={() => clearHoverUfSoon()}
+                                                    onFocus={() => {
+                                                        if (!u.state) return;
+                                                        setHoverUfDebounced(u.state);
+                                                    }}
+                                                    onBlur={() => clearHoverUfSoon()}
+                                                    onClick={() => {
+                                                        const dest = getUnitDestination(u);
+                                                        trackEvent("unit_map_click", { unitSlug: u.slug, placement: "featured_list", destination: dest });
+                                                        window.location.assign(dest);
+                                                    }}
+                                                >
+                                                    <span className="unitsFeaturedItemName">{u.name}</span>
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
+                            <p className="small unitsPanelCaption">Unidades em destaque</p>
                         </div>
                     ) : null}
-                    <div className="unitsStatesPanel">
-                        <div className="unitsStatesScroller">
-                            <div className="unitsStatesList">
-                                {stateGroupsForList.map((g) => (
-                                    <div key={g.uf} className="unitsStateBlock">
-                                        <div
-                                            className="unitsStateHeader"
-                                            onMouseEnter={() => setHoverUfDebounced(g.uf)}
-                                            onMouseLeave={() => clearHoverUfSoon()}
-                                        >
-                                            <span className="unitsStateHeaderMain">{STATE_NAME_BY_UF[g.uf] ?? g.uf}</span>
+                    <div className="unitsPanelGroup">
+                        <div className="unitsStatesPanel">
+                            <div className="unitsStatesScroller">
+                                <div className="unitsStatesList">
+                                    {stateGroupsForList.map((g) => (
+                                        <div key={g.uf} className="unitsStateBlock">
+                                            <div
+                                                className="unitsStateHeader"
+                                                onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                                                onMouseLeave={() => clearHoverUfSoon()}
+                                            >
+                                                <span className="unitsStateHeaderMain">{STATE_NAME_BY_UF[g.uf] ?? g.uf}</span>
+                                            </div>
+                                            <div className="unitsStateUnits">
+                                                {g.units
+                                                    .slice()
+                                                    .sort((a, b) => a.name.localeCompare(b.name))
+                                                    .map((u) => (
+                                                        <button
+                                                            key={u.slug}
+                                                            className="unitsStateUnit"
+                                                            onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                                                            onMouseLeave={() => clearHoverUfSoon()}
+                                                            onClick={() => {
+                                                                const dest = getUnitDestination(u);
+                                                                trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_list", destination: dest });
+                                                                window.location.assign(dest);
+                                                            }}
+                                                        >
+                                                            {u.name}
+                                                        </button>
+                                                    ))}
+                                            </div>
                                         </div>
-                                        <div className="unitsStateUnits">
-                                            {g.units
-                                                .slice()
-                                                .sort((a, b) => a.name.localeCompare(b.name))
-                                                .map((u) => (
-                                                    <button
-                                                        key={u.slug}
-                                                        className="unitsStateUnit"
-                                                        onMouseEnter={() => setHoverUfDebounced(g.uf)}
-                                                        onMouseLeave={() => clearHoverUfSoon()}
-                                                        onClick={() => {
-                                                            const dest = getUnitDestination(u);
-                                                            trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_list", destination: dest });
-                                                            window.location.assign(dest);
-                                                        }}
-                                                    >
-                                                        {u.name}
-                                                    </button>
-                                                ))}
-                                        </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
                         </div>
+                        <p className="small unitsPanelCaption">Arraste a barra lateral para navegar pelas unidades.</p>
                     </div>
                 </div>
             </div>

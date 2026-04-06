@@ -9,7 +9,7 @@ export default function Footer({ siteKey = "espacofacial" }: { siteKey?: SiteKey
   if (siteKey === "skincos") {
     return (
       <footer className="footer">
-        <div className="container">
+        <div className="container footerContainer">
           <div className="footerInner">
             <div className="footerMeta">
               <div>Copyright © 2019-{year} - SKINCOS. Todos os direitos reservados.</div>
@@ -38,7 +38,7 @@ export default function Footer({ siteKey = "espacofacial" }: { siteKey?: SiteKey
 
   return (
     <footer className="footer">
-      <div className="container">
+      <div className="container footerContainer">
         <div className="footerInner">
           <div className="footerBrand">
             <Brand className="brand--footer" variant="full" showTagline tone="light" />

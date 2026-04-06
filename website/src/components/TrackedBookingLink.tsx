@@ -1,7 +1,8 @@
 "use client";
 
-import Link, { type LinkProps } from "next/link";
+import { type LinkProps } from "next/link";
 import { type MouseEventHandler, type ReactNode } from "react";
+import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import { trackBookingStart, type LeadPlacement } from "@/lib/leadTracking";
 
 type TrackedBookingLinkProps = LinkProps & {
@@ -28,7 +29,7 @@ export default function TrackedBookingLink({
     ...rest
 }: TrackedBookingLinkProps) {
     return (
-        <Link
+        <SmoothAnchorLink
             {...rest}
             href={href}
             className={className}
@@ -45,6 +46,6 @@ export default function TrackedBookingLink({
             }}
         >
             {children}
-        </Link>
+        </SmoothAnchorLink>
     );
 }

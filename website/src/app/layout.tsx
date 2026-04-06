@@ -8,6 +8,7 @@ import Analytics from "@/components/Analytics";
 import MarketingPixels from "@/components/MarketingPixels";
 import CampaignAttribution from "@/components/CampaignAttribution";
 import WebVitalsReporter from "@/components/WebVitalsReporter";
+import HomeHashScroller from "@/components/HomeHashScroller";
 import { getSiteConfigFromHost } from "@/lib/site-config";
 
 const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA ?? "";
@@ -135,6 +136,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
         />
         {children}
+        <HomeHashScroller />
         {site.key === "espacofacial" ? <Analytics /> : null}
         <WebVitalsReporter />
         {site.key === "espacofacial" ? <MarketingPixels /> : null}
