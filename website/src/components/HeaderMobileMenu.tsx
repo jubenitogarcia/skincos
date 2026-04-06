@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import { trackEvent } from "@/lib/analytics";
 
 function menuIcon() {
@@ -140,14 +140,14 @@ export default function HeaderMobileMenu() {
 
             <nav className="mobileNavLinks" aria-label="Navegacao">
               {links.map((l) => (
-                <Link key={l.href} className="mobileNavLink" href={l.href} onClick={() => setOpen(false)}>
+                <SmoothAnchorLink key={l.href} className="mobileNavLink" href={l.href} onClick={() => setOpen(false)}>
                   {l.label}
-                </Link>
+                </SmoothAnchorLink>
               ))}
 
-              <Link className="mobileNavLink mobileNavLink--primary" href="/agendamento" onClick={() => setOpen(false)}>
+              <SmoothAnchorLink className="mobileNavLink mobileNavLink--primary" href="/agendamento" onClick={() => setOpen(false)}>
                 Agendar
-              </Link>
+              </SmoothAnchorLink>
             </nav>
           </div>
         </div>

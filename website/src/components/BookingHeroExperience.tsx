@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import ExperienceTracker from "@/components/ExperienceTracker";
 import PageTitleBand from "@/components/PageTitleBand";
+import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackExperienceShortcutClick } from "@/lib/leadTracking";
 
@@ -21,9 +21,6 @@ export default function BookingHeroExperience() {
     });
     if (unit?.slug) bookingQuery.set("unit", unit.slug);
 
-    const doctorsQuery = new URLSearchParams();
-    if (unit?.slug) doctorsQuery.set("unit", unit.slug);
-
     const shortcuts = [
         {
             title: "Primeiro Horário Disponível",
@@ -34,7 +31,7 @@ export default function BookingHeroExperience() {
         {
             title: "Ver Especialistas",
             description: "Conheça a equipe e veja seus procedimentos.",
-            href: doctorsQuery.toString() ? `/?${doctorsQuery.toString()}#doutores` : "/#doutores",
+            href: "/#doutores",
             kind: "secondary" as const,
         },
     ];
@@ -61,7 +58,7 @@ export default function BookingHeroExperience() {
                             <div className="bookingHero__shortcutGrid bookingHero__shortcutGrid--inline">
                                 {shortcuts.map((item) => (
                                     <div key={item.title} className="bookingHero__shortcutItem">
-                                        <Link
+                                        <SmoothAnchorLink
                                             href={item.href}
                                             className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
                                             data-selected={item.kind === "primary" && firstSlotSelected ? "true" : "false"}
@@ -77,7 +74,7 @@ export default function BookingHeroExperience() {
                                             }
                                         >
                                             <strong>{item.title}</strong>
-                                        </Link>
+                                        </SmoothAnchorLink>
                                         <p className="bookingHero__shortcutNote">{item.description}</p>
                                     </div>
                                 ))}

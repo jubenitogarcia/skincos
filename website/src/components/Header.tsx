@@ -1,8 +1,8 @@
-import Link from "next/link";
 import AgendeCta from "@/components/AgendeCta";
 import UnitChooser from "@/components/UnitChooser";
 import Brand from "@/components/Brand";
 import HeaderMobileMenu from "@/components/HeaderMobileMenu";
+import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 
 export default function Header() {
   return (
@@ -15,9 +15,9 @@ export default function Header() {
           </div>
 
           <nav className="menu menu--center" aria-label="Menu principal">
-            <Link href="/#sobre-nos">Sobre Nós</Link>
-            <Link href="/#doutores">Equipe</Link>
-            <Link href="/#unidades">Unidades</Link>
+            <SmoothAnchorLink href="/#sobre-nos">Sobre Nós</SmoothAnchorLink>
+            <SmoothAnchorLink href="/#doutores">Equipe</SmoothAnchorLink>
+            <SmoothAnchorLink href="/#unidades">Unidades</SmoothAnchorLink>
           </nav>
 
           <div className="headerActions">

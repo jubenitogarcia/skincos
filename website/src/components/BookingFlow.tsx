@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getDigitalJourneyUnits, units } from "@/data/units";
 import { services, type Service } from "@/data/services";
@@ -14,6 +13,7 @@ import { doctorSlugFromTeamMember, doctorSlugMatchesQuery, normalizeDoctorSlug }
 import { trackBookingFunnelStep, trackBookingRequestSubmitted } from "@/lib/leadTracking";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
 import TurnstileWidget from "@/components/TurnstileWidget";
+import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import UnitChooser from "@/components/UnitChooser";
 import UnitDoctorsGrid, { type BookingSelectDoctor } from "@/components/UnitDoctorsGrid";
 import useHorizontalRail from "@/hooks/useHorizontalRail";
@@ -959,11 +959,6 @@ export default function BookingFlow() {
         return slots.slots.find((s) => s.time === timeKey) ?? null;
     }, [slots?.slots, timeKey]);
 
-    const homeDoctorsHref = useMemo(() => {
-        if (!unitSlug) return "/#doutores";
-        return `/?unit=${encodeURIComponent(unitSlug)}#doutores`;
-    }, [unitSlug]);
-
     useEffect(() => {
         if (autoPickQuery !== "first") return;
         if (autoPickConsumedRef.current) return;
@@ -1166,9 +1161,11 @@ export default function BookingFlow() {
             {step !== "submitted" ? (
                 <div className="bookingFlow__grid">
                     {!unitSlug ? (
-                        <div className="card bookingFlow__cardEntryUnit" style={{ padding: 16 }}>
-                            <div className="bookingFlow__entryTitle">Escolha a unidade</div>
-                            <div className="bookingFlow__cardSub">A unidade libera a equipe, o procedimento e os horários reais.</div>
+                        <div className="bookingFlow__stage bookingFlow__cardEntryUnit">
+                            <div className="bookingFlow__stepIntro">
+                                <div className="bookingFlow__entryTitle">Escolha a unidade</div>
+                                <div className="bookingFlow__cardSub">A unidade libera a equipe, o procedimento e os horários reais.</div>
+                            </div>
                             <div className="bookingFlow__embeddedUnitChooser">
                                 <UnitChooser />
                             </div>
@@ -1176,11 +1173,13 @@ export default function BookingFlow() {
                     ) : null}
 
                     <div
-                        className={`card bookingFlow__cardDoctor ${unitSlug ? "bookingFlow__cardDoctor--half" : "bookingFlow__cardDoctor--withUnit"}`.trim()}
-                        style={{ padding: 14 }}
+                        className={`bookingFlow__stage bookingFlow__cardDoctor ${unitSlug ? "bookingFlow__cardDoctor--half" : "bookingFlow__cardDoctor--withUnit"}`.trim()}
                     >
-                        <div className="bookingFlow__entryTitle">Escolha o seu doutor</div>
-                        <div style={{ marginTop: 2 }}>
+                        <div className="bookingFlow__stepIntro">
+                            <div className="bookingFlow__entryTitle">Escolha o seu doutor</div>
+                            <div className="bookingFlow__cardSub">Escolha o especialista e veja os dias e horários disponíveis para atendimento.</div>
+                        </div>
+                        <div>
                             {!unitLabel ? (
                                 <div className="bookingFlow__emptyState" role="status">
                                     <span className="bookingFlow__emptyEyebrow">Primeiro passo</span>
@@ -1190,9 +1189,9 @@ export default function BookingFlow() {
                                         Se preferir comparar os perfis antes, abra a página de especialistas.
                                     </p>
                                     <div className="bookingFlow__emptyActions">
-                                        <Link className="decisionCard__secondary" href={homeDoctorsHref}>
+                                        <SmoothAnchorLink className="decisionCard__secondary" href="/#doutores">
                                             Ver especialistas
-                                        </Link>
+                                        </SmoothAnchorLink>
                                     </div>
                                 </div>
                             ) : doctorsForUnit === null || membersLoading ? (
@@ -1206,25 +1205,29 @@ export default function BookingFlow() {
                                     {membersError ? "A agenda desta unidade está sendo atualizada. Tente novamente em instantes." : "Nenhum doutor encontrado para esta unidade."}
                                 </div>
                             ) : (
-                                <UnitDoctorsGrid
-                                    variant="booking-select"
-                                    doctorSelections={doctorsForUnit.map(
-                                        (doctor): BookingSelectDoctor => ({
-                                            slug: doctor.slug,
-                                            name: doctor.name,
-                                            handle: doctor.handle,
-                                        }),
-                                    )}
-                                    activeDoctorSlug={doctor?.slug ?? null}
-                                    onDoctorSelect={selectDoctor}
-                                />
+                                <div className="bookingFlow__railShell bookingFlow__railShell--doctors">
+                                    <UnitDoctorsGrid
+                                        variant="booking-select"
+                                        doctorSelections={doctorsForUnit.map(
+                                            (doctor): BookingSelectDoctor => ({
+                                                slug: doctor.slug,
+                                                name: doctor.name,
+                                                handle: doctor.handle,
+                                            }),
+                                        )}
+                                        activeDoctorSlug={doctor?.slug ?? null}
+                                        onDoctorSelect={selectDoctor}
+                                    />
+                                </div>
                             )}
                         </div>
                     </div>
 
-                    <div className={`card bookingFlow__cardProcedure ${unitSlug ? "bookingFlow__cardProcedure--half" : "bookingFlow__cardProcedure--full"}`.trim()} style={{ padding: 14 }}>
-                        <div className="bookingFlow__entryTitle">Escolha os procedimentos</div>
-                        <div className="bookingFlow__cardSub">Selecione um ou mais procedimentos para o seu atendimento.</div>
+                    <div className={`bookingFlow__stage bookingFlow__cardProcedure ${unitSlug ? "bookingFlow__cardProcedure--half" : "bookingFlow__cardProcedure--full"}`.trim()}>
+                        <div className="bookingFlow__stepIntro">
+                            <div className="bookingFlow__entryTitle">Escolha os procedimentos</div>
+                            <div className="bookingFlow__cardSub">Selecione um ou mais procedimentos para o seu atendimento.</div>
+                        </div>
                         {!canPickProcedure ? (
                             <div className="bookingFlow__emptyState" role="status">
                                 <span className="bookingFlow__emptyEyebrow">Como continuar</span>
@@ -1235,94 +1238,84 @@ export default function BookingFlow() {
                                 </p>
                             </div>
                         ) : (
-                            <HoverScrollPicker
-                                ariaLabel="Lista de procedimentos"
-                                className="bookingFlow__picker--rail"
-                                scrollWindowRef={procedureScrollWindowRef}
-                            >
-                                <div className="bookingFlow__procedureBadgeGrid">
-                                    {services.map((s) => {
-                                        const active = selectedServices.some((item) => item.id === s.id);
-                                        return (
-                                            <div key={s.id} className="bookingFlow__procedureBadgeWrap" role="listitem" data-active={active ? "true" : "false"}>
-                                                <PortalTooltip
-                                                    className="bookingFlow__procedureTooltip"
-                                                    disabled={!s.subtitle}
-                                                    content={s.subtitle ?? ""}
-                                                >
-                                                    <button
-                                                        type="button"
-                                                        className="bookingFlow__procedureBadge"
-                                                        data-active={active ? "true" : "false"}
-                                                        onClick={() => toggleProcedure(s)}
+                            <div className="bookingFlow__railShell bookingFlow__railShell--procedures">
+                                <HoverScrollPicker
+                                    ariaLabel="Lista de procedimentos"
+                                    className="bookingFlow__picker--rail"
+                                    scrollWindowRef={procedureScrollWindowRef}
+                                >
+                                    <div className="bookingFlow__procedureBadgeGrid">
+                                        {services.map((s) => {
+                                            const active = selectedServices.some((item) => item.id === s.id);
+                                            return (
+                                                <div key={s.id} className="bookingFlow__procedureBadgeWrap" role="listitem" data-active={active ? "true" : "false"}>
+                                                    <PortalTooltip
+                                                        className="bookingFlow__procedureTooltip"
+                                                        disabled={!s.subtitle}
+                                                        content={s.subtitle ?? ""}
                                                     >
-                                                        <span className="bookingFlow__procedureBadgeAvatar">
-                                                            {s.highlightImage ? (
-                                                                <Image
-                                                                    src={s.highlightImage}
-                                                                    alt=""
-                                                                    fill
-                                                                    sizes="76px"
-                                                                    style={{ objectFit: "cover" }}
-                                                                    unoptimized
-                                                                    aria-hidden="true"
-                                                                />
-                                                            ) : (
-                                                                <span className="bookingFlow__procedureBadgeFallback">EF</span>
-                                                            )}
-                                                        </span>
-                                                        <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
-                                                    </button>
-                                                </PortalTooltip>
-                                            </div>
-                                        );
-                                    })}
+                                                        <button
+                                                            type="button"
+                                                            className="bookingFlow__procedureBadge"
+                                                            data-active={active ? "true" : "false"}
+                                                            onClick={() => toggleProcedure(s)}
+                                                        >
+                                                            <span className="bookingFlow__procedureBadgeAvatar">
+                                                                {s.highlightImage ? (
+                                                                    <Image
+                                                                        src={s.highlightImage}
+                                                                        alt=""
+                                                                        fill
+                                                                        sizes="76px"
+                                                                        style={{ objectFit: "cover" }}
+                                                                        unoptimized
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                ) : (
+                                                                    <span className="bookingFlow__procedureBadgeFallback">EF</span>
+                                                                )}
+                                                            </span>
+                                                            <span className="bookingFlow__procedureBadgeLabel">{s.name}</span>
+                                                        </button>
+                                                    </PortalTooltip>
+                                                </div>
+                                            );
+                                        })}
 
-                                    <div
-                                        className="bookingFlow__procedureBadgeWrap"
-                                        role="listitem"
-                                        data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
-                                    >
-                                        <PortalTooltip className="bookingFlow__procedureTooltip" content="Outros procedimentos ou combinação">
-                                            <button
-                                                type="button"
-                                                className="bookingFlow__procedureBadge"
-                                                data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
-                                                onClick={() => toggleProcedure(OTHER_SERVICE)}
-                                            >
-                                                <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
-                                                    <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outros</span>
-                                                </span>
-                                                <span className="bookingFlow__procedureBadgeLabel">Outros</span>
-                                            </button>
-                                        </PortalTooltip>
+                                        <div
+                                            className="bookingFlow__procedureBadgeWrap"
+                                            role="listitem"
+                                            data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
+                                        >
+                                            <PortalTooltip className="bookingFlow__procedureTooltip" content="Outros procedimentos ou combinação">
+                                                <button
+                                                    type="button"
+                                                    className="bookingFlow__procedureBadge"
+                                                    data-active={selectedServices.some((item) => item.id === OTHER_SERVICE.id) ? "true" : "false"}
+                                                    onClick={() => toggleProcedure(OTHER_SERVICE)}
+                                                >
+                                                    <span className="bookingFlow__procedureBadgeAvatar bookingFlow__procedureBadgeAvatar--all">
+                                                        <span className="bookingFlow__procedureBadgeFallback bookingFlow__procedureBadgeFallback--all">Outros</span>
+                                                    </span>
+                                                    <span className="bookingFlow__procedureBadgeLabel">Outros</span>
+                                                </button>
+                                            </PortalTooltip>
+                                        </div>
                                     </div>
-                                </div>
-                            </HoverScrollPicker>
+                                </HoverScrollPicker>
+                            </div>
                         )}
                     </div>
 
-                    <div className="card bookingFlow__cardFull bookingFlow__cardDateTime" style={{ padding: 14 }}>
+                    <div className="bookingFlow__stage bookingFlow__cardFull bookingFlow__cardDateTime">
                         <div className="bookingFlow__cardHeader">
-                            <div>
+                            <div className="bookingFlow__stepIntro">
                                 <div className="bookingFlow__entryTitle">Data e horário</div>
                                 <div className="bookingFlow__cardSub">Selecione uma data e verifique os horários disponíveis.</div>
                             </div>
-                            {canPick ? (
-                                <div className="bookingFlow__legend" aria-hidden="true">
-                                    <div className="bookingFlow__legendItem">
-                                        <span className="bookingFlow__legendSwatch bookingFlow__legendSwatch--past" />
-                                        Passou
-                                    </div>
-                                    <div className="bookingFlow__legendItem">
-                                        <span className="bookingFlow__legendSwatch bookingFlow__legendSwatch--occupied" />
-                                        Ocupado
-                                    </div>
-                                </div>
-                            ) : null}
                         </div>
                         {!canPick ? (
-                            <div className="bookingFlow__emptyState bookingFlow__emptyState--wide" role="status" style={{ marginTop: 12 }}>
+                            <div className="bookingFlow__emptyState bookingFlow__emptyState--wide" role="status">
                                 <span className="bookingFlow__emptyEyebrow">Agenda real</span>
                                 <strong className="bookingFlow__emptyTitle">Os horários aparecem quando a unidade estiver definida.</strong>
                                 <p className="bookingFlow__emptyBody">
@@ -1330,26 +1323,32 @@ export default function BookingFlow() {
                                 </p>
                             </div>
                         ) : (
-                            <div className="bookingFlow__datetimeGrid" style={{ marginTop: 12 }}>
+                            <div className="bookingFlow__datetimeGrid bookingFlow__datetimeGrid--centered">
                                 <div>
-                                    <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
-                                        Datas
-                                    </div>
                                     <div className="bookingFlow__dateWeeks">
                                         {visibleUpcomingWeeks.map((week) => (
                                             <div key={week[0]} className="bookingFlow__dateWeekRow">
                                                 {week.map((d) => {
                                                     const active = dateKey === d;
-                                                    const unavailable = canPick && hasResolvedDateAvailability && dateAvailability[d] === false;
+                                                    const isPastDate = isDateKeyBeforeToday(d);
+                                                    const isOccupiedDate = canPick && hasResolvedDateAvailability && !isPastDate && dateAvailability[d] === false;
+                                                    const isLockedDate = isPastDate || isOccupiedDate;
+                                                    const dateTooltip = isPastDate ? "passou" : isOccupiedDate ? "ocupado" : "disponível";
+                                                    const dateReason = isPastDate ? "past" : isOccupiedDate ? "agenda" : "available";
+                                                    const ariaDisabled = !canPick || isLockedDate;
                                                     return (
                                                         <button
                                                             key={d}
                                                             type="button"
-                                                            disabled={!canPick || unavailable}
+                                                            disabled={!canPick}
+                                                            aria-disabled={ariaDisabled}
                                                             className="bookingFlow__selectItem bookingFlow__dateBtn"
                                                             data-active={active ? "true" : "false"}
-                                                            data-unavailable={unavailable ? "true" : "false"}
+                                                            data-locked={isLockedDate ? "true" : "false"}
+                                                            data-reason={dateReason}
+                                                            data-tooltip={dateTooltip}
                                                             onClick={() => {
+                                                                if (ariaDisabled) return;
                                                                 ensureDefaultSelections();
                                                                 setDateTouched(true);
                                                                 if (active) {
@@ -1377,20 +1376,11 @@ export default function BookingFlow() {
                                                                 setTimeKey(null);
                                                                 setStep("pick");
                                                             }}
-                                                            style={{
-                                                                opacity: canPick ? 1 : 0.5,
-                                                                fontWeight: 900,
-                                                                borderRadius: 12,
-                                                                padding: "10px 8px",
-                                                                textAlign: "center",
-                                                                display: "grid",
-                                                                gap: 2,
-                                                            }}
                                                         >
-                                                            <div style={{ fontSize: 11, fontWeight: 800, opacity: active ? 0.9 : 0.75 }}>
+                                                            <div className="bookingFlow__dateBtnWeekday">
                                                                 {weekdayPtBrShort(d)}
                                                             </div>
-                                                            <div style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.2px" }}>
+                                                            <div className="bookingFlow__dateBtnDay">
                                                                 {parseLocalDateKey(d)?.getDate()}
                                                             </div>
                                                         </button>
@@ -1400,17 +1390,14 @@ export default function BookingFlow() {
                                         ))}
                                     </div>
                                     {!canPick ? (
-                                        <div className="small" style={{ marginTop: 10 }}>
+                                        <div className="small bookingFlow__dateHint">
                                             Selecione a unidade no topo para liberar as datas.
                                         </div>
                                     ) : null}
                                 </div>
 
                                 <div>
-                                    <div className="small" style={{ fontWeight: 800, marginBottom: 8 }}>
-                                        Horários
-                                    </div>
-                                    <div style={{ minHeight: 44 }}>
+                                    <div className="bookingFlow__timeStateWrap">
                                         {!dateKey ? (
                                             <div className="small">Escolha uma data para ver horários.</div>
                                         ) : slotsLoading ? (
@@ -1441,7 +1428,7 @@ export default function BookingFlow() {
                                                             key={s.time}
                                                             type="button"
                                                             disabled={nativeDisabled}
-                                                            aria-disabled={ariaDisabled ? "true" : "false"}
+                                                            aria-disabled={ariaDisabled}
                                                             data-reason={s.reason ?? ""}
                                                             data-locked={hasTooltip ? "true" : "false"}
                                                             data-tooltip={hasTooltip ? tooltip : undefined}
@@ -1489,12 +1476,6 @@ export default function BookingFlow() {
                                                                 openDetailsModal(s.time);
                                                             }}
                                                             tabIndex={ariaDisabled ? -1 : 0}
-                                                            style={{
-                                                                padding: "10px 8px",
-                                                                borderRadius: 12,
-                                                                fontWeight: 900,
-                                                                textAlign: "center",
-                                                            }}
                                                         >
                                                             <div className="bookingFlow__timeBtnText">{s.time}</div>
                                                             {label ? <div className="bookingFlow__timeBtnSub">{label}</div> : null}

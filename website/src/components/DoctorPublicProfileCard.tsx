@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
-import { resolveDoctorAvatarUrl } from "@/lib/doctorAvatar";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { resolveDoctorAvatarPresentation, resolveDoctorAvatarUrl, resolveDoctorPublicName } from "@/lib/doctorAvatar";
 import { trackDoctorInstagramClick } from "@/lib/leadTracking";
 
 type InstagramMedia = {
@@ -31,6 +31,15 @@ function avatarUrl(handle: string, name: string) {
     return resolveDoctorAvatarUrl(handle, name);
 }
 
+function doctorAvatarStyle(name: string): CSSProperties {
+    const presentation = resolveDoctorAvatarPresentation(name);
+
+    return {
+        ["--doctor-avatar-position" as string]: presentation.objectPosition,
+        ["--doctor-avatar-scale" as string]: `${presentation.scale}`,
+    };
+}
+
 export default function DoctorPublicProfileCard({
     name,
     handle,
@@ -39,6 +48,7 @@ export default function DoctorPublicProfileCard({
     availabilityLabel,
     unitLabels,
 }: DoctorPublicProfileCardProps) {
+    const publicName = resolveDoctorPublicName(name);
     const [state, setState] = useState<PublicProfileState>({
         bio: null,
         items: [],
@@ -123,7 +133,7 @@ export default function DoctorPublicProfileCard({
                 <div className="doctorPublicProfile__identity">
                     {handle ? (
                         <div className="doctorPublicProfile__avatar">
-                            <Image src={avatarUrl(handle, name)} alt={name} width={84} height={84} unoptimized />
+                            <Image src={avatarUrl(handle, name)} alt={publicName} width={84} height={84} unoptimized style={doctorAvatarStyle(name)} />
                         </div>
                     ) : (
                         <div className="doctorPublicProfile__avatar doctorPublicProfile__avatar--fallback" aria-hidden="true">
@@ -133,7 +143,7 @@ export default function DoctorPublicProfileCard({
 
                     <div className="doctorPublicProfile__copy">
                         <span className="doctorPublicProfile__eyebrow">Especialista</span>
-                        <strong>{name}</strong>
+                        <strong>{publicName}</strong>
                         <p>
                             {state.bio
                                 ? state.bio

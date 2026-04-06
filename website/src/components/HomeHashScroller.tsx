@@ -1,62 +1,70 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import { alignHashTarget } from "@/lib/hashNavigation";
 
-const TARGET_HASHES = new Set(["#doutores"]);
-
-function getHeaderOffsetPx(): number {
-    const header = document.querySelector(".header") as HTMLElement | null;
-    if (!header) return 0;
-    const rect = header.getBoundingClientRect();
-    return Math.max(0, Math.ceil(rect.height));
-}
-
-function scrollToHash(hash: string): boolean {
-    const targetId = decodeURIComponent(hash.replace(/^#/, ""));
-    if (!targetId) return false;
-
-    const target = document.getElementById(targetId);
-    if (!target) return false;
-
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const top = Math.max(0, window.scrollY + target.getBoundingClientRect().top - getHeaderOffsetPx());
-    window.scrollTo({
-        top,
-        behavior: reduceMotion ? "auto" : "smooth",
-    });
-
-    return true;
-}
+const ALIGNMENT_TOLERANCE_PX = 2;
 
 export default function HomeHashScroller() {
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const searchKey = searchParams.toString();
+    const [hash, setHash] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
 
     useEffect(() => {
-        if (pathname !== "/") return;
+        const syncHash = () => {
+            setHash(window.location.hash);
+        };
 
-        const hash = window.location.hash;
-        if (!TARGET_HASHES.has(hash)) return;
+        syncHash();
+        window.addEventListener("hashchange", syncHash);
+        return () => {
+            window.removeEventListener("hashchange", syncHash);
+        };
+    }, []);
 
+    useEffect(() => {
+        setHash(window.location.hash);
+    }, [pathname, searchKey]);
+
+    useLayoutEffect(() => {
+        if (!hash) return;
+
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         let attempts = 0;
-        const maxAttempts = 8;
+        let alignedChecks = 0;
+        const maxAttempts = 18;
 
         const interval = window.setInterval(() => {
             attempts += 1;
-            if (scrollToHash(hash) || attempts >= maxAttempts) {
+            const result = alignHashTarget(hash, reduceMotion || attempts > 1 ? "auto" : "smooth", ALIGNMENT_TOLERANCE_PX);
+            alignedChecks = result.aligned ? alignedChecks + 1 : 0;
+            if ((result.found && alignedChecks >= 2) || attempts >= maxAttempts) {
                 window.clearInterval(interval);
             }
         }, 120);
 
-        // Immediate first try for cases where the section is already mounted.
-        if (scrollToHash(hash)) window.clearInterval(interval);
+        const initial = alignHashTarget(hash, reduceMotion ? "auto" : "smooth", ALIGNMENT_TOLERANCE_PX);
+        alignedChecks = initial.aligned ? 1 : 0;
+        if (initial.found && initial.aligned) {
+            const settleTimer = window.setTimeout(() => {
+                const settled = alignHashTarget(hash, "auto", ALIGNMENT_TOLERANCE_PX);
+                if (settled.found && settled.aligned) {
+                    window.clearInterval(interval);
+                }
+            }, 180);
+
+            return () => {
+                window.clearInterval(interval);
+                window.clearTimeout(settleTimer);
+            };
+        }
 
         return () => {
             window.clearInterval(interval);
         };
-    }, [pathname, searchKey]);
+    }, [hash, pathname, searchKey]);
 
     return null;
 }

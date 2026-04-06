@@ -28,6 +28,33 @@ const LOCAL_DOCTOR_AVATARS_BY_HANDLE: Record<string, string> = {
     raulrosariojunior: "/images/doctors/raul-junior.jpeg",
 };
 
+type DoctorAvatarPresentation = {
+    objectPosition: string;
+    scale: number;
+};
+
+const DEFAULT_DOCTOR_AVATAR_PRESENTATION: DoctorAvatarPresentation = {
+    objectPosition: "50% 28%",
+    scale: 1,
+};
+
+const DOCTOR_PUBLIC_NAME_BY_NORMALIZED_NAME: Record<string, string> = {
+    "raul rosario junior": "Raul Júnior",
+    "raul junior": "Raul Júnior",
+};
+
+const DOCTOR_AVATAR_PRESENTATION_BY_NORMALIZED_NAME: Record<string, DoctorAvatarPresentation> = {
+    "marcelo soares": { objectPosition: "50% 32%", scale: 1.27 },
+    "marcelo gomes": { objectPosition: "50% 32%", scale: 1.27 },
+    "marcelo gomes soares": { objectPosition: "50% 32%", scale: 1.27 },
+    "vinicius vieira": { objectPosition: "50% 30%", scale: 1.19 },
+    "josiele de souza": { objectPosition: "50% 36%", scale: 1.08 },
+    "viviane mondin": { objectPosition: "50% 41%", scale: 1.02 },
+    "gabriela menegat": { objectPosition: "50% 29%", scale: 1.06 },
+    "raul rosario junior": { objectPosition: "50% 36%", scale: 1.14 },
+    "raul junior": { objectPosition: "50% 36%", scale: 1.14 },
+};
+
 function normalizeHandle(handle: string | null | undefined): string {
     if (!handle) return "";
     return handle
@@ -50,6 +77,12 @@ function normalizeDoctorName(name: string): string {
 
 function normalizeHandleLookupKey(handle: string): string {
     return handle.replace(/[._]/g, "");
+}
+
+function detectHonorific(name: string): "Dr." | "Dra." | null {
+    if (/^\s*(dra\.?|doutora)\b/i.test(name)) return "Dra.";
+    if (/^\s*(dr\.?|doutor)\b/i.test(name)) return "Dr.";
+    return null;
 }
 
 function findAvatarByName(normalizedName: string): string | null {
@@ -82,4 +115,18 @@ export function resolveDoctorAvatarUrl(handle: string, name: string): string {
     if (byName) return byName;
 
     return `/api/instagram-avatar?handle=${encodeURIComponent(handle)}&name=${encodeURIComponent(name)}`;
+}
+
+export function resolveDoctorAvatarPresentation(name: string): DoctorAvatarPresentation {
+    const normalizedName = normalizeDoctorName(name);
+    return DOCTOR_AVATAR_PRESENTATION_BY_NORMALIZED_NAME[normalizedName] ?? DEFAULT_DOCTOR_AVATAR_PRESENTATION;
+}
+
+export function resolveDoctorPublicName(name: string): string {
+    const normalizedName = normalizeDoctorName(name);
+    const publicName = DOCTOR_PUBLIC_NAME_BY_NORMALIZED_NAME[normalizedName];
+    if (!publicName) return name;
+
+    const honorific = detectHonorific(name);
+    return honorific ? `${honorific} ${publicName}` : publicName;
 }
