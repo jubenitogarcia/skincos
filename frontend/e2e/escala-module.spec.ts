@@ -84,6 +84,68 @@ test.describe('escala', () => {
     await expect(page.getByRole('option', { name: 'Carla' })).toHaveCount(0)
   })
 
+  test('keeps team members visible when the selected month has no schedule entries', async ({ page }) => {
+    await page.route('**/api/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
+      })
+    })
+
+    await page.route('**/api/insumos/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
+      })
+    })
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-04'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: '', units: ['Novo Hamburgo'], role: '', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Bruno', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' },
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          schedule: [],
+          closedDays: [],
+          holidays: []
+        })
+      })
+    })
+
+    await page.goto('/?module=escala-profissionais')
+
+    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
+    await expect(page.getByTestId('escala-team-member-dr-bruno')).toBeVisible()
+    await page.getByRole('combobox', { name: '' }).nth(3).click()
+    await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Dr. Bruno' })).toBeVisible()
+  })
+
   test('edits schedule entries directly from the day card modal', async ({ page }) => {
     const replacePayloads: any[] = []
     const closedAddPayloads: any[] = []

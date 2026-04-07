@@ -204,22 +204,23 @@ function isVisibleInjector(prof: EscalaProfessional) {
   return isActiveInjector(prof) || isInactiveInjector(prof)
 }
 
+function normalizeProfessionalRecord(prof: EscalaProfessional) {
+  return {
+    ...prof,
+    role: String(prof.role || '').trim() || 'Injetor',
+    status: String(prof.status || '').trim() || 'Ativo',
+    units: Array.isArray(prof.units) ? prof.units : [],
+  }
+}
+
 function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional[]) {
   const map = new Map<string, EscalaProfessional>()
   base.forEach((prof) => {
-    const isScheduled = scheduleNames.has(prof.name)
-    const role = String(prof.role || '').trim() || (isScheduled ? 'Injetor' : '')
-    const status = String(prof.status || '').trim() || (isScheduled ? 'Ativo' : '')
-    map.set(prof.name, {
-      ...prof,
-      role,
-      status,
-      units: Array.isArray(prof.units) ? prof.units : [],
-    })
+    map.set(prof.name, normalizeProfessionalRecord(prof))
   })
   scheduleNames.forEach((name) => {
     if (map.has(name)) return
-    map.set(name, {
+    map.set(name, normalizeProfessionalRecord({
       name,
       status: 'Ativo',
       units: [],
@@ -230,9 +231,13 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
       email: '',
       instagram: '',
       color: '',
-    })
+    }))
   })
   return Array.from(map.values())
+}
+
+export const __testables = {
+  mergeProfessionals,
 }
 
 function uniqueNames(values: string[]) {
