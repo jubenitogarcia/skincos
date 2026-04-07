@@ -157,11 +157,23 @@ jobs:
           set -euo pipefail
           npx --yes wrangler@4 deploy --config backend/apps/escala-api/wrangler.toml --env staging --keep-vars
 
-      - name: Smoke check Escala health
+      - name: Smoke check Escala API (production)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
+        env:
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          ESCALA_SMOKE_BASE_URL: https://escala-api.skincos.com.br
         run: |
           set -euo pipefail
-          curl -fsS -H 'User-Agent: EscalaWorkerSmoke/1.0' https://escala-api.skincos.com.br/api/escala/health >/dev/null
+          node backend/apps/escala-api/scripts/smoke.mjs
+
+      - name: Smoke check Escala API (staging)
+        if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') && steps.guard.outputs.deploy_staging == 'true' }}
+        env:
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          ESCALA_SMOKE_BASE_URL: https://escala-api-staging.skincos.com.br
+        run: |
+          set -euo pipefail
+          node backend/apps/escala-api/scripts/smoke.mjs
 
       - name: Mark deployed SHA
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}

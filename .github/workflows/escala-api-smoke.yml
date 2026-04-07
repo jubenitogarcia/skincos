@@ -1,0 +1,59 @@
+name: Escala API Smoke
+
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: escala-api-smoke-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_ESCALA_API_SMOKE == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve target
+        id: target
+        run: |
+          set -euo pipefail
+          ENVIRONMENT="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}"
+          if [[ "$ENVIRONMENT" == "staging" ]]; then
+            echo "base_url=https://escala-api-staging.skincos.com.br" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_url=https://escala-api.skincos.com.br" >> "$GITHUB_OUTPUT"
+          fi
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+
+      - name: Run Escala smoke
+        env:
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          ESCALA_SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
+        run: |
+          set -euo pipefail
+          echo "Running Escala smoke for environment=${{ steps.target.outputs.environment }}"
+          node backend/apps/escala-api/scripts/smoke.mjs

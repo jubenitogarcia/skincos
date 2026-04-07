@@ -125,6 +125,10 @@ function parseBooleanEnv(value: unknown): boolean | null {
   return null
 }
 
+function isLocalEscalaDevModeAllowed(context: any): boolean {
+  return isLocalDevAuthBypassEnabled(context)
+}
+
 function isValidIsoDate(value: unknown): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
 }
@@ -272,6 +276,7 @@ async function readJson(request: Request): Promise<any> {
 }
 
 function isLocalEscalaMockEnabled(context: any, targetOrigin: string, actorKey: string): boolean {
+  if (!isLocalEscalaDevModeAllowed(context)) return false
   const env = context?.env || {}
   const explicit =
     parseBooleanEnv(env.LOCAL_ESCALA_MOCK) ??
@@ -280,17 +285,27 @@ function isLocalEscalaMockEnabled(context: any, targetOrigin: string, actorKey: 
   if (explicit !== null) return explicit
 
   // In localhost dev, automatically fallback to mock when upstream auth vars are missing.
-  return isLocalDevAuthBypassEnabled(context) && (!targetOrigin || !actorKey)
+  return !targetOrigin || !actorKey
 }
 
 function isLocalEscalaShadowWritesEnabled(context: any): boolean {
+  if (!isLocalEscalaDevModeAllowed(context)) return false
   const env = context?.env || {}
   const explicit =
     parseBooleanEnv(env.LOCAL_ESCALA_SHADOW_WRITES) ??
     parseBooleanEnv(env.ESCALA_LOCAL_SHADOW_WRITES) ??
     parseBooleanEnv(env.DEV_ESCALA_SHADOW_WRITES)
   if (explicit !== null) return explicit
-  return isLocalDevAuthBypassEnabled(context)
+  return true
+}
+
+function buildEscalaTargetUrl(targetOrigin: string, requestUrl: string, rest: string): string {
+  const url = new URL(requestUrl)
+  const targetUrl = new URL(targetOrigin)
+  const basePath = targetUrl.pathname.replace(/\/$/, '')
+  targetUrl.pathname = `${basePath}/api/escala${rest.startsWith('/') ? '' : '/'}${rest}`
+  targetUrl.search = url.search
+  return targetUrl.toString()
 }
 
 function applyShadowOperationsToSchedulePayload(basePayload: any, ops: ShadowOperation[]): any {
@@ -794,10 +809,7 @@ export async function onRequest(context: any): Promise<Response> {
   }
 
   const actorTs = String(Date.now())
-  const targetUrl = new URL(targetOrigin)
-  const basePath = targetUrl.pathname.replace(/\/$/, '')
-  targetUrl.pathname = `${basePath}/api/escala${rest.startsWith('/') ? '' : '/'}${rest}`
-  targetUrl.search = url.search
+  const targetUrl = buildEscalaTargetUrl(targetOrigin, request.url, rest)
 
   const headers = buildUpstreamHeaders(request, requestId)
   headers.set('x-crm-user', actorB64)
@@ -808,7 +820,7 @@ export async function onRequest(context: any): Promise<Response> {
   const method = (request.method || 'GET').toUpperCase()
   const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
 
-  const upstreamRequest = new Request(targetUrl.toString(), {
+  const upstreamRequest = new Request(targetUrl, {
     method,
     headers,
     body,
@@ -885,4 +897,12 @@ export async function onRequest(context: any): Promise<Response> {
     statusText: upstream.statusText,
     headers: outHeaders,
   })
+}
+
+export const __testables = {
+  buildEscalaTargetUrl,
+  buildUpstreamHeaders,
+  isLocalEscalaDevModeAllowed,
+  isLocalEscalaMockEnabled,
+  isLocalEscalaShadowWritesEnabled,
 }
