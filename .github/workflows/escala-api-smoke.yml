@@ -39,9 +39,11 @@ jobs:
 
       - name: Resolve target
         id: target
+        env:
+          INPUT_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
         run: |
           set -euo pipefail
-          ENVIRONMENT="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}"
+          ENVIRONMENT="${INPUT_ENVIRONMENT}"
           if [[ "$ENVIRONMENT" == "staging" ]]; then
             echo "base_url=https://escala-api-staging.skincos.com.br" >> "$GITHUB_OUTPUT"
           else
@@ -53,7 +55,8 @@ jobs:
         env:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           ESCALA_SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
+          ESCALA_SMOKE_ENVIRONMENT: ${{ steps.target.outputs.environment }}
         run: |
           set -euo pipefail
-          echo "Running Escala smoke for environment=${{ steps.target.outputs.environment }}"
+          echo "Running Escala smoke for environment=${ESCALA_SMOKE_ENVIRONMENT}"
           node backend/apps/escala-api/scripts/smoke.mjs

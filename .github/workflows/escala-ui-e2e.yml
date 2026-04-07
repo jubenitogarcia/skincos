@@ -19,6 +19,7 @@ jobs:
   e2e:
     name: Escala UI E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +46,7 @@ jobs:
         run: |
           set -euxo pipefail
           cd frontend
-          npx playwright install --with-deps chromium
+          npx --yes playwright install --with-deps chromium
 
       - name: Start frontend
         run: |
