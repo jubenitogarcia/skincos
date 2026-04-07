@@ -39,6 +39,21 @@ class FakeD1 {
     this.scheduleEntries = []
     this.closedDays = []
     this.holidays = []
+    this.professionalColumns = new Set([
+      'id',
+      'name',
+      'status',
+      'role',
+      'shift',
+      'nickname',
+      'phone',
+      'email',
+      'instagram',
+      'units_json',
+      'created_at',
+      'updated_at',
+      'color',
+    ])
   }
 
   prepare(sql) {
@@ -60,10 +75,17 @@ class FakeD1 {
   all(sql, params) {
     const query = normalizeSql(sql)
 
-    if (query.includes('select name, status, role, shift, nickname, phone, email, instagram, color, units_json from professionals')) {
+    if (query.startsWith('pragma table_info(professionals)')) {
+      return Array.from(this.professionalColumns).map((name, index) => ({ cid: index, name }))
+    }
+
+    if (
+      query.includes('select name, status, role, shift, nickname, phone, email, instagram, color, units_json from professionals')
+      || query.includes('select name, status, role, shift, nickname, phone, email, instagram, null as color, units_json from professionals')
+    ) {
       return [...this.professionals]
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map((prof) => ({ ...prof }))
+        .map((prof) => ({ ...prof, color: this.professionalColumns.has('color') ? prof.color ?? null : null }))
     }
 
     if (query.startsWith('select name from professionals where name in (')) {
@@ -100,6 +122,7 @@ class FakeD1 {
     const query = normalizeSql(sql)
 
     if (query.startsWith('insert into professionals')) {
+      const hasColor = query.includes('(id, name, status, role, shift, nickname, phone, email, instagram, color, units_json, created_at, updated_at)')
       this.professionals.push({
         id: params[0],
         name: params[1],
@@ -110,16 +133,17 @@ class FakeD1 {
         phone: params[6],
         email: params[7],
         instagram: params[8],
-        color: params[9],
-        units_json: params[10],
-        created_at: params[11],
-        updated_at: params[12],
+        color: hasColor ? params[9] : null,
+        units_json: hasColor ? params[10] : params[9],
+        created_at: hasColor ? params[11] : params[10],
+        updated_at: hasColor ? params[12] : params[11],
       })
       return
     }
 
     if (query.startsWith('update professionals set name = ?1')) {
-      const index = this.professionals.findIndex((prof) => prof.name === params[11])
+      const hasColor = query.includes('color = ?9')
+      const index = this.professionals.findIndex((prof) => prof.name === params[hasColor ? 11 : 10])
       if (index >= 0) {
         this.professionals[index] = {
           ...this.professionals[index],
@@ -131,9 +155,9 @@ class FakeD1 {
           phone: params[5],
           email: params[6],
           instagram: params[7],
-          color: params[8],
-          units_json: params[9],
-          updated_at: params[10],
+          color: hasColor ? params[8] : this.professionals[index].color ?? null,
+          units_json: hasColor ? params[9] : params[8],
+          updated_at: hasColor ? params[10] : params[9],
         }
       }
       return
@@ -318,4 +342,72 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
       professional: 'Dra. Anita',
     },
   ])
+})
+
+test('Escala professionals GET/POST/PUT tolerate legacy schema without color column', async () => {
+  const db = new FakeD1()
+  db.professionalColumns.delete('color')
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+  const actor = {
+    id: 'gestor-1',
+    email: 'gestor@local.test',
+    role: 'GESTOR',
+    allowedUnits: [],
+  }
+
+  const createResponse = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: {
+        name: 'Dra. Marina',
+        status: 'Ativo',
+        units: ['BarraShoppingSul'],
+        role: 'Injetor',
+        color: '#22c55e',
+      },
+    }),
+    env,
+  )
+  assert.equal(createResponse.status, 200)
+  assert.equal(db.professionals.length, 1)
+  assert.equal(db.professionals[0].name, 'Dra. Marina')
+  assert.equal(db.professionals[0].color, null)
+
+  const updateResponse = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals', {
+      method: 'PUT',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: {
+        currentName: 'Dra. Marina',
+        name: 'Dra. Marina Lima',
+        status: 'Ativo',
+        units: ['BarraShoppingSul'],
+        role: 'Injetor',
+        color: '#0ea5e9',
+      },
+    }),
+    env,
+  )
+  assert.equal(updateResponse.status, 200)
+
+  const professionalsResponse = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals?unit=BarraShoppingSul', {
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+    }),
+    env,
+  )
+  assert.equal(professionalsResponse.status, 200)
+  const professionalsJson = await professionalsResponse.json()
+  assert.equal(professionalsJson.data.length, 1)
+  assert.equal(professionalsJson.data[0].name, 'Dra. Marina Lima')
+  assert.equal(professionalsJson.data[0].color, null)
+  assert.deepEqual(professionalsJson.data[0].units, ['BarraShoppingSul'])
 })
