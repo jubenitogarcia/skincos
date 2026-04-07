@@ -411,3 +411,83 @@ test('Escala professionals GET/POST/PUT tolerate legacy schema without color col
   assert.equal(professionalsJson.data[0].color, null)
   assert.deepEqual(professionalsJson.data[0].units, ['BarraShoppingSul'])
 })
+
+test('Escala rejects actors without management role', async () => {
+  const db = new FakeD1()
+  db.professionals.push({
+    id: 'prof-1',
+    name: 'Dra. Ana',
+    status: 'Ativo',
+    role: 'Injetor',
+    shift: '',
+    nickname: '',
+    phone: '',
+    email: '',
+    instagram: '',
+    color: '#22c55e',
+    units_json: JSON.stringify(['Novo Hamburgo']),
+    created_at: '2026-03-01T00:00:00.000Z',
+    updated_at: '2026-03-01T00:00:00.000Z',
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals?unit=Novo%20Hamburgo', {
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: {
+        id: 'injetor-1',
+        email: 'injetor@local.test',
+        role: 'INJETOR',
+        allowedUnits: ['Novo Hamburgo'],
+      },
+    }),
+    env,
+  )
+
+  assert.equal(response.status, 403)
+  assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN' })
+})
+
+test('Escala enforces allowed unit scope on read operations', async () => {
+  const db = new FakeD1()
+  db.professionals.push({
+    id: 'prof-1',
+    name: 'Dra. Marina',
+    status: 'Ativo',
+    role: 'Injetor',
+    shift: '',
+    nickname: '',
+    phone: '',
+    email: '',
+    instagram: '',
+    color: '#0ea5e9',
+    units_json: JSON.stringify(['BarraShoppingSul']),
+    created_at: '2026-03-01T00:00:00.000Z',
+    updated_at: '2026-03-01T00:00:00.000Z',
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals?unit=BarraShoppingSul', {
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: {
+        id: 'gestor-1',
+        email: 'gestor@local.test',
+        role: 'GESTOR',
+        allowedUnits: ['Novo Hamburgo'],
+      },
+    }),
+    env,
+  )
+
+  assert.equal(response.status, 403)
+  assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN_UNIT' })
+})

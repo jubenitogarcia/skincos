@@ -238,6 +238,7 @@ function mergeProfessionals(scheduleNames: Set<string>, base: EscalaProfessional
 
 export const __testables = {
   mergeProfessionals,
+  resolveVisibleMonth,
 }
 
 function uniqueNames(values: string[]) {
@@ -280,6 +281,21 @@ function buildYearOptions(monthKeys: string[]) {
     if (/^\d{4}$/.test(year)) years.add(year)
   })
   return Array.from(years).sort((a, b) => Number(a) - Number(b))
+}
+
+function normalizeMonthKey(value: string) {
+  return /^\d{4}-\d{2}$/.test(String(value || '')) ? String(value) : ''
+}
+
+function resolveVisibleMonth(monthKeys: string[], year: string, monthNumber: string) {
+  const available = Array.from(new Set(monthKeys.map(normalizeMonthKey).filter(Boolean))).sort()
+  const selected = normalizeMonthKey(`${year}-${monthNumber}`)
+  const fallback = available.length ? available[available.length - 1] : (selected || `${DEFAULT_YEAR}-${DEFAULT_MONTH_NUMBER}`)
+  const next = selected && available.includes(selected) ? selected : fallback
+  return {
+    year: next.slice(0, 4),
+    monthNumber: next.slice(5, 7),
+  }
 }
 
 function hashString(value: string) {
@@ -515,17 +531,21 @@ export function EscalaProfissionaisModule() {
   const [loadingOverview, setLoadingOverview] = useState(true)
   const [loadingSchedule, setLoadingSchedule] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [teamLoadError, setTeamLoadError] = useState<string | null>(null)
   const [dayProfessionalDrafts, setDayProfessionalDrafts] = useState<Record<string, string[]>>({})
   const [dayBlockReasons, setDayBlockReasons] = useState<Record<string, string>>({})
   const [dayActionKey, setDayActionKey] = useState<string | null>(null)
   const [activeDate, setActiveDate] = useState<string | null>(null)
+  const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [highlightMode, setHighlightMode] = useState<'scheduled' | 'blocked' | 'empty' | null>(null)
+  const [multiDateBlockReason, setMultiDateBlockReason] = useState('')
   const [selectedTeamMember, setSelectedTeamMember] = useState<string>('')
   const [teamMemberDrafts, setTeamMemberDrafts] = useState<Record<string, EscalaProfessional>>({})
   const [savingTeamMember, setSavingTeamMember] = useState(false)
   const [teamFormMode, setTeamFormMode] = useState<'idle' | 'edit' | 'add'>('idle')
   const [showInactiveTeamMembers, setShowInactiveTeamMembers] = useState(false)
   const activeDateRef = useRef<string | null>(null)
+  const selectedDatesRef = useRef<string[]>([])
   const teamPanelExpanded = teamFormMode !== 'idle'
   const selectedMonth = useMemo(
     () => (selectedYear && selectedMonthNumber ? `${selectedYear}-${selectedMonthNumber}` : ''),
@@ -535,6 +555,10 @@ export function EscalaProfissionaisModule() {
   useEffect(() => {
     activeDateRef.current = activeDate
   }, [activeDate])
+
+  useEffect(() => {
+    selectedDatesRef.current = selectedDates
+  }, [selectedDates])
 
   const refreshOverview = useCallback(async () => {
     setLoadingOverview(true)
@@ -560,11 +584,12 @@ export function EscalaProfissionaisModule() {
     if (!unit) return
     const res = await fetchEscalaProfessionals(unit)
     if (!res.ok) {
-      setError(res.error || 'Não foi possível carregar profissionais.')
+      setProfessionals([])
+      setTeamLoadError(res.error || 'Falha ao carregar a equipe do cadastro.')
       return
     }
     setProfessionals(Array.isArray(res.data) ? res.data : [])
-    setError(null)
+    setTeamLoadError(null)
   }, [selectedUnit])
 
   const refreshSchedule = useCallback(async (unitOverride?: string, monthOverride?: string) => {
@@ -587,11 +612,16 @@ export function EscalaProfissionaisModule() {
 
   const clearInteractiveState = useCallback(() => {
     setSelectedProfessional(ALL_PROFESSIONALS_OPTION)
+    setSelectedDates([])
     setActiveDate(null)
     setHighlightMode(null)
+    setMultiDateBlockReason('')
   }, [])
 
   const focusProfessional = useCallback((name: string) => {
+    setSelectedDates([])
+    setActiveDate(null)
+    setMultiDateBlockReason('')
     setSelectedProfessional((prev) => (prev === name ? ALL_PROFESSIONALS_OPTION : name))
   }, [])
 
@@ -610,10 +640,27 @@ export function EscalaProfissionaisModule() {
   }, [refreshSchedule, selectedMonthNumber, selectedUnit, selectedYear])
 
   useEffect(() => {
+    const next = resolveVisibleMonth(availableMonths, selectedYear, selectedMonthNumber)
+    if (next.year !== selectedYear) setSelectedYear(next.year)
+    if (next.monthNumber !== selectedMonthNumber) setSelectedMonthNumber(next.monthNumber)
+  }, [availableMonths, selectedMonthNumber, selectedYear])
+
+  useEffect(() => {
     const activeMonth = selectedYear && selectedMonthNumber ? `${selectedYear}-${selectedMonthNumber}` : ''
     if (!activeMonth) return
     setActiveDate((prev) => (prev && prev.startsWith(`${activeMonth}-`) ? prev : null))
+    setSelectedDates((prev) => prev.filter((date) => date.startsWith(`${activeMonth}-`)))
   }, [selectedMonthNumber, selectedYear])
+
+  useEffect(() => {
+    if (!selectedDates.length) {
+      if (activeDate) setActiveDate(null)
+      return
+    }
+    if (!activeDate || !selectedDates.includes(activeDate)) {
+      setActiveDate(selectedDates[selectedDates.length - 1] || null)
+    }
+  }, [activeDate, selectedDates])
 
   const scheduleNames = useMemo(() => new Set(schedule.map((e) => e.professional)), [schedule])
   const mergedProfessionals = useMemo(() => mergeProfessionals(scheduleNames, professionals), [scheduleNames, professionals])
@@ -744,7 +791,30 @@ export function EscalaProfissionaisModule() {
   }, [closedDaysForMonth])
   const closedDateSet = useMemo(() => new Set(closedDaysForMonth.map((entry) => entry.date)), [closedDaysForMonth])
 
+  useEffect(() => {
+    if (selectedDates.length <= 1) {
+      setMultiDateBlockReason('')
+      return
+    }
+    const firstDate = selectedDates[0]
+    if (!firstDate) {
+      setMultiDateBlockReason('')
+      return
+    }
+    const nextReason = String(dayBlockReasons[firstDate] || closedReasonByDate.get(firstDate) || '').trim()
+    setMultiDateBlockReason(nextReason)
+  }, [closedReasonByDate, dayBlockReasons, selectedDates])
+
   const calendarCells = useMemo(() => (selectedMonth ? buildCalendarCells(selectedMonth) : []), [selectedMonth])
+  const selectedDateSet = useMemo(() => new Set(selectedDates), [selectedDates])
+  const selectedDatesLabel = useMemo(() => {
+    if (!selectedDates.length) return ''
+    if (selectedDates.length === 1) return formatDisplayDate(selectedDates[0])
+    const ordered = [...selectedDates].sort()
+    const preview = ordered.slice(0, 3).map(formatDisplayDate)
+    const suffix = ordered.length > 3 ? ` +${ordered.length - 3}` : ''
+    return `${preview.join(', ')}${suffix}`
+  }, [selectedDates])
 
   const totalScheduledDays = useMemo(() => {
     return new Set(scheduleForMonth.map((entry) => entry.date)).size
@@ -777,7 +847,7 @@ export function EscalaProfissionaisModule() {
           totalScheduledDays,
           unavailableDaysCount,
           activeInjectors: professionalOptions.length,
-          selectedDatesCount: 0,
+          selectedDatesCount: selectedDates.length,
           highlightMode,
           loadingOverview
         }
@@ -792,6 +862,7 @@ export function EscalaProfissionaisModule() {
     selectedMonthNumber,
     selectedMonth,
     selectedProfessional,
+    selectedDates.length,
     selectedUnit,
     selectedYear,
     totalScheduledDays,
@@ -853,6 +924,17 @@ export function EscalaProfissionaisModule() {
     return dayProfessionalDrafts[date] || uniqueNames(entries.map((entry) => entry.professional))
   }, [dayProfessionalDrafts])
 
+  const getDatesSelectionState = useCallback((dates: string[], name: string) => {
+    if (!dates.length) return false as boolean | 'indeterminate'
+    const checkedCount = dates.reduce((total, date) => {
+      const entries = scheduleByDate.get(date) || []
+      return getDayDraft(date, entries).includes(name) ? total + 1 : total
+    }, 0)
+    if (checkedCount === 0) return false
+    if (checkedCount === dates.length) return true
+    return 'indeterminate'
+  }, [getDayDraft, scheduleByDate])
+
   const toggleDayProfessional = useCallback((date: string, name: string, entries: EscalaScheduleEntry[]) => {
     setDayProfessionalDrafts((prev) => {
       const base = prev[date] || uniqueNames(entries.map((entry) => entry.professional))
@@ -863,51 +945,91 @@ export function EscalaProfissionaisModule() {
     })
   }, [])
 
-  const handleApplyDayProfessionals = useCallback(async (date: string, entries: EscalaScheduleEntry[]) => {
+  const toggleSelectedDatesProfessional = useCallback((name: string) => {
+    const dates = selectedDatesRef.current.filter((date) => !closedBlockedDates.has(date))
+    if (!dates.length) return
+    setDayProfessionalDrafts((prev) => {
+      const next = { ...prev }
+      const allChecked = dates.every((date) => {
+        const entries = scheduleByDate.get(date) || []
+        const base = prev[date] || uniqueNames(entries.map((entry) => entry.professional))
+        return base.includes(name)
+      })
+      dates.forEach((date) => {
+        const entries = scheduleByDate.get(date) || []
+        const base = prev[date] || uniqueNames(entries.map((entry) => entry.professional))
+        next[date] = allChecked
+          ? base.filter((item) => item !== name)
+          : uniqueNames([...base, name])
+      })
+      return next
+    })
+  }, [closedBlockedDates, scheduleByDate])
+
+  const handleApplyDayProfessionals = useCallback(async (dates: string[]) => {
     if (!selectedUnit) {
       toast.error('Selecione uma unidade antes de alterar a agenda.')
       return false
     }
-    const nextNames = uniqueNames(getDayDraft(date, entries))
-    const currentNames = uniqueNames(entries.map((entry) => entry.professional))
-    const unchanged = nextNames.length === currentNames.length && nextNames.every((name) => currentNames.includes(name))
-    if (unchanged) return true
 
-    setDayActionKey(`assign:${date}`)
-    const res = nextNames.length
-      ? await replaceScheduleEntries({ date, unit: selectedUnit, professionals: nextNames })
-      : await removeScheduleEntry({ date, unit: selectedUnit })
-    setDayActionKey(null)
-    if (!res.ok) {
-      toast.error(res.error || 'Falha ao atualizar profissionais do dia.')
-      return false
+    const targetDates = uniqueNames(dates).filter((date) => !closedBlockedDates.has(date))
+    if (!targetDates.length) return true
+
+    setDayActionKey(targetDates.length === 1 ? `assign:${targetDates[0]}` : 'assign:multi')
+    const changedDates: string[] = []
+    for (const date of targetDates) {
+      const entries = scheduleByDate.get(date) || []
+      const nextNames = uniqueNames(getDayDraft(date, entries))
+      const currentNames = uniqueNames(entries.map((entry) => entry.professional))
+      const unchanged = nextNames.length === currentNames.length && nextNames.every((name) => currentNames.includes(name))
+      if (unchanged) continue
+
+      const res = nextNames.length
+        ? await replaceScheduleEntries({ date, unit: selectedUnit, professionals: nextNames })
+        : await removeScheduleEntry({ date, unit: selectedUnit })
+      if (!res.ok) {
+        setDayActionKey(null)
+        toast.error(res.error || `Falha ao atualizar a agenda de ${formatDisplayDate(date)}.`)
+        return false
+      }
+      changedDates.push(date)
     }
-    toast.success(nextNames.length ? 'Agenda do dia atualizada.' : 'Agenda do dia limpa.')
+    setDayActionKey(null)
+
+    if (changedDates.length) {
+      toast.success(
+        changedDates.length === 1
+          ? 'Agenda do dia atualizada.'
+          : `Agenda atualizada em ${changedDates.length} datas.`
+      )
+    }
     setDayProfessionalDrafts((prev) => {
       const next = { ...prev }
-      delete next[date]
+      changedDates.forEach((date) => {
+        delete next[date]
+      })
       return next
     })
     await refreshSchedule()
     await refreshOverview()
     return true
-  }, [getDayDraft, refreshOverview, refreshSchedule, selectedUnit])
+  }, [closedBlockedDates, getDayDraft, refreshOverview, refreshSchedule, scheduleByDate, selectedUnit])
 
   const closeActiveDateWithSave = useCallback(async () => {
-    const date = activeDateRef.current
-    if (!date) {
+    const dates = uniqueNames(selectedDatesRef.current)
+    if (!dates.length) {
+      setSelectedDates([])
       setActiveDate(null)
+      setMultiDateBlockReason('')
       return
     }
 
-    if (!closedBlockedDates.has(date)) {
-      const entries = scheduleByDate.get(date) || []
-      const saved = await handleApplyDayProfessionals(date, entries)
-      if (!saved) return
-    }
-
+    const saved = await handleApplyDayProfessionals(dates)
+    if (!saved) return
+    setSelectedDates([])
     setActiveDate(null)
-  }, [closedBlockedDates, handleApplyDayProfessionals, scheduleByDate])
+    setMultiDateBlockReason('')
+  }, [handleApplyDayProfessionals])
 
   const shiftSelectedMonth = useCallback((offset: number) => {
     const next = shiftMonthValue(selectedMonth, offset)
@@ -937,7 +1059,9 @@ export function EscalaProfissionaisModule() {
         delete next[date]
         return next
       })
+      setSelectedDates([])
       setActiveDate(null)
+      setMultiDateBlockReason('')
       await refreshSchedule()
       await refreshOverview()
       return
@@ -963,10 +1087,91 @@ export function EscalaProfissionaisModule() {
       delete next[date]
       return next
     })
+    setSelectedDates([])
     setActiveDate(null)
+    setMultiDateBlockReason('')
     await refreshSchedule()
     await refreshOverview()
   }, [closedDateSet, closedReasonByDate, dayBlockReasons, refreshOverview, refreshSchedule, selectedUnit])
+
+  const handleToggleSelectedDatesBlock = useCallback(async () => {
+    if (!selectedUnit) {
+      toast.error('Selecione uma unidade antes de bloquear datas.')
+      return
+    }
+
+    const dates = uniqueNames(selectedDatesRef.current)
+    if (!dates.length) return
+    if (dates.length === 1) {
+      await handleToggleDayBlock(dates[0])
+      return
+    }
+
+    const allDirectlyBlocked = dates.every((date) => closedDateSet.has(date))
+    setDayActionKey(dates.length === 1 ? `block:${dates[0]}` : 'block:multi')
+
+    if (allDirectlyBlocked) {
+      for (const date of dates) {
+        const res = await removeClosedDay({ date, unit: selectedUnit })
+        if (!res.ok) {
+          setDayActionKey(null)
+          toast.error(res.error || `Falha ao remover bloqueio de ${formatDisplayDate(date)}.`)
+          return
+        }
+      }
+      setDayActionKey(null)
+      toast.success(dates.length === 1 ? 'Bloqueio removido.' : `Bloqueio removido de ${dates.length} datas.`)
+      setDayBlockReasons((prev) => {
+        const next = { ...prev }
+        dates.forEach((date) => {
+          delete next[date]
+        })
+        return next
+      })
+      setSelectedDates([])
+      setActiveDate(null)
+      setMultiDateBlockReason('')
+      await refreshSchedule()
+      await refreshOverview()
+      return
+    }
+
+    for (const date of dates) {
+      if (closedDateSet.has(date)) continue
+      const clearDayRes = await removeScheduleEntry({ date, unit: selectedUnit })
+      if (!clearDayRes.ok) {
+        setDayActionKey(null)
+        toast.error(clearDayRes.error || `Falha ao limpar a agenda de ${formatDisplayDate(date)} antes do bloqueio.`)
+        return
+      }
+      const reason = String(
+        (dates.length > 1 ? multiDateBlockReason : dayBlockReasons[date]) ||
+        closedReasonByDate.get(date) ||
+        ''
+      ).trim()
+      const res = await addClosedDay({ date, unit: selectedUnit, reason: reason || undefined })
+      if (!res.ok) {
+        setDayActionKey(null)
+        toast.error(res.error || `Falha ao bloquear ${formatDisplayDate(date)}.`)
+        return
+      }
+    }
+
+    setDayActionKey(null)
+    toast.success(dates.length === 1 ? 'Data bloqueada.' : `${dates.length} datas bloqueadas.`)
+    setDayProfessionalDrafts((prev) => {
+      const next = { ...prev }
+      dates.forEach((date) => {
+        delete next[date]
+      })
+      return next
+    })
+    setSelectedDates([])
+    setActiveDate(null)
+    setMultiDateBlockReason('')
+    await refreshSchedule()
+    await refreshOverview()
+  }, [closedDateSet, closedReasonByDate, dayBlockReasons, handleToggleDayBlock, multiDateBlockReason, refreshOverview, refreshSchedule, selectedUnit])
 
   const updateSelectedTeamMemberField = useCallback((field: keyof EscalaProfessional, value: string) => {
     const draftKey = teamFormMode === 'add' ? NEW_TEAM_MEMBER_KEY : selectedTeamMemberBase?.name
@@ -1013,6 +1218,8 @@ export function EscalaProfissionaisModule() {
   const beginAddTeamMember = useCallback(() => {
     setTeamFormMode('add')
     setSelectedProfessional(ALL_PROFESSIONALS_OPTION)
+    setSelectedDates([])
+    setActiveDate(null)
     setHighlightMode(null)
     setTeamMemberDrafts((prev) => ({
       ...prev,
@@ -1025,6 +1232,7 @@ export function EscalaProfissionaisModule() {
     if (isSameSelection) {
       setSelectedTeamMember('')
       setSelectedProfessional(ALL_PROFESSIONALS_OPTION)
+      setSelectedDates([])
       setActiveDate(null)
       setHighlightMode(null)
       return
@@ -1035,6 +1243,7 @@ export function EscalaProfissionaisModule() {
     setSelectedTeamMember(name)
     setTeamFormMode('idle')
     setSelectedProfessional(name)
+    setSelectedDates([])
     setActiveDate(null)
     setHighlightMode(null)
   }, [inactiveInjectors, selectedTeamMember, teamFormMode])
@@ -1176,8 +1385,9 @@ export function EscalaProfissionaisModule() {
                     : false
                 const hasTrackedFilter = selectedProfessional !== ALL_PROFESSIONALS_OPTION || highlightMode !== null
                 const isTracked = matchesSelectedProfessional || matchesHighlightMode
-                const isActiveDate = activeDate === cell.date
-                const dimmedByActiveDate = !!activeDate && !isActiveDate
+                const isSelectedDate = selectedDateSet.has(cell.date)
+                const isPrimarySelectedDate = activeDate === cell.date
+                const dimmedByActiveDate = selectedDates.length > 0 && !isSelectedDate
                 const dimmedByTrackedFilter = hasTrackedFilter && !isTracked
                 const isEmptyDay = isWithinSelectedMonth && !isBlocked && entryNames.length === 0
                 const isAdjacentMonth = cell.monthOffset !== 0
@@ -1217,7 +1427,7 @@ export function EscalaProfissionaisModule() {
                 const cardStyle = isAdjacentMonth
                   ? getAdjacentMonthCardStyle(cell.monthOffset === -1 ? 'previous-month' : 'next-month', adjacentPosition, adjacentTotal)
                   : trackedCardStyle
-                const handleOpenDate = () => {
+                const handleOpenDate = (event?: React.MouseEvent<HTMLDivElement> | React.KeyboardEvent<HTMLDivElement>) => {
                   if (selectedProfessional !== ALL_PROFESSIONALS_OPTION) {
                     setSelectedProfessional(ALL_PROFESSIONALS_OPTION)
                     setHighlightMode(null)
@@ -1227,6 +1437,18 @@ export function EscalaProfissionaisModule() {
                     setHighlightMode(null)
                     return
                   }
+                  const multiSelect = Boolean((event as React.MouseEvent<HTMLDivElement> | undefined)?.metaKey || (event as React.MouseEvent<HTMLDivElement> | undefined)?.ctrlKey)
+                  if (multiSelect) {
+                    const alreadySelected = selectedDateSet.has(cell.date)
+                    const next = alreadySelected
+                      ? selectedDates.filter((date) => date !== cell.date)
+                      : uniqueNames([...selectedDates, cell.date]).sort()
+                    setSelectedDates(next)
+                    setActiveDate(next.length ? (alreadySelected ? next[next.length - 1] : cell.date) : null)
+                    if (!next.length) setMultiDateBlockReason('')
+                    return
+                  }
+                  setSelectedDates([cell.date])
                   setActiveDate(cell.date)
                 }
 
@@ -1237,11 +1459,11 @@ export function EscalaProfissionaisModule() {
                       tabIndex={isAdjacentMonth ? undefined : 0}
                       data-testid={`escala-day-${cell.date}`}
                       data-escala-preserve-filter="true"
-                      onClick={isAdjacentMonth ? undefined : handleOpenDate}
+                      onClick={isAdjacentMonth ? undefined : (event) => handleOpenDate(event)}
                       onKeyDown={isAdjacentMonth ? undefined : (event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
-                          handleOpenDate()
+                          handleOpenDate(event)
                         }
                       }}
                       className={cn(
@@ -1249,7 +1471,8 @@ export function EscalaProfissionaisModule() {
                         isAdjacentMonth ? 'place-items-center border-slate-400/8 bg-slate-400/[0.03] text-center text-slate-500/65 saturate-50' : 'hover:border-white/30',
                         isBlocked && 'border-rose-300/45 bg-rose-500/12 text-rose-50/95',
                         isTracked && 'escala-day-card--tracked',
-                        isActiveDate && 'escala-day-card--selected border-sky-200/80 bg-sky-300/14 ring-2 ring-sky-300/32',
+                        isSelectedDate && 'escala-day-card--selected border-sky-200/80 bg-sky-300/14',
+                        isPrimarySelectedDate && 'ring-2 ring-sky-300/32',
                         (dimmedByActiveDate || dimmedByTrackedFilter) && 'opacity-45 saturate-75'
                       )}
                       style={cardStyle}
@@ -1374,6 +1597,7 @@ export function EscalaProfissionaisModule() {
                         size="icon"
                         variant={teamFormMode === 'add' ? 'premium' : 'outline'}
                         onClick={beginAddTeamMember}
+                        disabled={!!teamLoadError}
                         aria-label="Adicionar injetor"
                         title="Adicionar"
                         data-testid="escala-team-add"
@@ -1412,7 +1636,7 @@ export function EscalaProfissionaisModule() {
                           size="icon"
                           variant="outline"
                           onClick={() => beginEditTeamMember(selectedTeamMember)}
-                          disabled={!selectedTeamMember}
+                          disabled={!selectedTeamMember || !!teamLoadError}
                           aria-label="Editar injetor"
                           title="Editar"
                           data-testid="escala-team-edit"
@@ -1424,7 +1648,27 @@ export function EscalaProfissionaisModule() {
                   </div>
 
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {activeInjectors.length || inactiveInjectors.length ? (
+                    {teamLoadError ? (
+                      <div
+                        className="w-full rounded-xl border border-amber-300/30 bg-amber-500/10 px-3 py-3 text-xs text-amber-50/90"
+                        data-testid="escala-team-error"
+                      >
+                        <div className="font-medium text-amber-50">Falha ao carregar a equipe do cadastro.</div>
+                        <div className="mt-1 text-amber-50/80">
+                          A agenda pode continuar visível, mas a lateral da equipe não está confiável até recarregar os profissionais.
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="mt-3 border-amber-200/35 bg-amber-50/8 text-amber-50 hover:bg-amber-50/14"
+                          onClick={() => void refreshProfessionals(selectedUnit)}
+                          data-testid="escala-team-retry"
+                        >
+                          Tentar novamente
+                        </Button>
+                      </div>
+                    ) : activeInjectors.length || inactiveInjectors.length ? (
                       <>
                         {activeInjectors.map((prof) => {
                       const isCurrent = prof.name === selectedTeamMember
@@ -1637,35 +1881,37 @@ export function EscalaProfissionaisModule() {
       </div>
 
       <Dialog
-        open={!!activeDate}
+        open={selectedDates.length > 0}
         onOpenChange={(open) => {
           if (open) return
           void closeActiveDateWithSave()
         }}
       >
         <DialogContent className="max-w-sm border-white/10 bg-slate-950/96 text-slate-100" data-escala-preserve-filter="true">
-          {activeDate ? (
+          {selectedDates.length ? (
             <>
               <DialogHeader className="space-y-1">
                 <div className="flex items-start justify-between gap-3 pr-8">
                   <div className="flex items-center gap-2">
-                    <DialogTitle className="text-base">Injetores do dia</DialogTitle>
+                    <DialogTitle className="text-base">
+                      {selectedDates.length === 1 ? 'Injetores do dia' : 'Injetores das datas'}
+                    </DialogTitle>
                     <DialogDescription className="text-xs text-slate-300/75">
-                      {formatDisplayDate(activeDate)}
+                      {selectedDates.length === 1 ? selectedDatesLabel : `${selectedDates.length} datas selecionadas`}
                     </DialogDescription>
                   </div>
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        data-testid={`escala-block-${activeDate}`}
+                        data-testid={selectedDates.length === 1 && activeDate ? `escala-block-${activeDate}` : 'escala-block-multi'}
                         className={cn(
                           'escala-card-action rounded-full border p-2 hover:bg-white/[0.12]',
-                          closedBlockedDates.has(activeDate)
+                          selectedDates.every((date) => closedBlockedDates.has(date))
                             ? 'border-rose-300/40 bg-rose-500/15 text-rose-100'
                             : 'border-white/15 bg-white/[0.06] text-white/85'
                         )}
-                        aria-label={`Bloquear data ${activeDate}`}
+                        aria-label={selectedDates.length === 1 && activeDate ? `Bloquear data ${activeDate}` : 'Bloquear datas selecionadas'}
                       >
                         <Shield className="size-4.5" />
                       </button>
@@ -1677,26 +1923,42 @@ export function EscalaProfissionaisModule() {
                     >
                       <div className="space-y-3 text-xs">
                         <div>
-                          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">Bloqueio de data</div>
-                          <div className="text-sm text-white">{activeDate}</div>
+                          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300/70">
+                            {selectedDates.length === 1 ? 'Bloqueio de data' : 'Bloqueio de datas'}
+                          </div>
+                          <div className="text-sm text-white">
+                            {selectedDates.length === 1 ? activeDate : selectedDatesLabel}
+                          </div>
                         </div>
                         <Input
-                          value={dayBlockReasons[activeDate] || closedReasonByDate.get(activeDate) || ''}
-                          onChange={(event) => setDayBlockReasons((prev) => ({ ...prev, [activeDate]: event.target.value }))}
+                          value={
+                            selectedDates.length === 1 && activeDate
+                              ? (dayBlockReasons[activeDate] || closedReasonByDate.get(activeDate) || '')
+                              : multiDateBlockReason
+                          }
+                          onChange={(event) => {
+                            if (selectedDates.length === 1 && activeDate) {
+                              setDayBlockReasons((prev) => ({ ...prev, [activeDate]: event.target.value }))
+                              return
+                            }
+                            setMultiDateBlockReason(event.target.value)
+                          }}
                           placeholder="escreva o motivo"
                           className="h-9 bg-white/5"
-                          data-testid={`escala-block-reason-${activeDate}`}
-                          disabled={closedBlockedDates.has(activeDate) && !closedDateSet.has(activeDate)}
+                          data-testid={selectedDates.length === 1 && activeDate ? `escala-block-reason-${activeDate}` : 'escala-block-reason-multi'}
+                          disabled={selectedDates.length === 1 && !!activeDate && closedBlockedDates.has(activeDate) && !closedDateSet.has(activeDate)}
                         />
                         <Button
-                          variant={closedDateSet.has(activeDate) ? 'outline' : 'premium'}
+                          variant={selectedDates.every((date) => closedDateSet.has(date)) ? 'outline' : 'premium'}
                           size="sm"
                           className="w-full"
-                          data-testid={`escala-toggle-block-${activeDate}`}
-                          onClick={() => void handleToggleDayBlock(activeDate)}
-                          disabled={dayActionKey === `block:${activeDate}`}
+                          data-testid={selectedDates.length === 1 && activeDate ? `escala-toggle-block-${activeDate}` : 'escala-toggle-block-multi'}
+                          onClick={() => void handleToggleSelectedDatesBlock()}
+                          disabled={dayActionKey === (selectedDates.length === 1 && activeDate ? `block:${activeDate}` : 'block:multi')}
                         >
-                          {closedDateSet.has(activeDate) ? 'Remover bloqueio' : 'Bloquear data'}
+                          {selectedDates.every((date) => closedDateSet.has(date))
+                            ? (selectedDates.length === 1 ? 'Remover bloqueio' : 'Remover bloqueio das datas')
+                            : (selectedDates.length === 1 ? 'Bloquear data' : 'Bloquear datas')}
                         </Button>
                       </div>
                     </PopoverContent>
@@ -1704,14 +1966,25 @@ export function EscalaProfissionaisModule() {
                 </div>
               </DialogHeader>
 
+              {selectedDates.length > 1 ? (
+                <div className="rounded-xl border border-sky-300/16 bg-sky-400/8 px-3 py-2 text-[11px] text-sky-100/78">
+                  Seleção múltipla ativa. As alterações de injetores e bloqueio serão aplicadas em todas as datas selecionadas.
+                </div>
+              ) : null}
+
               <div className="grid grid-cols-2 gap-2">
                 {assignableProfessionalOptions.length ? assignableProfessionalOptions.map((name) => {
-                  const checked = closedBlockedDates.has(activeDate)
-                    ? false
-                    : getDayDraft(activeDate, scheduleByDate.get(activeDate) || []).includes(name)
+                  const targetDates = selectedDates.filter((date) => !closedBlockedDates.has(date))
+                  const checked = selectedDates.length === 1 && activeDate
+                    ? (
+                        closedBlockedDates.has(activeDate)
+                          ? false
+                          : getDayDraft(activeDate, scheduleByDate.get(activeDate) || []).includes(name)
+                      )
+                    : getDatesSelectionState(targetDates, name)
                   return (
                     <label
-                      key={`${activeDate}-${name}`}
+                      key={`${selectedDates.join('|')}-${name}`}
                       className={cn(
                         'flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-2 py-1.5 text-xs transition-all',
                         checked ? 'shadow-[0_10px_24px_rgba(15,23,42,0.18)]' : 'bg-white/[0.03]',
@@ -1720,8 +1993,14 @@ export function EscalaProfissionaisModule() {
                     >
                       <Checkbox
                         checked={checked}
-                        onCheckedChange={() => toggleDayProfessional(activeDate, name, scheduleByDate.get(activeDate) || [])}
-                        disabled={closedBlockedDates.has(activeDate)}
+                        onCheckedChange={() => {
+                          if (selectedDates.length === 1 && activeDate) {
+                            toggleDayProfessional(activeDate, name, scheduleByDate.get(activeDate) || [])
+                            return
+                          }
+                          toggleSelectedDatesProfessional(name)
+                        }}
+                        disabled={selectedDates.length === 1 && !!activeDate ? closedBlockedDates.has(activeDate) : selectedDates.every((date) => closedBlockedDates.has(date))}
                       />
                       <span className="truncate font-medium">{name}</span>
                     </label>

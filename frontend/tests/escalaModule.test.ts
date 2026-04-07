@@ -28,4 +28,11 @@ describe('Escala module helpers', () => {
       }),
     ])
   })
+
+  it('falls back to the latest available overview month when the current month is unavailable', () => {
+    expect(__testables.resolveVisibleMonth(['2026-03'], '2026', '04')).toEqual({
+      year: '2026',
+      monthNumber: '03',
+    })
+  })
 })

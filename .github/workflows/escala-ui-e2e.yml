@@ -1,0 +1,84 @@
+name: Escala UI E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/apps/escala-api/**"
+      - ".github/workflows/escala-ui-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/apps/escala-api/**"
+      - ".github/workflows/escala-ui-e2e.yml"
+  workflow_dispatch: {}
+
+jobs:
+  e2e:
+    name: Escala UI E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: |
+          set -euxo pipefail
+          cd frontend
+          npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-chromium
+
+      - name: Install Playwright Chromium
+        run: |
+          set -euxo pipefail
+          cd frontend
+          npx playwright install --with-deps chromium
+
+      - name: Start frontend
+        run: |
+          set -euxo pipefail
+          cd frontend
+          npm run dev -- --host 127.0.0.1 --port 5173 &
+          echo $! > /tmp/escala-vite.pid
+          for i in {1..60}; do
+            if curl -fsS "http://127.0.0.1:5173/" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::Vite did not become ready"
+          exit 1
+
+      - name: Run Escala E2E
+        env:
+          CI: "true"
+          RUN_ESCALA_E2E_IN_CI: "1"
+          E2E_BASE_URL: http://127.0.0.1:5173
+        run: |
+          set -euxo pipefail
+          cd frontend
+          npx playwright test e2e/escala-module.spec.ts
+
+      - name: Stop frontend
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -f /tmp/escala-vite.pid ]]; then
+            pid="$(cat /tmp/escala-vite.pid 2>/dev/null || true)"
+            if [[ "${pid}" =~ ^[0-9]+$ ]]; then
+              kill "${pid}" 2>/dev/null || true
+            fi
+          fi

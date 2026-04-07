@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('escala', () => {
-  test.skip(!!process.env.CI, 'Escala E2E is unstable in CI; track and re-enable in dedicated fix PR')
+  test.describe.configure({ mode: 'serial' })
+
+  test.skip(
+    !!process.env.CI && process.env.RUN_ESCALA_E2E_IN_CI !== '1',
+    'Escala E2E only runs in the dedicated CI workflow.',
+  )
 
   test('renders overview and schedule from API', async ({ page }) => {
     await page.route('**/api/auth/me**', async (route) => {
@@ -144,6 +149,61 @@ test.describe('escala', () => {
     await page.getByRole('combobox', { name: '' }).nth(3).click()
     await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
     await expect(page.getByRole('option', { name: 'Dr. Bruno' })).toBeVisible()
+  })
+
+  test('shows team load failure as an error state instead of an empty team', async ({ page }) => {
+    await page.route('**/api/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
+      })
+    })
+
+    await page.route('**/api/insumos/auth/me**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
+      })
+    })
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-04'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: false, error: 'professionals unavailable' })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          schedule: [],
+          closedDays: [],
+          holidays: []
+        })
+      })
+    })
+
+    await page.goto('/?module=escala-profissionais')
+
+    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-team-error')).toContainText('Falha ao carregar a equipe')
+    await expect(page.getByText('Nenhum injetor encontrado para a unidade selecionada.')).toHaveCount(0)
+    await expect(page.getByTestId('escala-team-add')).toBeDisabled()
+    await expect(page.getByTestId('escala-team-edit')).toBeDisabled()
   })
 
   test('edits schedule entries directly from the day card modal', async ({ page }) => {
