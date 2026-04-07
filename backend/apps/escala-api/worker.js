@@ -146,6 +146,32 @@ function normalizeUnitKey(value) {
     .trim()
 }
 
+async function getTableColumns(env, tableName) {
+  if (!globalThis.__escalaSchemaCache) {
+    globalThis.__escalaSchemaCache = new WeakMap()
+  }
+  const dbCache = globalThis.__escalaSchemaCache
+  let tableCache = dbCache.get(env.DB)
+  if (!tableCache) {
+    tableCache = new Map()
+    dbCache.set(env.DB, tableCache)
+  }
+  if (!tableCache.has(tableName)) {
+    tableCache.set(
+      tableName,
+      env.DB.prepare(`pragma table_info(${tableName})`).all()
+        .then((res) => new Set((res.results || []).map((row) => String(row.name || '').trim()).filter(Boolean)))
+        .catch(() => new Set())
+    )
+  }
+  return tableCache.get(tableName)
+}
+
+async function tableHasColumn(env, tableName, columnName) {
+  const columns = await getTableColumns(env, tableName)
+  return columns.has(String(columnName || '').trim())
+}
+
 function isUnitVisibleForActor(actor, unit) {
   const key = normalizeUnitKey(unit)
   if (!key) return true
@@ -187,8 +213,9 @@ async function handleOverview(env, actor) {
 }
 
 async function handleProfessionals(env, unit, actor) {
+  const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
   const res = await env.DB.prepare(
-    `select name, status, role, shift, nickname, phone, email, instagram, color, units_json
+    `select name, status, role, shift, nickname, phone, email, instagram, ${hasColorColumn ? 'color' : 'null as color'}, units_json
      from professionals
      order by name`
   ).all()
@@ -286,6 +313,7 @@ async function listKnownProfessionals(env, names) {
 }
 
 async function handleProfessionalPut(env, actor, body) {
+  const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
   const currentName = normalizeName(body?.currentName)
   const nextName = normalizeName(body?.name)
   const status = normalizeName(body?.status)
@@ -324,34 +352,63 @@ async function handleProfessionalPut(env, actor, body) {
   }
 
   const now = new Date().toISOString()
-  await env.DB.prepare(
-    `update professionals
-     set name = ?1,
-         status = ?2,
-         role = ?3,
-         shift = ?4,
-         nickname = ?5,
-         phone = ?6,
-         email = ?7,
-         instagram = ?8,
-         color = ?9,
-         units_json = ?10,
-         updated_at = ?11
-     where name = ?12`
-  ).bind(
-    nextName,
-    status || null,
-    role || null,
-    shift || null,
-    nickname || null,
-    phone || null,
-    email || null,
-    instagram || null,
-    color || null,
-    JSON.stringify(units),
-    now,
-    currentName,
-  ).run()
+  if (hasColorColumn) {
+    await env.DB.prepare(
+      `update professionals
+       set name = ?1,
+           status = ?2,
+           role = ?3,
+           shift = ?4,
+           nickname = ?5,
+           phone = ?6,
+           email = ?7,
+           instagram = ?8,
+           color = ?9,
+           units_json = ?10,
+           updated_at = ?11
+       where name = ?12`
+    ).bind(
+      nextName,
+      status || null,
+      role || null,
+      shift || null,
+      nickname || null,
+      phone || null,
+      email || null,
+      instagram || null,
+      color || null,
+      JSON.stringify(units),
+      now,
+      currentName,
+    ).run()
+  } else {
+    await env.DB.prepare(
+      `update professionals
+       set name = ?1,
+           status = ?2,
+           role = ?3,
+           shift = ?4,
+           nickname = ?5,
+           phone = ?6,
+           email = ?7,
+           instagram = ?8,
+           units_json = ?9,
+           updated_at = ?10
+       where name = ?11`
+    ).bind(
+      nextName,
+      status || null,
+      role || null,
+      shift || null,
+      nickname || null,
+      phone || null,
+      email || null,
+      instagram || null,
+      JSON.stringify(units),
+      now,
+      currentName,
+    ).run()
+  }
 
   if (currentName !== nextName) {
     await env.DB.prepare(
@@ -367,6 +424,7 @@ async function handleProfessionalPut(env, actor, body) {
 }
 
 async function handleProfessionalPost(env, actor, body) {
+  const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
   const name = normalizeName(body?.name)
   const status = normalizeName(body?.status)
   const role = normalizeName(body?.role)
@@ -395,25 +453,46 @@ async function handleProfessionalPost(env, actor, body) {
   }
 
   const now = new Date().toISOString()
-  await env.DB.prepare(
-    `insert into professionals
-     (id, name, status, role, shift, nickname, phone, email, instagram, color, units_json, created_at, updated_at)
-     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
-  ).bind(
-    crypto.randomUUID(),
-    name,
-    status || null,
-    role || null,
-    shift || null,
-    nickname || null,
-    phone || null,
-    email || null,
-    instagram || null,
-    color || null,
-    JSON.stringify(units),
-    now,
-    now,
-  ).run()
+  if (hasColorColumn) {
+    await env.DB.prepare(
+      `insert into professionals
+       (id, name, status, role, shift, nickname, phone, email, instagram, color, units_json, created_at, updated_at)
+       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+    ).bind(
+      crypto.randomUUID(),
+      name,
+      status || null,
+      role || null,
+      shift || null,
+      nickname || null,
+      phone || null,
+      email || null,
+      instagram || null,
+      color || null,
+      JSON.stringify(units),
+      now,
+      now,
+    ).run()
+  } else {
+    await env.DB.prepare(
+      `insert into professionals
+       (id, name, status, role, shift, nickname, phone, email, instagram, units_json, created_at, updated_at)
+       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+    ).bind(
+      crypto.randomUUID(),
+      name,
+      status || null,
+      role || null,
+      shift || null,
+      nickname || null,
+      phone || null,
+      email || null,
+      instagram || null,
+      JSON.stringify(units),
+      now,
+      now,
+    ).run()
+  }
 
   return { ok: true, status: 200, body: { ok: true } }
 }
@@ -620,7 +699,8 @@ export default {
           return jsonResponse(unitAllowed.body, { status: unitAllowed.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
         }
         const data = await handleProfessionals(env, unit, actor)
-        console.log(JSON.stringify({ event: 'escala.professionals', requestId, actor: actor.id, unit }))
+        const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
+        console.log(JSON.stringify({ event: 'escala.professionals', requestId, actor: actor.id, unit, total: data.data.length, hasColorColumn }))
         return jsonResponse({ ok: true, ...data }, { headers: { ...corsHeaders, 'x-request-id': requestId } })
       }
 

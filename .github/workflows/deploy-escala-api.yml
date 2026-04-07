@@ -66,6 +66,15 @@ jobs:
           printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml >/dev/null
           echo "Synced ESCALA_ACTOR_HMAC_KEY for production."
 
+      - name: Apply Escala D1 migrations (production)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config backend/apps/escala-api/wrangler.toml
+
       - name: Deploy Escala worker (production)
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
@@ -86,6 +95,15 @@ jobs:
           printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml --env staging >/dev/null
           echo "Synced ESCALA_ACTOR_HMAC_KEY for staging."
 
+      - name: Apply Escala D1 migrations (staging)
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config backend/apps/escala-api/wrangler.toml --env staging
+
       - name: Deploy Escala worker (staging)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
         env:
@@ -100,4 +118,3 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS -H 'User-Agent: EscalaWorkerSmoke/1.0' https://escala-api.skincos.com.br/api/escala/health >/dev/null
-
