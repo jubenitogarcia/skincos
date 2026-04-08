@@ -7,6 +7,7 @@ import AboutUsSection from "@/components/AboutUsSection";
 import HomeHeroExperience from "@/components/HomeHeroExperience";
 import TrustEvidenceSection from "@/components/TrustEvidenceSection";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
+import { resolveUnitFromSlug } from "@/lib/unitRoutes";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { getSiteConfigFromHost } from "@/lib/site-config";
@@ -56,9 +57,14 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const requestHeaders = await headers();
   const site = getSiteConfigFromHost(requestHeaders.get("host"));
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
 
   if (site.key === "skincos") {
     return (
@@ -71,7 +77,15 @@ export default async function HomePage() {
 
   const ua = requestHeaders.get("user-agent");
   const variant = heroVariantFromUserAgent(ua);
-  const { items: heroItems } = await getHeroMediaItems({ variant });
+  const unitParamRaw = resolvedSearchParams?.unit;
+  const unitParam =
+    typeof unitParamRaw === "string"
+      ? unitParamRaw
+      : Array.isArray(unitParamRaw)
+        ? unitParamRaw[0] ?? ""
+        : "";
+  const resolvedUnit = resolveUnitFromSlug(unitParam);
+  const { items: heroItems } = await getHeroMediaItems({ variant, unitSlug: resolvedUnit?.slug ?? null });
 
   return (
     <>

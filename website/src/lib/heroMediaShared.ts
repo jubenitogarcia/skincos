@@ -14,6 +14,11 @@ export type HeroMediaItem = {
 
 export type HeroMediaVariant = "desktop" | "mobile";
 
+export type HeroMediaUnitCampaign = {
+    desktop: HeroMediaItem[];
+    mobile: HeroMediaItem[];
+};
+
 export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = [
     {
         type: "image",
@@ -86,7 +91,97 @@ export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = [
     },
 ];
 
-export function getLocalHeroItems(variant: HeroMediaVariant): HeroMediaItem[] {
+export const LOCAL_HERO_ITEMS_BY_UNIT: Partial<Record<string, HeroMediaUnitCampaign>> = {
+    barrashoppingsul: {
+        desktop: [
+            {
+                type: "image",
+                src: "/images/hero/units/barrashoppingsul/desktop/banner-01.jpg",
+                alt: "2 anos Espaço Facial Barra Shopping Sul",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/barrashoppingsul/desktop/banner-02.jpg",
+                alt: "Campanha Botox 3 regiões por 4x de R$99,90",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/barrashoppingsul/desktop/banner-03.jpg",
+                alt: "Campanha Barra Shopping Sul com Botox, Lavieen e preenchedor",
+            },
+        ],
+        mobile: [
+            {
+                type: "image",
+                src: "/images/hero/units/barrashoppingsul/mobile/banner-01.jpg",
+                alt: "2 anos Espaço Facial Barra Shopping Sul",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/barrashoppingsul/mobile/banner-02.jpg",
+                alt: "Campanha Botox 3 regiões por 4x de R$99,90",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/barrashoppingsul/mobile/banner-03.jpg",
+                alt: "Campanha Barra Shopping Sul com Botox, Lavieen e preenchedor",
+            },
+        ],
+    },
+    novohamburgo: {
+        desktop: [
+            {
+                type: "image",
+                src: "/images/hero/units/novohamburgo/desktop/banner-01.png",
+                alt: "Campanha Beijo Premiado",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/novohamburgo/desktop/banner-02.png",
+                alt: "Campanha de preenchedor 1ml e 2ml",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/novohamburgo/desktop/banner-03.png",
+                alt: "Campanha Beije e Ganhe",
+            },
+        ],
+        mobile: [
+            {
+                type: "image",
+                src: "/images/hero/units/novohamburgo/mobile/banner-01.png",
+                alt: "Campanha Beijo Premiado",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/novohamburgo/mobile/banner-02.png",
+                alt: "Campanha de preenchedor 1ml e 2ml",
+            },
+            {
+                type: "image",
+                src: "/images/hero/units/novohamburgo/mobile/banner-03.png",
+                alt: "Campanha Beije e Ganhe",
+            },
+        ],
+    },
+};
+
+export function normalizeHeroUnitSlug(value: string | null | undefined): string {
+    return (value ?? "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+}
+
+export function getLocalHeroItems(variant: HeroMediaVariant, options: { unitSlug?: string | null } = {}): HeroMediaItem[] {
+    const unitKey = normalizeHeroUnitSlug(options.unitSlug);
+    const unitCampaign = unitKey ? LOCAL_HERO_ITEMS_BY_UNIT[unitKey] : null;
+    const unitItems = unitCampaign ? (variant === "mobile" ? unitCampaign.mobile : unitCampaign.desktop) : null;
+
+    if (Array.isArray(unitItems) && unitItems.length > 0) return unitItems;
+
     return variant === "mobile" ? LOCAL_HERO_ITEMS_MOBILE : LOCAL_HERO_ITEMS_DESKTOP;
 }
 

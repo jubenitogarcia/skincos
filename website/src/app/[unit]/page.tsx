@@ -67,9 +67,9 @@ export async function generateMetadata({ params }: { params: Promise<{ unit: str
             follow: isIndexableUnitPath(canonicalPath),
         },
         alternates: { canonical: canonicalUrl },
-            openGraph: {
-                title: unit.name,
-                description: `Conheça a unidade ${unit.name}, veja equipe, localização e siga para o agendamento com mais facilidade.`,
+        openGraph: {
+            title: unit.name,
+            description: `Conheça a unidade ${unit.name}, veja equipe, localização e siga para o agendamento com mais facilidade.`,
             url: canonicalUrl,
             type: "website",
         },
@@ -111,7 +111,7 @@ export default async function UnitHomePage({
     const email = unit.email ? unit.email.replace(/^mailto:/, "").split("?")[0] : null;
     const ua = (await headers()).get("user-agent");
     const variant = heroVariantFromUserAgent(ua);
-    const { items: heroItems } = await getHeroMediaItems({ variant });
+    const { items: heroItems } = await getHeroMediaItems({ variant, unitSlug: unit.slug });
 
     const localBusinessJsonLd =
         isIndexable && locality && unit.addressLine

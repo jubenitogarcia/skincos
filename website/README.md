@@ -176,6 +176,27 @@ Se quiser manter logs sem querystring:
 
 O hero já suporta atualização sem deploy via `/api/hero-media` (Drive folder / manifest).
 
+### Campanhas por unidade
+
+A infraestrutura agora aceita campanha por unidade (fallback automático para campanha padrão):
+
+- Home com query param: `/?unit=<slug-da-unidade>`
+- Página da unidade: `/<slug-da-unidade>`
+
+Ordem de resolução:
+1. Campanha local da unidade (`LOCAL_HERO_ITEMS_BY_UNIT` em `src/lib/heroMediaShared.ts`)
+2. Manifest/Drive da unidade (via variáveis de ambiente)
+3. Campanha padrão global (desktop/mobile)
+
+Variáveis de ambiente por unidade (substitua `<UNIT_KEY>` pelo slug normalizado em maiúsculas, ex.: `barrashoppingsul` -> `BARRASHOPPINGSUL`):
+
+- Manifest:
+  - `HERO_MEDIA_MANIFEST_URL_<UNIT_KEY>`
+  - `HERO_MEDIA_MANIFEST_URL_MOBILE_<UNIT_KEY>`
+- Drive folder:
+  - `HERO_DRIVE_FOLDER_ID_<UNIT_KEY>`
+  - `HERO_DRIVE_FOLDER_ID_MOBILE_<UNIT_KEY>`
+
 Checklist mensal recomendado:
 - Atualizar as mídias do hero (Drive folder / manifest)
 - Publicar campanhas com UTMs padronizadas (ex.: `utm_source=google&utm_medium=cpc&utm_campaign=YYYY-MM_nome`)
