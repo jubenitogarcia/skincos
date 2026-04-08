@@ -6,8 +6,9 @@ export async function GET(req: Request) {
     const debug = url.searchParams.get("debug") === "1";
     const variantParam = (url.searchParams.get("variant") ?? "").toLowerCase();
     const variant: HeroMediaVariant | undefined = variantParam === "mobile" || variantParam === "desktop" ? (variantParam as HeroMediaVariant) : undefined;
+    const unitSlug = (url.searchParams.get("unit") ?? "").trim() || undefined;
 
-    const { items, source } = await getHeroMediaItems({ variant });
+    const { items, source } = await getHeroMediaItems({ variant, unitSlug });
     const payload = { items } as {
         items: HeroMediaItem[];
         debug?: { source: string; count: number };
