@@ -598,6 +598,8 @@ export function EscalaProfissionaisModule() {
   const [showInactiveTeamMembers, setShowInactiveTeamMembers] = useState(false)
   const activeDateRef = useRef<string | null>(null)
   const selectedDatesRef = useRef<string[]>([])
+  const selectedPeriodRef = useRef<{ year: string; monthNumber: string }>({ year: DEFAULT_YEAR, monthNumber: DEFAULT_MONTH_NUMBER })
+  const monthSelectionTouchedRef = useRef(false)
   const autoPrefillRunningRef = useRef(false)
   const autoPrefilledMonthKeysRef = useRef(new Set<string>())
   const teamPanelExpanded = teamFormMode !== 'idle'
@@ -614,6 +616,13 @@ export function EscalaProfissionaisModule() {
     selectedDatesRef.current = selectedDates
   }, [selectedDates])
 
+  useEffect(() => {
+    selectedPeriodRef.current = {
+      year: selectedYear || DEFAULT_YEAR,
+      monthNumber: selectedMonthNumber || DEFAULT_MONTH_NUMBER,
+    }
+  }, [selectedMonthNumber, selectedYear])
+
   const refreshOverview = useCallback(async () => {
     setLoadingOverview(true)
     const res = await fetchEscalaOverview()
@@ -627,8 +636,18 @@ export function EscalaProfissionaisModule() {
     setUnits(nextUnits)
     setAvailableMonths(nextMonths)
     setSelectedUnit((prev) => (prev || nextUnits[0] || prev))
-    setSelectedMonthNumber((prev) => prev || DEFAULT_MONTH_NUMBER)
-    setSelectedYear((prev) => prev || DEFAULT_YEAR)
+    if (!monthSelectionTouchedRef.current && nextMonths.length) {
+      const resolvedMonth = resolveVisibleMonth(
+        nextMonths,
+        selectedPeriodRef.current.year,
+        selectedPeriodRef.current.monthNumber,
+      )
+      setSelectedYear(resolvedMonth.year)
+      setSelectedMonthNumber(resolvedMonth.monthNumber)
+    } else {
+      setSelectedMonthNumber((prev) => prev || DEFAULT_MONTH_NUMBER)
+      setSelectedYear((prev) => prev || DEFAULT_YEAR)
+    }
     setError(null)
     setLoadingOverview(false)
   }, [])
@@ -1017,8 +1036,14 @@ export function EscalaProfissionaisModule() {
       if (!action) return
 
       if (action === 'set-unit' && detail.value != null) setSelectedUnit(String(detail.value))
-      if (action === 'set-month' && detail.value != null) setSelectedMonthNumber(String(detail.value))
-      if (action === 'set-year' && detail.value != null) setSelectedYear(String(detail.value))
+      if (action === 'set-month' && detail.value != null) {
+        monthSelectionTouchedRef.current = true
+        setSelectedMonthNumber(String(detail.value))
+      }
+      if (action === 'set-year' && detail.value != null) {
+        monthSelectionTouchedRef.current = true
+        setSelectedYear(String(detail.value))
+      }
       if (action === 'set-professional' && detail.value != null) setSelectedProfessional(String(detail.value))
       if (action === 'toggle-highlight-mode' && detail.value != null) {
         const next = String(detail.value)
@@ -1228,6 +1253,7 @@ export function EscalaProfissionaisModule() {
   }, [])
 
   const shiftSelectedMonth = useCallback((offset: number) => {
+    monthSelectionTouchedRef.current = true
     const next = shiftMonthValue(selectedMonth, offset)
     setSelectedYear(next.year)
     setSelectedMonthNumber(next.monthNumber)
