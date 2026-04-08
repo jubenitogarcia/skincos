@@ -167,7 +167,11 @@ async function run() {
         const { res, text } = await fetchText("/");
         assert(res.status === 200, `/ expected 200, got ${res.status}`);
         assert(text.includes('href="/#sobre-nos"'), `Home HTML should include header link to /#sobre-nos`);
-        assert(text.includes('aria-label="Instagram"'), `Home HTML should include Instagram button (aria-label)`);
+        // Validate a stable SSR marker for social presence.
+        assert(
+            /https:\/\/www\.instagram\.com\/espacofacial_/i.test(text),
+            `Home HTML should include Instagram references for official unit profiles`,
+        );
     }
 
     {
