@@ -140,7 +140,7 @@ function parseBookingHotspot(value: unknown): HeroMediaBookingHotspot | undefine
 
 type HeroCache = { items: HeroMediaItem[]; source: string; expiresAtMs: number };
 const heroCacheByKey: Record<string, HeroCache> = {};
-const refreshInFlightByKey: Record<string, Promise<void>> = {};
+const refreshInFlightByKey: Partial<Record<string, Promise<void>>> = {};
 const HERO_CACHE_TTL_MS = 5 * 60_000;
 const HERO_REMOTE_TIMEOUT_MS = 400;
 
@@ -158,9 +158,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 
 async function refreshHeroMedia(variant: HeroMediaVariant, unitSlug?: string | null): Promise<void> {
     const cacheKey = getHeroCacheKey(variant, unitSlug);
-    if (refreshInFlightByKey[cacheKey]) return refreshInFlightByKey[cacheKey];
+    const inFlight = refreshInFlightByKey[cacheKey];
+    if (inFlight) return inFlight;
 
-    refreshInFlightByKey[cacheKey] = (async () => {
+    const refreshPromise: Promise<void> = (async () => {
         const manifestUrl = getManifestUrlForVariant(variant, unitSlug);
         const folderId = getDriveFolderIdForVariant(variant, unitSlug);
         const fromManifest = (await withTimeout(getFromManifestUrl(manifestUrl), HERO_REMOTE_TIMEOUT_MS)) ?? [];
@@ -176,7 +177,8 @@ async function refreshHeroMedia(variant: HeroMediaVariant, unitSlug?: string | n
         .finally(() => {
             delete refreshInFlightByKey[cacheKey];
         });
-    return refreshInFlightByKey[cacheKey];
+    refreshInFlightByKey[cacheKey] = refreshPromise;
+    return refreshPromise;
 }
 
 export async function getHeroMediaItems(
