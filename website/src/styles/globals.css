@@ -2839,14 +2839,18 @@ button:focus-visible {
   height: auto;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
-  background: #050505;
+  background: linear-gradient(180deg, var(--hero-band-bg-top-live, #050505), var(--hero-band-bg-bottom-live, #050505));
 }
 
 .hero--experience,
-.heroTitleBand,
+.heroTitleBand {
+  --hero-band-bg: var(--hero-band-bg-top-live, #050505);
+  --hero-band-fg: var(--hero-band-fg-top-live, #f5ead8);
+}
+
 .trustEvidenceBand {
-  --hero-band-bg: #050505;
-  --hero-band-fg: #f5ead8;
+  --hero-band-bg: var(--hero-band-bg-bottom-live, #050505);
+  --hero-band-fg: var(--hero-band-fg-bottom-live, #f5ead8);
 }
 
 .heroMedia {
@@ -2855,7 +2859,7 @@ button:focus-visible {
   min-height: 320px;
   position: relative;
   z-index: 1;
-  background: var(--hero-band-bg, #050505);
+  background: linear-gradient(180deg, var(--hero-band-bg-top, var(--hero-band-bg, #050505)), var(--hero-band-bg-bottom, var(--hero-band-bg, #050505)));
 }
 
 .heroMediaLayer {
