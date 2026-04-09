@@ -159,7 +159,7 @@ export default async function UnitHomePage({
             <h1 className="srOnly">Espaço Facial</h1>
 
             <section className="hero" aria-label="Destaque">
-                <HeroMedia initialItems={heroItems} initialVariant={variant} />
+                <HeroMedia initialItems={heroItems} initialVariant={variant} initialUnitSlug={unit.slug} />
                 <div className="heroOverlay" />
             </section>
 

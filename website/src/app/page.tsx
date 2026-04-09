@@ -91,7 +91,7 @@ export default async function HomePage({
     <>
       <Header />
       <main>
-        <HomeHeroExperience heroItems={heroItems} initialMediaVariant={variant} />
+        <HomeHeroExperience heroItems={heroItems} initialMediaVariant={variant} initialUnitSlug={resolvedUnit?.slug ?? null} />
         <TrustEvidenceSection context="home" />
 
         <div className="container">
