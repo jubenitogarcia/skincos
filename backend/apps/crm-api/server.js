@@ -547,6 +547,55 @@ app.use(express.json({
 }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+const BOOKING_API_TARGET = String(process.env.CRM_BOOKING_API_TARGET || 'http://127.0.0.1:8765').trim().replace(/\/$/, '')
+
+async function proxyBookingApi(req, res, pathSuffix = '') {
+    const upstreamUrl = `${BOOKING_API_TARGET}/api/agenda/book${pathSuffix}`
+    try {
+        const headers = new Headers()
+        const contentType = String(req.headers['content-type'] || '').trim()
+        if (contentType) headers.set('content-type', contentType)
+        const authHeader = String(req.headers.authorization || '').trim()
+        const webhookSecret = String(req.headers['x-booking-webhook-secret'] || '').trim()
+        const requestId = String(req.requestId || '').trim()
+        if (authHeader) headers.set('authorization', authHeader)
+        if (webhookSecret) headers.set('x-booking-webhook-secret', webhookSecret)
+        if (requestId) headers.set('x-request-id', requestId)
+
+        const init = {
+            method: req.method,
+            headers,
+        }
+        if (!['GET', 'HEAD'].includes(String(req.method || '').toUpperCase())) {
+            if (Buffer.isBuffer(req.rawBody) && req.rawBody.length > 0) {
+                init.body = req.rawBody
+            } else if (req.body && typeof req.body === 'object') {
+                init.body = JSON.stringify(req.body)
+                if (!headers.has('content-type')) headers.set('content-type', 'application/json')
+            }
+        }
+
+        const upstream = await fetch(upstreamUrl, init)
+        const body = Buffer.from(await upstream.arrayBuffer())
+        res.status(upstream.status)
+        upstream.headers.forEach((value, key) => {
+            if (key.toLowerCase() === 'transfer-encoding') return
+            res.setHeader(key, value)
+        })
+        return res.send(body)
+    } catch (error) {
+        return res.status(502).json({
+            ok: false,
+            error: 'BOOKING_API_UNAVAILABLE',
+            message: error?.message || String(error),
+            target: upstreamUrl,
+        })
+    }
+}
+
+app.post('/api/agenda/book', async (req, res) => proxyBookingApi(req, res))
+app.get('/api/agenda/book/:jobId', async (req, res) => proxyBookingApi(req, res, `/${encodeURIComponent(String(req.params.jobId || '').trim())}`))
+
 // -------------------------------------------------------------
 // Dev-only Auth stub (for local testing without Cloudflare Pages Functions)
 // Frontend expects `/api/auth/*` endpoints (normally served by Pages Functions).

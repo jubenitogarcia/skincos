@@ -145,6 +145,25 @@ Payload enviado:
 - `bookingId`
 - `unitSlug`
 
+#### Evolution API direto
+
+Se quiser mandar direto para uma instância do Evolution API, use:
+
+```bash
+wrangler secret put BOOKING_WHATSAPP_WEBHOOK_URL
+# Ex.: https://wa.skincos.com.br/message/sendText/crm-channel-1
+
+wrangler secret put BOOKING_WHATSAPP_WEBHOOK_SECRET
+# Valor: token/apikey aceito pelo Evolution
+```
+
+Quando a URL termina em `/message/sendText/<instance>`, o Worker envia payload no formato do Evolution:
+
+- `number`
+- `text`
+
+E autentica com o header `apikey`.
+
 ### Visual da confirmação
 
 Se quiser sobrescrever os assets da arte:

@@ -7,6 +7,7 @@ import { sendBookingNotifications, type PatientGender } from "@/lib/bookingNotif
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 import { issueBookingStatusToken } from "@/lib/bookingSecurity";
+import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 
 export const dynamic = "force-dynamic";
 
@@ -97,8 +98,9 @@ async function verifyTurnstile(params: { secret: string; token: string; ip: stri
 }
 
 async function tryPostWebhook(payload: unknown) {
-    const url = (process.env.BOOKING_WEBHOOK_URL ?? "").trim();
+    const url = await getRuntimeSecret("BOOKING_WEBHOOK_URL");
     if (!url) return;
+    const secret = await getRuntimeSecret("BOOKING_WEBHOOK_SECRET");
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4_000);
@@ -107,7 +109,7 @@ async function tryPostWebhook(payload: unknown) {
             method: "POST",
             headers: {
                 "content-type": "application/json",
-                ...(process.env.BOOKING_WEBHOOK_SECRET ? { "x-booking-webhook-secret": process.env.BOOKING_WEBHOOK_SECRET } : null),
+                ...(secret ? { "x-booking-webhook-secret": secret } : null),
             } as Record<string, string>,
             body: JSON.stringify(payload),
             signal: controller.signal,
@@ -348,7 +350,7 @@ export async function POST(request: Request) {
     }
 
     // Optional Cloudflare Turnstile verification (recommended for production).
-    const turnstileSecret = (process.env.TURNSTILE_SECRET_KEY ?? "").trim();
+    const turnstileSecret = await getRuntimeSecret("TURNSTILE_SECRET_KEY");
     const requireTurnstileRaw = (process.env.BOOKING_REQUIRE_TURNSTILE ?? "").trim().toLowerCase();
     const requireTurnstile =
         requireTurnstileRaw === "1" ||
@@ -595,7 +597,7 @@ export async function POST(request: Request) {
     });
 
     const statusTokenExpMs = addMinutes(confirmByMs, 120);
-    const statusSecret = (process.env.BOOKING_STATUS_SECRET ?? process.env.BOOKING_DECISION_SECRET ?? "").trim();
+    const statusSecret = (await getRuntimeSecret("BOOKING_STATUS_SECRET")) || (await getRuntimeSecret("BOOKING_DECISION_SECRET"));
     let statusToken: string | null = null;
     if (statusSecret) {
         try {

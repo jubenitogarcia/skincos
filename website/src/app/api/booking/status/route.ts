@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getBookingDb, nowMs } from "@/lib/bookingDb";
 import { getServiceById } from "@/data/services";
 import { verifyBookingStatusToken } from "@/lib/bookingSecurity";
+import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 import { readBookingStatusAuth } from "./auth";
 
 export const dynamic = "force-dynamic";
@@ -53,7 +54,7 @@ export async function GET(req: Request) {
     const auth = readBookingStatusAuth(req);
     if (!auth.ok) return json({ ok: false, error: auth.error }, { status: auth.status });
 
-    const secret = (process.env.BOOKING_STATUS_SECRET ?? process.env.BOOKING_DECISION_SECRET ?? "").trim();
+    const secret = (await getRuntimeSecret("BOOKING_STATUS_SECRET")) || (await getRuntimeSecret("BOOKING_DECISION_SECRET"));
     if (!secret) {
         return json({ ok: false, error: "status_unavailable" }, { status: 503 }, true);
     }

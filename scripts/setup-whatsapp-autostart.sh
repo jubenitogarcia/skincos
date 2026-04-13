@@ -16,11 +16,13 @@ TUNNEL_LABEL="com.skincos.cloudflared.cs"
 ORB_TUNNEL_LABEL="com.skincos.cloudflared.orb"
 EVOLUTION_LABEL="com.skincos.evolution-api"
 CRM_LABEL="com.skincos.crm-api"
+BOOKING_API_LABEL="com.skincos.booking-api"
 LEGACY_LABELS=("com.n8n.automation" "com.skincos.cloudflared.wa" "com.skincos.keepawake")
 N8N_ENV_FILE="${N8N_ENV_FILE:-$N8N_ROOT/.env}"
 ENSURE_STACK_SCRIPT="${ENSURE_STACK_SCRIPT:-$N8N_ROOT/scripts/ensure-whatsapp-stack.sh}"
 SETUP_KEEPAWAKE_SCRIPT="$SCRIPT_DIR/setup-mac-awake-service.sh"
 SETUP_NETWORK_FALLBACK_SCRIPT="$SCRIPT_DIR/setup-network-fallback-service.sh"
+SETUP_BOOKING_API_SCRIPT="$SCRIPT_DIR/setup-booking-api-service.sh"
 NETWORK_FALLBACK_DAEMON_SCRIPT="$SCRIPT_DIR/network-fallback-daemon.sh"
 ORB_TUNNEL_PLIST="$HOME/Library/LaunchAgents/com.skincos.cloudflared.orb.plist"
 ORB_TUNNEL_CONFIG="${ORB_TUNNEL_CONFIG:-$HOME/.cloudflared/orb-config.yml}"
@@ -154,6 +156,7 @@ apply_network_defaults() {
 [[ -f "$ENSURE_STACK_SCRIPT" ]] && chmod +x "$ENSURE_STACK_SCRIPT"
 chmod +x "$SETUP_KEEPAWAKE_SCRIPT"
 chmod +x "$SETUP_NETWORK_FALLBACK_SCRIPT"
+chmod +x "$SETUP_BOOKING_API_SCRIPT"
 chmod +x "$NETWORK_FALLBACK_DAEMON_SCRIPT"
 
 apply_power_defaults
@@ -168,6 +171,11 @@ if ! launchctl print "gui/$UID_VALUE/$NETWORK_FALLBACK_LABEL" >/dev/null 2>&1; t
   echo "[setup] network fallback não carregou na primeira tentativa; retry com logs."
   bash "$SETUP_NETWORK_FALLBACK_SCRIPT"
 fi
+bash "$SETUP_BOOKING_API_SCRIPT" >/dev/null 2>&1
+if ! launchctl print "gui/$UID_VALUE/$BOOKING_API_LABEL" >/dev/null 2>&1; then
+  echo "[setup] booking api não carregou na primeira tentativa; retry com logs."
+  bash "$SETUP_BOOKING_API_SCRIPT"
+fi
 
 ensure_orb_tunnel_plist || true
 
@@ -176,6 +184,7 @@ bootstrap_if_missing "$TUNNEL_LABEL" "$HOME/Library/LaunchAgents/com.skincos.clo
 bootstrap_if_missing "$ORB_TUNNEL_LABEL" "$ORB_TUNNEL_PLIST"
 bootstrap_if_missing "$EVOLUTION_LABEL" "$HOME/Library/LaunchAgents/com.skincos.evolution-api.plist"
 bootstrap_if_missing "$CRM_LABEL" "$HOME/Library/LaunchAgents/com.skincos.crm-api.plist"
+bootstrap_if_missing "$BOOKING_API_LABEL" "$HOME/Library/LaunchAgents/com.skincos.booking-api.plist"
 bootstrap_if_missing "$WATCHDOG_LABEL" "$HOME/Library/LaunchAgents/com.skincos.whatsapp-watchdog.plist"
 bootstrap_if_missing "$NETWORK_FALLBACK_LABEL" "$HOME/Library/LaunchAgents/com.skincos.network-fallback.plist"
 
@@ -190,6 +199,7 @@ kickstart_job "$TUNNEL_LABEL"
 kickstart_job "$ORB_TUNNEL_LABEL"
 kickstart_job "$EVOLUTION_LABEL"
 kickstart_job "$CRM_LABEL"
+kickstart_job "$BOOKING_API_LABEL"
 kickstart_job "$WATCHDOG_LABEL"
 kickstart_job "$NETWORK_FALLBACK_LABEL"
 
