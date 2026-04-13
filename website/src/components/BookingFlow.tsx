@@ -16,7 +16,9 @@ import TurnstileWidget from "@/components/TurnstileWidget";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import UnitChooser from "@/components/UnitChooser";
 import UnitDoctorsGrid, { type BookingSelectDoctor } from "@/components/UnitDoctorsGrid";
+import BookingConfirmationCard from "@/components/BookingConfirmationCard";
 import useHorizontalRail from "@/hooks/useHorizontalRail";
+import type { BookingConfirmationPayload } from "@/lib/bookingConfirmationView";
 
 type SlotsPayload = {
     ok: true;
@@ -52,6 +54,14 @@ type BookingStatus = {
 
 type StatusResponse = { ok: true; booking: BookingStatus } | { ok: false; error: string };
 type DoctorSelection = { slug: string; name: string; handle: string | null };
+type SubmittedReservation = {
+    id: string;
+    status: string;
+    confirmByMs: number;
+    statusToken?: string | null;
+    notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult };
+    reservation: BookingConfirmationPayload;
+};
 
 const ANY_DOCTOR: DoctorSelection = { slug: "any", name: "Sem Preferência", handle: null };
 const OTHER_SERVICE: Service = { id: "any", name: "Outros", subtitle: "Outros procedimentos ou combinação" };
@@ -116,16 +126,6 @@ function weekdayPtBrShort(dateKey: string): string {
     const dt = parseLocalDateKey(dateKey);
     if (!dt) return "";
     return ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][dt.getDay()] ?? "";
-}
-
-function formatTimeFromMs(ms: number): string {
-    const dt = new Date(ms);
-    return `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
-}
-
-function formatDeadline(ms: number): string {
-    const dt = new Date(ms);
-    return `${formatTimeFromMs(ms)} (${pad2(dt.getDate())}/${pad2(dt.getMonth() + 1)})`;
 }
 
 function formatBrPhone(input: string): string {
@@ -378,7 +378,7 @@ export default function BookingFlow() {
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [dateAvailability, setDateAvailability] = useState<Record<string, boolean>>({});
 
-    const [submitted, setSubmitted] = useState<{ id: string; status: string; confirmByMs: number; statusToken?: string | null; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } } | null>(null);
+    const [submitted, setSubmitted] = useState<SubmittedReservation | null>(null);
     const [status, setStatus] = useState<BookingStatus | null>(null);
     const procedureScrollWindowRef = useRef<HTMLDivElement | null>(null);
     const autoPickMotionDoneRef = useRef(false);
@@ -869,6 +869,18 @@ export default function BookingFlow() {
                 confirmByMs: json.confirmByMs,
                 statusToken: json.statusToken ?? null,
                 notifications: json.notifications,
+                reservation: {
+                    id: json.id,
+                    unitSlug,
+                    procedureName: selectedServicesLabel || primaryService.name,
+                    date: dateKey,
+                    time: timeKey,
+                    patientName,
+                    patientGender,
+                    email: emailValue,
+                    whatsapp,
+                    doctorName: json.doctorName || effectiveDoctor.name,
+                },
             });
             trackBookingRequestSubmitted({
                 bookingId: json.id,
@@ -959,25 +971,12 @@ export default function BookingFlow() {
         return slots.slots.find((s) => s.time === timeKey) ?? null;
     }, [slots?.slots, timeKey]);
 
-    useEffect(() => {
-        if (autoPickQuery !== "first") return;
-        if (autoPickConsumedRef.current) return;
-        if (!unitSlug || !dateKey || step !== "pick" || slotsLoading) return;
-        if (!slots?.slots?.length) return;
-
-        const firstAvailableSlot = slots.slots.find((slot) => slot.available);
-        if (!firstAvailableSlot) return;
-
-        autoPickConsumedRef.current = true;
-        openDetailsModal(firstAvailableSlot.time);
-    }, [autoPickQuery, dateKey, effectiveDoctorSlug, effectiveServiceId, slots?.slots, slotsLoading, step, unitSlug]);
-
-    function ensureDefaultSelections() {
+    const ensureDefaultSelections = useCallback(() => {
         if (!doctor) setDoctor(ANY_DOCTOR);
         if (selectedServices.length === 0) setSelectedServices([OTHER_SERVICE]);
-    }
+    }, [doctor, selectedServices.length]);
 
-    function openDetailsModal(nextTime: string) {
+    const openDetailsModal = useCallback((nextTime: string) => {
         ensureDefaultSelections();
         setTimeKey(nextTime);
         setStep("details");
@@ -994,7 +993,20 @@ export default function BookingFlow() {
             time: nextTime,
             detailsStage: "contact",
         });
-    }
+    }, [dateKey, effectiveDoctorSlug, effectiveServiceId, ensureDefaultSelections, unitSlug]);
+
+    useEffect(() => {
+        if (autoPickQuery !== "first") return;
+        if (autoPickConsumedRef.current) return;
+        if (!unitSlug || !dateKey || step !== "pick" || slotsLoading) return;
+        if (!slots?.slots?.length) return;
+
+        const firstAvailableSlot = slots.slots.find((slot) => slot.available);
+        if (!firstAvailableSlot) return;
+
+        autoPickConsumedRef.current = true;
+        openDetailsModal(firstAvailableSlot.time);
+    }, [autoPickQuery, dateKey, openDetailsModal, slots?.slots, slotsLoading, step, unitSlug]);
 
     const emailValue = email.trim().toLowerCase();
     const emailSeemsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
@@ -1494,26 +1506,20 @@ export default function BookingFlow() {
                 </div>
             ) : (
                 <div className="bookingFlow__grid">
-                    <div className="card bookingFlow__cardFull" style={{ padding: 18 }}>
+                    <div className="bookingFlow__cardFull">
+                        {submitted ? (
+                            <BookingConfirmationCard reservation={submitted.reservation} notifications={submitted.notifications} />
+                        ) : null}
+                    </div>
+
+                    <div className="card bookingFlow__cardFull bookingFlow__submittedStatusCard" style={{ padding: 18 }}>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>
-                            {submitted?.status === "confirmed" ? "Reserva confirmada" : "Pedido enviado"}
+                            {submitted?.status === "confirmed" ? "Status do agendamento" : "Status do pedido"}
                         </div>
                         {submitted ? (
-                            <>
-                                <div className="small" style={{ marginTop: 8 }}>
-                                    Protocolo: <span style={{ fontWeight: 900 }}>{submitted.id}</span>
-                                </div>
-                                <div style={{ marginTop: 10 }}>
-                                    {submitted.status === "confirmed"
-                                        ? "Enviamos a confirmação para seu e-mail e WhatsApp."
-                                        : `Seu pedido entrou na fila. Prazo: ${formatDeadline(submitted.confirmByMs)}.`}
-                                </div>
-                                {submitted.notifications && submitted.status === "confirmed" ? (
-                                    <div className="small" style={{ marginTop: 6 }}>
-                                        E-mail: {submitted.notifications.email.status} · WhatsApp: {submitted.notifications.whatsapp.status}
-                                    </div>
-                                ) : null}
-                            </>
+                            <div className="small" style={{ marginTop: 8 }}>
+                                Protocolo: <span style={{ fontWeight: 900 }}>{submitted.id}</span>
+                            </div>
                         ) : null}
 
                         {status ? (
