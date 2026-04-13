@@ -137,6 +137,37 @@ function normalizeName(value) {
   return String(value || '').trim()
 }
 
+function toIsoDate(value) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+}
+
+function getWeekdayFromIsoDate(value) {
+  const [year, month, day] = String(value || '').split('-').map(Number)
+  if (!year || !month || !day) return -1
+  return new Date(year, month - 1, day).getDay()
+}
+
+function buildPreviousMonthKeys(monthValue, count = 3) {
+  const [year, month] = String(monthValue || '').split('-').map(Number)
+  if (!year || !month || count <= 0) return []
+  const keys = []
+  for (let index = 1; index <= count; index += 1) {
+    const date = new Date(year, month - 1 - index, 1)
+    keys.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`)
+  }
+  return keys
+}
+
+function buildMonthDates(monthValue) {
+  const [year, month] = String(monthValue || '').split('-').map(Number)
+  if (!year || !month) return []
+  const daysInMonth = new Date(year, month, 0).getDate()
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const day = index + 1
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  })
+}
+
 function normalizeUnitKey(value) {
   return String(value || '')
     .normalize('NFD')
@@ -291,6 +322,79 @@ async function handleSchedule(env, unit, month, actor) {
   }
 }
 
+function deriveWeekdaySuggestionStats(entries) {
+  const byWeekday = new Map()
+  for (const entry of entries) {
+    const professional = normalizeName(entry?.professional)
+    const weekday = getWeekdayFromIsoDate(entry?.date)
+    if (!professional || weekday < 0) continue
+    const countByProfessional = byWeekday.get(weekday) || new Map()
+    countByProfessional.set(professional, (countByProfessional.get(professional) || 0) + 1)
+    byWeekday.set(weekday, countByProfessional)
+  }
+  const stats = new Map()
+  byWeekday.forEach((countByProfessional, weekday) => {
+    const ranked = Array.from(countByProfessional.entries()).sort((left, right) => {
+      if (right[1] !== left[1]) return right[1] - left[1]
+      return left[0].localeCompare(right[0])
+    })
+    const winner = ranked[0]
+    if (!winner) return
+    const total = ranked.reduce((sum, [, count]) => sum + count, 0)
+    stats.set(weekday, {
+      professional: winner[0],
+      count: winner[1],
+      total,
+      confidence: total ? Number((winner[1] / total).toFixed(4)) : 0,
+    })
+  })
+  return stats
+}
+
+async function handlePrefill(env, unit, month, actor) {
+  const normalizedUnit = normalizeName(unit)
+  const normalizedMonth = normalizeName(month)
+  if (!normalizedUnit || !normalizedMonth || !isValidMonth(normalizedMonth)) {
+    return { ok: false, status: 400, body: { ok: false, error: 'INVALID_INPUT' } }
+  }
+  const unitAllowed = ensureUnitAllowed(actor, normalizedUnit)
+  if (!unitAllowed.ok) return unitAllowed
+
+  const previousMonths = buildPreviousMonthKeys(normalizedMonth, 3)
+  const [currentMonthData, ...historyResponses] = await Promise.all([
+    handleSchedule(env, normalizedUnit, normalizedMonth, actor),
+    ...previousMonths.map((monthKey) => handleSchedule(env, normalizedUnit, monthKey, actor)),
+  ])
+  const historicalEntries = historyResponses.flatMap((response) => response.schedule || [])
+  const stats = deriveWeekdaySuggestionStats(historicalEntries)
+  const scheduledDates = new Set((currentMonthData.schedule || []).map((entry) => entry.date))
+  const blockedDates = new Set((currentMonthData.closedDays || []).map((entry) => entry.date))
+  const todayIso = toIsoDate(new Date())
+  const suggestions = buildMonthDates(normalizedMonth)
+    .filter((date) => date >= todayIso && !scheduledDates.has(date) && !blockedDates.has(date))
+    .map((date) => {
+      const stat = stats.get(getWeekdayFromIsoDate(date))
+      if (!stat) return null
+      return {
+        date,
+        professional: stat.professional,
+        confidence: stat.confidence,
+        sampleSize: stat.total,
+      }
+    })
+    .filter(Boolean)
+
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      ok: true,
+      suggestions,
+      windowMonths: previousMonths,
+    },
+  }
+}
+
 async function readJson(request) {
   if (request.method === 'GET' || request.method === 'HEAD') return null
   const text = await request.text()
@@ -310,6 +414,17 @@ async function listKnownProfessionals(env, names) {
     `select name from professionals where name in (${placeholders})`
   ).bind(...unique).all()
   return (res.results || []).map((r) => r.name)
+}
+
+async function runStatements(env, statements) {
+  if (!statements.length) return
+  if (typeof env.DB.batch === 'function') {
+    await env.DB.batch(statements)
+    return
+  }
+  for (const statement of statements) {
+    await statement.run()
+  }
 }
 
 async function handleProfessionalPut(env, actor, body) {
@@ -527,31 +642,45 @@ async function handleSchedulePost(env, actor, body) {
 
 async function handleSchedulePut(env, actor, body) {
   const unit = normalizeName(body?.unit)
-  const date = normalizeName(body?.date)
-  const professionals = Array.isArray(body?.professionals) ? body.professionals : []
-  const names = Array.from(new Set(professionals.map(normalizeName).filter(Boolean)))
-  if (!unit || !date || !isValidDate(date) || !names.length) {
+  const rawEntries = Array.isArray(body?.entries)
+    ? body.entries
+    : [{ date: body?.date, professionals: Array.isArray(body?.professionals) ? body.professionals : [] }]
+  const entries = rawEntries
+    .map((entry) => ({
+      date: normalizeName(entry?.date),
+      professionals: Array.from(new Set((Array.isArray(entry?.professionals) ? entry.professionals : []).map(normalizeName).filter(Boolean))),
+    }))
+    .filter((entry) => entry.date)
+  if (!unit || !entries.length || entries.some((entry) => !isValidDate(entry.date) || !entry.professionals.length)) {
     return { ok: false, status: 400, body: { ok: false, error: 'INVALID_INPUT' } }
   }
   const unitAllowed = ensureUnitAllowed(actor, unit)
   if (!unitAllowed.ok) return unitAllowed
-  const known = await listKnownProfessionals(env, names)
-  if (known.length !== names.length) {
+  const uniqueNames = Array.from(new Set(entries.flatMap((entry) => entry.professionals)))
+  const known = await listKnownProfessionals(env, uniqueNames)
+  if (known.length !== uniqueNames.length) {
     return { ok: false, status: 400, body: { ok: false, error: 'UNKNOWN_PROFESSIONAL' } }
   }
-  await env.DB.prepare(
-    `delete from schedule_entries where date = ?1 and unit = ?2`
-  ).bind(date, unit).run()
   const now = new Date().toISOString()
-  const stmt = env.DB.prepare(
-    `insert into schedule_entries
-     (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
-     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
-  )
-  for (const name of names) {
-    await stmt.bind(crypto.randomUUID(), date, unit, name, now, now, actor.id, actor.id).run()
+  const statements = []
+  let updatedEntries = 0
+  for (const entry of entries) {
+    statements.push(
+      env.DB.prepare(`delete from schedule_entries where date = ?1 and unit = ?2`).bind(entry.date, unit),
+    )
+    for (const name of entry.professionals) {
+      updatedEntries += 1
+      statements.push(
+        env.DB.prepare(
+          `insert into schedule_entries
+           (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
+           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        ).bind(crypto.randomUUID(), entry.date, unit, name, now, now, actor.id, actor.id),
+      )
+    }
   }
-  return { ok: true, status: 200, body: { ok: true } }
+  await runStatements(env, statements)
+  return { ok: true, status: 200, body: { ok: true, updatedDates: entries.length, updatedEntries } }
 }
 
 async function handleScheduleDelete(env, actor, body) {
@@ -741,6 +870,30 @@ export default {
           return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
         }
         return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405, headers: { ...corsHeaders, 'x-request-id': requestId } })
+      }
+
+      if (path === '/api/escala/prefill') {
+        if (request.method !== 'GET') {
+          return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
+        const unit = url.searchParams.get('unit') || ''
+        const month = url.searchParams.get('month') || ''
+        const startedAt = Date.now()
+        console.log(JSON.stringify({ event: 'escala.prefill.analyze.started', requestId, actor: actor.id, unit, month }))
+        const result = await handlePrefill(env, unit, month, actor)
+        if (!result.ok) {
+          return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
+        console.log(JSON.stringify({
+          event: 'escala.prefill.analyze.completed',
+          requestId,
+          actor: actor.id,
+          unit,
+          month,
+          candidateDates: result.body.suggestions.length,
+          durationMs: Date.now() - startedAt,
+        }))
+        return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
       }
 
       if (path === '/api/escala/closed-days') {
