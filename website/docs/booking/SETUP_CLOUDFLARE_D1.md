@@ -86,8 +86,76 @@ Já existe um endpoint para seu sistema confirmar/recusar via POST (útil quando
 
 Ele fica **desabilitado** até você configurar `BOOKING_WEBHOOK_SECRET`.
 
+## 8) Ativar confirmações por e-mail e WhatsApp
 
-## 8) Deploy
+Sem provedor configurado, o frontend vai mostrar `skipped` porque o backend devolve:
+
+- `email.status = skipped` quando não há SMTP Titan, `RESEND_API_KEY` ou `BOOKING_EMAIL_WEBHOOK_URL`
+- `whatsapp.status = skipped` quando não há `BOOKING_WHATSAPP_WEBHOOK_URL`
+
+### E-mail
+
+Escolha uma estratégia:
+
+1. Titan SMTP por unidade
+
+```bash
+wrangler secret put BOOKING_EMAIL_FROM
+wrangler secret put TITAN_SMTP_USER_BARRA
+wrangler secret put TITAN_SMTP_PASS_BARRA
+wrangler secret put TITAN_SMTP_USER_NH
+wrangler secret put TITAN_SMTP_PASS_NH
+```
+
+Opcionalmente:
+
+```bash
+wrangler secret put TITAN_SMTP_HOST
+wrangler secret put TITAN_SMTP_PORT
+```
+
+2. Resend
+
+```bash
+wrangler secret put BOOKING_EMAIL_FROM
+wrangler secret put RESEND_API_KEY
+```
+
+3. Webhook próprio de e-mail
+
+```bash
+wrangler secret put BOOKING_EMAIL_FROM
+wrangler secret put BOOKING_EMAIL_WEBHOOK_URL
+wrangler secret put BOOKING_EMAIL_WEBHOOK_SECRET
+```
+
+### WhatsApp
+
+Configure seu serviço de automação para receber o POST da confirmação:
+
+```bash
+wrangler secret put BOOKING_WHATSAPP_WEBHOOK_URL
+wrangler secret put BOOKING_WHATSAPP_WEBHOOK_SECRET
+```
+
+Payload enviado:
+
+- `to`
+- `message`
+- `bookingId`
+- `unitSlug`
+
+### Visual da confirmação
+
+Se quiser sobrescrever os assets da arte:
+
+```bash
+wrangler secret put BOOKING_EMAIL_LOGO_URL
+wrangler secret put BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL
+wrangler secret put BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL
+```
+
+## 9) Deploy
 
 Depois do D1 + secret configurados:
 
@@ -95,7 +163,7 @@ Depois do D1 + secret configurados:
 npm run deploy
 ```
 
-## 9) Nota sobre painel interno
+## 10) Nota sobre painel interno
 
 O painel interno (UI de confirmações) e as rotas `/api/booking/admin/*` foram removidos para reduzir superfície pública.
 

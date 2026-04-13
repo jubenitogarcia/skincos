@@ -1,8 +1,15 @@
 import { units } from "@/data/units";
 import { BOOKING_CONFIRMATION_EMAIL_TEMPLATE } from "@/lib/emailTemplates/bookingConfirmationTemplate";
+import {
+    buildBookingConfirmationViewModel,
+    formatDatePtBr,
+    type BookingConfirmationPayload,
+    type PatientGender,
+} from "@/lib/bookingConfirmationView";
+
+export type { PatientGender } from "@/lib/bookingConfirmationView";
 
 type NotificationStatus = "sent" | "skipped" | "failed";
-export type PatientGender = "male" | "female" | "unspecified";
 
 export type NotificationResult = {
     ok: boolean;
@@ -11,19 +18,9 @@ export type NotificationResult = {
     error?: string;
 };
 
-export type BookingNotificationPayload = {
-    id: string;
-    unitSlug: string;
-    procedureName: string;
-    date: string;
-    time: string;
-    patientName: string;
-    patientGender: PatientGender;
-    email: string;
-    whatsapp: string;
+export type BookingNotificationPayload = BookingConfirmationPayload & {
     cpf?: string;
     address?: string;
-    doctorName?: string;
 };
 
 type SmtpConnect = (options: {
@@ -52,12 +49,6 @@ function unitEmailFromSlug(slug: string): string | null {
     return raw.replace(/^mailto:/i, "").split("?")[0]?.trim() || null;
 }
 
-function formatDatePtBr(dateKey: string): string {
-    const [y, m, d] = dateKey.split("-").map((x) => Number(x));
-    if (!y || !m || !d) return dateKey;
-    return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
-}
-
 function sanitizeEmail(value: string): string {
     const email = (value ?? "").trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "";
@@ -77,76 +68,9 @@ function escapeHtml(value: string): string {
         .replace(/'/g, "&#39;");
 }
 
-function stripPhoneToDigits(value: string): string {
-    return (value ?? "").replace(/\D/g, "");
-}
-
-function formatWhatsappDisplay(value: string): string {
-    const digitsRaw = stripPhoneToDigits(value);
-    const digits = digitsRaw.startsWith("55") ? digitsRaw.slice(2) : digitsRaw;
-    const ddd = digits.slice(0, 2);
-    const prefix = digits.slice(2, 7);
-    const suffix = digits.slice(7, 11);
-    if (!ddd || !prefix || !suffix) return value || "";
-    return `+55 (${ddd}) ${prefix}-${suffix}`;
-}
-
-function parseInstagramLabel(url: string): string {
-    try {
-        const pathname = new URL(url).pathname;
-        const handle = pathname.split("/").filter(Boolean)[0] ?? "";
-        return handle ? `@${handle.replace(/^@/, "")}` : "Instagram";
-    } catch {
-        return "Instagram";
-    }
-}
-
-function parseFacebookLabel(url: string): string {
-    try {
-        const parsed = new URL(url);
-        const path = parsed.pathname.replace(/\/$/, "");
-        return `${parsed.hostname}${path}`;
-    } catch {
-        return "Facebook";
-    }
-}
-
 function resolveSiteUrl(): string {
     const raw = (process.env.NEXT_PUBLIC_SITE_URL ?? process.env.BOOKING_SITE_URL ?? "https://espacofacial.com").trim();
     return raw.replace(/\/$/, "");
-}
-
-function absoluteUrl(siteUrl: string, raw: string): string {
-    const value = (raw ?? "").trim();
-    if (!value) return siteUrl;
-    if (/^https?:\/\//i.test(value)) return value;
-    if (value.startsWith("/")) return `${siteUrl}${value}`;
-    return `${siteUrl}/${value}`;
-}
-
-function sanitizeUrl(value: string, fallback: string): string {
-    const raw = (value ?? "").trim();
-    if (!raw) return fallback;
-    if (/^(https?:|mailto:|tel:)/i.test(raw)) return raw;
-    return fallback;
-}
-
-function ambassadorForGender(gender: PatientGender, siteUrl: string): { name: string; imageUrl: string } {
-    const male = {
-        name: "Márcio Garcia",
-        imageUrl: absoluteUrl(
-            siteUrl,
-            process.env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL ?? "/images/email/ambassadors/marcio-garcia-u3a7227.jpg",
-        ),
-    };
-    const female = {
-        name: "Deborah Secco",
-        imageUrl: absoluteUrl(
-            siteUrl,
-            process.env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL ?? "/images/email/ambassadors/deborah-secco-20244437.jpeg",
-        ),
-    };
-    return gender === "male" ? male : female;
 }
 
 function formatGenderLabel(gender: PatientGender): string {
@@ -180,53 +104,34 @@ function buildCustomerEmailText(payload: BookingNotificationPayload) {
 
 function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
     const siteUrl = resolveSiteUrl();
-    const unit = unitFromSlug(payload.unitSlug);
-    const unitName = unit?.name ?? payload.unitSlug;
-    const unitAddress = [unit?.addressLine ?? "", unit?.state ? `- ${unit.state}` : ""].filter(Boolean).join(" ").trim() || unitName;
-
-    const instagramUrl = sanitizeUrl(unit?.instagram ?? "", `${siteUrl}/`);
-    const facebookUrl = sanitizeUrl(unit?.facebook ?? "", `${siteUrl}/`);
-    const whatsappDigits = stripPhoneToDigits(unit?.whatsappPhone ?? payload.whatsapp);
-    const whatsappUrl = sanitizeUrl(
-        whatsappDigits ? `https://api.whatsapp.com/send?phone=${whatsappDigits}` : "",
-        `${siteUrl}/`,
-    );
-
-    const teamContactUrl = sanitizeUrl(
-        unit?.contactUrl ? absoluteUrl(siteUrl, unit.contactUrl) : whatsappUrl,
-        whatsappUrl,
-    );
-    const reservationDetailsUrl = sanitizeUrl(
-        `${siteUrl}/agendamento?protocolo=${encodeURIComponent(payload.id)}#booking-flow`,
-        `${siteUrl}/agendamento`,
-    );
-
-    const ambassador = ambassadorForGender(payload.patientGender, siteUrl);
-    const logoUrl = sanitizeUrl(
-        absoluteUrl(siteUrl, process.env.BOOKING_EMAIL_LOGO_URL ?? "/logo.png"),
-        `${siteUrl}/logo.png`,
-    );
+    const confirmation = buildBookingConfirmationViewModel(payload, {
+        siteUrl,
+        logoUrl: process.env.BOOKING_EMAIL_LOGO_URL ?? "/logo.png",
+        maleAmbassadorImageUrl: process.env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL ?? "/images/email/ambassadors/marcio-garcia-u3a7227.jpg",
+        femaleAmbassadorImageUrl: process.env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL ?? "/images/email/ambassadors/deborah-secco-20244437.jpeg",
+        reservationDetailsUrl: `${siteUrl}/agendamento#booking-flow`,
+    });
 
     return renderTemplate(BOOKING_CONFIRMATION_EMAIL_TEMPLATE, {
         customer_gender: payload.patientGender,
-        customer_name: escapeHtml(payload.patientName),
-        procedure_name: escapeHtml(payload.procedureName),
-        appointment_date: escapeHtml(formatDatePtBr(payload.date)),
-        appointment_time: escapeHtml(payload.time),
-        unit_name: escapeHtml(unitName),
-        reservation_code: escapeHtml(payload.id),
-        ambassador_name: escapeHtml(ambassador.name),
-        ambassador_image_url: escapeHtml(sanitizeUrl(ambassador.imageUrl, `${siteUrl}/logo.png`)),
-        logo_url: escapeHtml(logoUrl),
-        reservation_details_url: escapeHtml(reservationDetailsUrl),
-        team_contact_url: escapeHtml(teamContactUrl),
-        unit_instagram_url: escapeHtml(instagramUrl),
-        unit_instagram: escapeHtml(parseInstagramLabel(instagramUrl)),
-        unit_facebook_url: escapeHtml(facebookUrl),
-        unit_facebook: escapeHtml(parseFacebookLabel(facebookUrl)),
-        unit_whatsapp_url: escapeHtml(whatsappUrl),
-        unit_whatsapp: escapeHtml(formatWhatsappDisplay(unit?.whatsappPhone ?? payload.whatsapp)),
-        unit_address: escapeHtml(unitAddress),
+        customer_name: escapeHtml(confirmation.customerName),
+        procedure_name: escapeHtml(confirmation.procedureName),
+        appointment_date: escapeHtml(confirmation.appointmentDate),
+        appointment_time: escapeHtml(confirmation.appointmentTime),
+        unit_name: escapeHtml(confirmation.unitName),
+        reservation_code: escapeHtml(confirmation.reservationCode),
+        ambassador_name: escapeHtml(confirmation.ambassadorName),
+        ambassador_image_url: escapeHtml(confirmation.ambassadorImageUrl),
+        logo_url: escapeHtml(confirmation.logoUrl),
+        reservation_details_url: escapeHtml(confirmation.reservationDetailsUrl),
+        team_contact_url: escapeHtml(confirmation.teamContactUrl),
+        unit_instagram_url: escapeHtml(confirmation.unitInstagramUrl),
+        unit_instagram: escapeHtml(confirmation.unitInstagramLabel),
+        unit_facebook_url: escapeHtml(confirmation.unitFacebookUrl),
+        unit_facebook: escapeHtml(confirmation.unitFacebookLabel),
+        unit_whatsapp_url: escapeHtml(confirmation.unitWhatsappUrl),
+        unit_whatsapp: escapeHtml(confirmation.unitWhatsappLabel),
+        unit_address: escapeHtml(confirmation.unitAddress),
     });
 }
 
