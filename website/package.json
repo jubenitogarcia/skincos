@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
+    "typecheck": "next build >/dev/null && tsc -p tsconfig.json --noEmit --incremental false",
     "lint": "next lint",
     "test": "tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
@@ -58,7 +58,7 @@
       "glob": "10.5.0"
     },
     "wrangler": {
-      "undici": "7.18.2"
+      "undici": "7.24.4"
     }
   }
 }

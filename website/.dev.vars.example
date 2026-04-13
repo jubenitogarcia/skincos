@@ -13,6 +13,31 @@ CADASTRO_WHEEL_LOCK_HOURS=
 BOOKING_WEBHOOK_URL=
 BOOKING_WEBHOOK_SECRET=
 
+# Opcional: envio de confirmação por e-mail
+# Use uma das opções abaixo:
+# 1) Titan SMTP por unidade
+BOOKING_EMAIL_FROM=
+TITAN_SMTP_HOST=smtp.titan.email
+TITAN_SMTP_PORT=465
+TITAN_SMTP_USER_BARRA=
+TITAN_SMTP_PASS_BARRA=
+TITAN_SMTP_USER_NH=
+TITAN_SMTP_PASS_NH=
+# 2) Resend
+RESEND_API_KEY=
+# 3) Webhook próprio
+BOOKING_EMAIL_WEBHOOK_URL=
+BOOKING_EMAIL_WEBHOOK_SECRET=
+
+# Opcional: envio de confirmação por WhatsApp via webhook próprio
+BOOKING_WHATSAPP_WEBHOOK_URL=
+BOOKING_WHATSAPP_WEBHOOK_SECRET=
+
+# Opcional: customização visual da confirmação
+BOOKING_EMAIL_LOGO_URL=
+BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL=
+BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL=
+
 # Opcional: token de autenticação da agenda (usado em /api/agenda e smoke estrito)
 AGENDA_SYNC_TOKEN=
 # Opcional: override dedicado do smoke (se vazio, usa AGENDA_SYNC_TOKEN)
