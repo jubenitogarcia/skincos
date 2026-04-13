@@ -198,6 +198,25 @@ def _coerce_payload(payload: dict) -> dict:
                 if subtitle:
                     flattened["serviceCandidates"] = [part for part in re.split(r"[,\n;|]+", subtitle) if _normalize_spaces(part)]
 
+    selected_services = booking.get("selectedServices")
+    if isinstance(selected_services, (list, tuple)):
+        selected_candidates: list[str] = []
+        for item in selected_services:
+            if isinstance(item, dict):
+                name = _normalize_spaces(str(item.get("name") or ""))
+            else:
+                name = _normalize_spaces(str(item))
+            if name and name not in selected_candidates:
+                selected_candidates.append(name)
+        if selected_candidates:
+            existing_candidates = _first_text_list(flattened, "serviceCandidates", "service_candidates")
+            merged_candidates = [*existing_candidates]
+            for candidate in selected_candidates:
+                if candidate not in merged_candidates:
+                    merged_candidates.append(candidate)
+            if merged_candidates:
+                flattened["serviceCandidates"] = merged_candidates
+
     procedure = booking.get("procedure")
     if isinstance(procedure, dict):
         if "procedureName" not in flattened and procedure.get("name"):
@@ -1407,6 +1426,18 @@ def _resolve_booking_type(request: BookingRequest) -> str:
     return ""
 
 
+def _should_fill_service(request: BookingRequest) -> bool:
+    service_name = _normalize_spaces(request.service_name)
+    if not service_name:
+        return False
+    if request.service_candidates:
+        return True
+    booking_type = _normalize_match(_resolve_booking_type(request))
+    if booking_type and _normalize_match(service_name) == booking_type:
+        return False
+    return True
+
+
 def _parse_sheet_datetime(text: str) -> datetime | None:
     match = re.search(r"(\d{2}/\d{2}/\d{2,4})\s+(\d{2}:\d{2})", _normalize_spaces(text))
     if not match:
@@ -1482,7 +1513,7 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
             selected_prof = selected_prof and _multiselect_has_selected_label(professional_multiselect or dialog, request.professional_name)
         log(f"Booking fill: professional {'ok' if selected_prof else 'not-found'} ({request.professional_name})")
 
-    if request.service_name:
+    if _should_fill_service(request):
         selected_service_value = ""
         service_values: list[str] = []
         for value in [*request.service_candidates, request.service_name]:

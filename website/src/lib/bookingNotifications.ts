@@ -6,6 +6,7 @@ import {
     type BookingConfirmationPayload,
     type PatientGender,
 } from "@/lib/bookingConfirmationView";
+import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 
 export type { PatientGender } from "@/lib/bookingConfirmationView";
 
@@ -102,13 +103,18 @@ function buildCustomerEmailText(payload: BookingNotificationPayload) {
     ].join("\n");
 }
 
-function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
+async function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
     const siteUrl = resolveSiteUrl();
+    const [logoUrl, maleAmbassadorImageUrl, femaleAmbassadorImageUrl] = await Promise.all([
+        getRuntimeSecret("BOOKING_EMAIL_LOGO_URL"),
+        getRuntimeSecret("BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL"),
+        getRuntimeSecret("BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL"),
+    ]);
     const confirmation = buildBookingConfirmationViewModel(payload, {
         siteUrl,
-        logoUrl: process.env.BOOKING_EMAIL_LOGO_URL ?? "/logo.png",
-        maleAmbassadorImageUrl: process.env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL ?? "/images/email/ambassadors/marcio-garcia-u3a7227.jpg",
-        femaleAmbassadorImageUrl: process.env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL ?? "/images/email/ambassadors/deborah-secco-20244437.jpeg",
+        logoUrl: logoUrl || "/logo.png",
+        maleAmbassadorImageUrl: maleAmbassadorImageUrl || "/images/email/ambassadors/marcio-garcia-u3a7227.jpg",
+        femaleAmbassadorImageUrl: femaleAmbassadorImageUrl || "/images/email/ambassadors/deborah-secco-20244437.jpeg",
         reservationDetailsUrl: `${siteUrl}/agendamento#booking-flow`,
     });
 
@@ -296,19 +302,19 @@ async function sendTitanEmailDirect(params: {
     let user = "";
     let pass = "";
     if (params.unitSlug === "barrashoppingsul") {
-        user = sanitizeEmail(process.env.TITAN_SMTP_USER_BARRA ?? "");
-        pass = (process.env.TITAN_SMTP_PASS_BARRA ?? "").trim();
+        user = sanitizeEmail(await getRuntimeSecret("TITAN_SMTP_USER_BARRA"));
+        pass = await getRuntimeSecret("TITAN_SMTP_PASS_BARRA");
     } else if (params.unitSlug === "novo-hamburgo") {
-        user = sanitizeEmail(process.env.TITAN_SMTP_USER_NH ?? "");
-        pass = (process.env.TITAN_SMTP_PASS_NH ?? "").trim();
+        user = sanitizeEmail(await getRuntimeSecret("TITAN_SMTP_USER_NH"));
+        pass = await getRuntimeSecret("TITAN_SMTP_PASS_NH");
     }
 
     if (!user || !pass) {
         return { ok: false, status: "skipped", error: "smtp_not_configured_for_unit" };
     }
 
-    const host = (process.env.TITAN_SMTP_HOST ?? "smtp.titan.email").trim();
-    const portRaw = Number((process.env.TITAN_SMTP_PORT ?? "465").trim() || 465);
+    const host = (await getRuntimeSecret("TITAN_SMTP_HOST")) || "smtp.titan.email";
+    const portRaw = Number((await getRuntimeSecret("TITAN_SMTP_PORT")) || 465);
     const port = Number.isFinite(portRaw) ? portRaw : 465;
 
     const socket = connect({
@@ -384,6 +390,17 @@ async function postJson(url: string, body: unknown, headers?: Record<string, str
     }
 }
 
+function isEvolutionSendTextUrl(value: string): boolean {
+    const raw = (value ?? "").trim();
+    if (!raw) return false;
+    try {
+        const parsed = new URL(raw);
+        return /\/message\/sendText\/[^/]+\/?$/i.test(parsed.pathname);
+    } catch {
+        return /\/message\/sendText\/[^/]+\/?$/i.test(raw);
+    }
+}
+
 async function sendEmail(params: {
     unitSlug: string;
     to: string;
@@ -394,7 +411,7 @@ async function sendEmail(params: {
 }): Promise<NotificationResult> {
     const to = sanitizeEmail(params.to);
     const unitFrom = sanitizeEmail(unitEmailFromSlug(params.unitSlug) ?? "");
-    const envFrom = sanitizeEmail(process.env.BOOKING_EMAIL_FROM ?? "");
+    const envFrom = sanitizeEmail(await getRuntimeSecret("BOOKING_EMAIL_FROM"));
     const from = envFrom || unitFrom;
 
     if (!to) return { ok: false, status: "skipped", error: "missing_to" };
@@ -411,8 +428,11 @@ async function sendEmail(params: {
         : { ok: false, status: "skipped", error: "missing_from" };
     if (smtpResult.ok) return smtpResult;
 
-    const resendKey = (process.env.RESEND_API_KEY ?? "").trim();
-    const webhookUrl = (process.env.BOOKING_EMAIL_WEBHOOK_URL ?? "").trim();
+    const [resendKey, webhookUrl, webhookSecret] = await Promise.all([
+        getRuntimeSecret("RESEND_API_KEY"),
+        getRuntimeSecret("BOOKING_EMAIL_WEBHOOK_URL"),
+        getRuntimeSecret("BOOKING_EMAIL_WEBHOOK_SECRET"),
+    ]);
 
     if (resendKey && from) {
         const res = await postJson(
@@ -432,7 +452,6 @@ async function sendEmail(params: {
     }
 
     if (webhookUrl) {
-        const secret = (process.env.BOOKING_EMAIL_WEBHOOK_SECRET ?? "").trim();
         const res = await postJson(
             webhookUrl,
             {
@@ -444,7 +463,7 @@ async function sendEmail(params: {
                 unitSlug: params.unitSlug,
                 kind: params.kind,
             },
-            secret ? { "x-booking-webhook-secret": secret } : undefined,
+            webhookSecret ? { "x-booking-webhook-secret": webhookSecret } : undefined,
         );
         return res.ok
             ? { ok: true, status: "sent", provider: "webhook" }
@@ -459,12 +478,13 @@ async function sendEmail(params: {
 }
 
 export async function sendBookingEmail(payload: BookingNotificationPayload): Promise<NotificationResult> {
+    const html = await buildCustomerEmailHtml(payload);
     return sendEmail({
         unitSlug: payload.unitSlug,
         to: payload.email,
         subject: "Confirmação de agendamento — Espaço Facial",
         text: buildCustomerEmailText(payload),
-        html: buildCustomerEmailHtml(payload),
+        html,
         kind: "customer_confirmation",
     });
 }
@@ -486,24 +506,35 @@ export async function sendBookingUnitEmail(payload: BookingNotificationPayload):
 }
 
 export async function sendBookingWhatsappPrep(payload: BookingNotificationPayload): Promise<NotificationResult> {
-    const webhookUrl = (process.env.BOOKING_WHATSAPP_WEBHOOK_URL ?? "").trim();
+    const [webhookUrl, webhookSecret] = await Promise.all([
+        getRuntimeSecret("BOOKING_WHATSAPP_WEBHOOK_URL"),
+        getRuntimeSecret("BOOKING_WHATSAPP_WEBHOOK_SECRET"),
+    ]);
     if (!webhookUrl) return { ok: false, status: "skipped", error: "not_configured" };
-
-    const secret = (process.env.BOOKING_WHATSAPP_WEBHOOK_SECRET ?? "").trim();
+    const useEvolutionDirect = isEvolutionSendTextUrl(webhookUrl);
     const res = await postJson(
         webhookUrl,
-        {
-            to: payload.whatsapp,
-            message: buildWhatsappMessage(payload),
-            bookingId: payload.id,
-            unitSlug: payload.unitSlug,
-        },
-        secret ? { "x-booking-webhook-secret": secret } : undefined,
+        useEvolutionDirect
+            ? {
+                number: payload.whatsapp.replace(/\D/g, ""),
+                text: buildWhatsappMessage(payload),
+            }
+            : {
+                to: payload.whatsapp,
+                message: buildWhatsappMessage(payload),
+                bookingId: payload.id,
+                unitSlug: payload.unitSlug,
+            },
+        webhookSecret
+            ? useEvolutionDirect
+                ? { apikey: webhookSecret }
+                : { "x-booking-webhook-secret": webhookSecret }
+            : undefined,
     );
 
     return res.ok
-        ? { ok: true, status: "sent", provider: "webhook" }
-        : { ok: false, status: "failed", provider: "webhook", error: res.text || "send_failed" };
+        ? { ok: true, status: "sent", provider: useEvolutionDirect ? "evolution_api" : "webhook" }
+        : { ok: false, status: "failed", provider: useEvolutionDirect ? "evolution_api" : "webhook", error: res.text || "send_failed" };
 }
 
 export async function sendBookingNotifications(payload: BookingNotificationPayload) {
