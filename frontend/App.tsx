@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
 import { useKV } from '@/spark-mock'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
-import { BriefcaseBusiness, CalendarX2, Download } from 'lucide-react'
+import { Download } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -104,9 +104,14 @@ type EscalaHeaderState = {
     professionalOptions: string[]
     totalScheduledDays: number
     unavailableDaysCount?: number
+    manualDays?: number
+    autoDays?: number
+    blockedDays?: number
+    emptyDays?: number
+    coveredDays?: number
     activeInjectors: number
     selectedDatesCount: number
-    highlightMode?: 'scheduled' | 'empty' | null
+    highlightMode?: 'manual' | 'auto' | 'blocked' | 'empty' | null
     loadingOverview: boolean
 }
 
@@ -1395,48 +1400,68 @@ export default function AppFunctionalNeatlab() {
 		                                <div className={`flex items-center gap-4 ${active === 'escala-profissionais' ? 'pr-44' : ''}`}>
 	                                    {active === 'escala-profissionais' ? (
 		                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-escala-preserve-filter="true">
-		                                            <Tooltip>
-		                                                <TooltipTrigger asChild>
-		                                                    <button
-                                                            type="button"
-                                                            className={`escala-kpi-badge inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === 'scheduled' ? 'border-sky-300/55 bg-sky-300/16 text-sky-50 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]' : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
-                                                            data-escala-preserve-filter="true"
-                                                            aria-label="Destacar dias laborais"
-                                                            onClick={() => {
-                                                                try {
-                                                                    window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'toggle-highlight-mode', value: 'scheduled' } }))
-                                                                } catch { /* ignore */ }
-                                                            }}
-                                                        >
-	                                                        <BriefcaseBusiness className="size-3.5" aria-hidden="true" />
-                                                            <span>{escalaHeaderState?.totalScheduledDays ?? 0}</span>
-	                                                    </button>
-	                                                </TooltipTrigger>
-		                                                <TooltipContent>
-		                                                    Atendimentos do mês: {escalaHeaderState?.totalScheduledDays ?? 0}
-		                                                </TooltipContent>
-		                                            </Tooltip>
-	                                            <Tooltip>
-	                                                <TooltipTrigger asChild>
-	                                                    <button
-                                                            type="button"
-                                                            className={`escala-kpi-badge inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === 'empty' ? 'border-amber-300/55 bg-amber-300/14 text-amber-50 shadow-[0_0_0_1px_rgba(252,211,77,0.16)]' : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
-                                                            data-escala-preserve-filter="true"
-                                                            aria-label="Destacar dias sem atendimento"
-                                                            onClick={() => {
-                                                                try {
-                                                                    window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'toggle-highlight-mode', value: 'empty' } }))
-                                                                } catch { /* ignore */ }
-                                                            }}
-                                                        >
-	                                                        <CalendarX2 className="size-3.5" aria-hidden="true" />
-                                                            <span>{escalaHeaderState?.unavailableDaysCount ?? 0}</span>
-	                                                    </button>
-	                                                </TooltipTrigger>
-	                                                <TooltipContent>
-	                                                    Sem atendimento e bloqueios: {escalaHeaderState?.unavailableDaysCount ?? 0}
-	                                                </TooltipContent>
-	                                            </Tooltip>
+                                                    {[
+                                                        {
+                                                            key: 'manual',
+                                                            label: 'Manual',
+                                                            value: escalaHeaderState?.manualDays ?? escalaHeaderState?.totalScheduledDays ?? 0,
+                                                            description: `Atendimentos ajustados manualmente: ${escalaHeaderState?.manualDays ?? escalaHeaderState?.totalScheduledDays ?? 0}`,
+                                                            activeClass: 'border-sky-300/55 bg-sky-300/16 text-sky-50 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]',
+                                                        },
+                                                        {
+                                                            key: 'auto',
+                                                            label: 'Auto',
+                                                            value: escalaHeaderState?.autoDays ?? 0,
+                                                            description: `Sugestões automáticas aplicadas: ${escalaHeaderState?.autoDays ?? 0}`,
+                                                            activeClass: 'border-emerald-300/55 bg-emerald-300/16 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.16)]',
+                                                        },
+                                                        {
+                                                            key: 'blocked',
+                                                            label: 'Bloq',
+                                                            value: escalaHeaderState?.blockedDays ?? 0,
+                                                            description: `Datas bloqueadas: ${escalaHeaderState?.blockedDays ?? 0}`,
+                                                            activeClass: 'border-rose-300/55 bg-rose-300/16 text-rose-50 shadow-[0_0_0_1px_rgba(253,164,175,0.16)]',
+                                                        },
+                                                        {
+                                                            key: 'empty',
+                                                            label: 'Vazio',
+                                                            value: escalaHeaderState?.emptyDays ?? escalaHeaderState?.unavailableDaysCount ?? 0,
+                                                            description: `Datas sem definição: ${escalaHeaderState?.emptyDays ?? escalaHeaderState?.unavailableDaysCount ?? 0}`,
+                                                            activeClass: 'border-amber-300/55 bg-amber-300/14 text-amber-50 shadow-[0_0_0_1px_rgba(252,211,77,0.16)]',
+                                                        },
+                                                    ].map((item) => (
+                                                        <Tooltip key={item.key}>
+                                                            <TooltipTrigger asChild>
+                                                                <button
+                                                                    type="button"
+                                                                    className={`escala-kpi-badge inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === item.key ? item.activeClass : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
+                                                                    data-escala-preserve-filter="true"
+                                                                    aria-label={`Destacar dias ${item.label.toLowerCase()}`}
+                                                                    onClick={() => {
+                                                                        try {
+                                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'toggle-highlight-mode', value: item.key } }))
+                                                                        } catch { /* ignore */ }
+                                                                    }}
+                                                                >
+                                                                    <span className="text-[10px] uppercase tracking-[0.14em]">{item.label}</span>
+                                                                    <span>{item.value}</span>
+                                                                </button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>
+                                                                {item.description}
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    ))}
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <span className="inline-flex h-8 items-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-xs text-blue-50" data-escala-preserve-filter="true">
+                                                                Cobertura {escalaHeaderState?.coveredDays ?? escalaHeaderState?.totalScheduledDays ?? 0}
+                                                            </span>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>
+                                                            Dias cobertos no mês: {escalaHeaderState?.coveredDays ?? escalaHeaderState?.totalScheduledDays ?? 0}
+                                                        </TooltipContent>
+                                                    </Tooltip>
 	                                            <Tooltip>
 	                                                <TooltipTrigger asChild>
 	                                                    <span data-escala-preserve-filter="true">

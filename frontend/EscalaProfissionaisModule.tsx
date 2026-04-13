@@ -9,9 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/input'
 import { LoadingPercentText } from '@/LoadingPattern'
 import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
+import { Progress } from '@/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { useAuth } from '@/contexts'
 import { cn } from '@/utils'
+import { buildMonthPlanMetrics, buildScheduleVersion, resolveDayPlanSource } from '@/escalaDomain'
+import { useEscalaPrefill } from '@/useEscalaPrefill'
 import {
   addClosedDay,
   addEscalaProfessional,
@@ -279,6 +282,33 @@ function deriveWeekdayDefaultProfessionals(entries: EscalaScheduleEntry[]): Week
   return defaults
 }
 
+function buildWeekdayPrefillAssignments(dates: string[], historicalEntries: EscalaScheduleEntry[]) {
+  const weekdayDefaults = deriveWeekdayDefaultProfessionals(historicalEntries)
+  return dates
+    .map((date) => {
+      const weekday = getWeekdayFromIsoDate(date)
+      const professional = weekdayDefaults[weekday as 0 | 1 | 2 | 3 | 4 | 5 | 6]
+      if (!professional) return null
+      return { date, professional }
+    })
+    .filter((item): item is { date: string; professional: string } => Boolean(item))
+}
+
+function applyPrefillUpdatesToSchedule(entries: EscalaScheduleEntry[], unit: string, updates: Array<{ date: string; professional: string }>) {
+  const updateMap = new Map(updates.map((update) => [update.date, update.professional]))
+  const preserved = entries.filter((entry) => !updateMap.has(entry.date))
+  const inserted = updates.map((update) => ({
+    date: update.date,
+    unit,
+    professional: update.professional,
+  }))
+  return [...preserved, ...inserted].sort((left, right) => {
+    const dateCompare = left.date.localeCompare(right.date)
+    if (dateCompare !== 0) return dateCompare
+    return left.professional.localeCompare(right.professional)
+  })
+}
+
 function toLocalIsoDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
@@ -288,6 +318,8 @@ export const __testables = {
   resolveVisibleMonth,
   buildPreviousMonthKeys,
   deriveWeekdayDefaultProfessionals,
+  buildWeekdayPrefillAssignments,
+  applyPrefillUpdatesToSchedule,
 }
 
 function uniqueNames(values: string[]) {
@@ -589,7 +621,7 @@ export function EscalaProfissionaisModule() {
   const [isDayAssignModalOpen, setIsDayAssignModalOpen] = useState(false)
   const [isBulkSelectionMode, setIsBulkSelectionMode] = useState(false)
   const [isBulkAssignModalOpen, setIsBulkAssignModalOpen] = useState(false)
-  const [highlightMode, setHighlightMode] = useState<'scheduled' | 'blocked' | 'empty' | null>(null)
+  const [highlightMode, setHighlightMode] = useState<'manual' | 'auto' | 'blocked' | 'empty' | null>(null)
   const [multiDateBlockReason, setMultiDateBlockReason] = useState('')
   const [selectedTeamMember, setSelectedTeamMember] = useState<string>('')
   const [teamMemberDrafts, setTeamMemberDrafts] = useState<Record<string, EscalaProfessional>>({})
@@ -600,8 +632,6 @@ export function EscalaProfissionaisModule() {
   const selectedDatesRef = useRef<string[]>([])
   const selectedPeriodRef = useRef<{ year: string; monthNumber: string }>({ year: DEFAULT_YEAR, monthNumber: DEFAULT_MONTH_NUMBER })
   const monthSelectionTouchedRef = useRef(false)
-  const autoPrefillRunningRef = useRef(false)
-  const autoPrefilledMonthKeysRef = useRef(new Set<string>())
   const teamPanelExpanded = teamFormMode !== 'idle'
   const selectedMonth = useMemo(
     () => (selectedYear && selectedMonthNumber ? `${selectedYear}-${selectedMonthNumber}` : ''),
@@ -775,7 +805,6 @@ export function EscalaProfissionaisModule() {
     setTeamMemberDrafts({})
     setTeamFormMode('idle')
     setShowInactiveTeamMembers(false)
-    autoPrefilledMonthKeysRef.current.clear()
   }, [selectedUnit])
 
   const scheduleForMonth = schedule
@@ -864,80 +893,27 @@ export function EscalaProfissionaisModule() {
   }, [closedDaysForMonth])
   const closedDateSet = useMemo(() => new Set(closedDaysForMonth.map((entry) => entry.date)), [closedDaysForMonth])
   const calendarCells = useMemo(() => (selectedMonth ? buildCalendarCells(selectedMonth) : []), [selectedMonth])
-
-  const autoPrefillFutureDatesFromHistory = useCallback(async () => {
-    if (!selectedUnit || !selectedMonth) return
-    if (autoPrefillRunningRef.current) return
-
-    const prefillKey = `${selectedUnit}__${selectedMonth}`
-    if (autoPrefilledMonthKeysRef.current.has(prefillKey)) return
-
-    const todayIso = toLocalIsoDate(new Date())
-    const emptyFutureDates = calendarCells
-      .filter((cell) => cell.monthOffset === 0 && cell.date >= todayIso)
-      .map((cell) => cell.date)
-      .filter((date) => !closedDateSet.has(date) && (scheduleByDate.get(date) || []).length === 0)
-
-    if (!emptyFutureDates.length) {
-      autoPrefilledMonthKeysRef.current.add(prefillKey)
-      return
-    }
-
-    autoPrefillRunningRef.current = true
-    try {
-      const previousMonths = buildPreviousMonthKeys(selectedMonth, 3)
-      const historyResponses = await Promise.all(
-        previousMonths.map((monthKey) => fetchEscalaSchedule(selectedUnit, monthKey)),
-      )
-      const historicalEntries = historyResponses
-        .filter((response) => response.ok)
-        .flatMap((response) => (Array.isArray(response.schedule) ? response.schedule : [])) as EscalaScheduleEntry[]
-
-      const weekdayDefaults = deriveWeekdayDefaultProfessionals(historicalEntries)
-      const targetUpdates = emptyFutureDates
-        .map((date) => {
-          const weekday = getWeekdayFromIsoDate(date)
-          const professional = weekdayDefaults[weekday as 0 | 1 | 2 | 3 | 4 | 5 | 6]
-          if (!professional) return null
-          return { date, professional }
-        })
-        .filter((item): item is { date: string; professional: string } => Boolean(item))
-
-      if (!targetUpdates.length) {
-        autoPrefilledMonthKeysRef.current.add(prefillKey)
-        return
-      }
-
-      let successCount = 0
-      for (const update of targetUpdates) {
-        const result = await replaceScheduleEntries({
-          date: update.date,
-          unit: selectedUnit,
-          professionals: [update.professional],
-        })
-        if (result.ok) successCount += 1
-      }
-
-      autoPrefilledMonthKeysRef.current.add(prefillKey)
-      if (!successCount) return
-
-      toast.success(
-        successCount === 1
-          ? '1 data futura foi pré-preenchida com o doutor padrão.'
-          : `${successCount} datas futuras foram pré-preenchidas com os doutores padrão.`,
-      )
-      await refreshSchedule(selectedUnit, selectedMonth)
-      await refreshOverview()
-    } finally {
-      autoPrefillRunningRef.current = false
-    }
-  }, [calendarCells, closedDateSet, refreshOverview, refreshSchedule, scheduleByDate, selectedMonth, selectedUnit])
-
-  useEffect(() => {
-    if (loadingSchedule) return
-    if (!selectedUnit || !selectedMonth) return
-    void autoPrefillFutureDatesFromHistory()
-  }, [autoPrefillFutureDatesFromHistory, loadingSchedule, selectedMonth, selectedUnit])
+  const scheduleVersion = useMemo(
+    () => (selectedMonth ? buildScheduleVersion(scheduleForMonth, closedDaysForMonth, selectedMonth) : ''),
+    [closedDaysForMonth, scheduleForMonth, selectedMonth],
+  )
+  const {
+    prefillState: autoPrefillState,
+    activeSuggestionMap,
+    appliedSuggestionMap,
+    applySuggestions,
+    ignoreSuggestions,
+    retryAnalysis,
+  } = useEscalaPrefill({
+    selectedUnit,
+    selectedMonth,
+    loadingSchedule,
+    calendarCells,
+    schedule: scheduleForMonth,
+    closedDays: closedDaysForMonth,
+    scheduleVersion,
+    onScheduleApplied: setSchedule,
+  })
 
   useEffect(() => {
     if (selectedDates.length <= 1) {
@@ -966,6 +942,18 @@ export function EscalaProfissionaisModule() {
   const totalScheduledDays = useMemo(() => {
     return new Set(scheduleForMonth.map((entry) => entry.date)).size
   }, [scheduleForMonth])
+  const monthPlanMetrics = useMemo(
+    () => buildMonthPlanMetrics(calendarCells, scheduleByDate, closedBlockedDates, appliedSuggestionMap),
+    [appliedSuggestionMap, calendarCells, closedBlockedDates, scheduleByDate],
+  )
+  const autoPrefillProgress = useMemo(() => {
+    if (autoPrefillState.status === 'analyzing') return 18
+    if (autoPrefillState.status === 'ready') return 42
+    if (autoPrefillState.status === 'applying') return 74
+    if (autoPrefillState.status === 'done') return 100
+    if (autoPrefillState.status === 'ignored') return 100
+    return 0
+  }, [autoPrefillState.status])
   const unavailableDaysCount = useMemo(() => {
     return calendarCells.reduce((total, cell) => {
       if (cell.monthOffset !== 0) return total
@@ -977,6 +965,16 @@ export function EscalaProfissionaisModule() {
   const firstCurrentMonthIndex = useMemo(() => calendarCells.findIndex((cell) => cell.monthOffset === 0), [calendarCells])
   const previousMonthCellsCount = useMemo(() => calendarCells.filter((cell) => cell.monthOffset === -1).length, [calendarCells])
   const nextMonthCellsCount = useMemo(() => calendarCells.filter((cell) => cell.monthOffset === 1).length, [calendarCells])
+  const prefillWindowLabel = useMemo(
+    () => autoPrefillState.windowMonths.map(formatMonthLabel).join(', '),
+    [autoPrefillState.windowMonths],
+  )
+  const selectionScopeLabel = useMemo(() => {
+    if (!selectedDates.length) return 'Nenhuma data selecionada'
+    return selectedDates.length === 1
+      ? `1 data selecionada: ${selectedDatesLabel}`
+      : `${selectedDates.length} datas selecionadas: ${selectedDatesLabel}`
+  }, [selectedDates.length, selectedDatesLabel])
 
   useEffect(() => {
     try {
@@ -993,6 +991,11 @@ export function EscalaProfissionaisModule() {
           professionalOptions: headerProfessionalOptions,
           totalScheduledDays,
           unavailableDaysCount,
+          manualDays: monthPlanMetrics.manual,
+          autoDays: monthPlanMetrics.auto,
+          blockedDays: monthPlanMetrics.blocked,
+          emptyDays: monthPlanMetrics.empty,
+          coveredDays: monthPlanMetrics.covered,
           activeInjectors: professionalOptions.length,
           selectedDatesCount: selectedDates.length,
           highlightMode,
@@ -1014,6 +1017,7 @@ export function EscalaProfissionaisModule() {
     selectedYear,
     totalScheduledDays,
     unavailableDaysCount,
+    monthPlanMetrics,
     units,
     yearOptions,
     highlightMode
@@ -1047,8 +1051,9 @@ export function EscalaProfissionaisModule() {
       if (action === 'set-professional' && detail.value != null) setSelectedProfessional(String(detail.value))
       if (action === 'toggle-highlight-mode' && detail.value != null) {
         const next = String(detail.value)
-        if (next === 'scheduled' || next === 'empty') {
-          setHighlightMode((prev) => (prev === next ? null : next))
+        const normalized = next === 'scheduled' ? 'manual' : next
+        if (normalized === 'manual' || normalized === 'auto' || normalized === 'blocked' || normalized === 'empty') {
+          setHighlightMode((prev) => (prev === normalized ? null : normalized))
         }
       }
       if (action === 'clear-selection') clearInteractiveState()
@@ -1585,12 +1590,154 @@ export function EscalaProfissionaisModule() {
           <CardContent className="flex flex-col gap-2 pt-3">
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_344px]">
               <div className="flex flex-col gap-2" data-testid="escala-calendar-panel">
-                <div className="flex items-center justify-end gap-2 pb-1">
+                <div className="flex flex-wrap items-start justify-between gap-2 pb-1">
+                  {autoPrefillState.status !== 'idle' ? (
+                    <div
+                      data-testid="escala-autoprefill-status"
+                      className={cn(
+                        'min-w-[280px] max-w-[540px] rounded-2xl border px-3 py-3',
+                        autoPrefillState.status === 'error'
+                          ? 'border-rose-300/35 bg-rose-500/10'
+                          : autoPrefillState.status === 'done'
+                            ? 'border-emerald-300/28 bg-emerald-500/10'
+                            : autoPrefillState.status === 'ignored'
+                              ? 'border-slate-300/20 bg-white/[0.04]'
+                              : 'border-sky-300/25 bg-sky-500/10',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-300/65">
+                            Assistente de planejamento
+                          </div>
+                          <div className="mt-1 text-sm font-medium text-slate-50">
+                            {autoPrefillState.status === 'analyzing' && 'Analisando histórico'}
+                            {autoPrefillState.status === 'ready' && 'Sugestões prontas para aplicar'}
+                            {autoPrefillState.status === 'applying' && 'Aplicando sugestões'}
+                            {autoPrefillState.status === 'done' && 'Sugestões concluídas'}
+                            {autoPrefillState.status === 'ignored' && 'Sugestões ignoradas neste mês'}
+                            {autoPrefillState.status === 'error' && 'Falha ao analisar sugestões'}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-100/90">
+                            {autoPrefillState.message}
+                          </div>
+                          {prefillWindowLabel ? (
+                            <div className="mt-2 text-[10px] text-slate-300/70">
+                              Base histórica: {prefillWindowLabel}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {autoPrefillState.status === 'ready' ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="shrink-0"
+                                onClick={ignoreSuggestions}
+                                data-testid="escala-prefill-ignore"
+                              >
+                                Ignorar neste mês
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="premium"
+                                className="shrink-0"
+                                onClick={() => void applySuggestions()}
+                                data-testid="escala-prefill-apply"
+                              >
+                                Aplicar sugestões
+                              </Button>
+                            </>
+                          ) : null}
+                          {autoPrefillState.status === 'error' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="shrink-0"
+                              onClick={retryAnalysis}
+                              data-testid="escala-prefill-retry"
+                            >
+                              Tentar novamente
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                      {autoPrefillState.status !== 'error' ? (
+                        <div className="mt-3 space-y-1.5">
+                          <Progress value={autoPrefillProgress} className="h-1.5 bg-white/10 [&_[data-slot=progress-indicator]]:bg-sky-300" />
+                          <div className="flex items-center justify-between text-[10px] text-slate-300/70">
+                            <span>{formatMonthLabel(selectedMonth)}</span>
+                            <span>
+                              {autoPrefillState.status === 'ready'
+                                ? `${autoPrefillState.total || 0} prontas`
+                                : `${autoPrefillState.completed}/${autoPrefillState.total || 0}`}
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : <div />}
                   {loadingSchedule ? (
                     <div className="text-[11px] text-slate-300/75">
                       <LoadingPercentText label="Atualizando agenda" showPercent={false} />
                     </div>
                   ) : null}
+                </div>
+                <div className="grid gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-3 py-3">
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-300/65">
+                    <span>Resumo do mês</span>
+                    <span className="text-slate-400/55">{formatMonthLabel(selectedMonth)}</span>
+                    {selectedDates.length ? (
+                      <span className="rounded-full border border-sky-300/24 bg-sky-400/10 px-2 py-0.5 text-[9px] tracking-[0.16em] text-sky-100/80">
+                        {selectionScopeLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    {[
+                      { key: 'manual', label: 'Manuais', value: monthPlanMetrics.manual, tone: 'border-sky-300/25 bg-sky-400/10 text-sky-100/85' },
+                      { key: 'auto', label: 'Automáticos', value: monthPlanMetrics.auto, tone: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100/85' },
+                      { key: 'blocked', label: 'Bloqueados', value: monthPlanMetrics.blocked, tone: 'border-rose-300/25 bg-rose-400/10 text-rose-100/85' },
+                      { key: 'empty', label: 'Vazios', value: monthPlanMetrics.empty, tone: 'border-amber-300/25 bg-amber-400/10 text-amber-100/85' },
+                    ].map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        data-escala-preserve-filter="true"
+                        onClick={() => setHighlightMode((prev) => (prev === item.key ? null : item.key as 'manual' | 'auto' | 'blocked' | 'empty'))}
+                        className={cn(
+                          'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition hover:border-white/20',
+                          item.tone,
+                          highlightMode === item.key && 'ring-2 ring-white/15'
+                        )}
+                        data-testid={`escala-highlight-${item.key}`}
+                      >
+                        <span className="text-[10px] uppercase tracking-[0.16em]">{item.label}</span>
+                        <span className="text-sm font-semibold">{item.value}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-300/75">
+                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1">
+                      Cobertura {monthPlanMetrics.covered}
+                    </span>
+                    <span className="rounded-full border border-emerald-300/18 bg-emerald-500/8 px-2 py-1 text-emerald-100/80">
+                      Auto = sugestão aplicada
+                    </span>
+                    <span className="rounded-full border border-sky-300/18 bg-sky-500/8 px-2 py-1 text-sky-100/80">
+                      Manual = ajuste humano
+                    </span>
+                    <span className="rounded-full border border-rose-300/18 bg-rose-500/8 px-2 py-1 text-rose-100/80">
+                      Bloqueado = sem atendimento
+                    </span>
+                    <span className="rounded-full border border-amber-300/18 bg-amber-500/8 px-2 py-1 text-amber-100/80">
+                      Vazio = sem definição
+                    </span>
+                  </div>
                 </div>
                 <div className="grid grid-cols-7 gap-1.5 text-[10px] uppercase tracking-[0.2em] text-slate-300/70">
                   {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((label) => (
@@ -1604,22 +1751,27 @@ export function EscalaProfissionaisModule() {
                     const entries = scheduleByDate.get(cell.date) || []
                     const entryNames = uniqueNames(entries.map((entry) => entry.professional))
                     const isBlocked = closedBlockedDates.has(cell.date)
+                    const appliedSuggestion = appliedSuggestionMap.get(cell.date) || null
                     const holidayLabels = holidayByDate.get(cell.date) || []
                     const displayEntryNames = isBlocked ? [] : entryNames
                     const isWithinSelectedMonth = cell.monthOffset === 0
+                    const daySource = resolveDayPlanSource({
+                      date: cell.date,
+                      entryNames,
+                      blocked: isBlocked,
+                      autoSuggestion: appliedSuggestion,
+                    })
                     const matchesSelectedProfessional = selectedProfessional !== ALL_PROFESSIONALS_OPTION && displayEntryNames.includes(selectedProfessional)
-                    const matchesHighlightMode = highlightMode === 'scheduled'
-                      ? isWithinSelectedMonth && !isBlocked && entryNames.length > 0
-                      : highlightMode === 'empty'
-                        ? isWithinSelectedMonth && (isBlocked || entryNames.length === 0)
-                        : false
+                    const matchesHighlightMode = highlightMode
+                      ? isWithinSelectedMonth && daySource === highlightMode
+                      : false
                     const hasTrackedFilter = selectedProfessional !== ALL_PROFESSIONALS_OPTION || highlightMode !== null
                     const isTracked = matchesSelectedProfessional || matchesHighlightMode
                     const isSelectedDate = selectedDateSet.has(cell.date)
                     const isPrimarySelectedDate = activeDate === cell.date
                     const dimmedByActiveDate = selectedDates.length > 0 && !isSelectedDate
                     const dimmedByTrackedFilter = hasTrackedFilter && !isTracked
-                    const isEmptyDay = isWithinSelectedMonth && !isBlocked && entryNames.length === 0
+                    const isEmptyDay = isWithinSelectedMonth && daySource === 'empty'
                     const isAdjacentMonth = cell.monthOffset !== 0
                     const isPrevMonthShortcut = index === firstCurrentMonthIndex - 1
                     const isNextMonthShortcut = cell.monthOffset === 1 && cell.day === 1
@@ -1637,12 +1789,24 @@ export function EscalaProfissionaisModule() {
                     const blockBadgeLabel = String(blockReason || '').trim() || 'Sem atendimento'
                     const trackedCardStyle = matchesSelectedProfessional
                       ? getProfessionalCardHighlightStyle(selectedProfessional, selectedProfessionalColor)
-                      : matchesHighlightMode && highlightMode === 'scheduled'
+                      : matchesHighlightMode && highlightMode === 'manual'
                         ? {
                           borderColor: 'rgba(125, 211, 252, 0.68)',
                           background: 'linear-gradient(180deg, rgba(56, 189, 248, 0.13), rgba(15, 23, 42, 0.32))',
                           boxShadow: '0 0 0 1px rgba(125, 211, 252, 0.18), 0 14px 28px rgba(2, 132, 199, 0.16), inset 0 1px 0 rgba(255,255,255,0.05)',
                         } as React.CSSProperties
+                        : matchesHighlightMode && highlightMode === 'auto'
+                          ? {
+                            borderColor: 'rgba(110, 231, 183, 0.72)',
+                            background: 'linear-gradient(180deg, rgba(16, 185, 129, 0.15), rgba(15, 23, 42, 0.34))',
+                            boxShadow: '0 0 0 1px rgba(110, 231, 183, 0.18), 0 14px 28px rgba(4, 120, 87, 0.18), inset 0 1px 0 rgba(255,255,255,0.05)',
+                          } as React.CSSProperties
+                          : matchesHighlightMode && highlightMode === 'blocked'
+                            ? {
+                              borderColor: 'rgba(251, 113, 133, 0.72)',
+                              background: 'linear-gradient(180deg, rgba(244, 63, 94, 0.16), rgba(15, 23, 42, 0.34))',
+                              boxShadow: '0 0 0 1px rgba(251, 113, 133, 0.18), 0 14px 28px rgba(159, 18, 57, 0.18), inset 0 1px 0 rgba(255,255,255,0.04)',
+                            } as React.CSSProperties
                         : matchesHighlightMode && highlightMode === 'empty'
                           ? {
                             borderColor: isBlocked ? 'rgba(251, 113, 133, 0.7)' : 'rgba(250, 204, 21, 0.6)',
@@ -1709,9 +1873,10 @@ export function EscalaProfissionaisModule() {
                           }
                         }}
                         className={cn(
-                          'escala-day-card grid h-full min-h-[76px] content-start gap-1 rounded-xl border border-white/10 bg-white/[0.045] px-2 py-1.5 text-left text-[11px] text-slate-100/90 transition-all',
+                          'escala-day-card grid h-full min-h-[108px] grid-rows-[auto_minmax(42px,1fr)_auto] content-start gap-1 rounded-xl border border-white/10 bg-white/[0.045] px-2 py-1.5 text-left text-[11px] text-slate-100/90 transition-all',
                           isAdjacentMonth ? 'place-items-center border-slate-400/8 bg-slate-400/[0.03] text-center text-slate-500/65 saturate-50' : 'hover:border-white/30',
                           isBlocked && 'border-rose-300/45 bg-rose-500/12 text-rose-50/95',
+                          !isBlocked && daySource === 'auto' && 'border-emerald-300/25 bg-emerald-500/[0.075]',
                           isTracked && 'escala-day-card--tracked',
                           isSelectedDate && 'escala-day-card--selected border-sky-200/80 bg-sky-300/14',
                           isPrimarySelectedDate && 'ring-2 ring-sky-300/32',
@@ -1798,7 +1963,7 @@ export function EscalaProfissionaisModule() {
                           ) : null}
                         </div>
 
-                        <div className="flex min-h-[22px] flex-col gap-1">
+                        <div className="flex min-h-[30px] flex-col justify-end gap-1">
                           {!isAdjacentMonth && !displayEntryNames.length && isBlocked ? (
                             <NoAttendanceChip
                               date={cell.date}
@@ -1815,6 +1980,25 @@ export function EscalaProfissionaisModule() {
                             <Badge variant="warning" className="max-w-full px-1.5 py-0.5 text-[10px]">
                               {holidayLabels[0]}
                             </Badge>
+                          ) : null}
+                          {!isAdjacentMonth ? (
+                            <div
+                              className={cn(
+                                'inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em]',
+                                daySource === 'manual' && 'border-sky-300/22 bg-sky-500/10 text-sky-100/85',
+                                daySource === 'auto' && 'border-emerald-300/22 bg-emerald-500/10 text-emerald-100/85',
+                                daySource === 'blocked' && 'border-rose-300/22 bg-rose-500/10 text-rose-100/85',
+                                daySource === 'empty' && 'border-amber-300/22 bg-amber-500/10 text-amber-100/85',
+                              )}
+                              title={daySource === 'auto' && appliedSuggestion
+                                ? `${appliedSuggestion.professional} • ${Math.round(appliedSuggestion.confidence * 100)}% • ${appliedSuggestion.sampleSize} ocorrências`
+                                : undefined}
+                            >
+                              {daySource === 'manual' && 'Manual'}
+                              {daySource === 'auto' && 'Auto'}
+                              {daySource === 'blocked' && 'Bloqueado'}
+                              {daySource === 'empty' && 'Vazio'}
+                            </div>
                           ) : null}
                         </div>
                       </div>

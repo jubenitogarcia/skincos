@@ -1,9 +1,11 @@
+import type { PrefillSuggestion } from '@/escalaDomain'
+
 const DEFAULT_ESCALA_API_BASE = '/api/escala'
 
 export const ESCALA_API_BASE =
   (import.meta as any).env?.VITE_ESCALA_API_URL || DEFAULT_ESCALA_API_BASE
 
-type ApiResponse<T> = { ok: boolean; error?: string } & T
+type ApiResponse<T> = { ok: boolean; error?: string; requestId?: string } & T
 
 function parseJsonResponse(text: string) {
   if (!text) return null
@@ -42,16 +44,17 @@ async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
     const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
     const text = await res.text()
     const json = parseJsonResponse(text)
+    const requestId = String(res.headers.get('x-request-id') || '').trim() || undefined
     const contentType = String(res.headers.get('content-type') || '').toLowerCase()
     const likelyJson = contentType.includes('application/json')
     if (!res.ok || json?.ok === false) {
-      return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+      return { ok: false, error: normalizeApiError(res, json, text), requestId } as ApiResponse<T>
     }
     if (!json || typeof json !== 'object') {
       const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
-      return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
+      return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.`, requestId } as ApiResponse<T>
     }
-    return json as ApiResponse<T>
+    return { ...(json as ApiResponse<T>), requestId }
   } catch (error) {
     return { ok: false, error: normalizeFetchError(error) } as ApiResponse<T>
   }
@@ -68,16 +71,17 @@ async function apiWrite<T>(path: string, method: string, body?: any): Promise<Ap
     })
     const text = await res.text()
     const json = parseJsonResponse(text)
+    const requestId = String(res.headers.get('x-request-id') || '').trim() || undefined
     const contentType = String(res.headers.get('content-type') || '').toLowerCase()
     const likelyJson = contentType.includes('application/json')
     if (!res.ok || json?.ok === false) {
-      return { ok: false, error: normalizeApiError(res, json, text) } as ApiResponse<T>
+      return { ok: false, error: normalizeApiError(res, json, text), requestId } as ApiResponse<T>
     }
     if (!json || typeof json !== 'object') {
       const hint = likelyJson ? 'Payload JSON inválido.' : 'Retorno não-JSON.'
-      return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.` } as ApiResponse<T>
+      return { ok: false, error: `${hint} Verifique /api/escala/_proxy-status.`, requestId } as ApiResponse<T>
     }
-    return json as ApiResponse<T>
+    return { ...(json as ApiResponse<T>), requestId }
   } catch (error) {
     return { ok: false, error: normalizeFetchError(error) } as ApiResponse<T>
   }
@@ -131,12 +135,26 @@ export async function fetchEscalaSchedule(unit?: string, month?: string) {
   return apiGet<{ schedule: any[]; closedDays: any[]; holidays: any[] }>(`/schedule${qs}`)
 }
 
+export async function fetchEscalaPrefill(unit: string, month: string) {
+  const params = new URLSearchParams()
+  params.set('unit', unit)
+  params.set('month', month)
+  return apiGet<{ suggestions: PrefillSuggestion[]; windowMonths: string[] }>(`/prefill?${params.toString()}`)
+}
+
 export async function addScheduleEntry(payload: { date: string; unit: string; professional?: string; professionals?: string[] }) {
   return apiWrite<{ ok: boolean }>(`/schedule`, 'POST', payload)
 }
 
 export async function replaceScheduleEntries(payload: { date: string; unit: string; professionals: string[] }) {
-  return apiWrite<{ ok: boolean }>(`/schedule`, 'PUT', payload)
+  return apiWrite<{ ok: boolean; updatedDates?: number; updatedEntries?: number }>(`/schedule`, 'PUT', payload)
+}
+
+export async function replaceScheduleEntriesBatch(payload: {
+  unit: string
+  entries: Array<{ date: string; professionals: string[] }>
+}) {
+  return apiWrite<{ ok: boolean; updatedDates?: number; updatedEntries?: number }>(`/schedule`, 'PUT', payload)
 }
 
 export async function removeScheduleEntry(payload: { date: string; unit: string; professional?: string }) {
