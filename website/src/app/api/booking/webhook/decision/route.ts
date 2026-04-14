@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, nowMs, clampText, sanitizeOneLine } from "@/lib/bookingDb";
 import { constantTimeEqual } from "@/lib/bookingSecurity";
+import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 
 export const dynamic = "force-dynamic";
 
@@ -51,8 +52,8 @@ async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: 
         .run();
 }
 
-function authorize(req: Request, body: Payload): string | null {
-    const expected = (process.env.BOOKING_WEBHOOK_SECRET ?? "").trim();
+async function authorize(req: Request, body: Payload): Promise<string | null> {
+    const expected = await getRuntimeSecret("BOOKING_WEBHOOK_SECRET");
     if (!expected) return "webhook_not_configured";
 
     const headerSecret = (req.headers.get("x-booking-webhook-secret") ?? "").trim();
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
         return json({ ok: false, error: "invalid_json" }, { status: 400 });
     }
 
-    const authError = authorize(req, body);
+    const authError = await authorize(req, body);
     if (authError) {
         const status = authError === "unauthorized" ? 401 : 501;
         return json({ ok: false, error: authError }, { status });

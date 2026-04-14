@@ -27,6 +27,17 @@ jobs:
       TITAN_SMTP_PASS_BARRA: ${{ secrets.TITAN_SMTP_PASS_BARRA }}
       TITAN_SMTP_USER_NH: ${{ secrets.TITAN_SMTP_USER_NH }}
       TITAN_SMTP_PASS_NH: ${{ secrets.TITAN_SMTP_PASS_NH }}
+      BOOKING_EMAIL_FROM: ${{ secrets.BOOKING_EMAIL_FROM }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      BOOKING_EMAIL_WEBHOOK_URL: ${{ secrets.BOOKING_EMAIL_WEBHOOK_URL }}
+      BOOKING_EMAIL_WEBHOOK_SECRET: ${{ secrets.BOOKING_EMAIL_WEBHOOK_SECRET }}
+      BOOKING_WHATSAPP_WEBHOOK_URL: ${{ secrets.BOOKING_WHATSAPP_WEBHOOK_URL }}
+      BOOKING_WHATSAPP_WEBHOOK_SECRET: ${{ secrets.BOOKING_WHATSAPP_WEBHOOK_SECRET }}
+      BOOKING_WEBHOOK_URL: ${{ secrets.BOOKING_WEBHOOK_URL }}
+      BOOKING_WEBHOOK_SECRET: ${{ secrets.BOOKING_WEBHOOK_SECRET }}
+      BOOKING_EMAIL_LOGO_URL: ${{ secrets.BOOKING_EMAIL_LOGO_URL }}
+      BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL: ${{ secrets.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL }}
+      BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL: ${{ secrets.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL }}
       INSTAGRAM_SYNC_TOKEN: ${{ secrets.INSTAGRAM_SYNC_TOKEN }}
 
     steps:
@@ -75,7 +86,7 @@ jobs:
         run: npm run lint
 
       - name: Sync worker secrets (optional)
-        if: ${{ steps.guard.outputs.skip != 'true' && (env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
+        if: ${{ steps.guard.outputs.skip != 'true' && (env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.BOOKING_EMAIL_FROM != '' || env.RESEND_API_KEY != '' || env.BOOKING_EMAIL_WEBHOOK_URL != '' || env.BOOKING_EMAIL_WEBHOOK_SECRET != '' || env.BOOKING_WHATSAPP_WEBHOOK_URL != '' || env.BOOKING_WHATSAPP_WEBHOOK_SECRET != '' || env.BOOKING_WEBHOOK_URL != '' || env.BOOKING_WEBHOOK_SECRET != '' || env.BOOKING_EMAIL_LOGO_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
         continue-on-error: true
         working-directory: website
         run: |
@@ -101,6 +112,17 @@ jobs:
           put_secret "TITAN_SMTP_PASS_BARRA" "${TITAN_SMTP_PASS_BARRA}"
           put_secret "TITAN_SMTP_USER_NH" "${TITAN_SMTP_USER_NH}"
           put_secret "TITAN_SMTP_PASS_NH" "${TITAN_SMTP_PASS_NH}"
+          put_secret "BOOKING_EMAIL_FROM" "${BOOKING_EMAIL_FROM}"
+          put_secret "RESEND_API_KEY" "${RESEND_API_KEY}"
+          put_secret "BOOKING_EMAIL_WEBHOOK_URL" "${BOOKING_EMAIL_WEBHOOK_URL}"
+          put_secret "BOOKING_EMAIL_WEBHOOK_SECRET" "${BOOKING_EMAIL_WEBHOOK_SECRET}"
+          put_secret "BOOKING_WHATSAPP_WEBHOOK_URL" "${BOOKING_WHATSAPP_WEBHOOK_URL}"
+          put_secret "BOOKING_WHATSAPP_WEBHOOK_SECRET" "${BOOKING_WHATSAPP_WEBHOOK_SECRET}"
+          put_secret "BOOKING_WEBHOOK_URL" "${BOOKING_WEBHOOK_URL}"
+          put_secret "BOOKING_WEBHOOK_SECRET" "${BOOKING_WEBHOOK_SECRET}"
+          put_secret "BOOKING_EMAIL_LOGO_URL" "${BOOKING_EMAIL_LOGO_URL}"
+          put_secret "BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL" "${BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL}"
+          put_secret "BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL" "${BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL}"
           put_secret "INSTAGRAM_SYNC_TOKEN" "${INSTAGRAM_SYNC_TOKEN}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

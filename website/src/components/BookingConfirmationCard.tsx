@@ -38,6 +38,7 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
     const model = buildBookingConfirmationViewModel(props.reservation, {
         siteUrl: resolveBookingSiteUrl(),
     });
+    const hasNotificationStatuses = !!props.notifications?.email || !!props.notifications?.whatsapp;
 
     return (
         <section className="bookingConfirmation" aria-label="Resumo da reserva confirmada">
@@ -78,10 +79,6 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                                 <div className="bookingConfirmation__detailLabel">Unidade</div>
                                 <div className="bookingConfirmation__detailValue">{model.unitName}</div>
                             </div>
-                            <div>
-                                <div className="bookingConfirmation__detailLabel">Protocolo</div>
-                                <div className="bookingConfirmation__detailValue">{model.reservationCode}</div>
-                            </div>
                             {model.doctorName ? (
                                 <div>
                                     <div className="bookingConfirmation__detailLabel">Profissional</div>
@@ -105,29 +102,31 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                 </div>
             </div>
 
-            <div className="bookingConfirmation__supportCard">
-                <div>
-                    <div className="bookingConfirmation__sectionTitle">Canais da confirmação</div>
-                    <p className="bookingConfirmation__body">
-                        O site tenta enviar a confirmação automaticamente pelos canais abaixo. Quando algum deles não estiver configurado, a reserva continua válida.
-                    </p>
-                </div>
+            {hasNotificationStatuses ? (
+                <div className="bookingConfirmation__supportCard">
+                    <div>
+                        <div className="bookingConfirmation__sectionTitle">Canais da confirmação</div>
+                        <p className="bookingConfirmation__body">
+                            O site tenta enviar a confirmação automaticamente pelos canais abaixo. Quando algum deles não estiver configurado, a reserva continua válida.
+                        </p>
+                    </div>
 
-                <div className="bookingConfirmation__statusGrid">
-                    <div className="bookingConfirmation__statusItem">
-                        <span className="bookingConfirmation__statusLabel">E-mail</span>
-                        <span className="bookingConfirmation__statusValue" data-tone={notificationTone(props.notifications?.email)}>
-                            {notificationLabel(props.notifications?.email)}
-                        </span>
-                    </div>
-                    <div className="bookingConfirmation__statusItem">
-                        <span className="bookingConfirmation__statusLabel">WhatsApp</span>
-                        <span className="bookingConfirmation__statusValue" data-tone={notificationTone(props.notifications?.whatsapp)}>
-                            {notificationLabel(props.notifications?.whatsapp)}
-                        </span>
+                    <div className="bookingConfirmation__statusGrid">
+                        <div className="bookingConfirmation__statusItem">
+                            <span className="bookingConfirmation__statusLabel">E-mail</span>
+                            <span className="bookingConfirmation__statusValue" data-tone={notificationTone(props.notifications?.email)}>
+                                {notificationLabel(props.notifications?.email)}
+                            </span>
+                        </div>
+                        <div className="bookingConfirmation__statusItem">
+                            <span className="bookingConfirmation__statusLabel">WhatsApp</span>
+                            <span className="bookingConfirmation__statusValue" data-tone={notificationTone(props.notifications?.whatsapp)}>
+                                {notificationLabel(props.notifications?.whatsapp)}
+                            </span>
+                        </div>
                     </div>
                 </div>
-            </div>
+            ) : null}
 
             <div className="bookingConfirmation__supportCard">
                 <div>

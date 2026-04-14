@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getBookingDb, nowMs } from "@/lib/bookingDb";
 import { getServiceById } from "@/data/services";
 import { verifyBookingStatusToken } from "@/lib/bookingSecurity";
+import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 import { readBookingStatusAuth } from "./auth";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,10 @@ type BookingStatusRow = {
     end_at_ms: number;
     status: string;
     confirm_by_ms: number;
+    patient_name: string;
+    whatsapp: string;
+    customer_email: string | null;
+    notes: string | null;
 };
 
 function json(data: unknown, init?: ResponseInit, noStore = false) {
@@ -53,7 +58,7 @@ export async function GET(req: Request) {
     const auth = readBookingStatusAuth(req);
     if (!auth.ok) return json({ ok: false, error: auth.error }, { status: auth.status });
 
-    const secret = (process.env.BOOKING_STATUS_SECRET ?? process.env.BOOKING_DECISION_SECRET ?? "").trim();
+    const secret = (await getRuntimeSecret("BOOKING_STATUS_SECRET")) || (await getRuntimeSecret("BOOKING_DECISION_SECRET"));
     if (!secret) {
         return json({ ok: false, error: "status_unavailable" }, { status: 503 }, true);
     }
@@ -73,14 +78,15 @@ export async function GET(req: Request) {
 
     const row = await db
         .prepare(
-            "SELECT id, unit_slug, doctor_slug, service_id, start_at_ms, end_at_ms, status, confirm_by_ms FROM booking_requests WHERE id = ?",
+            "SELECT id, unit_slug, doctor_slug, service_id, start_at_ms, end_at_ms, status, confirm_by_ms, patient_name, whatsapp, customer_email, notes FROM booking_requests WHERE id = ?",
         )
         .bind(auth.id)
         .first<BookingStatusRow>();
 
     if (!row) return json({ ok: false, error: "not_found" }, { status: 404 }, true);
 
-    const service = getServiceById((row.service_id ?? "").toString());
+    const serviceId = (row.service_id ?? "").toString();
+    const service = getServiceById(serviceId);
     const durationMinutes = Math.max(0, Math.round((Number(row.end_at_ms) - Number(row.start_at_ms)) / 60_000));
 
     return json(
@@ -89,7 +95,7 @@ export async function GET(req: Request) {
             booking: {
                 ...row,
                 durationMinutes,
-                service: service ? { id: service.id, name: service.name } : null,
+                service: service ? { id: service.id, name: service.name } : serviceId === "any" ? { id: "any", name: "Outros" } : null,
             },
         },
         { status: 200 },

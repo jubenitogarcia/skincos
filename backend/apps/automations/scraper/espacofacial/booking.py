@@ -40,6 +40,45 @@ def _strip_non_digits(value: str) -> str:
     return re.sub(r"\D+", "", value or "")
 
 
+def _normalize_tokens(value: str) -> list[str]:
+    return [token for token in re.split(r"[^a-z0-9]+", _normalize_match(value)) if token]
+
+
+def _text_matches_value(current: str, expected: str, *, token_threshold: int = 2) -> bool:
+    current_text = _normalize_match(current)
+    expected_text = _normalize_match(expected)
+    if not current_text or not expected_text:
+        return False
+    if current_text == expected_text or expected_text in current_text or current_text in expected_text:
+        return True
+
+    current_tokens = _normalize_tokens(current)
+    expected_tokens = _normalize_tokens(expected)
+    if not current_tokens or not expected_tokens:
+        return False
+
+    common = set(current_tokens) & set(expected_tokens)
+    if not common:
+        return False
+
+    shorter = min(len(current_tokens), len(expected_tokens))
+    required = min(token_threshold, shorter)
+    return len(common) >= required
+
+
+def _is_generic_service_name(value: str) -> bool:
+    normalized = _normalize_match(value)
+    return normalized in {
+        _normalize_match("Outro"),
+        _normalize_match("Outros"),
+        _normalize_match("Outro procedimento"),
+        _normalize_match("Outros procedimentos"),
+        _normalize_match("Outros procedimentos ou combinação"),
+        _normalize_match("Outros procedimentos ou combinacao"),
+        _normalize_match("Any"),
+    }
+
+
 @dataclass(frozen=True)
 class BookingRequest:
     unit_name: str
@@ -198,6 +237,25 @@ def _coerce_payload(payload: dict) -> dict:
                 if subtitle:
                     flattened["serviceCandidates"] = [part for part in re.split(r"[,\n;|]+", subtitle) if _normalize_spaces(part)]
 
+    selected_services = booking.get("selectedServices")
+    if isinstance(selected_services, (list, tuple)):
+        selected_candidates: list[str] = []
+        for item in selected_services:
+            if isinstance(item, dict):
+                name = _normalize_spaces(str(item.get("name") or ""))
+            else:
+                name = _normalize_spaces(str(item))
+            if name and name not in selected_candidates:
+                selected_candidates.append(name)
+        if selected_candidates:
+            existing_candidates = _first_text_list(flattened, "serviceCandidates", "service_candidates")
+            merged_candidates = [*existing_candidates]
+            for candidate in selected_candidates:
+                if candidate not in merged_candidates:
+                    merged_candidates.append(candidate)
+            if merged_candidates:
+                flattened["serviceCandidates"] = merged_candidates
+
     procedure = booking.get("procedure")
     if isinstance(procedure, dict):
         if "procedureName" not in flattened and procedure.get("name"):
@@ -245,6 +303,7 @@ def _map_unit_slug(value: str) -> str:
         "barrashoppingsul": "BarraShoppingSul",
         "barra shopping sul": "BarraShoppingSul",
         "novohamburgo": "Novo Hamburgo",
+        "novo-hamburgo": "Novo Hamburgo",
         "novo hamburgo": "Novo Hamburgo",
     }
     return aliases.get(normalized, value)
@@ -621,7 +680,7 @@ def _event_element_matches_request(driver: WebDriver, element, request: BookingR
     if appointment_type and appointment_type not in text:
         return False
 
-    if professional and professional not in text:
+    if professional and not _text_matches_value(text_raw, request.professional_name):
         return False
 
     return True
@@ -788,13 +847,24 @@ def _requested_slot_time(request: BookingRequest) -> str:
     return f"{request.start_time}:00"
 
 
+def _requested_slot_click_plan(request: BookingRequest) -> tuple[str, float]:
+    start = datetime.strptime(request.start_time, "%H:%M")
+    base_minute = (start.minute // 30) * 30
+    offset_minutes = start.minute - base_minute
+    base_time = f"{start.hour:02d}:{base_minute:02d}:00"
+    click_fraction = min(max((offset_minutes / 30) + 0.25, 0.2), 0.8)
+    return base_time, click_fraction
+
+
 def _click_calendar_slot(driver: WebDriver, request: BookingRequest) -> bool:
     try:
         _ensure_date_visible(driver, request.appointment_date, timeout=10)
+        base_time, click_fraction = _requested_slot_click_plan(request)
         clicked = driver.execute_script(
             """
             const targetDate = arguments[0];
             const targetTime = arguments[1];
+            const clickFraction = arguments[2];
             const slot = document.querySelector(`td.fc-timegrid-slot-lane[data-time="${targetTime}"]`);
             const col = document.querySelector(`td.fc-timegrid-col[data-date="${targetDate}"]`);
             if (!slot || !col) return false;
@@ -802,8 +872,8 @@ def _click_calendar_slot(driver: WebDriver, request: BookingRequest) -> bool:
             const cr = col.getBoundingClientRect();
             const sr = slot.getBoundingClientRect();
             const x = Math.floor(cr.left + cr.width / 2);
-            const y = Math.floor(sr.top + sr.height / 2);
-            const target = document.elementFromPoint(x, y);
+            const y = Math.floor(sr.top + (sr.height * clickFraction));
+            const target = document.elementsFromPoint(x, y).find((el) => el instanceof HTMLElement) || document.elementFromPoint(x, y);
             if (!target) return false;
             for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
               target.dispatchEvent(new MouseEvent(type, {
@@ -818,7 +888,8 @@ def _click_calendar_slot(driver: WebDriver, request: BookingRequest) -> bool:
             return true;
             """,
             _date_to_iso(request.appointment_date),
-            _requested_slot_time(request),
+            base_time,
+            click_fraction,
         )
         return bool(clicked)
     except Exception:
@@ -1100,7 +1171,7 @@ def _select_option(driver: WebDriver, value: str, *, timeout: int = 15) -> bool:
                 continue
             if not text:
                 continue
-            if any(target in text or text in target for target in targets):
+            if any(target in text or text in target for target in targets) or _text_matches_value(text, value):
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
                 driver.execute_script("arguments[0].click();", el)
                 return True
@@ -1253,10 +1324,32 @@ def _open_multiselect_by_placeholder(driver: WebDriver, scope, placeholders: Seq
         candidate = _find_multiselect_by_placeholder(scope, placeholders, timeout=timeout)
     except Exception:
         return None
+
+    def _is_open() -> bool:
+        try:
+            return bool(
+                driver.execute_script(
+                    """
+                    const root = arguments[0];
+                    const input = root.querySelector('.multiselect-search');
+                    const dropdown = root.querySelector('.multiselect-dropdown');
+                    if (!input || !dropdown) return false;
+                    const expanded = (input.getAttribute('aria-expanded') || '').trim() === 'true';
+                    const style = getComputedStyle(dropdown);
+                    const visible = !dropdown.classList.contains('is-hidden') && style.display !== 'none' && style.visibility !== 'hidden';
+                    return expanded && visible;
+                    """,
+                    candidate,
+                )
+            )
+        except Exception:
+            return False
+
     xpaths = [
         ".//*[@role='combobox']",
         ".//input[contains(@class, 'multiselect-search')]",
         ".//*[contains(@class, 'multiselect-wrapper')]",
+        ".//*[contains(@class, 'multiselect-placeholder-el')]",
     ]
     for xpath in xpaths:
         try:
@@ -1264,26 +1357,47 @@ def _open_multiselect_by_placeholder(driver: WebDriver, scope, placeholders: Seq
                 if not el.is_displayed():
                     continue
                 if _real_click(driver, el):
-                    time.sleep(0.3)
-                    return candidate
+                    time.sleep(0.2)
+                    if _is_open():
+                        return candidate
         except Exception:
             continue
+
     if _real_click(driver, candidate):
-        time.sleep(0.3)
-        return candidate
+        time.sleep(0.2)
+        if _is_open():
+            return candidate
+
+    try:
+        input_el = candidate.find_element(By.XPATH, ".//input[contains(@class, 'multiselect-search')]")
+        driver.execute_script(
+            """
+            const el = arguments[0];
+            el.focus();
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            """,
+            input_el,
+        )
+        time.sleep(0.2)
+        if _is_open():
+            return candidate
+    except Exception:
+        pass
     return None
 
 
 def _multiselect_has_selected_label(scope, value: str) -> bool:
-    target = _normalize_match(value)
     for el in scope.find_elements(By.XPATH, ".//*[contains(@class, 'multiselect-single-label')]"):
         try:
             if not el.is_displayed():
                 continue
-            text = _normalize_match(el.text)
+            text = el.text
         except Exception:
             continue
-        if text and (target == text or target in text or text in target):
+        if _text_matches_value(text, value):
             return True
     return False
 
@@ -1303,7 +1417,7 @@ def _select_multiselect_option(driver: WebDriver, container, value: str, *, time
                 continue
             if not text:
                 continue
-            if target in text or text in target or (digits and digits in _strip_non_digits(text)):
+            if target in text or text in target or _text_matches_value(text, value) or (digits and digits in _strip_non_digits(text)):
                 return _real_click(driver, el)
         time.sleep(0.25)
     return False
@@ -1407,6 +1521,34 @@ def _resolve_booking_type(request: BookingRequest) -> str:
     return ""
 
 
+def _should_fill_service(request: BookingRequest) -> bool:
+    service_name = _normalize_spaces(request.service_name)
+    if not service_name:
+        return False
+    booking_type = _normalize_match(_resolve_booking_type(request))
+    if booking_type in {
+        _normalize_match("Avaliação"),
+        _normalize_match("Revisão"),
+        _normalize_match("Gift Card"),
+        _normalize_match("Compra Antecipada"),
+    }:
+        return False
+    if _is_generic_service_name(service_name):
+        meaningful_candidates = [value for value in request.service_candidates if not _is_generic_service_name(value)]
+        if booking_type in {
+            _normalize_match("Avaliação"),
+            _normalize_match("Revisão"),
+            _normalize_match("Gift Card"),
+            _normalize_match("Compra Antecipada"),
+        } and not meaningful_candidates:
+            return False
+    if request.service_candidates:
+        return True
+    if booking_type and _normalize_match(service_name) == booking_type:
+        return False
+    return True
+
+
 def _parse_sheet_datetime(text: str) -> datetime | None:
     match = re.search(r"(\d{2}/\d{2}/\d{2,4})\s+(\d{2}:\d{2})", _normalize_spaces(text))
     if not match:
@@ -1419,6 +1561,53 @@ def _parse_sheet_datetime(text: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _expected_sheet_datetimes(request: BookingRequest) -> tuple[datetime, datetime]:
+    return (
+        datetime.strptime(f"{request.appointment_date} {request.start_time}", "%d/%m/%Y %H:%M"),
+        datetime.strptime(f"{request.appointment_date} {request.end_time}", "%d/%m/%Y %H:%M"),
+    )
+
+
+_MONTH_TEXT_TO_NUMBER = {
+    "jan": 1,
+    "jan.": 1,
+    "fev": 2,
+    "fev.": 2,
+    "feb": 2,
+    "mar": 3,
+    "mar.": 3,
+    "abr": 4,
+    "abr.": 4,
+    "apr": 4,
+    "apr.": 4,
+    "mai": 5,
+    "mai.": 5,
+    "may": 5,
+    "jun": 6,
+    "jun.": 6,
+    "jul": 7,
+    "jul.": 7,
+    "ago": 8,
+    "ago.": 8,
+    "aug": 8,
+    "aug.": 8,
+    "set": 9,
+    "set.": 9,
+    "sep": 9,
+    "sep.": 9,
+    "out": 10,
+    "out.": 10,
+    "oct": 10,
+    "oct.": 10,
+    "nov": 11,
+    "nov.": 11,
+    "dez": 12,
+    "dez.": 12,
+    "dec": 12,
+    "dec.": 12,
+}
 
 
 def _read_sheet_datetimes(driver: WebDriver, scope) -> tuple[datetime | None, datetime | None]:
@@ -1439,13 +1628,245 @@ def _read_sheet_datetimes(driver: WebDriver, scope) -> tuple[datetime | None, da
     return parsed[0], parsed[1]
 
 
+def _request_datetime_ms(request: BookingRequest) -> tuple[int, int]:
+    raw_payload = request.raw_payload or {}
+    booking = raw_payload.get("booking") if isinstance(raw_payload.get("booking"), dict) else {}
+    start_at_ms = booking.get("startAtMs") if isinstance(booking, dict) else None
+    end_at_ms = booking.get("endAtMs") if isinstance(booking, dict) else None
+
+    def _coerce_ms(value: object) -> int | None:
+        try:
+            return int(str(value).strip())
+        except Exception:
+            return None
+
+    start_ms = _coerce_ms(start_at_ms)
+    end_ms = _coerce_ms(end_at_ms)
+    if start_ms is not None and end_ms is not None:
+        return start_ms, end_ms
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    expected_start, expected_end = _expected_sheet_datetimes(request)
+    return int(expected_start.replace(tzinfo=tz).timestamp() * 1000), int(expected_end.replace(tzinfo=tz).timestamp() * 1000)
+
+
+def _format_sheet_datetime(value: datetime) -> str:
+    return value.strftime("%d/%m/%y %H:%M")
+
+
+def _find_visible_datepicker_menu(driver: WebDriver, *, timeout: int = 6):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for menu in driver.find_elements(By.CSS_SELECTOR, '.dp__menu[role="dialog"]'):
+            try:
+                if menu.is_displayed():
+                    return menu
+            except Exception:
+                continue
+        time.sleep(0.1)
+    raise TimeoutException("datepicker menu not found")
+
+
+def _scope_datepicker_displays(scope) -> list:
+    try:
+        return [
+            el
+            for el in scope.find_elements(By.XPATH, './/*[@aria-label="Datepicker input" and @role="textbox"]')
+            if el.is_displayed()
+        ]
+    except Exception:
+        return []
+
+
+def _datepicker_click_aria(driver: WebDriver, aria_label: str, *, timeout: int = 6) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            menu = _find_visible_datepicker_menu(driver, timeout=1)
+            button = menu.find_element(By.XPATH, f'.//*[@aria-label="{aria_label}"]')
+            if _real_click(driver, button):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+def _datepicker_select_overlay_value(driver: WebDriver, value: str, *, timeout: int = 6) -> bool:
+    target_value = _normalize_spaces(value)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            menu = _find_visible_datepicker_menu(driver, timeout=1)
+            clicked = driver.execute_script(
+                """
+                const menu = arguments[0];
+                const targetValue = arguments[1];
+                const candidates = Array.from(menu.querySelectorAll('.dp__overlay_cell, .dp__overlay_col, [role="option"]'));
+                const target = candidates.find((el) => ((el.innerText || el.textContent || '').trim() === targetValue));
+                if (!target) return false;
+                target.click();
+                return true;
+                """,
+                menu,
+                target_value,
+            )
+            if clicked:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+def _datepicker_current_month_year(driver: WebDriver) -> tuple[int | None, int | None]:
+    try:
+        menu = _find_visible_datepicker_menu(driver, timeout=1)
+        values = driver.execute_script(
+            """
+            const menu = arguments[0];
+            return Array.from(menu.querySelectorAll('.dp__month_year_select'))
+              .map((el) => (el.innerText || el.textContent || '').trim());
+            """,
+            menu,
+        ) or []
+    except Exception:
+        return None, None
+
+    month_text = _normalize_match(str(values[0] or "")) if values else ""
+    year_text = _normalize_spaces(str(values[1] or "")) if len(values) > 1 else ""
+    month = _MONTH_TEXT_TO_NUMBER.get(month_text)
+    try:
+        year = int(year_text)
+    except Exception:
+        year = None
+    return month, year
+
+
+def _datepicker_select_date(driver: WebDriver, target: datetime, *, timeout: int = 8) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            menu = _find_visible_datepicker_menu(driver, timeout=1)
+            clicked = driver.execute_script(
+                """
+                const menu = arguments[0];
+                const targetYear = arguments[1];
+                const targetMonth = arguments[2];
+                const targetDay = arguments[3];
+                const cells = Array.from(menu.querySelectorAll('[role="gridcell"][data-test]'));
+                const target = cells.find((cell) => {
+                  const raw = (cell.getAttribute('data-test') || '').trim();
+                  const dt = new Date(raw);
+                  if (Number.isNaN(dt.getTime())) return false;
+                  return (
+                    dt.getFullYear() === targetYear &&
+                    dt.getMonth() === targetMonth &&
+                    dt.getDate() === targetDay
+                  );
+                });
+                if (!target) return false;
+                const clickable = target.querySelector('.dp__cell_inner') || target;
+                clickable.click();
+                return true;
+                """,
+                menu,
+                target.year,
+                target.month - 1,
+                target.day,
+            )
+            if clicked:
+                return True
+        except Exception:
+            pass
+
+        current_month, current_year = _datepicker_current_month_year(driver)
+        if current_month is None or current_year is None:
+            return False
+        if (current_year, current_month) == (target.year, target.month):
+            return False
+        direction = "Next month" if (current_year, current_month) < (target.year, target.month) else "Previous month"
+        if not _datepicker_click_aria(driver, direction, timeout=1):
+            return False
+        time.sleep(0.2)
+    return False
+
+
+def _set_single_datepicker_datetime(driver: WebDriver, scope, index: int, target: datetime) -> bool:
+    displays = _scope_datepicker_displays(scope)
+    if len(displays) <= index:
+        return False
+
+    if not _real_click(driver, displays[index]):
+        return False
+    time.sleep(0.2)
+    _find_visible_datepicker_menu(driver, timeout=4)
+
+    if not _datepicker_select_date(driver, target, timeout=6):
+        return False
+
+    if not _datepicker_click_aria(driver, "Open time picker", timeout=4):
+        return False
+    time.sleep(0.15)
+
+    hour_text = f"{target.hour:02d}"
+    minute_text = f"{target.minute:02d}"
+
+    try:
+        current_hour = _find_visible_datepicker_menu(driver, timeout=1).find_element(By.XPATH, './/*[@aria-label="Open hours overlay"]').text
+    except Exception:
+        current_hour = ""
+    if _normalize_spaces(current_hour) != hour_text:
+        if not _datepicker_click_aria(driver, "Open hours overlay", timeout=2):
+            return False
+        time.sleep(0.1)
+        if not _datepicker_select_overlay_value(driver, hour_text, timeout=2):
+            return False
+        time.sleep(0.15)
+
+    try:
+        current_minute = _find_visible_datepicker_menu(driver, timeout=1).find_element(By.XPATH, './/*[@aria-label="Open minutes overlay"]').text
+    except Exception:
+        current_minute = ""
+    if _normalize_spaces(current_minute) != minute_text:
+        if not _datepicker_click_aria(driver, "Open minutes overlay", timeout=2):
+            return False
+        time.sleep(0.1)
+        if not _datepicker_select_overlay_value(driver, minute_text, timeout=2):
+            return False
+        time.sleep(0.15)
+
+    _datepicker_click_aria(driver, "Close time Picker", timeout=2)
+    time.sleep(0.2)
+    try:
+        driver.execute_script("document.body.click();")
+    except Exception:
+        pass
+    time.sleep(0.2)
+    return True
+
+
+def _set_sheet_datetimes(driver: WebDriver, scope, request: BookingRequest) -> bool:
+    expected_start, expected_end = _expected_sheet_datetimes(request)
+    current_start, current_end = _read_sheet_datetimes(driver, scope)
+    if current_start != expected_start:
+        if not _set_single_datepicker_datetime(driver, scope, 0, expected_start):
+            return False
+    current_start, current_end = _read_sheet_datetimes(driver, scope)
+    if current_end != expected_end:
+        if not _set_single_datepicker_datetime(driver, scope, 1, expected_end):
+            return False
+    time.sleep(0.2)
+    current_start, current_end = _read_sheet_datetimes(driver, scope)
+    return current_start == expected_start and current_end == expected_end
+
+
 def _adjust_duration_buttons(driver: WebDriver, scope, request: BookingRequest) -> None:
     current_start, current_end = _read_sheet_datetimes(driver, scope)
     if current_start is None or current_end is None:
         return
 
-    expected_start = datetime.strptime(f"{request.appointment_date} {request.start_time}", "%d/%m/%Y %H:%M")
-    expected_end = datetime.strptime(f"{request.appointment_date} {request.end_time}", "%d/%m/%Y %H:%M")
+    expected_start, expected_end = _expected_sheet_datetimes(request)
     if current_start != expected_start:
         return
 
@@ -1468,7 +1889,14 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
         _click_text_in_scope(dialog, [booking_type])
         time.sleep(0.3)
 
+    sheet_datetimes_ok = _set_sheet_datetimes(driver, dialog, request)
     _adjust_duration_buttons(driver, dialog, request)
+    if not sheet_datetimes_ok:
+        current_start, current_end = _read_sheet_datetimes(driver, dialog)
+        log(f"Booking fill: datetime not-set ({current_start} -> {current_end})")
+        raise BookingError(
+            f"booking datetime not set to requested slot: expected {request.appointment_date} {request.start_time}-{request.end_time}"
+        )
 
     if request.professional_name:
         selected_prof = _multiselect_has_selected_label(dialog, request.professional_name)
@@ -1481,13 +1909,15 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
                 selected_prof = _select_or_fill(driver, dialog, ["Profissional", "Injetor"], request.professional_name, timeout=8)
             selected_prof = selected_prof and _multiselect_has_selected_label(professional_multiselect or dialog, request.professional_name)
         log(f"Booking fill: professional {'ok' if selected_prof else 'not-found'} ({request.professional_name})")
+        if not selected_prof:
+            raise BookingError(f"professional not selected: {request.professional_name}")
 
-    if request.service_name:
+    if _should_fill_service(request):
         selected_service_value = ""
         service_values: list[str] = []
         for value in [*request.service_candidates, request.service_name]:
             normalized = _normalize_spaces(value)
-            if normalized and normalized not in service_values:
+            if normalized and normalized not in service_values and not _is_generic_service_name(normalized):
                 service_values.append(normalized)
         selected_service = _service_summary_contains_any(dialog, service_values)
         if selected_service:
@@ -1510,6 +1940,8 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
                     break
             selected_service = selected_service and _service_summary_contains_any(dialog, [selected_service_value, *service_values])
         log(f"Booking fill: service {'ok' if selected_service else 'not-found'} ({selected_service_value or request.service_name})")
+        if service_values and not selected_service:
+            raise BookingError(f"service not selected: {selected_service_value or request.service_name}")
 
     name_ok = _fill_input_by_placeholder(driver, dialog, ["Digite o nome"], request.client_name, timeout=8)
     if name_ok:
