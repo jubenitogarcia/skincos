@@ -1849,6 +1849,10 @@ button:focus-visible {
   margin-top: 16px;
 }
 
+.bookingConfirmation__detailSupplement {
+  margin-top: 18px;
+}
+
 .bookingConfirmation__detailLabel {
   font-size: 11px;
   line-height: 1.2;
@@ -1936,6 +1940,10 @@ button:focus-visible {
   display: grid;
   gap: 10px;
   margin-top: 16px;
+}
+
+.bookingConfirmation__nextSteps--embedded {
+  margin-top: 12px;
 }
 
 .bookingConfirmation__nextStep {

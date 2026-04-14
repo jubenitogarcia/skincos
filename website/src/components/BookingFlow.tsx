@@ -399,6 +399,7 @@ export default function BookingFlow() {
     }, [searchParams]);
     const bookingIdQuery = useMemo(() => (searchParams?.get("booking") ?? "").trim(), [searchParams]);
     const bookingTokenQuery = useMemo(() => (searchParams?.get("statusToken") ?? "").trim(), [searchParams]);
+    const isReservationDetailsView = step === "submitted" && !!submitted && bookingIdQuery.length > 0;
 
     const allowedUnitSlugs = useMemo(() => new Set(getDigitalJourneyUnits().map((unit) => unit.slug)), []);
 
@@ -1581,69 +1582,75 @@ export default function BookingFlow() {
                 <div className="bookingFlow__grid">
                     <div className="bookingFlow__cardFull">
                         {submitted ? (
-                            <BookingConfirmationCard reservation={submitted.reservation} notifications={submitted.notifications} />
+                            <BookingConfirmationCard
+                                reservation={submitted.reservation}
+                                notifications={submitted.notifications}
+                                variant={isReservationDetailsView ? "details_link" : "default"}
+                            />
                         ) : null}
                     </div>
 
-                    <div className="card bookingFlow__cardFull bookingFlow__submittedStatusCard" style={{ padding: 18 }}>
-                        <div style={{ fontWeight: 900, fontSize: 18 }}>
-                            {submitted?.status === "confirmed" ? "Status do agendamento" : "Status do pedido"}
-                        </div>
-
-                        {status ? (
-                            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
-                                <div style={{ fontWeight: 900 }}>Status</div>
-                                <div style={{ marginTop: 6 }}>
-                                    {status.status === "confirmed" ? (
-                                        <span style={{ fontWeight: 900, color: "#16a34a" }}>Confirmado</span>
-                                    ) : status.status === "declined" ? (
-                                        <span style={{ fontWeight: 900, color: "#b91c1c" }}>Não confirmado</span>
-                                    ) : status.status === "expired" ? (
-                                        <span style={{ fontWeight: 900, color: "#b45309" }}>Expirado</span>
-                                    ) : status.status === "needs_approval" ? (
-                                        <span style={{ fontWeight: 900, color: "#b45309" }}>Em análise</span>
-                                    ) : (
-                                        <span style={{ fontWeight: 900 }}>Pendente</span>
-                                    )}
-                                </div>
-                                <div className="small" style={{ marginTop: 6 }}>
-                                    Atualiza automaticamente.
-                                </div>
+                    {!isReservationDetailsView ? (
+                        <div className="card bookingFlow__cardFull bookingFlow__submittedStatusCard" style={{ padding: 18 }}>
+                            <div style={{ fontWeight: 900, fontSize: 18 }}>
+                                {submitted?.status === "confirmed" ? "Status do agendamento" : "Status do pedido"}
                             </div>
-                        ) : null}
 
-                        <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                            <button
-                                type="button"
-                                className="pill"
-                                onClick={() => {
-                                    // restart
-                                    setStep("pick");
-                                    setDoctor(null);
-                                    setSelectedServices([]);
-                                    setDateKey(null);
-                                    setDateTouched(false);
-                                    setTimeKey(null);
-                                    setPatientName("");
-                                    setPatientGender("");
-                                    setEmail("");
-                                    setWhatsapp("");
-                                    setNotes("");
-                                    setSlots(null);
-                                    setSubmitted(null);
-                                    setStatus(null);
-                                    setSubmitError(null);
-                                    setDetailsStartedAtMs(null);
-                                    setTurnstileToken(null);
-                                    setTurnstileHadError(false);
-                                    clearBookingDraft();
-                                }}
-                                style={{ cursor: "pointer" }}
-                            >
-                                Fazer outro pedido
-                            </button>
+                            {status ? (
+                                <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+                                    <div style={{ fontWeight: 900 }}>Status</div>
+                                    <div style={{ marginTop: 6 }}>
+                                        {status.status === "confirmed" ? (
+                                            <span style={{ fontWeight: 900, color: "#16a34a" }}>Confirmado</span>
+                                        ) : status.status === "declined" ? (
+                                            <span style={{ fontWeight: 900, color: "#b91c1c" }}>Não confirmado</span>
+                                        ) : status.status === "expired" ? (
+                                            <span style={{ fontWeight: 900, color: "#b45309" }}>Expirado</span>
+                                        ) : status.status === "needs_approval" ? (
+                                            <span style={{ fontWeight: 900, color: "#b45309" }}>Em análise</span>
+                                        ) : (
+                                            <span style={{ fontWeight: 900 }}>Pendente</span>
+                                        )}
+                                    </div>
+                                    <div className="small" style={{ marginTop: 6 }}>
+                                        Atualiza automaticamente.
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                <button
+                                    type="button"
+                                    className="pill"
+                                    onClick={() => {
+                                        // restart
+                                        setStep("pick");
+                                        setDoctor(null);
+                                        setSelectedServices([]);
+                                        setDateKey(null);
+                                        setDateTouched(false);
+                                        setTimeKey(null);
+                                        setPatientName("");
+                                        setPatientGender("");
+                                        setEmail("");
+                                        setWhatsapp("");
+                                        setNotes("");
+                                        setSlots(null);
+                                        setSubmitted(null);
+                                        setStatus(null);
+                                        setSubmitError(null);
+                                        setDetailsStartedAtMs(null);
+                                        setTurnstileToken(null);
+                                        setTurnstileHadError(false);
+                                        clearBookingDraft();
+                                    }}
+                                    style={{ cursor: "pointer" }}
+                                >
+                                    Fazer outro pedido
+                                </button>
+                            </div>
                         </div>
-                    </div>
+                    ) : null}
                 </div>
             )}
             {showDetailsModal && unitSlug && primaryService && dateKey && timeKey ? (
