@@ -1500,6 +1500,7 @@ export default function BookingFlow() {
                                                     const active = timeKey === s.time;
                                                     const isPast = s.reason === "past";
                                                     const isOccupied = s.reason === "agenda" || s.reason === "booked";
+                                                    const isLocked = isPast || isOccupied;
                                                     const hasTooltip = isPast || isOccupied || s.available;
                                                     const tooltip = isPast ? "passou" : isOccupied ? "ocupado" : s.available ? "disponível" : "";
                                                     const tooltipTone = isPast ? "neutral" : isOccupied ? "occupied" : s.available ? "available" : "neutral";
@@ -1519,7 +1520,7 @@ export default function BookingFlow() {
                                                             disabled={nativeDisabled}
                                                             aria-disabled={ariaDisabled}
                                                             data-reason={s.reason ?? ""}
-                                                            data-locked={hasTooltip ? "true" : "false"}
+                                                            data-locked={isLocked ? "true" : "false"}
                                                             data-tooltip={hasTooltip ? tooltip : undefined}
                                                             data-tooltip-tone={hasTooltip ? tooltipTone : undefined}
                                                             className="bookingFlow__selectItem bookingFlow__timeBtn"
