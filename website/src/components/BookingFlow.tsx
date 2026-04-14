@@ -610,7 +610,7 @@ export default function BookingFlow() {
     const doctorQuery = useMemo(() => normalizeDoctorSlug(searchParams?.get("doctor") ?? ""), [searchParams]);
     const serviceQuery = useMemo(() => normalizeDoctorSlug(searchParams?.get("service") ?? ""), [searchParams]);
     const autoPickQuery = useMemo(() => normalizeDoctorSlug(searchParams?.get("autopick") ?? ""), [searchParams]);
-    const autoPickConsumedRef = useRef(false);
+    const autoPickNonceQuery = useMemo(() => (searchParams?.get("autopick_nonce") ?? "").trim(), [searchParams]);
 
     useEffect(() => {
         if (!unitSlug || !doctorsForUnit || doctorsForUnit.length === 0) return;
@@ -639,7 +639,7 @@ export default function BookingFlow() {
         if (!match) return;
         setDoctor({ slug: match.slug, name: match.name, handle: match.handle });
         appliedDoctorQueryRef.current = doctorQuery;
-    }, [doctorQuery, doctorsForUnit, unitSlug]);
+    }, [autoPickNonceQuery, doctorQuery, doctorsForUnit, unitSlug]);
 
     useEffect(() => {
         if (!unitSlug || !serviceQuery) return;
@@ -658,12 +658,25 @@ export default function BookingFlow() {
         if (!match) return;
         setSelectedServices([match]);
         appliedServiceQueryRef.current = serviceQuery;
-    }, [serviceQuery, unitSlug]);
+    }, [autoPickNonceQuery, serviceQuery, unitSlug]);
 
     useEffect(() => {
-        autoPickConsumedRef.current = false;
         autoPickMotionDoneRef.current = false;
-    }, [autoPickQuery, unitSlug]);
+        if (autoPickQuery !== "first" || !unitSlug) return;
+
+        appliedDoctorQueryRef.current = null;
+        appliedServiceQueryRef.current = null;
+        setDoctor(ANY_DOCTOR);
+        setSelectedServices([OTHER_SERVICE]);
+        setDateKey(null);
+        setDateTouched(false);
+        setTimeKey(null);
+        setStep("pick");
+        setDetailsStartedAtMs(null);
+        setTurnstileToken(null);
+        setTurnstileHadError(false);
+        setSubmitError(null);
+    }, [autoPickNonceQuery, autoPickQuery, unitSlug]);
 
     useEffect(() => {
         if (autoPickQuery !== "first") return;
@@ -693,7 +706,7 @@ export default function BookingFlow() {
             block: "nearest",
             inline: "center",
         });
-    }, [autoPickQuery, selectedServiceIds, unitSlug]);
+    }, [autoPickNonceQuery, autoPickQuery, selectedServiceIds, unitSlug]);
 
     const upcomingWeeks = useMemo(() => {
         const out: string[][] = [];
@@ -1071,19 +1084,6 @@ export default function BookingFlow() {
         });
     }, [dateKey, effectiveDoctorSlug, effectiveServiceId, ensureDefaultSelections, unitSlug]);
 
-    useEffect(() => {
-        if (autoPickQuery !== "first") return;
-        if (autoPickConsumedRef.current) return;
-        if (!unitSlug || !dateKey || step !== "pick" || slotsLoading) return;
-        if (!slots?.slots?.length) return;
-
-        const firstAvailableSlot = slots.slots.find((slot) => slot.available);
-        if (!firstAvailableSlot) return;
-
-        autoPickConsumedRef.current = true;
-        openDetailsModal(firstAvailableSlot.time);
-    }, [autoPickQuery, dateKey, openDetailsModal, slots?.slots, slotsLoading, step, unitSlug]);
-
     const emailValue = email.trim().toLowerCase();
     const emailSeemsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
     const whatsappDigits = whatsapp.replace(/\D/g, "");
@@ -1422,6 +1422,7 @@ export default function BookingFlow() {
                                                     const isOccupiedDate = canPick && hasResolvedDateAvailability && !isPastDate && dateAvailability[d] === false;
                                                     const isLockedDate = isPastDate || isOccupiedDate;
                                                     const dateTooltip = isPastDate ? "passou" : isOccupiedDate ? "ocupado" : "disponível";
+                                                    const dateTooltipTone = isPastDate ? "neutral" : isOccupiedDate ? "occupied" : "available";
                                                     const dateReason = isPastDate ? "past" : isOccupiedDate ? "agenda" : "available";
                                                     const ariaDisabled = !canPick || isLockedDate;
                                                     return (
@@ -1435,6 +1436,7 @@ export default function BookingFlow() {
                                                             data-locked={isLockedDate ? "true" : "false"}
                                                             data-reason={dateReason}
                                                             data-tooltip={dateTooltip}
+                                                            data-tooltip-tone={dateTooltipTone}
                                                             onClick={() => {
                                                                 if (ariaDisabled) return;
                                                                 ensureDefaultSelections();
@@ -1498,8 +1500,9 @@ export default function BookingFlow() {
                                                     const active = timeKey === s.time;
                                                     const isPast = s.reason === "past";
                                                     const isOccupied = s.reason === "agenda" || s.reason === "booked";
-                                                    const hasTooltip = isPast || isOccupied;
-                                                    const tooltip = isPast ? "horário já passou" : isOccupied ? "horário ocupado" : "";
+                                                    const hasTooltip = isPast || isOccupied || s.available;
+                                                    const tooltip = isPast ? "passou" : isOccupied ? "ocupado" : s.available ? "disponível" : "";
+                                                    const tooltipTone = isPast ? "neutral" : isOccupied ? "occupied" : s.available ? "available" : "neutral";
                                                     const ariaDisabled = !s.available;
                                                     const nativeDisabled = !s.available && !hasTooltip;
                                                     const label =
@@ -1518,6 +1521,7 @@ export default function BookingFlow() {
                                                             data-reason={s.reason ?? ""}
                                                             data-locked={hasTooltip ? "true" : "false"}
                                                             data-tooltip={hasTooltip ? tooltip : undefined}
+                                                            data-tooltip-tone={hasTooltip ? tooltipTone : undefined}
                                                             className="bookingFlow__selectItem bookingFlow__timeBtn"
                                                             data-active={active ? "true" : "false"}
                                                             onClick={() => {
