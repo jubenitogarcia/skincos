@@ -16,6 +16,7 @@ type BookingConfirmationCardProps = {
         email?: NotificationResult;
         whatsapp?: NotificationResult;
     };
+    variant?: "default" | "details_link";
 };
 
 function notificationLabel(result?: NotificationResult): string {
@@ -39,6 +40,7 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
         siteUrl: resolveBookingSiteUrl(),
     });
     const hasNotificationStatuses = !!props.notifications?.email || !!props.notifications?.whatsapp;
+    const isDetailsLinkVariant = props.variant === "details_link";
 
     return (
         <section className="bookingConfirmation" aria-label="Resumo da reserva confirmada">
@@ -94,6 +96,19 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                                 <div className="bookingConfirmation__detailValue">{model.customerEmail}</div>
                             </div>
                         </div>
+
+                        {isDetailsLinkVariant ? (
+                            <div className="bookingConfirmation__detailSupplement">
+                                <div className="bookingConfirmation__detailLabel">Próximos passos</div>
+                                <div className="bookingConfirmation__nextSteps bookingConfirmation__nextSteps--embedded">
+                                    {model.nextSteps.map((step) => (
+                                        <div key={step} className="bookingConfirmation__nextStep">
+                                            {step}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
                     </div>
 
                     <div className="bookingConfirmation__ambassadorWrap">
@@ -128,52 +143,56 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                 </div>
             ) : null}
 
-            <div className="bookingConfirmation__supportCard">
-                <div>
-                    <div className="bookingConfirmation__sectionTitle">Próximos passos</div>
-                    <div className="bookingConfirmation__nextSteps">
-                        {model.nextSteps.map((step) => (
-                            <div key={step} className="bookingConfirmation__nextStep">
-                                {step}
+            {!isDetailsLinkVariant ? (
+                <>
+                    <div className="bookingConfirmation__supportCard">
+                        <div>
+                            <div className="bookingConfirmation__sectionTitle">Próximos passos</div>
+                            <div className="bookingConfirmation__nextSteps">
+                                {model.nextSteps.map((step) => (
+                                    <div key={step} className="bookingConfirmation__nextStep">
+                                        {step}
+                                    </div>
+                                ))}
                             </div>
-                        ))}
+                        </div>
+
+                        <div className="bookingConfirmation__actions">
+                            <a href={model.teamContactUrl} className="bookingConfirmation__cta bookingConfirmation__cta--secondary">
+                                Falar com a equipe
+                            </a>
+                            <a href={model.unitWhatsappUrl} className="bookingConfirmation__cta">
+                                Abrir WhatsApp da unidade
+                            </a>
+                        </div>
                     </div>
-                </div>
 
-                <div className="bookingConfirmation__actions">
-                    <a href={model.teamContactUrl} className="bookingConfirmation__cta bookingConfirmation__cta--secondary">
-                        Falar com a equipe
-                    </a>
-                    <a href={model.unitWhatsappUrl} className="bookingConfirmation__cta">
-                        Abrir WhatsApp da unidade
-                    </a>
-                </div>
-            </div>
-
-            <div className="bookingConfirmation__footer">
-                <div className="bookingConfirmation__footerCol">
-                    <div className="bookingConfirmation__detailLabel">Instagram</div>
-                    <a href={model.unitInstagramUrl} className="bookingConfirmation__footerLink">
-                        {model.unitInstagramLabel}
-                    </a>
-                </div>
-                <div className="bookingConfirmation__footerCol">
-                    <div className="bookingConfirmation__detailLabel">Facebook</div>
-                    <a href={model.unitFacebookUrl} className="bookingConfirmation__footerLink">
-                        {model.unitFacebookLabel}
-                    </a>
-                </div>
-                <div className="bookingConfirmation__footerCol">
-                    <div className="bookingConfirmation__detailLabel">WhatsApp</div>
-                    <a href={model.unitWhatsappUrl} className="bookingConfirmation__footerLink">
-                        {model.unitWhatsappLabel}
-                    </a>
-                </div>
-                <div className="bookingConfirmation__footerAddress">
-                    <div className="bookingConfirmation__detailLabel">Endereço da unidade</div>
-                    <div className="bookingConfirmation__footerText">{model.unitAddress}</div>
-                </div>
-            </div>
+                    <div className="bookingConfirmation__footer">
+                        <div className="bookingConfirmation__footerCol">
+                            <div className="bookingConfirmation__detailLabel">Instagram</div>
+                            <a href={model.unitInstagramUrl} className="bookingConfirmation__footerLink">
+                                {model.unitInstagramLabel}
+                            </a>
+                        </div>
+                        <div className="bookingConfirmation__footerCol">
+                            <div className="bookingConfirmation__detailLabel">Facebook</div>
+                            <a href={model.unitFacebookUrl} className="bookingConfirmation__footerLink">
+                                {model.unitFacebookLabel}
+                            </a>
+                        </div>
+                        <div className="bookingConfirmation__footerCol">
+                            <div className="bookingConfirmation__detailLabel">WhatsApp</div>
+                            <a href={model.unitWhatsappUrl} className="bookingConfirmation__footerLink">
+                                {model.unitWhatsappLabel}
+                            </a>
+                        </div>
+                        <div className="bookingConfirmation__footerAddress">
+                            <div className="bookingConfirmation__detailLabel">Endereço da unidade</div>
+                            <div className="bookingConfirmation__footerText">{model.unitAddress}</div>
+                        </div>
+                    </div>
+                </>
+            ) : null}
         </section>
     );
 }

@@ -83,9 +83,12 @@ function resolveSiteUrl(): string {
     return raw.replace(/\/$/, "");
 }
 
-function buildReservationDetailsUrl(siteUrl: string, payload: Pick<BookingNotificationPayload, "id" | "statusToken">): string {
+function buildReservationDetailsUrl(siteUrl: string, payload: Pick<BookingNotificationPayload, "id" | "statusToken" | "unitSlug">): string {
     const url = new URL("/agendamento", siteUrl);
     url.searchParams.set("booking", payload.id);
+    if (payload.unitSlug) {
+        url.searchParams.set("unit", payload.unitSlug);
+    }
     if (payload.statusToken) {
         url.searchParams.set("statusToken", payload.statusToken);
     }
