@@ -2282,8 +2282,7 @@ button:focus-visible {
 }
 
 .bookingFlow__doctorBadge:hover .bookingFlow__doctorBadgeAvatar,
-.bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar,
-.bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadgeAvatar {
+.bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar {
   transform: translateY(-2px);
   border-color: rgba(17, 17, 17, 0.88);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
@@ -2335,10 +2334,20 @@ button:focus-visible {
 .bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadgeAvatar--all {
   background: #111;
   border-color: rgba(17, 17, 17, 0.88);
+  box-shadow: none;
+  transform: none;
 }
 
 .bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
   color: #fff;
+}
+
+.bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadge:hover .bookingFlow__doctorBadgeAvatar--all,
+.bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar--all {
+  background: #111;
+  border-color: rgba(17, 17, 17, 0.88);
+  box-shadow: none;
+  transform: none;
 }
 
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap {
@@ -2532,17 +2541,14 @@ button:focus-visible {
 }
 
 .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar,
-.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar,
-.bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar,
-.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar {
+.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar {
   transform: translateY(-2px);
   border-color: rgba(17, 17, 17, 0.88);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
 }
 
 .bookingFlow__procedureBadge:hover:not(:disabled),
-.bookingFlow__procedureBadge:focus-visible,
-.bookingFlow__procedureBadge[data-active="true"] {
+.bookingFlow__procedureBadge:focus-visible {
   transform: translateY(-1px);
 }
 
@@ -2555,9 +2561,7 @@ button:focus-visible {
 }
 
 .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar img,
-.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar img,
-.bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar img,
-.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar img {
+.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar img {
   filter: saturate(1) grayscale(0);
   transform: scale(1.03);
 }
@@ -2595,11 +2599,28 @@ button:focus-visible {
 .bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar--all {
   background: #111;
   border-color: rgba(17, 17, 17, .84);
+  box-shadow: none;
+  transform: none;
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeFallback--all,
 .bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeFallback--all {
   color: #fff;
+}
+
+.bookingFlow__procedureBadge[data-active="true"]:hover:not(:disabled),
+.bookingFlow__procedureBadge[data-active="true"]:focus-visible {
+  transform: none;
+}
+
+.bookingFlow__procedureBadge[data-active="true"]:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
+.bookingFlow__procedureBadge[data-active="true"]:focus-visible .bookingFlow__procedureBadgeAvatar--all,
+.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
+.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar--all {
+  background: #111;
+  border-color: rgba(17, 17, 17, .84);
+  box-shadow: none;
+  transform: none;
 }
 
 .bookingFlow__procedureBadgeLabel {
@@ -6899,13 +6920,25 @@ video.heroMediaEl {
 
 .unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeAvatar--all,
 .unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeAvatar--all {
-  background: #fff;
-  border-color: rgba(17, 17, 17, .84);
+  background: #111;
+  border-color: rgba(17, 17, 17, .88);
+  box-shadow: none;
+  transform: none;
 }
 
 .unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeFallback--all,
 .unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
-  color: #111;
+  color: #fff;
+}
+
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"]:hover .bookingFlow__doctorBadgeAvatar--all,
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"]:focus-visible .bookingFlow__doctorBadgeAvatar--all,
+.unitDoctorsCompact__item[data-active="true"] .unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeAvatar--all,
+.unitDoctorsCompact__item[data-active="true"] .unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar--all {
+  background: #111;
+  border-color: rgba(17, 17, 17, .88);
+  box-shadow: none;
+  transform: none;
 }
 
 .unitDoctorsCompact__avatarTrigger .bookingFlow__doctorBadgeAvatar {
