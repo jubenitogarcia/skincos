@@ -1496,17 +1496,15 @@ export default function BookingFlow() {
                                                 {slots.slots.map((s) => {
                                                     const active = timeKey === s.time;
                                                     const isPast = s.reason === "past";
-                                                    const isAgenda = s.reason === "agenda";
-                                                    const hasTooltip = isPast || isAgenda;
-                                                    const tooltip = isPast ? "horário já passou" : isAgenda ? "horário ocupado" : "";
+                                                    const isOccupied = s.reason === "agenda" || s.reason === "booked";
+                                                    const hasTooltip = isPast || isOccupied;
+                                                    const tooltip = isPast ? "horário já passou" : isOccupied ? "horário ocupado" : "";
                                                     const ariaDisabled = !s.available;
                                                     const nativeDisabled = !s.available && !hasTooltip;
                                                     const label =
-                                                        isPast || isAgenda
+                                                        isPast || isOccupied
                                                             ? ""
-                                                            : s.reason === "booked"
-                                                                ? "Indisponível"
-                                                                : s.reason === "in_review"
+                                                            : s.reason === "in_review"
                                                                     ? "Em análise"
                                                                     : "";
 
