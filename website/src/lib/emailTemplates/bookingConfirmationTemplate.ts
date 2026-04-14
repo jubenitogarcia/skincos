@@ -156,6 +156,55 @@ export const BOOKING_CONFIRMATION_EMAIL_TEMPLATE = `
       color: #505050 !important;
     }
 
+    .footer-shell {
+      background: linear-gradient(180deg, #2d2827 0%, #241f1f 100%);
+      border-radius: 24px 24px 0 0;
+      overflow: hidden;
+    }
+
+    .footer-brand {
+      font-size: 18px;
+      line-height: 24px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.2px;
+    }
+
+    .footer-address {
+      font-size: 14px;
+      line-height: 22px;
+      color: rgba(255, 255, 255, 0.78);
+      margin: 0;
+    }
+
+    .footer-socialWrap {
+      text-align: right;
+    }
+
+    .footer-socialLink {
+      display: inline-block;
+      width: 46px;
+      height: 46px;
+      border-radius: 999px;
+      background-color: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      margin-left: 10px;
+    }
+
+    .footer-socialIcon {
+      width: 22px;
+      height: 22px;
+      margin: 11px auto;
+    }
+
+    .footer-meta {
+      font-size: 12px;
+      line-height: 18px;
+      color: rgba(255, 255, 255, 0.62);
+      text-transform: uppercase;
+      letter-spacing: 1.1px;
+    }
+
     .icon-badge {
       width: 54px;
       height: 54px;
@@ -226,6 +275,14 @@ export const BOOKING_CONFIRMATION_EMAIL_TEMPLATE = `
       .mobile-image {
         max-width: 280px !important;
         margin: 0 auto !important;
+      }
+
+      .footer-socialWrap {
+        text-align: left !important;
+      }
+
+      .footer-socialLink {
+        margin: 0 10px 0 0 !important;
       }
     }
   </style>
@@ -319,12 +376,6 @@ export const BOOKING_CONFIRMATION_EMAIL_TEMPLATE = `
                                   <div class="detail-value">{{unit_name}}</div>
                                 </td>
                               </tr>
-                              <tr>
-                                <td>
-                                  <div class="detail-label">Protocolo</div>
-                                  <div class="detail-value">{{reservation_code}}</div>
-                                </td>
-                              </tr>
                             </table>
                           </td>
                           <td width="44%" valign="bottom" align="right" class="mobile-center">
@@ -394,26 +445,31 @@ export const BOOKING_CONFIRMATION_EMAIL_TEMPLATE = `
             </tr>
 
             <tr>
-              <td style="padding: 0 32px; background-color: #ffffff;">
-                <div class="divider">&nbsp;</div>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="px-32" style="padding: 22px 32px 10px 32px; background-color: #ffffff;">
-                <table role="presentation" width="100%" class="stack">
+              <td class="px-32 pb-40" style="padding: 0 32px 32px 32px; background-color: #f2efee;">
+                <table role="presentation" width="100%" class="footer-shell">
                   <tr>
-                    <td width="33.33%" class="mobile-pb-24">
-                      <div class="detail-label" style="padding-bottom: 6px;">Instagram</div>
-                      <a href="{{unit_instagram_url}}" class="footer-link">{{unit_instagram}}</a>
-                    </td>
-                    <td width="33.33%" class="mobile-pb-24">
-                      <div class="detail-label" style="padding-bottom: 6px;">Facebook</div>
-                      <a href="{{unit_facebook_url}}" class="footer-link">{{unit_facebook}}</a>
-                    </td>
-                    <td width="33.33%">
-                      <div class="detail-label" style="padding-bottom: 6px;">WhatsApp</div>
-                      <a href="{{unit_whatsapp_url}}" class="footer-link">{{unit_whatsapp}}</a>
+                    <td style="padding: 26px 28px 20px 28px;">
+                      <table role="presentation" width="100%" class="stack">
+                        <tr>
+                          <td width="58%" valign="top" class="mobile-pb-24">
+                            <img src="{{footer_logo_url}}" alt="Espaço Facial" width="168" style="max-width: 168px; width: 100%; height: auto; margin-bottom: 16px;" />
+                            <div class="footer-meta" style="padding-bottom: 8px;">Unidade confirmada</div>
+                            <div class="footer-brand" style="padding-bottom: 10px;">{{unit_name}}</div>
+                            <p class="footer-address">{{unit_address}}</p>
+                          </td>
+                          <td width="42%" valign="middle" class="footer-socialWrap">
+                            <a href="{{unit_instagram_url}}" class="footer-socialLink" aria-label="Instagram da unidade" title="Instagram da unidade">
+                              <img src="{{unit_instagram_icon_url}}" alt="Instagram" class="footer-socialIcon" width="22" height="22" />
+                            </a>
+                            <a href="{{unit_facebook_url}}" class="footer-socialLink" aria-label="Facebook da unidade" title="Facebook da unidade">
+                              <img src="{{unit_facebook_icon_url}}" alt="Facebook" class="footer-socialIcon" width="22" height="22" />
+                            </a>
+                            <a href="{{unit_whatsapp_url}}" class="footer-socialLink" aria-label="WhatsApp da unidade" title="WhatsApp da unidade">
+                              <img src="{{unit_whatsapp_icon_url}}" alt="WhatsApp" class="footer-socialIcon" width="22" height="22" />
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
                     </td>
                   </tr>
                 </table>
@@ -421,14 +477,7 @@ export const BOOKING_CONFIRMATION_EMAIL_TEMPLATE = `
             </tr>
 
             <tr>
-              <td class="px-32" style="padding: 10px 32px 10px 32px; background-color: #ffffff;">
-                <div class="detail-label" style="padding-bottom: 6px;">Endereço da unidade</div>
-                <div class="footer-link">{{unit_address}}</div>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="px-32" style="padding: 10px 32px 32px 32px; background-color: #ffffff;">
+              <td class="px-32" style="padding: 0 32px 32px 32px; background-color: #f2efee;">
                 <p class="micro">Esta mensagem confirma apenas o recebimento da sua reserva no site. Caso precise ajustar informações, nossa equipe pode orientar você pelos canais da unidade. Resultados variam de pessoa para pessoa e dependem de avaliação individual.</p>
               </td>
             </tr>

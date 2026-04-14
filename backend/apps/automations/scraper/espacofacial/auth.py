@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import traceback
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -121,21 +123,81 @@ def wait_for(driver: WebDriver, by, value, timeout: int = 20):
     return WebDriverWait(driver, timeout).until(EC.presence_of_element_located((by, value)))
 
 
+def _normalize_unit_text(value: str) -> str:
+    text = "".join(
+        ch
+        for ch in unicodedata.normalize("NFD", value or "")
+        if unicodedata.category(ch) != "Mn"
+    )
+    text = re.sub(r"[^a-zA-Z0-9]+", "", text)
+    return text.casefold()
+
+
+def _unit_aliases(unit_name: str) -> list[str]:
+    normalized = _normalize_unit_text(unit_name)
+    alias_map = {
+        "barrashoppingsul": ["BarraShoppingSul", "Barra Shopping Sul", "Barra Shopping Sul - RS"],
+        "novohamburgo": ["Novo Hamburgo", "NovoHamburgo", "Novo Hamburgo - RS"],
+    }
+    aliases = alias_map.get(normalized, [])
+    values = [unit_name, *aliases]
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = (value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _unit_text_matches(current: str, expected_values: list[str]) -> bool:
+    current_key = _normalize_unit_text(current)
+    if not current_key:
+        return False
+    for expected in expected_values:
+        expected_key = _normalize_unit_text(expected)
+        if not expected_key:
+            continue
+        if current_key == expected_key or expected_key in current_key or current_key in expected_key:
+            return True
+    return False
+
+
+def _unit_match_rank(current: str, expected_values: list[str]) -> tuple[int, int]:
+    current_key = _normalize_unit_text(current)
+    best_rank = (99, 9999)
+    for expected in expected_values:
+        expected_key = _normalize_unit_text(expected)
+        if not expected_key:
+            continue
+        if current_key == expected_key:
+            best_rank = min(best_rank, (0, len(current or "")))
+        elif expected_key in current_key or current_key in expected_key:
+            best_rank = min(best_rank, (1, len(current or "")))
+    return best_rank
+
+
 def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds: int = 20) -> bool:
     if not unit_name:
         return True
 
     log(f"Selecting unit: {unit_name}")
+    unit_aliases = _unit_aliases(unit_name)
 
-    def _dropdown_label_contains(name: str) -> bool:
+    def _dropdown_label_contains() -> bool:
         try:
-            els = driver.find_elements(
-                By.XPATH,
-                f'//*[contains(@class,"dropdown__layout")]//p[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ", "abcdefghijklmnopqrstuvwxyzàáâãäåçèéêëìíîïñòóôõöùúûüý"), "{name.lower()}")]',
-            )
-            return any(e.is_displayed() for e in els)
+            els = driver.find_elements(By.XPATH, '//*[contains(@class,"dropdown__layout")]//*[self::p or self::span or self::div]')
+            for el in els:
+                if not el.is_displayed():
+                    continue
+                text = (el.text or "").strip()
+                if _unit_text_matches(text, unit_aliases):
+                    return True
         except Exception:
             return False
+        return False
 
     def _open_unit_dropdown() -> bool:
         # Recorder shows this UI:
@@ -158,21 +220,33 @@ def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds
                 continue
         return False
 
-    def _click_unit_option(name: str) -> bool:
-        # Prefer options inside dropdown content (matches recorder selectors).
-        option_xpaths = [
-            f'//*[contains(@class,"dropdown__content")]//*[self::p or self::span or self::div][normalize-space(.)="{name}"]',
-            f'//*[contains(@class,"dropdown__content")]//*[self::p or self::span or self::div][contains(normalize-space(.), "{name}")]',
-        ]
-        for ox in option_xpaths:
+    def _click_unit_option() -> bool:
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
             try:
-                opt = WebDriverWait(driver, timeout_seconds).until(EC.presence_of_element_located((By.XPATH, ox)))
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", opt)
-                driver.execute_script("arguments[0].click();", opt)
-                time.sleep(1.2)
-                return True
+                options = driver.find_elements(By.XPATH, '//*[contains(@class,"dropdown__content")]//*[self::p or self::span or self::div or self::button]')
             except Exception:
-                continue
+                options = []
+            candidates: list[tuple[tuple[int, int], object]] = []
+            for opt in options:
+                try:
+                    if not opt.is_displayed():
+                        continue
+                    text = (opt.text or "").strip()
+                except Exception:
+                    continue
+                if not _unit_text_matches(text, unit_aliases):
+                    continue
+                candidates.append((_unit_match_rank(text, unit_aliases), opt))
+            for _, opt in sorted(candidates, key=lambda item: item[0]):
+                try:
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", opt)
+                    driver.execute_script("arguments[0].click();", opt)
+                    time.sleep(1.2)
+                    return True
+                except Exception:
+                    continue
+            time.sleep(0.25)
         return False
 
     # Best-effort: different accounts/tenants have different UIs.
@@ -180,7 +254,7 @@ def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds
     try:
         # 0) If the UI shows a dropdown unit label, use it (most reliable for this tenant).
         # If unit is already selected, don't touch.
-        if _dropdown_label_contains(unit_name):
+        if _dropdown_label_contains():
             log("✓ Unit already selected")
             return True
 
@@ -190,10 +264,9 @@ def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds
                 log("WARNING: Found unit dropdown but could not open it")
             else:
                 # Some tenants show a suffix like "- RS"; accept contains.
-                if not _click_unit_option(unit_name):
-                    _click_unit_option(f"{unit_name} -")
+                _click_unit_option()
 
-            if _dropdown_label_contains(unit_name):
+            if _dropdown_label_contains():
                 log("✓ Unit selected")
                 return True
 

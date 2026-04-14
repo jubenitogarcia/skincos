@@ -30,7 +30,7 @@ Runner único via ações do Codex (sem menu).
 - `EF_LOG_DIR` (default: `./debug`)
 - `EF_CHROME_USER_DATA_DIR` (default: `./chrome_profile` quando sessão persistente estiver ativa)
 - `HEADLESS` (`1`/`0`)
-- `EF_MODE` (`agenda`, `caixa`, `procedures`, `recorder`, `selftest`, `booking_api`)
+- `EF_MODE` (`agenda`, `caixa`, `procedures`, `client_registration`, `recorder`, `selftest`, `booking_api`)
 - `EF_DRY_RUN` (`1`/`0`)
 - `EF_DEBUG_RETENTION_DAYS` (default: `7`)
 - `EF_DATE_RANGE_MODE` (`prev_month`)
@@ -40,6 +40,16 @@ Runner único via ações do Codex (sem menu).
 - `EF_UNITS` (opcional; lista separada por vírgula para modos multiunidade, ex.: `BarraShoppingSul,Novo Hamburgo`)
 - `EF_PROCEDURES_MAX_PAGES` (opcional; limita páginas no modo `procedures`, útil para smoke test)
 - `EF_PROCEDURES_MAX_CLIENTS_PER_UNIT` (opcional; limita clientes por unidade no modo `procedures`, útil para smoke test)
+- `EF_CLIENT_REGISTRATION_MAX_PAGES` (opcional; limita páginas no modo `client_registration`, útil para smoke test)
+- `EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT` (opcional; limita clientes por unidade no modo `client_registration`, útil para smoke test)
+- `EF_CLIENT_REGISTRATION_TARGETS` (opcional; lista separada por vírgula, `;` ou quebra de linha para export seletivo por cliente)
+- `EF_CLIENT_REGISTRATION_TARGETS_FILE` (opcional; arquivo `.txt`, `.csv`, `.tsv`, `.xlsx` ou `.json` com a lista de clientes)
+- `EF_CLIENT_REGISTRATION_TARGETS_FILE_SHEET` (opcional; aba do Excel quando `EF_CLIENT_REGISTRATION_TARGETS_FILE` for `.xlsx`)
+- `EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_URL` (opcional; URL da planilha Google Sheets com a lista de clientes)
+- `EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_ID` (opcional; Google Sheets com a lista de clientes)
+- `EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET` (opcional; nome da aba no Google Sheets com a lista de clientes)
+- `EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET_GID` (opcional; `gid` da aba no Google Sheets; útil quando você só tem a URL)
+- `EF_CLIENT_REGISTRATION_SYNC_SHEETS` (default: `1`; quando a origem é Google Sheets, preenche as colunas C:K da própria aba com os dados extraídos)
 - `EF_AGENDA_SYNC_URL` (endpoint de sync, ex.: `https://espacofacial.com/api/agenda/sync`)
 - `EF_AGENDA_SYNC_TOKEN` (Bearer token do endpoint de sync)
 - `EF_BOOKING_API_HOST` (default: `127.0.0.1`)
@@ -126,6 +136,31 @@ Observações:
 
 - O modo `procedures` atualiza os arquivos parciais durante a execução, para não perder progresso se houver falha.
 - Erros pontuais por cliente são registrados no JSON de resumo em `client_errors`, sem interromper o restante do lote.
+
+## Export de cadastro dos clientes
+
+- Export completo: `EF_MODE=client_registration HEADLESS=1 ./.venv/bin/python run_scraper.py`
+- Smoke test curto: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_MAX_PAGES=1 EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT=2 ./.venv/bin/python run_scraper.py`
+- Export seletivo por lista inline: `EF_MODE=client_registration HEADLESS=1 EF_UNITS='Novo Hamburgo' EF_CLIENT_REGISTRATION_TARGETS='Adair Nobre,Ana Leticia Algayer' ./.venv/bin/python run_scraper.py`
+- Export seletivo por arquivo: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_TARGETS_FILE='/caminho/clientes.xlsx' ./.venv/bin/python run_scraper.py`
+- Export seletivo por Google Sheets: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_ID='...' EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET='Clientes' ./.venv/bin/python run_scraper.py`
+- Export seletivo por Google Sheets usando URL + `gid`: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_URL='https://docs.google.com/spreadsheets/d/.../edit?gid=1666496487#gid=1666496487' EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET_GID='1666496487' ./.venv/bin/python run_scraper.py`
+
+Saídas:
+
+- `report/cadastro_clientes_espacofacial.csv`
+- `report/cadastro_clientes_espacofacial.xlsx`
+- `report/cadastro_clientes_espacofacial_resumo.json`
+
+Observações:
+
+- O modo `client_registration` percorre todas as unidades configuradas em `EF_UNITS` e atualiza os arquivos parciais durante a execução.
+- Quando algum alvo é informado via `EF_CLIENT_REGISTRATION_TARGETS`, arquivo local ou Google Sheets, o scraper troca a paginação completa pela busca da tela de clientes e exporta só os correspondentes.
+- Para arquivo/planilha, o parser tenta detectar colunas como `cliente`/`nome` e `unidade`. Se a coluna `unidade` existir, a busca fica restrita à unidade informada; sem essa coluna, ele procura o cliente nas unidades configuradas em `EF_UNITS`.
+- Quando a origem é Google Sheets e `EF_CLIENT_REGISTRATION_SYNC_SHEETS` está ativo, o scraper escreve de volta na própria linha da aba: `TELEFONE`, `EMAIL`, `NASCIMENTO`, `PROFISSÃO`, `ENDEREÇO`, `CIDADE`, `ESTADO`, `CEP` e `COMO CONHECEU`.
+- Clientes não encontrados entram em `missing_clients` no JSON de resumo; falhas durante abertura/leitura continuam indo para `client_errors`.
+- O extrator lê os campos da aba `Cadastro` por rótulo visível, cobrindo dados pessoais, contatos e endereço.
+- Erros pontuais por cliente também vão para `client_errors` no JSON de resumo, sem derrubar o lote inteiro.
 
 ## Self-test
 

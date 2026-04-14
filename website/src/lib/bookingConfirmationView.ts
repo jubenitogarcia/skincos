@@ -185,7 +185,7 @@ export function buildBookingConfirmationViewModel(
         unitWhatsappUrl: whatsappUrl,
         unitWhatsappLabel: formatWhatsappDisplay(unitWhatsappRaw),
         nextSteps: [
-            "Guarde o protocolo para qualquer ajuste futuro.",
+            "Guarde os detalhes da reserva para qualquer ajuste futuro.",
             "Se precisar alterar algo, fale direto com a equipe da unidade.",
             "Chegue com alguns minutos de antecedência para o atendimento.",
         ],

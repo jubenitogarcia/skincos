@@ -1,12 +1,14 @@
 import { units } from "@/data/units";
 import { BOOKING_CONFIRMATION_EMAIL_TEMPLATE } from "@/lib/emailTemplates/bookingConfirmationTemplate";
 import {
+    absoluteUrl,
     buildBookingConfirmationViewModel,
     formatDatePtBr,
     type BookingConfirmationPayload,
     type PatientGender,
 } from "@/lib/bookingConfirmationView";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 
 export type { PatientGender } from "@/lib/bookingConfirmationView";
 
@@ -22,17 +24,24 @@ export type NotificationResult = {
 export type BookingNotificationPayload = BookingConfirmationPayload & {
     cpf?: string;
     address?: string;
+    statusToken?: string | null;
+};
+
+type SmtpSocket = {
+    readable: ReadableStream<Uint8Array>;
+    writable: WritableStream<Uint8Array>;
+    close: () => void;
+    startTls?: () => unknown;
 };
 
 type SmtpConnect = (options: {
     hostname: string;
     port: number;
     secureTransport?: "on" | "off" | "starttls";
-}) => {
-    readable: ReadableStream<Uint8Array>;
-    writable: WritableStream<Uint8Array>;
-    close: () => void;
-};
+}) => SmtpSocket;
+
+let smtpConnectLoader: Promise<SmtpConnect | null> | null = null;
+const SMTP_STEP_TIMEOUT_MS = 8_000;
 
 function unitFromSlug(slug: string) {
     return units.find((u) => u.slug === slug);
@@ -74,6 +83,16 @@ function resolveSiteUrl(): string {
     return raw.replace(/\/$/, "");
 }
 
+function buildReservationDetailsUrl(siteUrl: string, payload: Pick<BookingNotificationPayload, "id" | "statusToken">): string {
+    const url = new URL("/agendamento", siteUrl);
+    url.searchParams.set("booking", payload.id);
+    if (payload.statusToken) {
+        url.searchParams.set("statusToken", payload.statusToken);
+    }
+    url.hash = "booking-flow";
+    return url.toString();
+}
+
 function formatGenderLabel(gender: PatientGender): string {
     if (gender === "male") return "Masculino";
     if (gender === "female") return "Feminino";
@@ -87,6 +106,7 @@ function renderTemplate(rawTemplate: string, placeholders: Record<string, string
 function buildCustomerEmailText(payload: BookingNotificationPayload) {
     const unitLabel = unitLabelFromSlug(payload.unitSlug);
     const dateLabel = formatDatePtBr(payload.date);
+    const detailsUrl = buildReservationDetailsUrl(resolveSiteUrl(), payload);
     return [
         `Olá, ${payload.patientName}!`,
         "",
@@ -95,7 +115,8 @@ function buildCustomerEmailText(payload: BookingNotificationPayload) {
         `Procedimento: ${payload.procedureName}`,
         `Data: ${dateLabel} às ${payload.time}`,
         `Unidade: ${unitLabel}`,
-        `Protocolo: ${payload.id}`,
+        "",
+        `Ver detalhes da reserva: ${detailsUrl}`,
         "",
         "Se precisar alterar, fale com a equipe da unidade.",
         "",
@@ -115,7 +136,7 @@ async function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
         logoUrl: logoUrl || "/logo.png",
         maleAmbassadorImageUrl: maleAmbassadorImageUrl || "/images/email/ambassadors/marcio-garcia-u3a7227.jpg",
         femaleAmbassadorImageUrl: femaleAmbassadorImageUrl || "/images/email/ambassadors/deborah-secco-20244437.jpeg",
-        reservationDetailsUrl: `${siteUrl}/agendamento#booking-flow`,
+        reservationDetailsUrl: buildReservationDetailsUrl(siteUrl, payload),
     });
 
     return renderTemplate(BOOKING_CONFIRMATION_EMAIL_TEMPLATE, {
@@ -129,14 +150,18 @@ async function buildCustomerEmailHtml(payload: BookingNotificationPayload) {
         ambassador_name: escapeHtml(confirmation.ambassadorName),
         ambassador_image_url: escapeHtml(confirmation.ambassadorImageUrl),
         logo_url: escapeHtml(confirmation.logoUrl),
+        footer_logo_url: escapeHtml(absoluteUrl(siteUrl, "/logo-white.png")),
         reservation_details_url: escapeHtml(confirmation.reservationDetailsUrl),
         team_contact_url: escapeHtml(confirmation.teamContactUrl),
         unit_instagram_url: escapeHtml(confirmation.unitInstagramUrl),
         unit_instagram: escapeHtml(confirmation.unitInstagramLabel),
+        unit_instagram_icon_url: escapeHtml(absoluteUrl(siteUrl, "/images/email/social/instagram-white.svg")),
         unit_facebook_url: escapeHtml(confirmation.unitFacebookUrl),
         unit_facebook: escapeHtml(confirmation.unitFacebookLabel),
+        unit_facebook_icon_url: escapeHtml(absoluteUrl(siteUrl, "/images/email/social/facebook-white.svg")),
         unit_whatsapp_url: escapeHtml(confirmation.unitWhatsappUrl),
         unit_whatsapp: escapeHtml(confirmation.unitWhatsappLabel),
+        unit_whatsapp_icon_url: escapeHtml(absoluteUrl(siteUrl, "/images/email/social/whatsapp-white.svg")),
         unit_address: escapeHtml(confirmation.unitAddress),
     });
 }
@@ -192,19 +217,16 @@ function buildUnitEmailHtml(payload: BookingNotificationPayload) {
 function buildWhatsappMessage(payload: BookingNotificationPayload) {
     const unitLabel = unitLabelFromSlug(payload.unitSlug);
     const dateLabel = formatDatePtBr(payload.date);
-    return `Reserva confirmada! ${payload.patientName}, seu agendamento de ${payload.procedureName} em ${dateLabel} às ${payload.time} na ${unitLabel} foi confirmado. Protocolo ${payload.id}.`;
+    return `Reserva confirmada! ${payload.patientName}, seu agendamento de ${payload.procedureName} em ${dateLabel} às ${payload.time} na ${unitLabel} foi confirmado.`;
 }
 
 async function tryLoadSmtpConnect(): Promise<SmtpConnect | null> {
-    try {
-        const dynamicImport = new Function("specifier", "return import(specifier);") as (
-            specifier: string,
-        ) => Promise<unknown>;
-        const mod = (await dynamicImport("cloudflare:sockets")) as { connect?: SmtpConnect };
-        return typeof mod.connect === "function" ? mod.connect : null;
-    } catch {
-        return null;
+    if (!smtpConnectLoader) {
+        smtpConnectLoader = import(/* webpackIgnore: true */ "cloudflare:sockets")
+            .then((mod) => (typeof mod.connect === "function" ? mod.connect : null))
+            .catch(() => null);
     }
+    return smtpConnectLoader;
 }
 
 function buildSmtpMessage(params: { from: string; to: string; subject: string; text: string; html: string }) {
@@ -265,6 +287,20 @@ async function readSmtpResponse(
     }
 }
 
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = SMTP_STEP_TIMEOUT_MS): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`${label}_timeout`)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
 async function sendSmtpCommand(
     writer: WritableStreamDefaultWriter<Uint8Array>,
     reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -273,10 +309,222 @@ async function sendSmtpCommand(
     command: string,
     expectedCodes: number[],
 ) {
-    await writer.write(new TextEncoder().encode(`${command}\r\n`));
-    const response = await readSmtpResponse(reader, decoder, state);
+    await withTimeout(writer.write(new TextEncoder().encode(`${command}\r\n`)), "smtp_write");
+    const response = await withTimeout(readSmtpResponse(reader, decoder, state), "smtp_read");
     if (!expectedCodes.includes(response.code)) {
         throw new Error(`smtp_command_failed:${command}:${response.code}`);
+    }
+}
+
+async function readNodeSmtpResponse(socket: TLSSocket, state: { buffer: string }) {
+    while (true) {
+        const split = state.buffer.split("\r\n");
+        if (split.length > 1) {
+            const lines = split.slice(0, -1).filter((line) => line.length > 0);
+            const tail = split[split.length - 1] ?? "";
+            if (lines.length > 0) {
+                const last = lines[lines.length - 1] ?? "";
+                if (/^\d{3} /.test(last)) {
+                    state.buffer = tail;
+                    return { code: Number(last.slice(0, 3)) };
+                }
+            }
+        }
+
+        const chunk = await withTimeout(
+            new Promise<string>((resolve, reject) => {
+                const onData = (data: Buffer | string) => {
+                    cleanup();
+                    resolve(typeof data === "string" ? data : data.toString("utf8"));
+                };
+                const onError = (error: Error) => {
+                    cleanup();
+                    reject(error);
+                };
+                const onClose = () => {
+                    cleanup();
+                    reject(new Error("smtp_connection_closed"));
+                };
+                const cleanup = () => {
+                    socket.off("data", onData);
+                    socket.off("error", onError);
+                    socket.off("close", onClose);
+                    socket.off("end", onClose);
+                };
+
+                socket.once("data", onData);
+                socket.once("error", onError);
+                socket.once("close", onClose);
+                socket.once("end", onClose);
+            }),
+            "smtp_read",
+        );
+        state.buffer += chunk;
+    }
+}
+
+async function writeNodeSmtp(socket: TLSSocket, chunk: string) {
+    await withTimeout(
+        new Promise<void>((resolve, reject) => {
+            socket.write(chunk, (error) => {
+                if (error) reject(error);
+                else resolve();
+            });
+        }),
+        "smtp_write",
+    );
+}
+
+async function sendNodeSmtpCommand(socket: TLSSocket, state: { buffer: string }, command: string, expectedCodes: number[]) {
+    await writeNodeSmtp(socket, `${command}\r\n`);
+    const response = await readNodeSmtpResponse(socket, state);
+    if (!expectedCodes.includes(response.code)) {
+        throw new Error(`smtp_command_failed:${command}:${response.code}`);
+    }
+}
+
+async function sendTitanEmailViaNodeTls(params: {
+    hostname: string;
+    port: number;
+    user: string;
+    pass: string;
+    to: string;
+    from: string;
+    subject: string;
+    text: string;
+    html: string;
+}) {
+    const socket = await withTimeout(
+        new Promise<TLSSocket>((resolve, reject) => {
+            const candidate = tlsConnect(
+                {
+                    host: params.hostname,
+                    port: params.port,
+                    servername: params.hostname,
+                    rejectUnauthorized: true,
+                },
+                () => resolve(candidate),
+            );
+            candidate.setEncoding("utf8");
+            candidate.once("error", reject);
+        }),
+        "smtp_connect",
+    );
+    const state = { buffer: "" };
+
+    try {
+        const greeting = await readNodeSmtpResponse(socket, state);
+        if (greeting.code !== 220) {
+            throw new Error(`smtp_greeting_failed:${greeting.code}`);
+        }
+
+        await sendNodeSmtpCommand(socket, state, "EHLO espacofacial.com", [250]);
+        await sendNodeSmtpCommand(socket, state, "AUTH LOGIN", [334]);
+        await sendNodeSmtpCommand(socket, state, btoa(params.user), [334]);
+        await sendNodeSmtpCommand(socket, state, btoa(params.pass), [235]);
+        await sendNodeSmtpCommand(socket, state, `MAIL FROM:<${params.from}>`, [250]);
+        await sendNodeSmtpCommand(socket, state, `RCPT TO:<${params.to}>`, [250, 251]);
+        await sendNodeSmtpCommand(socket, state, "DATA", [354]);
+
+        const message = buildSmtpMessage({
+            from: params.from,
+            to: params.to,
+            subject: params.subject,
+            text: params.text,
+            html: params.html,
+        });
+        await writeNodeSmtp(socket, `${message}\r\n.\r\n`);
+
+        const dataResponse = await readNodeSmtpResponse(socket, state);
+        if (dataResponse.code !== 250) {
+            throw new Error(`smtp_data_failed:${dataResponse.code}`);
+        }
+
+        await sendNodeSmtpCommand(socket, state, "QUIT", [221]);
+        return { ok: true, status: "sent", provider: "titan_smtp" } as NotificationResult;
+    } finally {
+        socket.end();
+        socket.destroy();
+    }
+}
+
+async function sendTitanEmailAttempt(params: {
+    connect: SmtpConnect;
+    hostname: string;
+    port: number;
+    transport: "on" | "off" | "starttls";
+    useStartTls?: boolean;
+    user: string;
+    pass: string;
+    to: string;
+    from: string;
+    subject: string;
+    text: string;
+    html: string;
+}) {
+    let socket = params.connect({
+        hostname: params.hostname,
+        port: params.port,
+        secureTransport: params.transport,
+    });
+
+    let writer = socket.writable.getWriter();
+    let reader = socket.readable.getReader();
+    let decoder = new TextDecoder();
+    let state = { buffer: "" };
+
+    try {
+        const greeting = await withTimeout(readSmtpResponse(reader, decoder, state), "smtp_greeting");
+        if (greeting.code !== 220) {
+            throw new Error(`smtp_greeting_failed:${greeting.code}`);
+        }
+
+        await sendSmtpCommand(writer, reader, decoder, state, "EHLO espacofacial.com", [250]);
+
+        if (params.useStartTls) {
+            await sendSmtpCommand(writer, reader, decoder, state, "STARTTLS", [220]);
+            if (typeof socket.startTls !== "function") {
+                throw new Error("smtp_starttls_unavailable");
+            }
+
+            const upgraded = (await withTimeout(Promise.resolve(socket.startTls()), "smtp_starttls")) as SmtpSocket;
+            writer.releaseLock();
+            reader.releaseLock();
+            socket = upgraded;
+            writer = socket.writable.getWriter();
+            reader = socket.readable.getReader();
+            decoder = new TextDecoder();
+            state = { buffer: "" };
+            await sendSmtpCommand(writer, reader, decoder, state, "EHLO espacofacial.com", [250]);
+        }
+
+        await sendSmtpCommand(writer, reader, decoder, state, "AUTH LOGIN", [334]);
+        await sendSmtpCommand(writer, reader, decoder, state, btoa(params.user), [334]);
+        await sendSmtpCommand(writer, reader, decoder, state, btoa(params.pass), [235]);
+        await sendSmtpCommand(writer, reader, decoder, state, `MAIL FROM:<${params.from}>`, [250]);
+        await sendSmtpCommand(writer, reader, decoder, state, `RCPT TO:<${params.to}>`, [250, 251]);
+        await sendSmtpCommand(writer, reader, decoder, state, "DATA", [354]);
+
+        const message = buildSmtpMessage({
+            from: params.from,
+            to: params.to,
+            subject: params.subject,
+            text: params.text,
+            html: params.html,
+        });
+        await withTimeout(writer.write(new TextEncoder().encode(`${message}\r\n.\r\n`)), "smtp_data_write");
+
+        const dataResponse = await withTimeout(readSmtpResponse(reader, decoder, state), "smtp_data_read");
+        if (dataResponse.code !== 250) {
+            throw new Error(`smtp_data_failed:${dataResponse.code}`);
+        }
+
+        await sendSmtpCommand(writer, reader, decoder, state, "QUIT", [221]);
+        return { ok: true, status: "sent", provider: "titan_smtp" } as NotificationResult;
+    } finally {
+        writer.releaseLock();
+        reader.releaseLock();
+        socket.close();
     }
 }
 
@@ -294,17 +542,17 @@ async function sendTitanEmailDirect(params: {
     }
 
     const to = sanitizeEmail(params.to);
-    const from = sanitizeEmail(params.from);
-    if (!to || !from) {
+    if (!to) {
         return { ok: false, status: "failed", error: "invalid_email_fields" };
     }
 
     let user = "";
     let pass = "";
-    if (params.unitSlug === "barrashoppingsul") {
+    const normalizedUnitSlug = (params.unitSlug ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalizedUnitSlug === "barrashoppingsul") {
         user = sanitizeEmail(await getRuntimeSecret("TITAN_SMTP_USER_BARRA"));
         pass = await getRuntimeSecret("TITAN_SMTP_PASS_BARRA");
-    } else if (params.unitSlug === "novo-hamburgo") {
+    } else if (normalizedUnitSlug === "novohamburgo") {
         user = sanitizeEmail(await getRuntimeSecret("TITAN_SMTP_USER_NH"));
         pass = await getRuntimeSecret("TITAN_SMTP_PASS_NH");
     }
@@ -313,51 +561,82 @@ async function sendTitanEmailDirect(params: {
         return { ok: false, status: "skipped", error: "smtp_not_configured_for_unit" };
     }
 
+    // For unit-bound Titan accounts, force the visible sender to match the
+    // authenticated mailbox so the reservation email always leaves from the
+    // selected clinic unit.
+    const from = sanitizeEmail(user) || sanitizeEmail(params.from);
+    if (!from) {
+        return { ok: false, status: "failed", error: "invalid_email_fields" };
+    }
     const host = (await getRuntimeSecret("TITAN_SMTP_HOST")) || "smtp.titan.email";
     const portRaw = Number((await getRuntimeSecret("TITAN_SMTP_PORT")) || 465);
     const port = Number.isFinite(portRaw) ? portRaw : 465;
 
-    const socket = connect({
-        hostname: host,
-        port,
-        secureTransport: "on",
-    });
-
-    const writer = socket.writable.getWriter();
-    const reader = socket.readable.getReader();
-    const decoder = new TextDecoder();
-    const state = { buffer: "" };
-
-    try {
-        const greeting = await readSmtpResponse(reader, decoder, state);
-        if (greeting.code !== 220) {
-            throw new Error(`smtp_greeting_failed:${greeting.code}`);
-        }
-
-        await sendSmtpCommand(writer, reader, decoder, state, "EHLO espacofacial.com", [250]);
-        await sendSmtpCommand(writer, reader, decoder, state, "AUTH LOGIN", [334]);
-        await sendSmtpCommand(writer, reader, decoder, state, btoa(user), [334]);
-        await sendSmtpCommand(writer, reader, decoder, state, btoa(pass), [235]);
-        await sendSmtpCommand(writer, reader, decoder, state, `MAIL FROM:<${from}>`, [250]);
-        await sendSmtpCommand(writer, reader, decoder, state, `RCPT TO:<${to}>`, [250, 251]);
-        await sendSmtpCommand(writer, reader, decoder, state, "DATA", [354]);
-
-        const message = buildSmtpMessage({
-            from,
+    if (port === 465) {
+        const tlsResult = await sendTitanEmailViaNodeTls({
+            hostname: host,
+            port,
+            user,
+            pass,
             to,
+            from,
             subject: params.subject,
             text: params.text,
             html: params.html,
-        });
-        await writer.write(new TextEncoder().encode(`${message}\r\n.\r\n`));
+        }).catch((error) => ({
+            ok: false,
+            status: "failed",
+            provider: "titan_smtp",
+            error: error instanceof Error ? error.message : "smtp_send_failed",
+        } as NotificationResult));
+        if (tlsResult.ok) {
+            return tlsResult;
+        }
+    }
 
-        const dataResponse = await readSmtpResponse(reader, decoder, state);
-        if (dataResponse.code !== 250) {
-            throw new Error(`smtp_data_failed:${dataResponse.code}`);
+    const attempts: Array<{ port: number; transport: "on" | "off" | "starttls"; useStartTls?: boolean }> = [];
+    const pushAttempt = (attempt: { port: number; transport: "on" | "off" | "starttls"; useStartTls?: boolean }) => {
+        if (!attempts.some((item) => item.port === attempt.port && item.transport === attempt.transport && !!item.useStartTls === !!attempt.useStartTls)) {
+            attempts.push(attempt);
+        }
+    };
+    pushAttempt({ port, transport: port === 587 ? "starttls" : "on", useStartTls: port === 587 });
+    pushAttempt({ port: 587, transport: "starttls", useStartTls: true });
+    pushAttempt({ port: 465, transport: "on" });
+
+    try {
+        let lastError = "smtp_send_failed";
+
+        for (const attempt of attempts) {
+            const result = await sendTitanEmailAttempt({
+                connect,
+                hostname: host,
+                port: attempt.port,
+                transport: attempt.transport,
+                useStartTls: attempt.useStartTls,
+                user,
+                pass,
+                to,
+                from,
+                subject: params.subject,
+                text: params.text,
+                html: params.html,
+            }).catch((error) => {
+                lastError = error instanceof Error ? error.message : "smtp_send_failed";
+                return null;
+            });
+
+            if (result?.ok) {
+                return result;
+            }
         }
 
-        await sendSmtpCommand(writer, reader, decoder, state, "QUIT", [221]);
-        return { ok: true, status: "sent", provider: "titan_smtp" };
+        return {
+            ok: false,
+            status: "failed",
+            provider: "titan_smtp",
+            error: lastError,
+        };
     } catch (error) {
         return {
             ok: false,
@@ -365,10 +644,6 @@ async function sendTitanEmailDirect(params: {
             provider: "titan_smtp",
             error: error instanceof Error ? error.message : "smtp_send_failed",
         };
-    } finally {
-        writer.releaseLock();
-        reader.releaseLock();
-        socket.close();
     }
 }
 
@@ -412,7 +687,7 @@ async function sendEmail(params: {
     const to = sanitizeEmail(params.to);
     const unitFrom = sanitizeEmail(unitEmailFromSlug(params.unitSlug) ?? "");
     const envFrom = sanitizeEmail(await getRuntimeSecret("BOOKING_EMAIL_FROM"));
-    const from = envFrom || unitFrom;
+    const from = unitFrom || envFrom;
 
     if (!to) return { ok: false, status: "skipped", error: "missing_to" };
 
@@ -470,10 +745,19 @@ async function sendEmail(params: {
             : { ok: false, status: "failed", provider: "webhook", error: res.text || "send_failed" };
     }
 
+    if (smtpResult.status === "failed") {
+        return {
+            ok: false,
+            status: "failed",
+            provider: smtpResult.provider,
+            error: smtpResult.error ?? "send_failed",
+        };
+    }
+
     return {
         ok: false,
         status: "skipped",
-        error: smtpResult.error === "smtp_runtime_unavailable" ? "not_configured" : smtpResult.error ?? "not_configured",
+        error: smtpResult.error ?? "not_configured",
     };
 }
 
