@@ -2711,7 +2711,8 @@ button:focus-visible {
   box-shadow: none;
 }
 
-.bookingFlow__timeBtn[data-reason="agenda"] {
+.bookingFlow__timeBtn[data-reason="agenda"],
+.bookingFlow__timeBtn[data-reason="booked"] {
   background: #e5e7eb;
   color: #6b7280;
   border-color: #d1d5db;
@@ -2734,7 +2735,8 @@ button:focus-visible {
   border-color: #e5e7eb;
 }
 
-.bookingFlow__timeBtn[data-locked="true"][data-reason="agenda"]:hover {
+.bookingFlow__timeBtn[data-locked="true"][data-reason="agenda"]:hover,
+.bookingFlow__timeBtn[data-locked="true"][data-reason="booked"]:hover {
   background: #e5e7eb;
   color: #6b7280;
   border-color: #d1d5db;
