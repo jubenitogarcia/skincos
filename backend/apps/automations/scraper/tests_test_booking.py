@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from espacofacial.booking import BookingRequest
+from espacofacial.booking import BookingRequest, _is_generic_service_name, _should_fill_service
 from espacofacial.appointments import (
     _collapse_repeated_phrase,
     _extract_event_info,
@@ -150,6 +150,41 @@ class BookingRequestTests(unittest.TestCase):
         self.assertEqual(request.service_name, "Procedimento")
         self.assertEqual(request.service_candidates, ("Toxina botulínica", "Preenchimento labial"))
 
+    def test_maps_hyphenated_novo_hamburgo_slug(self) -> None:
+        request = BookingRequest.from_payload(
+            {
+                "event": "booking.created",
+                "booking": {
+                    "unitSlug": "novo-hamburgo",
+                    "durationMinutes": 30,
+                    "service": {"id": "avaliacao", "name": "Avaliação"},
+                    "startAtMs": 1773316800000,
+                    "endAtMs": 1773318600000,
+                    "patientName": "Maria Silva",
+                },
+            }
+        )
+        self.assertEqual(request.unit_name, "Novo Hamburgo")
+
+    def test_skips_generic_service_for_avaliacao(self) -> None:
+        request = BookingRequest.from_payload(
+            {
+                "event": "booking.created",
+                "booking": {
+                    "unitSlug": "barrashoppingsul",
+                    "doctorName": "Marina Lima",
+                    "durationMinutes": 30,
+                    "includes": {"avaliacao": True},
+                    "service": {"id": "any", "name": "Outro"},
+                    "selectedServices": [{"id": "any", "name": "Outros"}],
+                    "startAtMs": 1772971200000,
+                    "endAtMs": 1772973000000,
+                    "patientName": "Maria Silva",
+                },
+            }
+        )
+        self.assertTrue(_is_generic_service_name("Outros"))
+        self.assertFalse(_should_fill_service(request))
     def test_parses_procedure_name(self) -> None:
         request = BookingRequest.from_payload(
             {

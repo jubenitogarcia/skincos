@@ -29,12 +29,6 @@
         "count": 2,
         "reason": "Inline marketing pixel bootstrap scripts."
       }
-    },
-    "new Function": {
-      "website/src/lib/bookingNotifications.ts": {
-        "count": 1,
-        "reason": "Dynamic import fallback in server-only notification transport loading; kept under explicit review."
-      }
     }
   }
 }

@@ -546,6 +546,17 @@ export async function POST(request: Request) {
         return json({ ok: false, error: "db_error", message: msg }, { status: 500 });
     }
 
+    const statusTokenExpMs = addMinutes(confirmByMs, 120);
+    const statusSecret = (await getRuntimeSecret("BOOKING_STATUS_SECRET")) || (await getRuntimeSecret("BOOKING_DECISION_SECRET"));
+    let statusToken: string | null = null;
+    if (statusSecret) {
+        try {
+            statusToken = await issueBookingStatusToken({ secret: statusSecret, id, expMs: statusTokenExpMs });
+        } catch {
+            statusToken = null;
+        }
+    }
+
     const notifications =
         status === "confirmed"
             ? await sendBookingNotifications({
@@ -561,6 +572,7 @@ export async function POST(request: Request) {
                 cpf: cpf ?? undefined,
                 address: address ?? undefined,
                 doctorName: safeDoctorName,
+                statusToken,
             })
             : {
                 email: { ok: false, status: "skipped", error: "not_confirmed" },
@@ -595,17 +607,6 @@ export async function POST(request: Request) {
         },
         decisionLinks,
     });
-
-    const statusTokenExpMs = addMinutes(confirmByMs, 120);
-    const statusSecret = (await getRuntimeSecret("BOOKING_STATUS_SECRET")) || (await getRuntimeSecret("BOOKING_DECISION_SECRET"));
-    let statusToken: string | null = null;
-    if (statusSecret) {
-        try {
-            statusToken = await issueBookingStatusToken({ secret: statusSecret, id, expMs: statusTokenExpMs });
-        } catch {
-            statusToken = null;
-        }
-    }
 
     return json(
         {

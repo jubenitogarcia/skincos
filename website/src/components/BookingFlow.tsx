@@ -47,6 +47,7 @@ type BookingStatus = {
     confirm_by_ms: number;
     patient_name: string;
     whatsapp: string;
+    customer_email: string | null;
     notes: string | null;
     durationMinutes?: number;
     service?: { id: string; name: string } | null;
@@ -66,6 +67,7 @@ type SubmittedReservation = {
 const ANY_DOCTOR: DoctorSelection = { slug: "any", name: "Sem Preferência", handle: null };
 const OTHER_SERVICE: Service = { id: "any", name: "Outros", subtitle: "Outros procedimentos ou combinação" };
 const BOOKING_WINDOW_WEEKS = 4;
+const BOOKING_STATUS_SESSION_PREFIX = "booking-status-token:";
 
 function isOkResponse(value: unknown): value is { ok: true } {
     return !!value && typeof value === "object" && (value as { ok?: unknown }).ok === true;
@@ -114,6 +116,11 @@ function formatDatePtBr(dateKey: string): string {
     const [y, m, d] = dateKey.split("-").map((x) => Number(x));
     if (!y || !m || !d) return dateKey;
     return `${pad2(d)}/${pad2(m)}/${y}`;
+}
+
+function formatTimeFromMs(value: number): string {
+    const date = new Date(value);
+    return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
 function parseLocalDateKey(dateKey: string): Date | null {
@@ -390,6 +397,8 @@ export default function BookingFlow() {
         const value = normalizeDoctorSlug(searchParams?.get("doctor") ?? "");
         return value === "none" || value === "clear";
     }, [searchParams]);
+    const bookingIdQuery = useMemo(() => (searchParams?.get("booking") ?? "").trim(), [searchParams]);
+    const bookingTokenQuery = useMemo(() => (searchParams?.get("statusToken") ?? "").trim(), [searchParams]);
 
     const allowedUnitSlugs = useMemo(() => new Set(getDigitalJourneyUnits().map((unit) => unit.slug)), []);
 
@@ -417,6 +426,72 @@ export default function BookingFlow() {
         const resolved = findUnit(fromQuery);
         if (resolved?.slug && allowedUnitSlugs.has(resolved.slug)) setStoredUnitSlug(resolved.slug);
     }, [allowedUnitSlugs, searchParams]);
+
+    useEffect(() => {
+        if (!bookingIdQuery) return;
+        const storageKey = `${BOOKING_STATUS_SESSION_PREFIX}${bookingIdQuery}`;
+        const tokenFromStorage = typeof window === "undefined" ? "" : sessionStorage.getItem(storageKey) ?? "";
+        const token = bookingTokenQuery || tokenFromStorage;
+        if (!token) return;
+
+        if (bookingTokenQuery && typeof window !== "undefined") {
+            sessionStorage.setItem(storageKey, bookingTokenQuery);
+        }
+
+        let cancelled = false;
+
+        async function restoreSubmittedBooking() {
+            try {
+                const res = await fetch(`/api/booking/status?id=${encodeURIComponent(bookingIdQuery)}`, {
+                    cache: "no-store",
+                    headers: { "x-booking-status-token": token },
+                });
+                const json = (await res.json().catch(() => null)) as StatusResponse | null;
+                if (cancelled || !res.ok || !json || !isOkResponse(json)) return;
+
+                const booking = (json as { ok: true; booking: BookingStatus }).booking;
+                const memberDoctor = (members ?? []).find((member) => doctorSlugFromTeamMember(member) === booking.doctor_slug);
+                const startDate = new Date(Number(booking.start_at_ms));
+                const reservation: BookingConfirmationPayload = {
+                    id: booking.id,
+                    unitSlug: booking.unit_slug,
+                    procedureName: booking.service?.name ?? "Reserva",
+                    date: formatLocalDateKey(startDate),
+                    time: formatTimeFromMs(Number(booking.start_at_ms)),
+                    patientName: booking.patient_name,
+                    patientGender: "unspecified",
+                    email: booking.customer_email ?? "",
+                    whatsapp: booking.whatsapp,
+                    doctorName: memberDoctor?.name ?? undefined,
+                };
+
+                setStoredUnitSlug(booking.unit_slug);
+                setSubmitted({
+                    id: booking.id,
+                    status: booking.status,
+                    confirmByMs: booking.confirm_by_ms,
+                    statusToken: token,
+                    reservation,
+                });
+                setStatus(booking);
+                setStep("submitted");
+
+                if (bookingTokenQuery && typeof window !== "undefined") {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete("statusToken");
+                    if (!url.hash) url.hash = "booking-flow";
+                    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+                }
+            } catch {
+                // ignore failed deep-link restoration and keep the default booking flow
+            }
+        }
+
+        restoreSubmittedBooking();
+        return () => {
+            cancelled = true;
+        };
+    }, [bookingIdQuery, bookingTokenQuery, members]);
 
     const unitSlug = useMemo(() => {
         const slug = currentUnit?.slug ?? null;
@@ -1516,11 +1591,6 @@ export default function BookingFlow() {
                         <div style={{ fontWeight: 900, fontSize: 18 }}>
                             {submitted?.status === "confirmed" ? "Status do agendamento" : "Status do pedido"}
                         </div>
-                        {submitted ? (
-                            <div className="small" style={{ marginTop: 8 }}>
-                                Protocolo: <span style={{ fontWeight: 900 }}>{submitted.id}</span>
-                            </div>
-                        ) : null}
 
                         {status ? (
                             <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
