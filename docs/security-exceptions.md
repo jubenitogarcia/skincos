@@ -1,6 +1,6 @@
 # Security Exceptions
 
-Last review: 2026-03-16
+Last review: 2026-04-14
 
 ## Policy
 
@@ -32,13 +32,11 @@ Last review: 2026-03-16
   - `website/src/components/MarketingPixels.tsx`
   - `website/src/app/layout.tsx`
   - `website/src/app/[unit]/page.tsx`
-  - `website/src/lib/bookingNotifications.ts`
   - `frontend/EmailTemplatesManager.tsx`
   - `frontend/RichTaskManager.tsx`
   - `frontend/chart.tsx`
 - **Reason**:
   - JSON-LD serialization and third-party snippets still require controlled HTML/script injection.
-  - `bookingNotifications.ts` still uses one `new Function` occurrence for server-side dynamic import fallback.
   - Admin HTML previews and markdown rendering remain legacy hotspots pending sanitization hardening.
 - **Enforcement**:
   - `node scripts/check-js-security-exceptions.mjs`
