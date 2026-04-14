@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import ExperienceTracker from "@/components/ExperienceTracker";
 import PageTitleBand from "@/components/PageTitleBand";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
@@ -17,9 +17,11 @@ type HeroShortcut = {
     kind: "primary" | "secondary";
     description?: string;
     external?: boolean;
+    action?: "first_available";
 };
 
 export default function BookingHeroExperience() {
+    const router = useRouter();
     const unit = useCurrentUnit();
     const searchParams = useSearchParams();
     const bookingId = (searchParams?.get("booking") ?? "").trim();
@@ -33,20 +35,15 @@ export default function BookingHeroExperience() {
     const unitWhatsappDigits = (resolvedUnit?.whatsappPhone ?? "").replace(/\D/g, "");
     const unitWhatsappUrl = unitWhatsappDigits ? `https://api.whatsapp.com/send?phone=${unitWhatsappDigits}` : "/agendamento#booking-flow";
     const scheduleAnotherHref = resolvedUnit?.slug ? `/agendamento?unit=${resolvedUnit.slug}#booking-flow` : "/agendamento#booking-flow";
-
-    const bookingQuery = new URLSearchParams({
-        doctor: "any",
-        service: "any",
-        autopick: "first",
-    });
-    if (unit?.slug) bookingQuery.set("unit", unit.slug);
+    const preferredUnitSlug = resolvedUnit?.slug ?? unit?.slug ?? null;
 
     const shortcuts: HeroShortcut[] = [
         {
             title: "Primeiro Horário Disponível",
             description: "Sem preferência por especialista e indicação de procedimento.",
-            href: `/agendamento?${bookingQuery.toString()}#booking-flow`,
+            href: "/agendamento#booking-flow",
             kind: "primary" as const,
+            action: "first_available",
         },
         {
             title: "Ver Especialistas",
@@ -70,7 +67,16 @@ export default function BookingHeroExperience() {
         },
     ];
 
-    const firstSlotSelected = (searchParams?.get("autopick") ?? "").toLowerCase() === "first";
+    function activateFirstAvailableShortcut() {
+        const params = new URLSearchParams({
+            doctor: "any",
+            service: "any",
+            autopick: "first",
+            autopick_nonce: `${Date.now()}`,
+        });
+        if (preferredUnitSlug) params.set("unit", preferredUnitSlug);
+        router.push(`/agendamento?${params.toString()}#booking-flow`, { scroll: false });
+    }
 
     return (
         <>
@@ -96,7 +102,25 @@ export default function BookingHeroExperience() {
                             <div className="bookingHero__shortcutGrid bookingHero__shortcutGrid--inline">
                                 {(confirmationMode ? confirmationActions : shortcuts).map((item) => (
                                     <div key={item.title} className="bookingHero__shortcutItem">
-                                        {item.external ? (
+                                        {item.action === "first_available" ? (
+                                            <button
+                                                type="button"
+                                                className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
+                                                onClick={() => {
+                                                    trackExperienceShortcutClick({
+                                                        page: "/agendamento",
+                                                        shortcut: item.title,
+                                                        destination: "/agendamento?doctor=any&service=any&autopick=first#booking-flow",
+                                                        placement: "booking_page",
+                                                        experience: EXPERIENCE_KEY,
+                                                        variant: EXPERIENCE_VARIANT,
+                                                    });
+                                                    activateFirstAvailableShortcut();
+                                                }}
+                                            >
+                                                <strong>{item.title}</strong>
+                                            </button>
+                                        ) : item.external ? (
                                             <a
                                                 href={item.href}
                                                 className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
@@ -119,7 +143,6 @@ export default function BookingHeroExperience() {
                                             <SmoothAnchorLink
                                                 href={item.href}
                                                 className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
-                                                data-selected={!confirmationMode && item.kind === "primary" && firstSlotSelected ? "true" : "false"}
                                                 onClick={() =>
                                                     trackExperienceShortcutClick({
                                                         page: "/agendamento",
