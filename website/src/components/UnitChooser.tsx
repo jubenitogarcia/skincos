@@ -1,16 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getDigitalJourneyUnits } from "@/data/units";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackEvent } from "@/lib/analytics";
+import { getUnitHref } from "@/lib/unitRoutes";
+
+type UnitChooserProps = {
+    placement?: string;
+    redirectOnSelect?: boolean;
+};
 
 function getAllowedUnits() {
     return getDigitalJourneyUnits();
 }
 
-export default function UnitChooser() {
+export default function UnitChooser({ placement = "header", redirectOnSelect = false }: UnitChooserProps) {
+    const router = useRouter();
     const unit = useCurrentUnit();
     const allowed = getAllowedUnits();
 
@@ -53,7 +61,7 @@ export default function UnitChooser() {
                 type="button"
                 onClick={() => {
                     setOpen((v) => !v);
-                    trackEvent("unit_chooser_open", { placement: "header" });
+                    trackEvent("unit_chooser_open", { placement });
                 }}
                 onKeyDown={(e) => {
                     if (e.key === "Escape") {
@@ -124,8 +132,12 @@ export default function UnitChooser() {
                             }}
                             onClick={() => {
                                 setStoredUnitSlug(u.slug);
-                                trackEvent("unit_select", { unitSlug: u.slug, placement: "header_unit_chooser" });
+                                trackEvent("unit_select", { unitSlug: u.slug, placement: `${placement}_unit_chooser` });
                                 setOpen(false);
+                                if (redirectOnSelect) {
+                                    router.push(getUnitHref(u.slug));
+                                    return;
+                                }
                                 buttonRef.current?.focus();
                             }}
                         >
