@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { units, type Unit } from "@/data/units";
 import { normalizeUnitSlug } from "@/lib/unitRoutes";
 import { getStoredUnitSlug, setStoredUnitSlug } from "@/lib/unitSelection";
@@ -22,6 +22,7 @@ function findUnitBySlugOrAlias(slug: string | null | undefined): Unit | null {
 
 export function useCurrentUnit(): Unit | null {
     const pathname = usePathname();
+    const searchParams = useSearchParams();
 
     const slugFromPath = useMemo(() => {
         if (!pathname) return null;
@@ -32,13 +33,15 @@ export function useCurrentUnit(): Unit | null {
     }, [pathname]);
 
     const unitFromPath = useMemo(() => findUnitBySlugOrAlias(slugFromPath), [slugFromPath]);
+    const slugFromQuery = useMemo(() => searchParams?.get("unit") ?? null, [searchParams]);
+    const unitFromQuery = useMemo(() => findUnitBySlugOrAlias(slugFromQuery), [slugFromQuery]);
 
-    const [storedSlug, setStoredSlug] = useState<string | null>(null);
+    const [storedSlug, setStoredSlug] = useState<string | null>(() => getStoredUnitSlug());
 
     useEffect(() => {
         if (typeof window === "undefined") return;
         setStoredSlug(getStoredUnitSlug());
-    }, [pathname]);
+    }, [pathname, searchParams]);
 
     useEffect(() => {
         function onUnitChange(e: Event) {
@@ -53,11 +56,12 @@ export function useCurrentUnit(): Unit | null {
 
     const unitFromStorage = useMemo(() => findUnitBySlug(storedSlug), [storedSlug]);
 
-    const unit = unitFromPath ?? unitFromStorage;
+    const unit = unitFromPath ?? unitFromQuery ?? unitFromStorage;
 
     useEffect(() => {
-        if (unitFromPath?.slug) setStoredUnitSlug(unitFromPath.slug);
-    }, [unitFromPath?.slug]);
+        const activeSlug = unitFromPath?.slug ?? unitFromQuery?.slug ?? null;
+        if (activeSlug) setStoredUnitSlug(activeSlug);
+    }, [unitFromPath?.slug, unitFromQuery?.slug]);
 
     return unit;
 }

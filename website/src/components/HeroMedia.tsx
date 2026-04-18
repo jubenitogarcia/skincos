@@ -14,6 +14,7 @@ type HeroMediaProps = {
 };
 
 const HERO_AUTOPLAY_MS = 6000;
+const HERO_TRANSITION_MS = 560;
 const HERO_DEFAULT_FRAME_COLOR = "#050505";
 const HERO_LIGHT_TEXT_COLOR = "#f5ead8";
 const HERO_DARK_TEXT_COLOR = "#1f1f1f";
@@ -154,9 +155,11 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const unit = useCurrentUnit();
     const [index, setIndex] = useState(0);
     const [prevIndex, setPrevIndex] = useState<number | null>(null);
+    const [queuedIndex, setQueuedIndex] = useState<number | null>(null);
     const [aspectRatio, setAspectRatio] = useState<string>("16 / 9");
     const [frameColors, setFrameColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
     const [pendingFrameColors, setPendingFrameColors] = useState<HeroFrameColors | null>(null);
+    const [readyImageSrcs, setReadyImageSrcs] = useState<Record<string, true>>({});
     const [variant, setVariant] = useState<HeroMediaVariant>(initialVariant ?? "desktop");
     const hasInitialItems = Array.isArray(initialItems) && initialItems.length > 0;
     const topBandTextColor = useMemo(() => pickBandTextColor(frameColors.top), [frameColors.top]);
@@ -201,6 +204,37 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const targetCampaignKey = campaignKey(variant, targetUnitSlug);
     const initialCampaignKey = campaignKey(variant, initialUnitSlug ?? null);
     const visibleItems = loadedCampaignKey === targetCampaignKey ? items : EMPTY_HERO_ITEMS;
+
+    const markImageReady = useCallback((src: string) => {
+        if (!src) return;
+        setReadyImageSrcs((current) => {
+            if (current[src]) return current;
+            return {
+                ...current,
+                [src]: true,
+            };
+        });
+    }, []);
+
+    const preloadImage = useCallback(
+        (src: string) => {
+            if (typeof window === "undefined" || !src || readyImageSrcs[src]) return;
+
+            const image = new window.Image();
+            image.decoding = "async";
+            image.onload = () => markImageReady(src);
+            image.onerror = () => markImageReady(src);
+            image.src = src;
+
+            if (typeof image.decode === "function") {
+                void image.decode().then(
+                    () => markImageReady(src),
+                    () => markImageReady(src),
+                );
+            }
+        },
+        [markImageReady, readyImageSrcs],
+    );
 
     useEffect(() => {
         let cancelled = false;
@@ -252,7 +286,15 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     useEffect(() => {
         setIndex(0);
         setPrevIndex(null);
+        setQueuedIndex(null);
     }, [visibleItems]);
+
+    useEffect(() => {
+        visibleItems.forEach((heroItem) => {
+            if (heroItem.type !== "image") return;
+            preloadImage(heroItem.src);
+        });
+    }, [preloadImage, visibleItems]);
 
     const item = visibleItems[index] ?? visibleItems[0] ?? null;
     const shouldLoopVideo = item?.type === "video" && visibleItems.length === 1;
@@ -265,12 +307,23 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const goTo = useCallback(
         (nextIndex: number) => {
             if (visibleItems.length <= 1) return;
+            if (prevIndex !== null) return;
             if (nextIndex === index) return;
             if (nextIndex < 0 || nextIndex >= visibleItems.length) return;
+            const nextItem = visibleItems[nextIndex];
+            if (!nextItem) return;
+
+            if (nextItem.type === "image" && !readyImageSrcs[nextItem.src]) {
+                preloadImage(nextItem.src);
+                setQueuedIndex(nextIndex);
+                return;
+            }
+
+            setQueuedIndex(null);
             setPrevIndex(index);
             setIndex(nextIndex);
         },
-        [index, visibleItems.length],
+        [index, preloadImage, prevIndex, readyImageSrcs, visibleItems],
     );
 
     const goNext = useCallback(() => {
@@ -283,9 +336,26 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
 
     useEffect(() => {
         if (prevIndex === null) return;
-        const t = window.setTimeout(() => setPrevIndex(null), 650);
+        const t = window.setTimeout(() => setPrevIndex(null), HERO_TRANSITION_MS);
         return () => window.clearTimeout(t);
     }, [prevIndex]);
+
+    useEffect(() => {
+        if (queuedIndex === null) return;
+        const queuedItem = visibleItems[queuedIndex];
+        if (!queuedItem) {
+            setQueuedIndex(null);
+            return;
+        }
+        if (queuedItem.type === "image" && !readyImageSrcs[queuedItem.src]) return;
+        if (queuedIndex === index) {
+            setQueuedIndex(null);
+            return;
+        }
+        setPrevIndex(index);
+        setIndex(queuedIndex);
+        setQueuedIndex(null);
+    }, [index, queuedIndex, readyImageSrcs, visibleItems]);
 
     useEffect(() => {
         if (prevIndex !== null || !pendingFrameColors) return;
@@ -344,14 +414,18 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
         root.style.setProperty("--hero-band-bg-bottom-live", frameColors.bottom);
         root.style.setProperty("--hero-band-fg-top-live", topBandTextColor);
         root.style.setProperty("--hero-band-fg-bottom-live", bottomBandTextColor);
+    }, [bottomBandTextColor, frameColors.bottom, frameColors.top, topBandTextColor]);
 
+    useEffect(() => {
+        if (typeof document === "undefined") return undefined;
+        const root = document.documentElement;
         return () => {
             root.style.removeProperty("--hero-band-bg-top-live");
             root.style.removeProperty("--hero-band-bg-bottom-live");
             root.style.removeProperty("--hero-band-fg-top-live");
             root.style.removeProperty("--hero-band-fg-bottom-live");
         };
-    }, [bottomBandTextColor, frameColors.bottom, frameColors.top, topBandTextColor]);
+    }, []);
 
     const style = useMemo<HeroStyle>(() => {
         const hotspot = item?.bookingHotspot;
@@ -368,7 +442,10 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     }, [aspectRatio, frameColors.bottom, frameColors.top, item?.bookingHotspot]);
 
     const renderLayer = (layerItem: HeroMediaItem, opts: { layerKey: string; kind: "active" | "prev" }) => {
-        const layerClass = opts.kind === "active" ? "heroMediaLayer heroMediaLayer--active" : "heroMediaLayer heroMediaLayer--prev";
+        const layerClass =
+            opts.kind === "active"
+                ? `heroMediaLayer heroMediaLayer--active${prevIndex !== null ? " heroMediaLayer--enter" : ""}`
+                : "heroMediaLayer heroMediaLayer--prev";
 
         return (
             <div key={opts.layerKey} className={layerClass}>
@@ -415,6 +492,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
                         onLoad={(event) => {
                             if (opts.kind !== "active") return;
                             const img = event.currentTarget;
+                            markImageReady(layerItem.src);
                             if (img.naturalWidth > 0 && img.naturalHeight > 0) {
                                 setAspectRatio(`${img.naturalWidth} / ${img.naturalHeight}`);
                             }
