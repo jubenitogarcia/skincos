@@ -2337,8 +2337,8 @@ button:focus-visible {
 }
 
 .bookingFlow__doctorBadgeAvatar--all {
-  background: #fff;
-  border-color: rgba(17, 17, 17, 0.18);
+  background: #111;
+  border-color: rgba(17, 17, 17, 0.92);
   transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
@@ -2352,34 +2352,25 @@ button:focus-visible {
   font-size: 10px;
   line-height: 0.95;
   letter-spacing: -0.05em;
-  color: #111;
+  color: #fff;
   text-align: center;
   transition: color 160ms ease;
 }
 
-.bookingFlow__doctorBadge:hover .bookingFlow__doctorBadgeAvatar--all,
-.bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar--all {
-  background: #f3f4f6;
-  border-color: rgba(17, 17, 17, 0.64);
+.bookingFlow__doctorBadgeWrap:not([data-active="true"]) .bookingFlow__doctorBadge:hover .bookingFlow__doctorBadgeAvatar--all,
+.bookingFlow__doctorBadgeWrap:not([data-active="true"]) .bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar--all {
+  background: #000;
+  border-color: #000;
 }
 
 .bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadgeAvatar--all {
-  background: #111;
-  border-color: rgba(17, 17, 17, 0.88);
-  box-shadow: none;
-  transform: none;
+  background: #16a34a;
+  border-color: rgba(17, 17, 17, 0.92);
+  box-shadow: 0 16px 32px rgba(22, 163, 74, .26);
 }
 
 .bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
-  color: #fff;
-}
-
-.bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadge:hover .bookingFlow__doctorBadgeAvatar--all,
-.bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar--all {
-  background: #111;
-  border-color: rgba(17, 17, 17, 0.88);
-  box-shadow: none;
-  transform: none;
+  color: #062814;
 }
 
 .bookingFlow__picker--doctor .bookingFlow__doctorBadgeWrap {
@@ -2599,8 +2590,8 @@ button:focus-visible {
 }
 
 .bookingFlow__procedureBadgeAvatar--all {
-  background: #fff;
-  border-color: rgba(17, 17, 17, 0.18);
+  background: #111;
+  border-color: rgba(17, 17, 17, 0.92);
   transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
@@ -2616,43 +2607,27 @@ button:focus-visible {
 }
 
 .bookingFlow__procedureBadgeFallback--all {
-  color: #111;
+  color: #fff;
   font-size: 16px;
   transition: color 160ms ease;
 }
 
-.bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
-.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar--all {
-  background: #f3f4f6;
-  border-color: rgba(17, 17, 17, 0.64);
+.bookingFlow__procedureBadgeWrap:not([data-active="true"]) .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
+.bookingFlow__procedureBadgeWrap:not([data-active="true"]) .bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar--all {
+  background: #000;
+  border-color: #000;
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar--all,
 .bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar--all {
-  background: #111;
-  border-color: rgba(17, 17, 17, .84);
-  box-shadow: none;
-  transform: none;
+  background: #16a34a;
+  border-color: rgba(17, 17, 17, 0.92);
+  box-shadow: 0 16px 32px rgba(22, 163, 74, .26);
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeFallback--all,
 .bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeFallback--all {
-  color: #fff;
-}
-
-.bookingFlow__procedureBadge[data-active="true"]:hover:not(:disabled),
-.bookingFlow__procedureBadge[data-active="true"]:focus-visible {
-  transform: none;
-}
-
-.bookingFlow__procedureBadge[data-active="true"]:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
-.bookingFlow__procedureBadge[data-active="true"]:focus-visible .bookingFlow__procedureBadgeAvatar--all,
-.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
-.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar--all {
-  background: #111;
-  border-color: rgba(17, 17, 17, .84);
-  box-shadow: none;
-  transform: none;
+  color: #062814;
 }
 
 .bookingFlow__procedureBadgeLabel {
@@ -3242,33 +3217,46 @@ button:focus-visible {
 .heroMediaLayer {
   position: absolute;
   inset: 0;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
-.heroMediaLayer--fadeIn {
-  animation: heroFadeIn 650ms ease;
+.heroMediaLayer--active {
+  z-index: 1;
+  opacity: 1;
 }
 
-.heroMediaLayer--prev {
-  animation: heroFadeOut 650ms ease forwards;
+.heroMediaLayer--enter {
+  animation: heroFadeIn 560ms cubic-bezier(.22, .61, .36, 1);
 }
 
 @keyframes heroFadeIn {
   from {
     opacity: 0;
+    transform: scale(1.012);
   }
 
   to {
     opacity: 1;
+    transform: scale(1);
   }
+}
+
+.heroMediaLayer--prev {
+  z-index: 2;
+  opacity: 1;
+  animation: heroFadeOut 560ms cubic-bezier(.22, .61, .36, 1) forwards;
 }
 
 @keyframes heroFadeOut {
   from {
     opacity: 1;
+    transform: scale(1);
   }
 
   to {
     opacity: 0;
+    transform: scale(.992);
   }
 }
 
@@ -3277,6 +3265,7 @@ button:focus-visible {
   height: 100%;
   display: block;
   object-fit: contain;
+  transform: translateZ(0);
 }
 
 video.heroMediaEl {
@@ -6952,33 +6941,22 @@ video.heroMediaEl {
   transform: translateY(-1px);
 }
 
-.unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeAvatar--all,
-.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar--all {
-  background: #666;
-  border-color: #666;
+.unitDoctorsCompact__avatarTrigger:not([data-active="true"]):hover .bookingFlow__doctorBadgeAvatar--all,
+.unitDoctorsCompact__avatarTrigger:not([data-active="true"]):focus-visible .bookingFlow__doctorBadgeAvatar--all {
+  background: #000;
+  border-color: #000;
 }
 
 .unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeAvatar--all,
 .unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeAvatar--all {
-  background: #111;
-  border-color: rgba(17, 17, 17, .88);
-  box-shadow: none;
-  transform: none;
+  background: #16a34a;
+  border-color: rgba(17, 17, 17, 0.92);
+  box-shadow: 0 16px 32px rgba(22, 163, 74, .26);
 }
 
 .unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeFallback--all,
 .unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
-  color: #fff;
-}
-
-.unitDoctorsCompact__avatarTrigger--select[data-active="true"]:hover .bookingFlow__doctorBadgeAvatar--all,
-.unitDoctorsCompact__avatarTrigger--select[data-active="true"]:focus-visible .bookingFlow__doctorBadgeAvatar--all,
-.unitDoctorsCompact__item[data-active="true"] .unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeAvatar--all,
-.unitDoctorsCompact__item[data-active="true"] .unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar--all {
-  background: #111;
-  border-color: rgba(17, 17, 17, .88);
-  box-shadow: none;
-  transform: none;
+  color: #062814;
 }
 
 .unitDoctorsCompact__avatarTrigger .bookingFlow__doctorBadgeAvatar {
@@ -7176,6 +7154,66 @@ video.heroMediaEl {
 
 .pageNarrative--compact {
   padding-top: var(--space-5);
+}
+
+.homeUnitSelector {
+  margin-top: 20px;
+}
+
+.homeUnitSelector__intro {
+  transform: translateY(-8px);
+}
+
+.homeUnitSelector__intro .sectionTitle {
+  max-width: min(100%, 1220px);
+}
+
+.homeUnitSelector__intro .sectionSub {
+  max-width: min(100%, 1320px);
+}
+
+.homeUnitSelector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  margin: 6px auto 0;
+  transform: translateY(-10px);
+}
+
+.homeUnitSelector__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 260px;
+  min-height: 58px;
+  padding: 0 28px;
+  border: 1px solid rgba(17, 17, 17, .1);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(246, 242, 236, .98));
+  box-shadow: 0 18px 34px rgba(17, 17, 17, .08);
+  color: #171717;
+  font-family: var(--font-brand-ui);
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-decoration: none;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.homeUnitSelector__button:hover,
+.homeUnitSelector__button:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(138, 95, 42, .28);
+  box-shadow: 0 20px 40px rgba(17, 17, 17, .11);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(250, 244, 235, 1));
+}
+
+.homeUnitSelector__hint {
+  width: 100%;
+  margin-top: 0;
+  text-align: center;
 }
 
 .pageNarrative__intro {
@@ -8229,6 +8267,18 @@ video.heroMediaEl {
   .heroMediaEl {
     object-fit: cover;
   }
+
+  .homeUnitSelector {
+    margin-top: 12px;
+  }
+
+  .homeUnitSelector__intro {
+    transform: none;
+  }
+
+  .homeUnitSelector__actions {
+    transform: none;
+  }
 }
 
 @media (max-width:900px) {
@@ -8344,6 +8394,16 @@ video.heroMediaEl {
   .heroMedia {
     max-height: 380px;
     min-height: 260px;
+  }
+
+  .homeUnitSelector__actions {
+    gap: 12px;
+  }
+
+  .homeUnitSelector__button {
+    width: 100%;
+    min-width: 0;
+    min-height: 54px;
   }
 
   .cookieBannerInner {

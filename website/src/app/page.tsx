@@ -1,16 +1,14 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import FloatingContact from "@/components/FloatingContact";
-import UnitsMapSection from "@/components/UnitsMapSection";
-import UnitDoctorsGrid from "@/components/UnitDoctorsGrid";
-import AboutUsSection from "@/components/AboutUsSection";
 import HomeHeroExperience from "@/components/HomeHeroExperience";
 import TrustEvidenceSection from "@/components/TrustEvidenceSection";
-import UnitChooser from "@/components/UnitChooser";
+import HomePageSections from "@/components/HomePageSections";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import { resolveUnitFromSlug } from "@/lib/unitRoutes";
+import { UNIT_SELECTION_COOKIE_KEY } from "@/lib/unitSelection";
 import type { Metadata } from "next";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getSiteConfigFromHost } from "@/lib/site-config";
 import { SkincosHubPage } from "@/components/LegalContent";
 
@@ -64,6 +62,7 @@ export default async function HomePage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const requestHeaders = await headers();
+  const requestCookies = await cookies();
   const site = getSiteConfigFromHost(requestHeaders.get("host"));
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
 
@@ -85,7 +84,8 @@ export default async function HomePage({
       : Array.isArray(unitParamRaw)
         ? unitParamRaw[0] ?? ""
         : "";
-  const resolvedUnit = resolveUnitFromSlug(unitParam);
+  const cookieUnitParam = requestCookies.get(UNIT_SELECTION_COOKIE_KEY)?.value ?? "";
+  const resolvedUnit = resolveUnitFromSlug(unitParam || cookieUnitParam);
   const { items: heroItems } = await getHeroMediaItems({ variant, unitSlug: resolvedUnit?.slug ?? null });
 
   return (
@@ -93,68 +93,8 @@ export default async function HomePage({
       <Header />
       <main>
         <HomeHeroExperience heroItems={heroItems} initialMediaVariant={variant} initialUnitSlug={resolvedUnit?.slug ?? null} />
-
-        {resolvedUnit ? (
-          <>
-            <TrustEvidenceSection context="home" />
-
-            <div className="container">
-              <section className="pageSection pageNarrative homeLeadSection">
-                <div className="pageNarrative__intro pageNarrative__intro--extended homeLeadSection__intro">
-                  <h2 className="sectionTitle">Realce sua beleza com equilíbrio, segurança e resultado natural.</h2>
-                  <p className="sectionLead pageNarrative__sub homeLeadSection__sub">
-                    Na Espaço Facial, cada atendimento começa com uma avaliação cuidadosa para indicar o que faz sentido para o seu rosto e/ou corpo, sua rotina e suas expectativas, com segurança, elegância e naturalidade.
-                  </p>
-                </div>
-              </section>
-
-              <AboutUsSection />
-
-              <section id="doutores" className="pageSection homeDoctorsSection">
-                <h2 className="sectionTitle">Conheça a equipe</h2>
-                <div className="sectionCopyPair homeDoctorsLead">
-                  <p className="sectionSub">
-                    Escolher fica mais fácil quando você conhece o profissional.
-                  </p>
-                </div>
-                <UnitDoctorsGrid variant="booking-compact" />
-                <p className="small homeDoctorsAftercopy">
-                  Acompanhe os seus procedimentos em suas redes sociais e agende com confiança com um de nossos doutores especialistas.
-                </p>
-              </section>
-
-              <section id="unidades" className="pageSection">
-                <h2 className="sectionTitle">Nossas Unidades</h2>
-                <p className="sectionSub">
-                  Veja as unidades da Espaço Facial e encontre a mais conveniente para o seu atendimento.
-                </p>
-                <UnitsMapSection />
-              </section>
-            </div>
-          </>
-        ) : (
-          <div className="container">
-            <section className="pageSection pageNarrative pageNarrative--compact" aria-labelledby="home-unit-selector-title">
-              <div className="pageNarrative__intro">
-                <span className="pageNarrative__eyebrow">Escolha sua unidade</span>
-                <h2 id="home-unit-selector-title" className="sectionTitle">
-                  Selecione a unidade para continuar.
-                </h2>
-                <p className="sectionSub pageNarrative__sub">
-                  Para ver informações da unidade, equipe, localização e seguir para a jornada correta, escolha uma unidade no seletor abaixo.
-                </p>
-              </div>
-
-              <div className="bookingFlow__embeddedUnitChooser">
-                <UnitChooser placement="home_empty_state" redirectOnSelect />
-              </div>
-
-              <p className="small pageNarrative__hint">
-                Ao escolher uma unidade, você será redirecionado automaticamente para a página correspondente.
-              </p>
-            </section>
-          </div>
-        )}
+        <TrustEvidenceSection context="home" />
+        <HomePageSections />
       </main>
 
       <Footer />
