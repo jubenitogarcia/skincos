@@ -156,6 +156,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const [prevIndex, setPrevIndex] = useState<number | null>(null);
     const [aspectRatio, setAspectRatio] = useState<string>("16 / 9");
     const [frameColors, setFrameColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
+    const [pendingFrameColors, setPendingFrameColors] = useState<HeroFrameColors | null>(null);
     const [variant, setVariant] = useState<HeroMediaVariant>(initialVariant ?? "desktop");
     const hasInitialItems = Array.isArray(initialItems) && initialItems.length > 0;
     const topBandTextColor = useMemo(() => pickBandTextColor(frameColors.top), [frameColors.top]);
@@ -287,6 +288,12 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     }, [prevIndex]);
 
     useEffect(() => {
+        if (prevIndex !== null || !pendingFrameColors) return;
+        setFrameColors(pendingFrameColors);
+        setPendingFrameColors(null);
+    }, [pendingFrameColors, prevIndex]);
+
+    useEffect(() => {
         const canAutoAdvance = visibleItems.length > 1 && item?.type === "image" && effectiveVariant !== "mobile";
         if (!canAutoAdvance) return;
 
@@ -303,7 +310,12 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
         let cancelled = false;
 
         if (!item || item.type !== "image") {
-            setFrameColors(HERO_DEFAULT_FRAME_COLORS);
+            if (prevIndex !== null) {
+                setPendingFrameColors(HERO_DEFAULT_FRAME_COLORS);
+            } else {
+                setFrameColors(HERO_DEFAULT_FRAME_COLORS);
+                setPendingFrameColors(null);
+            }
             return () => {
                 cancelled = true;
             };
@@ -311,13 +323,19 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
 
         void extractTopBottomEdgeColorsFromImage(item.src).then((nextColors) => {
             if (cancelled) return;
-            setFrameColors(nextColors ?? HERO_DEFAULT_FRAME_COLORS);
+            const resolvedColors = nextColors ?? HERO_DEFAULT_FRAME_COLORS;
+            if (prevIndex !== null) {
+                setPendingFrameColors(resolvedColors);
+            } else {
+                setFrameColors(resolvedColors);
+                setPendingFrameColors(null);
+            }
         });
 
         return () => {
             cancelled = true;
         };
-    }, [item]);
+    }, [item, prevIndex]);
 
     useEffect(() => {
         if (typeof document === "undefined") return;
@@ -349,13 +367,8 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
         };
     }, [aspectRatio, frameColors.bottom, frameColors.top, item?.bookingHotspot]);
 
-    const shouldAnimateIn = prevIndex !== null;
-
     const renderLayer = (layerItem: HeroMediaItem, opts: { layerKey: string; kind: "active" | "prev" }) => {
-        const layerClass =
-            opts.kind === "active"
-                ? `heroMediaLayer heroMediaLayer--active${shouldAnimateIn ? " heroMediaLayer--fadeIn" : ""}`
-                : "heroMediaLayer heroMediaLayer--prev";
+        const layerClass = opts.kind === "active" ? "heroMediaLayer heroMediaLayer--active" : "heroMediaLayer heroMediaLayer--prev";
 
         return (
             <div key={opts.layerKey} className={layerClass}>

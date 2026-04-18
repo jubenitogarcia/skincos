@@ -8,14 +8,24 @@ export async function GET(req: Request) {
     const variant: HeroMediaVariant | undefined = variantParam === "mobile" || variantParam === "desktop" ? (variantParam as HeroMediaVariant) : undefined;
     const unitSlug = (url.searchParams.get("unit") ?? "").trim() || undefined;
 
-    const { items, source } = await getHeroMediaItems({ variant, unitSlug });
+    const { items, source, debug: heroDebug } = await getHeroMediaItems({ variant, unitSlug });
     const payload = { items } as {
         items: HeroMediaItem[];
-        debug?: { source: string; count: number };
+        debug?: {
+            source: string;
+            count: number;
+            scopeCounts: { global: number; unit: number };
+            sourceCounts: {
+                local: { global: number; unit: number; total: number };
+                remote: { global: number; unit: number; total: number };
+            };
+            remoteStrategy: "scoped_manifest" | "legacy" | "none";
+            remoteChannels: { global: string; unit: string };
+        };
     };
 
     if (debug) {
-        payload.debug = { source, count: payload.items.length };
+        payload.debug = heroDebug;
     }
 
     return Response.json(

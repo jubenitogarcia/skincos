@@ -6,6 +6,7 @@ import UnitDoctorsGrid from "@/components/UnitDoctorsGrid";
 import AboutUsSection from "@/components/AboutUsSection";
 import HomeHeroExperience from "@/components/HomeHeroExperience";
 import TrustEvidenceSection from "@/components/TrustEvidenceSection";
+import UnitChooser from "@/components/UnitChooser";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import { resolveUnitFromSlug } from "@/lib/unitRoutes";
 import type { Metadata } from "next";
@@ -92,41 +93,68 @@ export default async function HomePage({
       <Header />
       <main>
         <HomeHeroExperience heroItems={heroItems} initialMediaVariant={variant} initialUnitSlug={resolvedUnit?.slug ?? null} />
-        <TrustEvidenceSection context="home" />
 
-        <div className="container">
-          <section className="pageSection pageNarrative homeLeadSection">
-            <div className="pageNarrative__intro pageNarrative__intro--extended homeLeadSection__intro">
-              <h2 className="sectionTitle">Realce sua beleza com equilíbrio, segurança e resultado natural.</h2>
-              <p className="sectionLead pageNarrative__sub homeLeadSection__sub">
-                Na Espaço Facial, cada atendimento começa com uma avaliação cuidadosa para indicar o que faz sentido para o seu rosto e/ou corpo, sua rotina e suas expectativas, com segurança, elegância e naturalidade.
-              </p>
+        {resolvedUnit ? (
+          <>
+            <TrustEvidenceSection context="home" />
+
+            <div className="container">
+              <section className="pageSection pageNarrative homeLeadSection">
+                <div className="pageNarrative__intro pageNarrative__intro--extended homeLeadSection__intro">
+                  <h2 className="sectionTitle">Realce sua beleza com equilíbrio, segurança e resultado natural.</h2>
+                  <p className="sectionLead pageNarrative__sub homeLeadSection__sub">
+                    Na Espaço Facial, cada atendimento começa com uma avaliação cuidadosa para indicar o que faz sentido para o seu rosto e/ou corpo, sua rotina e suas expectativas, com segurança, elegância e naturalidade.
+                  </p>
+                </div>
+              </section>
+
+              <AboutUsSection />
+
+              <section id="doutores" className="pageSection homeDoctorsSection">
+                <h2 className="sectionTitle">Conheça a equipe</h2>
+                <div className="sectionCopyPair homeDoctorsLead">
+                  <p className="sectionSub">
+                    Escolher fica mais fácil quando você conhece o profissional.
+                  </p>
+                </div>
+                <UnitDoctorsGrid variant="booking-compact" />
+                <p className="small homeDoctorsAftercopy">
+                  Acompanhe os seus procedimentos em suas redes sociais e agende com confiança com um de nossos doutores especialistas.
+                </p>
+              </section>
+
+              <section id="unidades" className="pageSection">
+                <h2 className="sectionTitle">Nossas Unidades</h2>
+                <p className="sectionSub">
+                  Veja as unidades da Espaço Facial e encontre a mais conveniente para o seu atendimento.
+                </p>
+                <UnitsMapSection />
+              </section>
             </div>
-          </section>
+          </>
+        ) : (
+          <div className="container">
+            <section className="pageSection pageNarrative pageNarrative--compact" aria-labelledby="home-unit-selector-title">
+              <div className="pageNarrative__intro">
+                <span className="pageNarrative__eyebrow">Escolha sua unidade</span>
+                <h2 id="home-unit-selector-title" className="sectionTitle">
+                  Selecione a unidade para continuar.
+                </h2>
+                <p className="sectionSub pageNarrative__sub">
+                  Para ver informações da unidade, equipe, localização e seguir para a jornada correta, escolha uma unidade no seletor abaixo.
+                </p>
+              </div>
 
-          <AboutUsSection />
+              <div className="bookingFlow__embeddedUnitChooser">
+                <UnitChooser placement="home_empty_state" redirectOnSelect />
+              </div>
 
-          <section id="doutores" className="pageSection homeDoctorsSection">
-            <h2 className="sectionTitle">Conheça a equipe</h2>
-            <div className="sectionCopyPair homeDoctorsLead">
-              <p className="sectionSub">
-                Escolher fica mais fácil quando você conhece o profissional.
+              <p className="small pageNarrative__hint">
+                Ao escolher uma unidade, você será redirecionado automaticamente para a página correspondente.
               </p>
-            </div>
-            <UnitDoctorsGrid variant="booking-compact" />
-            <p className="small homeDoctorsAftercopy">
-              Acompanhe os seus procedimentos em suas redes sociais e agende com confiança com um de nossos doutores especialistas.
-            </p>
-          </section>
-
-          <section id="unidades" className="pageSection">
-            <h2 className="sectionTitle">Nossas Unidades</h2>
-            <p className="sectionSub">
-              Veja as unidades da Espaço Facial e encontre a mais conveniente para o seu atendimento.
-            </p>
-            <UnitsMapSection />
-          </section>
-        </div>
+            </section>
+          </div>
+        )}
       </main>
 
       <Footer />

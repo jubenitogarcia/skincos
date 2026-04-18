@@ -1,3 +1,27 @@
+@property --hero-band-bg-top-live {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #050505;
+}
+
+@property --hero-band-bg-bottom-live {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #050505;
+}
+
+@property --hero-band-fg-top-live {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f5ead8;
+}
+
+@property --hero-band-fg-bottom-live {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f5ead8;
+}
+
 :root {
   --bg: #ffffff;
   --text: #121212;
@@ -63,6 +87,14 @@ body {
   font-family: var(--font-brand-text);
   font-size: var(--type-body);
   line-height: 1.5
+}
+
+html {
+  transition:
+    --hero-band-bg-top-live 420ms ease,
+    --hero-band-bg-bottom-live 420ms ease,
+    --hero-band-fg-top-live 420ms ease,
+    --hero-band-fg-bottom-live 420ms ease;
 }
 
 button,
@@ -3176,12 +3208,21 @@ button:focus-visible {
   border-bottom: 1px solid var(--border);
   overflow: hidden;
   background: linear-gradient(180deg, var(--hero-band-bg-top-live, #050505), var(--hero-band-bg-bottom-live, #050505));
+  transition: background 420ms ease;
 }
 
 .hero--experience,
 .heroTitleBand {
   --hero-band-bg: var(--hero-band-bg-top-live, #050505);
   --hero-band-fg: var(--hero-band-fg-top-live, #f5ead8);
+}
+
+.hero--experience {
+  border-bottom: 0;
+}
+
+.hero--experience + .trustEvidenceBand {
+  margin-top: 0;
 }
 
 .trustEvidenceBand {
@@ -3245,6 +3286,7 @@ video.heroMediaEl {
 .heroTitleBand {
   width: 100%;
   background: var(--hero-band-bg, #050505);
+  transition: background 420ms ease;
 }
 
 .heroTitleBand__inner {
@@ -3263,6 +3305,7 @@ video.heroMediaEl {
   font-weight: 900;
   letter-spacing: .2em;
   text-transform: uppercase;
+  transition: color 420ms ease;
 }
 
 .heroOverlay {
@@ -7229,6 +7272,7 @@ video.heroMediaEl {
   margin-top: -1px;
   padding: 22px 0 24px;
   background: var(--hero-band-bg, #050505);
+  transition: background 420ms ease;
 }
 
 .trustEvidenceBand__inner {
