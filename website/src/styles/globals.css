@@ -1782,8 +1782,8 @@ button:focus-visible {
 .bookingConfirmation__hero {
   display: grid;
   justify-items: center;
-  gap: 12px;
-  padding: 28px 24px;
+  gap: 8px;
+  padding: 22px 24px 24px;
   text-align: center;
   background:
     radial-gradient(circle at top right, rgba(197, 186, 171, 0.28), rgba(255, 255, 255, 0) 30%),
@@ -1810,20 +1810,6 @@ button:focus-visible {
   color: #fff;
   font-size: 28px;
   font-weight: 900;
-}
-
-.bookingConfirmation__eyebrow {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: #f3f3f3;
-  color: #505050;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: .16em;
-  text-transform: uppercase;
 }
 
 .bookingConfirmation__title {
@@ -1953,8 +1939,10 @@ button:focus-visible {
 }
 
 .bookingConfirmation__nextSteps {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
   margin-top: 16px;
 }
 
@@ -1963,13 +1951,19 @@ button:focus-visible {
 }
 
 .bookingConfirmation__nextStep {
-  padding: 14px 16px;
-  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  max-width: 100%;
+  padding: 10px 16px;
+  border-radius: 999px;
   border: 1px solid rgba(17, 17, 17, 0.08);
-  background: rgba(248, 246, 244, 0.92);
-  color: rgba(17, 17, 17, 0.78);
-  font-size: 14px;
-  line-height: 1.55;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 241, 237, 0.94));
+  color: rgba(17, 17, 17, 0.82);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  box-shadow: 0 8px 18px rgba(31, 24, 18, 0.06);
 }
 
 .bookingConfirmation__actions {
@@ -2314,7 +2308,8 @@ button:focus-visible {
 }
 
 .bookingFlow__doctorBadge:hover .bookingFlow__doctorBadgeAvatar,
-.bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar {
+.bookingFlow__doctorBadge:focus-visible .bookingFlow__doctorBadgeAvatar,
+.bookingFlow__doctorBadgeWrap[data-active="true"] .bookingFlow__doctorBadgeAvatar {
   transform: translateY(-2px);
   border-color: rgba(17, 17, 17, 0.88);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
@@ -2566,12 +2561,19 @@ button:focus-visible {
 .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar,
 .bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar {
   transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
+}
+
+.bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar,
+.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar {
+  transform: translateY(-2px);
   border-color: rgba(17, 17, 17, 0.88);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
 }
 
 .bookingFlow__procedureBadge:hover:not(:disabled),
-.bookingFlow__procedureBadge:focus-visible {
+.bookingFlow__procedureBadge:focus-visible,
+.bookingFlow__procedureBadge[data-active="true"] {
   transform: translateY(-1px);
 }
 
@@ -2584,7 +2586,9 @@ button:focus-visible {
 }
 
 .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar img,
-.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar img {
+.bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar img,
+.bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar img,
+.bookingFlow__procedureBadgeWrap[data-active="true"] .bookingFlow__procedureBadgeAvatar img {
   filter: saturate(1) grayscale(0);
   transform: scale(1.03);
 }
@@ -2614,8 +2618,8 @@ button:focus-visible {
 
 .bookingFlow__procedureBadgeWrap:not([data-active="true"]) .bookingFlow__procedureBadge:hover:not(:disabled) .bookingFlow__procedureBadgeAvatar--all,
 .bookingFlow__procedureBadgeWrap:not([data-active="true"]) .bookingFlow__procedureBadge:focus-visible .bookingFlow__procedureBadgeAvatar--all {
-  background: #000;
-  border-color: #000;
+  background: #16a34a;
+  border-color: rgba(22, 163, 74, 0.72);
 }
 
 .bookingFlow__procedureBadge[data-active="true"] .bookingFlow__procedureBadgeAvatar--all,
@@ -2723,7 +2727,6 @@ button:focus-visible {
   border-radius: 12px;
   font-weight: 900;
   text-align: center;
-  cursor: pointer;
 }
 
 .bookingFlow__dateHint {
@@ -6930,21 +6933,28 @@ video.heroMediaEl {
 }
 
 .unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeAvatar,
-.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar {
+.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeAvatar,
+.unitDoctorsCompact__item:hover .bookingFlow__doctorBadgeAvatar {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
+}
+
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeAvatar,
+.unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeAvatar {
   transform: translateY(-2px);
   border-color: rgba(17, 17, 17, 0.88);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
 }
 
-.unitDoctorsCompact__avatarTrigger:hover .bookingFlow__doctorBadgeFallback--all,
-.unitDoctorsCompact__avatarTrigger:focus-visible .bookingFlow__doctorBadgeFallback--all {
-  transform: translateY(-1px);
+.unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeFallback--all,
+.unitDoctorsCompact__item[data-active="true"] .bookingFlow__doctorBadgeFallback--all {
+  transform: none;
 }
 
 .unitDoctorsCompact__avatarTrigger:not([data-active="true"]):hover .bookingFlow__doctorBadgeAvatar--all,
 .unitDoctorsCompact__avatarTrigger:not([data-active="true"]):focus-visible .bookingFlow__doctorBadgeAvatar--all {
-  background: #000;
-  border-color: #000;
+  background: #16a34a;
+  border-color: rgba(22, 163, 74, 0.72);
 }
 
 .unitDoctorsCompact__avatarTrigger--select[data-active="true"] .bookingFlow__doctorBadgeAvatar--all,

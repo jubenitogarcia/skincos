@@ -121,22 +121,6 @@ async function tryPostWebhook(payload: unknown) {
     }
 }
 
-async function expireStaleOverlaps(db: Awaited<ReturnType<typeof getBookingDb>>, overlaps: Array<{ id: string; status: string; confirm_by_ms: number }>) {
-    const now = nowMs();
-    for (const o of overlaps) {
-        const status = (o.status ?? "").toString();
-        if (status !== "pending" && status !== "needs_approval") continue;
-        const confirmBy = Number(o.confirm_by_ms ?? 0);
-        if (now <= confirmBy) continue;
-        await db
-            .prepare(
-                "UPDATE booking_requests SET status = 'expired', decided_at_ms = ?, decision_note = COALESCE(decision_note, 'auto_expired') WHERE id = ? AND (status = 'pending' OR status = 'needs_approval')",
-            )
-            .bind(now, o.id)
-            .run();
-    }
-}
-
 async function upsertCustomer(
     db: Awaited<ReturnType<typeof getBookingDb>>,
     params: { name: string; email: string; whatsapp: string; cpf: string | null; address: string | null; now: number },
@@ -401,44 +385,13 @@ export async function POST(request: Request) {
     }
     const agendaRanges = await listAgendaRanges({ unitSlug, date });
 
-    const db = await getBookingDb();
-
     // If the user has no preference, pick a free doctor for that unit+slot.
     let effectiveDoctorSlug = doctorSlug;
     let safeDoctorName = clampText(selectedDoctor?.name || doctorName || doctorSlug, 120);
     if (wantsAnyDoctor) {
         const doctorsForSelection = daySchedule ? doctorsAvailableBySchedule : doctors;
 
-        const placeholders = doctorsForSelection.map(() => "?").join(", ");
-        const overlapsRes = await db
-            .prepare(
-                `SELECT id, doctor_slug, status, confirm_by_ms, start_at_ms, end_at_ms FROM booking_requests WHERE unit_slug = ? AND doctor_slug IN (${placeholders}) AND start_at_ms < ? AND end_at_ms > ?`,
-            )
-            .bind(unitSlug, ...doctorsForSelection.map((doctor) => doctor.slug), endAtMs, startAtMs)
-            .all<{ id: string; doctor_slug: string; status: string; confirm_by_ms: number; start_at_ms: number; end_at_ms: number }>();
-
-        await expireStaleOverlaps(db, overlapsRes.results);
-
-        const now = nowMs();
-        const activeByDoctor = new Map<string, { hasConfirmed: boolean; hasPending: boolean }>();
-
-        for (const o of overlapsRes.results) {
-            const status = (o.status ?? "").toString();
-            const isConfirmed = status === "confirmed";
-            const isPending = status === "pending" || status === "needs_approval";
-            if (!isConfirmed && !isPending) continue;
-
-            if (isPending && now > Number(o.confirm_by_ms ?? 0)) continue;
-
-            const slug = (o.doctor_slug ?? "").toString();
-            const cur = activeByDoctor.get(slug) ?? { hasConfirmed: false, hasPending: false };
-            if (isConfirmed) cur.hasConfirmed = true;
-            if (isPending) cur.hasPending = true;
-            activeByDoctor.set(slug, cur);
-        }
-
-        const pick = doctorsForSelection.find((doctor) => {
-            if (activeByDoctor.has(doctor.slug)) return false;
+        const pick = doctorsForSelection.find(() => {
             return !hasAgendaConflictForDoctor({
                 agendaRanges,
                 startAtMs,
@@ -446,8 +399,7 @@ export async function POST(request: Request) {
             });
         }) ?? null;
         if (!pick) {
-            const anyPending = Array.from(activeByDoctor.values()).some((v) => v.hasPending);
-            return json({ ok: false, error: anyPending ? "slot_in_review" : "no_availability" }, { status: 409 });
+            return json({ ok: false, error: "no_availability" }, { status: 409 });
         }
 
         effectiveDoctorSlug = pick.slug;
@@ -463,39 +415,9 @@ export async function POST(request: Request) {
         return json({ ok: false, error: "no_availability" }, { status: 409 });
     }
 
-    // Check overlaps for the same unit+doctor.
-    const overlapsRes = await db
-        .prepare(
-            "SELECT id, status, confirm_by_ms, start_at_ms, end_at_ms FROM booking_requests WHERE unit_slug = ? AND doctor_slug = ? AND start_at_ms < ? AND end_at_ms > ?",
-        )
-        .bind(unitSlug, effectiveDoctorSlug, endAtMs, startAtMs)
-        .all<{ id: string; status: string; confirm_by_ms: number; start_at_ms: number; end_at_ms: number }>();
-
-    await expireStaleOverlaps(db, overlapsRes.results);
-
-    const now = nowMs();
-    const activeOverlaps = overlapsRes.results.filter((o) => {
-        const status = (o.status ?? "").toString();
-        if (status === "confirmed") return true;
-        if (status === "pending" || status === "needs_approval") {
-            return now <= Number(o.confirm_by_ms ?? 0);
-        }
-        return false;
-    });
-
-    const hasConfirmedConflict = activeOverlaps.some((o) => (o.status ?? "").toString() === "confirmed");
-    const hasPendingConflict = activeOverlaps.some((o) => {
-        const status = (o.status ?? "").toString();
-        return status === "pending" || status === "needs_approval";
-    });
-
-    if (hasPendingConflict) {
-        return json({ ok: false, error: "slot_in_review" }, { status: 409 });
-    }
-
-    if (hasConfirmedConflict) {
-        return json({ ok: false, error: "no_availability" }, { status: 409 });
-    }
+    // Persist the website request for protocol/automation, but do not let local booking_requests
+    // become a scheduling lock. Slot blocking must mirror agenda_appointments from the system only.
+    const db = await getBookingDb();
 
     const status = "confirmed";
 
