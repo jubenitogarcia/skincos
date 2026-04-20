@@ -386,7 +386,6 @@ export default function BookingFlow() {
     const [dateAvailability, setDateAvailability] = useState<Record<string, boolean>>({});
 
     const [submitted, setSubmitted] = useState<SubmittedReservation | null>(null);
-    const [status, setStatus] = useState<BookingStatus | null>(null);
     const procedureScrollWindowRef = useRef<HTMLDivElement | null>(null);
     const autoPickMotionDoneRef = useRef(false);
     const patientNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -474,7 +473,6 @@ export default function BookingFlow() {
                     statusToken: token,
                     reservation,
                 });
-                setStatus(booking);
                 setStep("submitted");
 
                 if (bookingTokenQuery && typeof window !== "undefined") {
@@ -990,41 +988,6 @@ export default function BookingFlow() {
         }
     }
 
-    // Poll status after submit
-    useEffect(() => {
-        if (!submitted) return;
-        const bookingId = submitted.id;
-        const statusToken = submitted.statusToken;
-        if (typeof statusToken !== "string" || statusToken.length === 0) return;
-        const safeStatusToken: string = statusToken;
-        let cancelled = false;
-        let timer: ReturnType<typeof setTimeout> | null = null;
-
-        async function tick() {
-            try {
-                const res = await fetch(`/api/booking/status?id=${encodeURIComponent(bookingId)}`, {
-                    cache: "no-store",
-                    headers: { "x-booking-status-token": safeStatusToken },
-                });
-                const json = (await res.json().catch(() => null)) as StatusResponse | null;
-                if (cancelled) return;
-                if (res.ok && json && isOkResponse(json)) {
-                    setStatus((json as { ok: true; booking: BookingStatus }).booking);
-                }
-            } catch {
-                // ignore
-            } finally {
-                if (!cancelled) timer = setTimeout(tick, 25_000);
-            }
-        }
-
-        tick();
-        return () => {
-            cancelled = true;
-            if (timer) clearTimeout(timer);
-        };
-    }, [submitted]);
-
     const canPickProcedure = !!unitSlug;
     const canPick = !!unitSlug;
     const hasResolvedDateAvailability = upcomingDays.every((day) => typeof dateAvailability[day] === "boolean");
@@ -1137,14 +1100,14 @@ export default function BookingFlow() {
     }, [dateKey, effectiveDoctorSlug, effectiveServiceId, showDetailsModal, timeKey, unitSlug]);
 
     function selectDoctor(nextDoctor: DoctorSelection | null) {
-        const nextSelection = doctor?.slug === nextDoctor?.slug ? null : nextDoctor;
-        if (!doctor && !nextSelection) return;
+        if (!nextDoctor) return;
+        if (doctor?.slug === nextDoctor.slug) return;
         trackBookingFunnelStep({
-            step: nextSelection ? "doctor_selected" : "doctor_cleared",
+            step: "doctor_selected",
             unitSlug,
-            doctorSlug: nextSelection?.slug ?? null,
+            doctorSlug: nextDoctor.slug,
         });
-        setDoctor(nextSelection);
+        setDoctor(nextDoctor);
         setDateKey(null);
         setDateTouched(false);
         setTimeKey(null);
@@ -1153,11 +1116,13 @@ export default function BookingFlow() {
 
     function toggleProcedure(nextService: Service) {
         setSelectedServices((current) => {
-            const exists = current.some((item) => item.id === nextService.id);
             if (nextService.id === OTHER_SERVICE.id) {
-                const nextSelection = exists ? [] : [OTHER_SERVICE];
+                const alreadySelected = current.some((item) => item.id === OTHER_SERVICE.id);
+                if (alreadySelected) return current;
+
+                const nextSelection = [OTHER_SERVICE];
                 trackBookingFunnelStep({
-                    step: nextSelection.length ? "service_selected" : "service_cleared",
+                    step: "service_selected",
                     unitSlug,
                     doctorSlug: effectiveDoctorSlug,
                     serviceId: nextSelection[0]?.id ?? null,
@@ -1167,9 +1132,12 @@ export default function BookingFlow() {
             }
 
             const withoutOther = current.filter((item) => item.id !== OTHER_SERVICE.id);
-            const nextSelection = exists ? withoutOther.filter((item) => item.id !== nextService.id) : [...withoutOther, nextService];
+            const alreadySelected = withoutOther.some((item) => item.id === nextService.id);
+            if (alreadySelected) return current;
+
+            const nextSelection = [...withoutOther, nextService];
             trackBookingFunnelStep({
-                step: nextSelection.length ? "service_selected" : "service_cleared",
+                step: "service_selected",
                 unitSlug,
                 doctorSlug: effectiveDoctorSlug,
                 serviceId: nextService.id,
@@ -1500,7 +1468,6 @@ export default function BookingFlow() {
                                                     const active = timeKey === s.time;
                                                     const isPast = s.reason === "past";
                                                     const isOccupied = s.reason === "agenda" || s.reason === "booked";
-                                                    const isLocked = isPast || isOccupied;
                                                     const hasTooltip = isPast || isOccupied || s.available;
                                                     const tooltip = isPast ? "passou" : isOccupied ? "ocupado" : s.available ? "disponível" : "";
                                                     const tooltipTone = isPast ? "neutral" : isOccupied ? "occupied" : s.available ? "available" : "neutral";
@@ -1520,7 +1487,7 @@ export default function BookingFlow() {
                                                             disabled={nativeDisabled}
                                                             aria-disabled={ariaDisabled}
                                                             data-reason={s.reason ?? ""}
-                                                            data-locked={isLocked ? "true" : "false"}
+                                                            data-locked={hasTooltip ? "true" : "false"}
                                                             data-tooltip={hasTooltip ? tooltip : undefined}
                                                             data-tooltip-tone={hasTooltip ? tooltipTone : undefined}
                                                             className="bookingFlow__selectItem bookingFlow__timeBtn"
@@ -1583,81 +1550,19 @@ export default function BookingFlow() {
                         )}
                     </div>
                 </div>
-            ) : (
-                <div className="bookingFlow__grid">
-                    <div className="bookingFlow__cardFull">
-                        {submitted ? (
-                            <BookingConfirmationCard
-                                reservation={submitted.reservation}
-                                notifications={submitted.notifications}
-                                variant={isReservationDetailsView ? "details_link" : "default"}
-                            />
-                        ) : null}
-                    </div>
-
-                    {!isReservationDetailsView ? (
-                        <div className="card bookingFlow__cardFull bookingFlow__submittedStatusCard" style={{ padding: 18 }}>
-                            <div style={{ fontWeight: 900, fontSize: 18 }}>
-                                {submitted?.status === "confirmed" ? "Status do agendamento" : "Status do pedido"}
-                            </div>
-
-                            {status ? (
-                                <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
-                                    <div style={{ fontWeight: 900 }}>Status</div>
-                                    <div style={{ marginTop: 6 }}>
-                                        {status.status === "confirmed" ? (
-                                            <span style={{ fontWeight: 900, color: "#16a34a" }}>Confirmado</span>
-                                        ) : status.status === "declined" ? (
-                                            <span style={{ fontWeight: 900, color: "#b91c1c" }}>Não confirmado</span>
-                                        ) : status.status === "expired" ? (
-                                            <span style={{ fontWeight: 900, color: "#b45309" }}>Expirado</span>
-                                        ) : status.status === "needs_approval" ? (
-                                            <span style={{ fontWeight: 900, color: "#b45309" }}>Em análise</span>
-                                        ) : (
-                                            <span style={{ fontWeight: 900 }}>Pendente</span>
-                                        )}
-                                    </div>
-                                    <div className="small" style={{ marginTop: 6 }}>
-                                        Atualiza automaticamente.
-                                    </div>
-                                </div>
-                            ) : null}
-
-                            <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                <button
-                                    type="button"
-                                    className="pill"
-                                    onClick={() => {
-                                        // restart
-                                        setStep("pick");
-                                        setDoctor(null);
-                                        setSelectedServices([]);
-                                        setDateKey(null);
-                                        setDateTouched(false);
-                                        setTimeKey(null);
-                                        setPatientName("");
-                                        setPatientGender("");
-                                        setEmail("");
-                                        setWhatsapp("");
-                                        setNotes("");
-                                        setSlots(null);
-                                        setSubmitted(null);
-                                        setStatus(null);
-                                        setSubmitError(null);
-                                        setDetailsStartedAtMs(null);
-                                        setTurnstileToken(null);
-                                        setTurnstileHadError(false);
-                                        clearBookingDraft();
-                                    }}
-                                    style={{ cursor: "pointer" }}
-                                >
-                                    Fazer outro pedido
-                                </button>
-                            </div>
-                        </div>
-                    ) : null}
-                </div>
-            )}
+	            ) : (
+	                <div className="bookingFlow__grid">
+	                    <div className="bookingFlow__cardFull">
+	                        {submitted ? (
+	                            <BookingConfirmationCard
+                                    reservation={submitted.reservation}
+                                    notifications={submitted.notifications}
+                                    variant={isReservationDetailsView ? "details_link" : "default"}
+                                />
+	                        ) : null}
+	                    </div>
+	                </div>
+	            )}
             {showDetailsModal && unitSlug && primaryService && dateKey && timeKey ? (
                 <div
                     className="bookingFlow__modalBackdrop"

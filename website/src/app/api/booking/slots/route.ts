@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBookingDb, nowMs, addMinutes, isValidDateKey, isValidTimeKey, toSaoPauloIso } from "@/lib/bookingDb";
+import { nowMs, addMinutes, isValidDateKey, isValidTimeKey, toSaoPauloIso } from "@/lib/bookingDb";
 import { getAgendaDb } from "@/lib/agendaDb";
 import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
@@ -86,28 +86,6 @@ function buildUnavailableSlots(params: { date: string; durationMinutes: number; 
     });
 }
 
-async function expireIfNeeded(db: Awaited<ReturnType<typeof getBookingDb>>, id: string) {
-    // Best-effort: mark pending approvals as expired after confirm_by.
-    const row = await db
-        .prepare("SELECT id, status, confirm_by_ms FROM booking_requests WHERE id = ?")
-        .bind(id)
-        .first<{ id: string; status: string; confirm_by_ms: number }>();
-
-    if (!row) return;
-    const status = (row.status ?? "").toString();
-    if (status !== "pending" && status !== "needs_approval") return;
-
-    const now = nowMs();
-    if (now <= Number(row.confirm_by_ms)) return;
-
-    await db
-        .prepare(
-            "UPDATE booking_requests SET status = 'expired', decided_at_ms = ?, decision_note = COALESCE(decision_note, 'auto_expired') WHERE id = ? AND (status = 'pending' OR status = 'needs_approval')",
-        )
-        .bind(now, id)
-        .run();
-}
-
 export async function GET(req: Request) {
     const url = new URL(req.url);
 
@@ -145,7 +123,6 @@ export async function GET(req: Request) {
     }
     const daySlots = buildDaySlots(unitSlug, date, durationMinutes);
 
-    const db = await getBookingDb();
     const wantsAnyDoctor = doctorSlug === "any";
     const unitDoctorsResult = await getUnitDoctorsResult(unitSlug);
     if (wantsAnyDoctor && !unitDoctorsResult.ok) {
@@ -230,55 +207,11 @@ export async function GET(req: Request) {
         });
     }
 
-    // Fetch existing bookings for that day (unit + doctor(s))
-    const dayStartIso = toSaoPauloIso(date, "00:00");
-    const dayStartMs = Date.parse(dayStartIso);
-    const dayEndMs = addMinutes(dayStartMs, 24 * 60);
-
-    const inPlaceholders = doctorSlugs.map(() => "?").join(", ");
-    const existing = await db
-        .prepare(
-            `SELECT id, doctor_slug, start_at_ms, end_at_ms, status, confirm_by_ms FROM booking_requests WHERE unit_slug = ? AND doctor_slug IN (${inPlaceholders}) AND start_at_ms < ? AND end_at_ms > ?`,
-        )
-        .bind(unitSlug, ...doctorSlugs, dayEndMs, dayStartMs)
-        .all<{ id: string; doctor_slug: string; start_at_ms: number; end_at_ms: number; status: string; confirm_by_ms: number }>();
-
-    // Expire stale rows we just loaded.
-    for (const row of existing.results) {
-        await expireIfNeeded(db, row.id);
-    }
-
     const now = nowMs();
-
-    const normalizedExisting = existing.results
-        .map((r) => {
-            const status = (r.status ?? "").toString();
-            const confirmBy = Number(r.confirm_by_ms ?? 0);
-            const activePending = (status === "pending" || status === "needs_approval") && now <= confirmBy;
-            const activeConfirmed = status === "confirmed";
-            return {
-                id: r.id,
-                doctorSlug: (r.doctor_slug ?? "").toString(),
-                start: Number(r.start_at_ms),
-                end: Number(r.end_at_ms),
-                status,
-                active: activeConfirmed || activePending,
-                isConfirmed: activeConfirmed,
-            };
-        })
-        .filter((r) => r.active);
-
-    const byDoctor = new Map<string, Array<{ start: number; end: number; isConfirmed: boolean }>>();
-    for (const e of normalizedExisting) {
-        const key = e.doctorSlug;
-        const list = byDoctor.get(key) ?? [];
-        list.push({ start: e.start, end: e.end, isConfirmed: e.isConfirmed });
-        if (!byDoctor.has(key)) byDoctor.set(key, list);
-    }
-
     let agendaBlockedCount = 0;
     const overlapsAgendaForDoctor = (startMs: number, endMs: number) => {
-        // Business rule: agenda slots from scraper block by unit+day+time regardless of "profissional".
+        // The site agenda must mirror the system agenda only.
+        // Local website booking requests do not reserve slots until the automation creates them in app.espacofacial.com.br.
         return agendaRanges.some((r) => r.start < endMs && r.end > startMs);
     };
     const out = daySlots.map((s) => {
@@ -304,37 +237,12 @@ export async function GET(req: Request) {
             return { time, available: false, reason: "agenda" };
         }
 
-        if (!wantsAnyDoctor) {
-            for (const e of normalizedExisting) {
-                const overlaps = e.start < endMs && e.end > startMs;
-                if (!overlaps) continue;
+        if (wantsAnyDoctor) {
+            const hasAgendaConflict = doctorSlugs.length > 0 && overlapsAgendaForDoctor(startMs, endMs);
+            if (hasAgendaConflict) {
                 available = false;
-                reason = e.isConfirmed ? "booked" : "in_review";
-                break;
-            }
-        } else {
-            let hasPending = false;
-            let hasConfirmed = false;
-            let hasAgendaConflict = false;
-            let anyFree = false;
-
-            for (const slug of doctorSlugs) {
-                const agendaOverlap = overlapsAgendaForDoctor(startMs, endMs);
-                const ranges = byDoctor.get(slug) ?? [];
-                const overlap = ranges.some((e) => e.start < endMs && e.end > startMs);
-                if (!agendaOverlap && !overlap) {
-                    anyFree = true;
-                    break;
-                }
-                if (agendaOverlap) hasAgendaConflict = true;
-                if (ranges.some((e) => e.start < endMs && e.end > startMs && e.isConfirmed)) hasConfirmed = true;
-                if (ranges.some((e) => e.start < endMs && e.end > startMs && !e.isConfirmed)) hasPending = true;
-            }
-
-            if (!anyFree) {
-                available = false;
-                reason = hasPending ? "in_review" : hasConfirmed ? "booked" : hasAgendaConflict ? "agenda" : "booked";
-                if (reason === "agenda") agendaBlockedCount += 1;
+                reason = "agenda";
+                agendaBlockedCount += 1;
             }
         }
 
