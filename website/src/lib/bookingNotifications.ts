@@ -571,6 +571,7 @@ async function sendTitanEmailDirect(params: {
     if (!from) {
         return { ok: false, status: "failed", error: "invalid_email_fields" };
     }
+
     const host = (await getRuntimeSecret("TITAN_SMTP_HOST")) || "smtp.titan.email";
     const portRaw = Number((await getRuntimeSecret("TITAN_SMTP_PORT")) || 465);
     const port = Number.isFinite(portRaw) ? portRaw : 465;

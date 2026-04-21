@@ -468,6 +468,10 @@ export default function UnitsMapSection() {
         () => getDigitalJourneyUnits(),
         [],
     );
+    const selectableUnitSlugs = useMemo(
+        () => new Set(featuredUnits.map((unit) => unit.slug)),
+        [featuredUnits],
+    );
     const stateGroupsForList = useMemo(
         () => stateGroups.filter((group) => group.uf !== "RS"),
         [stateGroups],
@@ -562,22 +566,37 @@ export default function UnitsMapSection() {
                                     {activeGroup.units
                                         .slice()
                                         .sort((a, b) => a.name.localeCompare(b.name))
-                                        .map((u, idx) => (
-                                            <button
-                                                key={u.slug}
-                                                className="brTooltipItem"
-                                                ref={(el) => {
-                                                    tooltipItemRefs.current[idx] = el;
-                                                }}
-                                                onClick={() => {
-                                                    const dest = getUnitDestination(u);
-                                                    trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_tooltip", destination: dest });
-                                                    window.location.assign(dest);
-                                                }}
-                                            >
-                                                {u.name}
-                                            </button>
-                                        ))}
+                                        .map((u, idx) => {
+                                            const isSelectable = selectableUnitSlugs.has(u.slug);
+                                            if (!isSelectable) {
+                                                return (
+                                                    <div
+                                                        key={u.slug}
+                                                        className="brTooltipItem brTooltipItem--static"
+                                                        aria-disabled="true"
+                                                    >
+                                                        {u.name}
+                                                    </div>
+                                                );
+                                            }
+
+                                            return (
+                                                <button
+                                                    key={u.slug}
+                                                    className="brTooltipItem"
+                                                    ref={(el) => {
+                                                        tooltipItemRefs.current[idx] = el;
+                                                    }}
+                                                    onClick={() => {
+                                                        const dest = getUnitDestination(u);
+                                                        trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_tooltip", destination: dest });
+                                                        window.location.assign(dest);
+                                                    }}
+                                                >
+                                                    {u.name}
+                                                </button>
+                                            );
+                                        })}
                                 </div>
                             </div>
                         ) : null}
@@ -643,21 +662,38 @@ export default function UnitsMapSection() {
                                                 {g.units
                                                     .slice()
                                                     .sort((a, b) => a.name.localeCompare(b.name))
-                                                    .map((u) => (
-                                                        <button
-                                                            key={u.slug}
-                                                            className="unitsStateUnit"
-                                                            onMouseEnter={() => setHoverUfDebounced(g.uf)}
-                                                            onMouseLeave={() => clearHoverUfSoon()}
-                                                            onClick={() => {
-                                                                const dest = getUnitDestination(u);
-                                                                trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_list", destination: dest });
-                                                                window.location.assign(dest);
-                                                            }}
-                                                        >
-                                                            {u.name}
-                                                        </button>
-                                                    ))}
+                                                    .map((u) => {
+                                                        const isSelectable = selectableUnitSlugs.has(u.slug);
+                                                        if (!isSelectable) {
+                                                            return (
+                                                                <div
+                                                                    key={u.slug}
+                                                                    className="unitsStateUnit unitsStateUnit--static"
+                                                                    onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                                                                    onMouseLeave={() => clearHoverUfSoon()}
+                                                                    aria-disabled="true"
+                                                                >
+                                                                    {u.name}
+                                                                </div>
+                                                            );
+                                                        }
+
+                                                        return (
+                                                            <button
+                                                                key={u.slug}
+                                                                className="unitsStateUnit"
+                                                                onMouseEnter={() => setHoverUfDebounced(g.uf)}
+                                                                onMouseLeave={() => clearHoverUfSoon()}
+                                                                onClick={() => {
+                                                                    const dest = getUnitDestination(u);
+                                                                    trackEvent("unit_map_click", { unitSlug: u.slug, placement: "state_list", destination: dest });
+                                                                    window.location.assign(dest);
+                                                                }}
+                                                            >
+                                                                {u.name}
+                                                            </button>
+                                                        );
+                                                    })}
                                             </div>
                                         </div>
                                     ))}

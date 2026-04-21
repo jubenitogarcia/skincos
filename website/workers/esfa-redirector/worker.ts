@@ -11,7 +11,12 @@ const REDIRECTS: Record<string, string> = {
   "/bss/alopecia": "https://payment-link-v3.stone.com.br/pl_7ezVNbW1nym2D4cz4IVa2rR0DxXJYdLP",
   "/bss/clubebotox": "https://payment-link-v3.stone.com.br/pl_lqrbavJ9pR50k6HBBt48jYoAPENQXxek",
   "/bss/clubelavieen": "https://payment-link-v3.stone.com.br/pl_r1gLZjbQ3nX4E7UKQfXEYwRO9Eom7GlV",
-  "/bss/nosavalie": "https://g.page/r/CapdhpusWvC1EBM/review",
+  "/avalienossoespaço/bss": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/avalienossoespaco/bss": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/bss/avalienossoespaço": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/bss/avalienossoespaco": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/nosavalie/bss": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/bss/nosavalie": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
   "/bss/vip": "https://chat.whatsapp.com/KsZ5LtGtXcCAg4HyyDWnSo",
 
   // Novo Hamburgo
@@ -24,7 +29,12 @@ const REDIRECTS: Record<string, string> = {
   "/nh/clubebotox": "https://payment-link-v3.stone.com.br/pl_2xNX5qopbEQAOw2iGHqbL9wdP8VRGYkB",
   "/nh/clubelavieen": "https://payment-link-v3.stone.com.br/pl_QypjlV90JAxoW7DzTnfY8X46qDe7EO15",
   "/nh/faleconosco": "https://wa.me/message/5ZD2K6FMTDVSC1",
-  "/nh/nosavalie": "https://g.page/r/CXvSNG6SG_gjEBM/review",
+  "/avalienossoespaço/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/avalienossoespaco/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/nh/avalienossoespaço": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/nh/avalienossoespaco": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/nh/nosavalie": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+  "/nosavalie/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
   "/nh/vip": "https://chat.whatsapp.com/EldkIVerELzESZKW8Iephz",
 
   // Campanhas
@@ -103,7 +113,13 @@ const REDIRECTS: Record<string, string> = {
 };
 
 function normalizePath(pathname: string): string {
-  const lower = pathname.toLowerCase();
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    decoded = pathname;
+  }
+  const lower = decoded.toLowerCase();
   if (lower.length > 1 && lower.endsWith("/")) return lower.slice(0, -1);
   return lower;
 }

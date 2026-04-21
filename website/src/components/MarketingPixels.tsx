@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Script from "next/script";
+import MetaPageTracker from "@/components/MetaPageTracker";
 import { COOKIE_CONSENT_EVENT, getCookieConsent, type CookieConsent } from "@/lib/cookieConsent";
 
 const META_PIXEL_ID = process.env.NEXT_PUBLIC_META_PIXEL_ID;
@@ -113,11 +114,12 @@ gtag('config', '${GOOGLE_ADS_ID}');`,
             ) : null}
 
             {META_PIXEL_ID ? (
-                <Script
-                    id="ef-meta-pixel"
-                    strategy="afterInteractive"
-                    dangerouslySetInnerHTML={{
-                        __html: `!function(f,b,e,v,n,t,s)
+                <>
+                    <Script
+                        id="ef-meta-pixel"
+                        strategy="afterInteractive"
+                        dangerouslySetInnerHTML={{
+                            __html: `!function(f,b,e,v,n,t,s)
 {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
  n.callMethod.apply(n,arguments):n.queue.push(arguments)};
  if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
@@ -126,10 +128,11 @@ gtag('config', '${GOOGLE_ADS_ID}');`,
  s.parentNode.insertBefore(t,s)}(window, document,'script',
  'https://connect.facebook.net/en_US/fbevents.js');
 fbq('init', '${META_PIXEL_ID}');
-fbq('consent','grant');
-fbq('track', 'PageView');`,
-                    }}
-                />
+fbq('consent','grant');`,
+                        }}
+                    />
+                    <MetaPageTracker />
+                </>
             ) : null}
         </>
     );

@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
+import TrackedBookingLink from "@/components/TrackedBookingLink";
 import { trackEvent } from "@/lib/analytics";
 
 function menuIcon() {
@@ -145,9 +146,9 @@ export default function HeaderMobileMenu() {
                 </SmoothAnchorLink>
               ))}
 
-              <SmoothAnchorLink className="mobileNavLink mobileNavLink--primary" href="/agendamento" onClick={() => setOpen(false)}>
+              <TrackedBookingLink className="mobileNavLink mobileNavLink--primary" href="/agendamento" placement="header" onClick={() => setOpen(false)}>
                 Agendar
-              </SmoothAnchorLink>
+              </TrackedBookingLink>
             </nav>
           </div>
         </div>

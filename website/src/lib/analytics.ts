@@ -7,7 +7,6 @@ declare global {
     interface Window {
         dataLayer?: unknown[];
         gtag?: (...args: unknown[]) => void;
-        fbq?: (...args: unknown[]) => void;
     }
 }
 
@@ -68,11 +67,7 @@ export function trackEvent(event: string, params: AnalyticsEventParams = {}) {
         }
     }
 
-    if (hasMarketingConsent() && typeof window.fbq === "function") {
-        try {
-            window.fbq("trackCustom", event, payload);
-        } catch {
-            // noop
-        }
+    if (hasMarketingConsent()) {
+        // Marketing events are modeled explicitly in the Meta layer.
     }
 }

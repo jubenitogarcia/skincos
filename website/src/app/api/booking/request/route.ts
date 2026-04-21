@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBookingDb, nowMs, addMinutes, clampText, normalizePhone, normalizeEmail, normalizeCpf, sanitizeOneLine, isValidDateKey, isValidTimeKey, toSaoPauloIso, slugify } from "@/lib/bookingDb";
+import { getBookingDb, nowMs, addMinutes, clampText, normalizePhone, normalizeEmail, normalizeCpf, sanitizeOneLine, isValidDateKey, isValidTimeKey, toSaoPauloIso, slugify, coerceTrackingContext, insertMetaCapiDeliveryLog, parseCookieHeader } from "@/lib/bookingDb";
 import { getServiceById } from "@/data/services";
 import { getUnitDoctorsResult } from "@/lib/injectorsDirectory";
 import { getAgendaDb } from "@/lib/agendaDb";
@@ -7,6 +7,7 @@ import { sendBookingNotifications, type PatientGender } from "@/lib/bookingNotif
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 import { issueBookingStatusToken } from "@/lib/bookingSecurity";
+import { sendMetaServerEvent } from "@/lib/metaConversionsApi";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ type Payload = {
     hp?: string;
     formStartedAtMs?: number;
     turnstileToken?: string | null;
+    trackingContext?: unknown;
+    metaEventId?: string;
 };
 
 function normalizePatientGender(raw: string): PatientGender | "" {
@@ -222,6 +225,17 @@ export async function POST(request: Request) {
 
     // Optional field, but avoid sensitive prompts.
     const rawNotes = clampText((body.notes ?? "").trim(), 300) || null;
+    const trackingContext = coerceTrackingContext(body.trackingContext);
+    const requestCookies = parseCookieHeader(request.headers.get("cookie"));
+    const clientUserAgent = sanitizeOneLine(request.headers.get("user-agent") ?? "") || null;
+    const trackingContextResolved = trackingContext
+        ? {
+            ...trackingContext,
+            fbp: trackingContext.fbp ?? requestCookies._fbp ?? null,
+            fbc: trackingContext.fbc ?? requestCookies._fbc ?? null,
+            fbclid: trackingContext.fbclid ?? trackingContext.params.fbclid ?? null,
+        }
+        : null;
 
     if (!unitSlug || !doctorSlugRaw || !serviceId || !date || !time) {
         return json({ ok: false, error: "missing_fields" }, { status: 400 });
@@ -391,7 +405,7 @@ export async function POST(request: Request) {
     if (wantsAnyDoctor) {
         const doctorsForSelection = daySchedule ? doctorsAvailableBySchedule : doctors;
 
-        const pick = doctorsForSelection.find(() => {
+        const pick = doctorsForSelection.find((doctor) => {
             return !hasAgendaConflictForDoctor({
                 agendaRanges,
                 startAtMs,
@@ -422,6 +436,7 @@ export async function POST(request: Request) {
     const status = "confirmed";
 
     const id = uuid();
+    const metaEventId = clampText(sanitizeOneLine(body.metaEventId ?? ""), 120) || `schedule_${id}`;
 
     const decisionLinks = null;
 
@@ -502,6 +517,76 @@ export async function POST(request: Request) {
                 unitEmail: { ok: false, status: "skipped", error: "not_confirmed" },
             };
 
+    if (status === "confirmed") {
+        try {
+            await db
+                .prepare(
+                    "UPDATE booking_requests SET attribution_first_touch_json = ?, attribution_last_touch_json = ?, tracking_context_json = ?, meta_event_id = ?, marketing_consent = ?, analytics_consent = ?, fbp = ?, fbc = ?, fbclid = ?, landing_page = ?, referrer = ? WHERE id = ?",
+                )
+                .bind(
+                    trackingContextResolved?.firstTouch ? JSON.stringify(trackingContextResolved.firstTouch) : null,
+                    trackingContextResolved?.lastTouch ? JSON.stringify(trackingContextResolved.lastTouch) : null,
+                    trackingContextResolved ? JSON.stringify(trackingContextResolved) : null,
+                    metaEventId,
+                    trackingContextResolved?.consent.marketing ? 1 : 0,
+                    trackingContextResolved?.consent.analytics ? 1 : 0,
+                    trackingContextResolved?.fbp ?? null,
+                    trackingContextResolved?.fbc ?? null,
+                    trackingContextResolved?.fbclid ?? null,
+                    trackingContextResolved?.landingPath ?? trackingContextResolved?.pagePath ?? null,
+                    trackingContextResolved?.referrer ?? null,
+                    id,
+                )
+                .run();
+        } catch {
+            // Keep booking creation resilient if tracking persistence fails.
+        }
+
+        await sendMetaServerEvent(
+            {
+                eventName: "Schedule",
+                eventId: metaEventId,
+                eventSourceUrl:
+                    trackingContextResolved?.pageUrl ??
+                    `${(process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com").replace(/\/$/, "")}/agendamento`,
+                userData: {
+                    email,
+                    phone: whatsapp,
+                    externalId: customerId ?? email ?? whatsapp,
+                    clientIpAddress: clientIp(request),
+                    clientUserAgent,
+                    fbp: trackingContextResolved?.fbp ?? null,
+                    fbc: trackingContextResolved?.fbc ?? null,
+                },
+                customData: {
+                    booking_id: id,
+                    unit_slug: unitSlug,
+                    doctor_slug: effectiveDoctorSlug,
+                    doctor_name: safeDoctorName,
+                    service_id: service.id,
+                    service_name: service.name,
+                    selected_service_ids: selectedProcedures.map((item) => item.id),
+                    selected_service_names: selectedProcedures.map((item) => item.name),
+                    status,
+                    start_at_ms: startAtMs,
+                    end_at_ms: endAtMs,
+                    currency: "BRL",
+                },
+                trackingContext: trackingContextResolved,
+                bookingId: id,
+            },
+            {
+                logDelivery: async (entry) => {
+                    await insertMetaCapiDeliveryLog(db, {
+                        id: uuid(),
+                        ...entry,
+                        createdAtMs: nowMs(),
+                    });
+                },
+            },
+        );
+    }
+
     // Optional: notify external automation via webhook (WhatsApp integration etc.)
     await tryPostWebhook({
         event: "booking.created",
@@ -526,6 +611,8 @@ export async function POST(request: Request) {
             address,
             customerId,
             notes,
+            metaEventId,
+            trackingContext: trackingContextResolved,
         },
         decisionLinks,
     });
@@ -547,6 +634,7 @@ export async function POST(request: Request) {
             statusToken,
             statusTokenExpMs,
             notifications,
+            metaEventId,
         },
         { status: 200 },
     );

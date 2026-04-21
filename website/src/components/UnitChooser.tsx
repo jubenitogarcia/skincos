@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDigitalJourneyUnits } from "@/data/units";
-import { setStoredUnitSlug } from "@/lib/unitSelection";
+import { buildUnitSelectionHref, setStoredUnitSlug } from "@/lib/unitSelection";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackEvent } from "@/lib/analytics";
 import { getUnitHref } from "@/lib/unitRoutes";
@@ -19,6 +19,8 @@ function getAllowedUnits() {
 
 export default function UnitChooser({ placement = "header", redirectOnSelect = false }: UnitChooserProps) {
     const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
     const unit = useCurrentUnit();
     const allowed = getAllowedUnits();
 
@@ -136,6 +138,15 @@ export default function UnitChooser({ placement = "header", redirectOnSelect = f
                                 setOpen(false);
                                 if (redirectOnSelect) {
                                     router.push(getUnitHref(u.slug));
+                                    return;
+                                }
+                                const samePageHref = buildUnitSelectionHref({
+                                    pathname,
+                                    searchParams,
+                                    nextUnitSlug: u.slug,
+                                });
+                                if (samePageHref) {
+                                    router.push(samePageHref, { scroll: false });
                                     return;
                                 }
                                 buttonRef.current?.focus();

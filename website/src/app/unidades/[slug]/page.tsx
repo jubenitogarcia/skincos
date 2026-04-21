@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import FloatingContact from "@/components/FloatingContact";
+import MetaMountEvent from "@/components/MetaMountEvent";
 import TrackedBookingLink from "@/components/TrackedBookingLink";
 import { getDigitalJourneyUnits } from "@/data/units";
 import { getCanonicalDigitalUnitSlug, getUnitHref, isDigitalJourneyUnit, resolveUnitFromSlug } from "@/lib/unitRoutes";
@@ -75,6 +76,15 @@ export default async function UnitPage({ params }: { params: Promise<{ slug: str
   return (
     <>
       <Header />
+      <MetaMountEvent
+        eventName="ViewContent"
+        dedupeKey={`unit-directory:${unit.slug}`}
+        params={{
+          content_type: "unit",
+          content_name: unit.name,
+          content_ids: [unit.slug],
+        }}
+      />
       <main className="container">
         <section className="pageSection pageNarrative">
           <div className="pageNarrative__intro">

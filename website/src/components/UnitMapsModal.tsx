@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import type { Unit } from "@/data/units";
+import TrackedWhatsappLink from "@/components/TrackedWhatsappLink";
 
 function buildQuery(unit: Unit): string {
     const parts: string[] = [];
@@ -111,9 +112,17 @@ export default function UnitMapsModal({
                             Abrir rota no mapa
                         </a>
                         {whatsappUrl ? (
-                            <a className="btn btnGhost" href={whatsappUrl} target="_blank" rel="noreferrer">
+                            <TrackedWhatsappLink
+                                className="btn btnGhost"
+                                rawUrl={whatsappUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                placement="unit_map_modal"
+                                unitSlug={unit.slug}
+                                source="unit_map_modal"
+                            >
                                 Falar no WhatsApp
-                            </a>
+                            </TrackedWhatsappLink>
                         ) : null}
                     </div>
 

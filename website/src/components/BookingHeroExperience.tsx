@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ExperienceTracker from "@/components/ExperienceTracker";
 import PageTitleBand from "@/components/PageTitleBand";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
+import TrackedWhatsappLink from "@/components/TrackedWhatsappLink";
 import { units } from "@/data/units";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { trackExperienceShortcutClick } from "@/lib/leadTracking";
@@ -121,11 +122,15 @@ export default function BookingHeroExperience() {
                                                 <strong>{item.title}</strong>
                                             </button>
                                         ) : item.external ? (
-                                            <a
-                                                href={item.href}
+                                            <TrackedWhatsappLink
+                                                rawUrl={item.href}
                                                 className={`bookingHero__shortcut bookingHero__shortcut--${item.kind}`.trim()}
                                                 target="_blank"
                                                 rel="noreferrer"
+                                                placement="booking_page"
+                                                unitSlug={preferredUnitSlug}
+                                                bookingId={bookingId || null}
+                                                source="booking_hero"
                                                 onClick={() =>
                                                     trackExperienceShortcutClick({
                                                         page: "/agendamento",
@@ -138,7 +143,7 @@ export default function BookingHeroExperience() {
                                                 }
                                             >
                                                 <strong>{item.title}</strong>
-                                            </a>
+                                            </TrackedWhatsappLink>
                                         ) : (
                                             <SmoothAnchorLink
                                                 href={item.href}

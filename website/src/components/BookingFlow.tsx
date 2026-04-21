@@ -12,6 +12,8 @@ import { clearBookingDraft, persistBookingDraft, readBookingDraft, type BookingD
 import { doctorSlugFromTeamMember, doctorSlugMatchesQuery, normalizeDoctorSlug } from "@/lib/doctorSlug";
 import { trackBookingFunnelStep, trackBookingRequestSubmitted } from "@/lib/leadTracking";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
+import { buildTrackingContextFromBrowser } from "@/lib/campaign";
+import { createMetaEventId, trackMetaStandardEvent } from "@/lib/metaBrowser";
 import TurnstileWidget from "@/components/TurnstileWidget";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
 import UnitChooser from "@/components/UnitChooser";
@@ -33,7 +35,7 @@ type SlotsPayload = {
 type NotificationResult = { ok: boolean; status: string; provider?: string; error?: string };
 
 type RequestResponse =
-    | { ok: true; id: string; status: string; confirmByMs: number; startAtMs: number; endAtMs: number; unitSlug: string; doctorSlug: string; doctorName: string; service: { id: string; name: string }; statusToken?: string | null; statusTokenExpMs?: number; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult } }
+    | { ok: true; id: string; status: string; confirmByMs: number; startAtMs: number; endAtMs: number; unitSlug: string; doctorSlug: string; doctorName: string; service: { id: string; name: string }; statusToken?: string | null; statusTokenExpMs?: number; notifications?: { email: NotificationResult; whatsapp: NotificationResult; unitEmail?: NotificationResult }; metaEventId?: string | null }
     | { ok: false; error: string; message?: string };
 
 type BookingStatus = {
@@ -68,6 +70,7 @@ const ANY_DOCTOR: DoctorSelection = { slug: "any", name: "Sem Preferência", han
 const OTHER_SERVICE: Service = { id: "any", name: "Outros", subtitle: "Outros procedimentos ou combinação" };
 const BOOKING_WINDOW_WEEKS = 4;
 const BOOKING_STATUS_SESSION_PREFIX = "booking-status-token:";
+const BOOKING_META_DEDUPE_PREFIX = "booking-meta-schedule:";
 
 function isOkResponse(value: unknown): value is { ok: true } {
     return !!value && typeof value === "object" && (value as { ok?: unknown }).ok === true;
@@ -858,6 +861,11 @@ export default function BookingFlow() {
 
         setSubmitting(true);
         try {
+            const metaEventId = createMetaEventId("schedule");
+            const trackingContext = buildTrackingContextFromBrowser({
+                pageUrl: typeof window !== "undefined" ? window.location.href : null,
+                pagePath: typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}${window.location.hash}` : null,
+            });
             const res = await fetch("/api/booking/request", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -883,6 +891,8 @@ export default function BookingFlow() {
                     hp: honeypot,
                     formStartedAtMs: detailsStartedAtMs,
                     turnstileToken,
+                    trackingContext,
+                    metaEventId,
                 }),
             });
 
@@ -969,6 +979,24 @@ export default function BookingFlow() {
                     doctorName: json.doctorName || effectiveDoctor.name,
                 },
             });
+            trackMetaStandardEvent(
+                "Schedule",
+                {
+                    content_type: "booking",
+                    booking_id: json.id,
+                    unit_slug: unitSlug,
+                    doctor_slug: effectiveDoctor.slug,
+                    service_id: primaryService.id,
+                    service_name: selectedServicesLabel || primaryService.name,
+                    date: dateKey,
+                    time: timeKey,
+                    currency: "BRL",
+                },
+                {
+                    eventId: json.metaEventId ?? metaEventId,
+                    dedupeKey: `${BOOKING_META_DEDUPE_PREFIX}${json.id}`,
+                },
+            );
             trackBookingRequestSubmitted({
                 bookingId: json.id,
                 unitSlug,
@@ -1045,7 +1073,16 @@ export default function BookingFlow() {
             time: nextTime,
             detailsStage: "contact",
         });
-    }, [dateKey, effectiveDoctorSlug, effectiveServiceId, ensureDefaultSelections, unitSlug]);
+        trackMetaStandardEvent("InitiateCheckout", {
+            content_type: "booking",
+            unit_slug: unitSlug,
+            doctor_slug: effectiveDoctorSlug,
+            service_id: effectiveServiceId,
+            service_name: selectedServicesLabel || primaryService?.name || "Reserva",
+            date: dateKey,
+            time: nextTime,
+        });
+    }, [dateKey, effectiveDoctorSlug, effectiveServiceId, ensureDefaultSelections, primaryService?.name, selectedServicesLabel, unitSlug]);
 
     const emailValue = email.trim().toLowerCase();
     const emailSeemsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
@@ -1128,6 +1165,13 @@ export default function BookingFlow() {
                     serviceId: nextSelection[0]?.id ?? null,
                     selectedCount: nextSelection.length,
                 });
+                trackMetaStandardEvent("ViewContent", {
+                    content_type: "procedure",
+                    content_ids: [OTHER_SERVICE.id],
+                    content_name: OTHER_SERVICE.name,
+                    unit_slug: unitSlug,
+                    doctor_slug: effectiveDoctorSlug,
+                });
                 return nextSelection;
             }
 
@@ -1142,6 +1186,13 @@ export default function BookingFlow() {
                 doctorSlug: effectiveDoctorSlug,
                 serviceId: nextService.id,
                 selectedCount: nextSelection.length,
+            });
+            trackMetaStandardEvent("ViewContent", {
+                content_type: "procedure",
+                content_ids: [nextService.id],
+                content_name: nextService.name,
+                unit_slug: unitSlug,
+                doctor_slug: effectiveDoctorSlug,
             });
             return nextSelection;
         });

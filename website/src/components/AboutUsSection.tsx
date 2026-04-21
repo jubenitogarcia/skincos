@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ElementType, type MouseEvent, type PointerEvent } from "react";
 import Link from "next/link";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import useHorizontalRail from "@/hooks/useHorizontalRail";
@@ -8,6 +8,7 @@ import type { Unit } from "@/data/units";
 import Image from "next/image";
 import { trackEvent } from "@/lib/analytics";
 import { trackBookingStart, trackCtaInstagramClick } from "@/lib/leadTracking";
+import TrackedBookingLink from "@/components/TrackedBookingLink";
 
 type PlaceDetailsPayload = {
     available: boolean;
@@ -58,6 +59,10 @@ type GalleryItem =
         href: string;
         handle: string | null;
     };
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+}
 
 function buildDefaultQuery(): string {
     return "Espaço Facial";
@@ -257,6 +262,14 @@ export default function AboutUsSection({
     });
 
     const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
+    const [mapZoom, setMapZoom] = useState(1);
+    const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
+    const [mapIsDragging, setMapIsDragging] = useState(false);
+    const [mapFrameSize, setMapFrameSize] = useState({ width: 0, height: 0 });
+    const [mapImageNaturalSize, setMapImageNaturalSize] = useState({ width: 1536, height: 1024 });
+    const mapFrameRef = useRef<HTMLDivElement | null>(null);
+    const mapDragStateRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
+    const mapSuppressClickRef = useRef(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -298,6 +311,31 @@ export default function AboutUsSection({
         };
     }, [hasSelectedUnit, query, unit?.placeId]);
 
+    useEffect(() => {
+        setMapZoom(1);
+        setMapPan({ x: 0, y: 0 });
+        setMapIsDragging(false);
+        mapDragStateRef.current = null;
+        mapSuppressClickRef.current = false;
+    }, [unit?.slug]);
+
+    useEffect(() => {
+        const frame = mapFrameRef.current;
+        if (!frame) return;
+
+        const updateSize = () => {
+            setMapFrameSize({
+                width: frame.clientWidth,
+                height: frame.clientHeight,
+            });
+        };
+
+        updateSize();
+        const observer = new ResizeObserver(() => updateSize());
+        observer.observe(frame);
+        return () => observer.disconnect();
+    }, [unit?.slug]);
+
     const title = hasSelectedUnit ? data?.name || unit?.name || "Espaço Facial" : "Selecione uma unidade";
     const address = hasSelectedUnit
         ? data?.address || unit?.addressLine || ""
@@ -312,10 +350,124 @@ export default function AboutUsSection({
 
     const mapOpenUrl = useMemo(() => buildOpenMapsUrl(data, unit, query), [data, unit, query]);
     const mapArtSrc = unit?.slug ? UNIT_STATIC_MAP_ART[unit.slug] ?? null : null;
+    const mapPanBounds = useMemo(() => {
+        const frameWidth = Math.max(1, mapFrameSize.width);
+        const frameHeight = Math.max(1, mapFrameSize.height);
+        const naturalWidth = Math.max(1, mapImageNaturalSize.width);
+        const naturalHeight = Math.max(1, mapImageNaturalSize.height);
+        const naturalRatio = naturalWidth / naturalHeight;
+        const frameRatio = frameWidth / frameHeight;
+
+        const baseWidth = naturalRatio > frameRatio
+            ? frameHeight * naturalRatio
+            : frameWidth;
+        const baseHeight = naturalRatio > frameRatio
+            ? frameHeight
+            : frameWidth / naturalRatio;
+
+        const scaledWidth = baseWidth * mapZoom;
+        const scaledHeight = baseHeight * mapZoom;
+
+        return {
+            x: Math.max(0, (scaledWidth - frameWidth) / 2),
+            y: Math.max(0, (scaledHeight - frameHeight) / 2),
+        };
+    }, [mapFrameSize.height, mapFrameSize.width, mapImageNaturalSize.height, mapImageNaturalSize.width, mapZoom]);
+    const mapMaxZoom = useMemo(() => {
+        const frameWidth = Math.max(1, mapFrameSize.width);
+        const frameHeight = Math.max(1, mapFrameSize.height);
+        const naturalWidth = Math.max(1, mapImageNaturalSize.width);
+        const naturalHeight = Math.max(1, mapImageNaturalSize.height);
+        const coverScale = Math.max(frameWidth / naturalWidth, frameHeight / naturalHeight);
+        return Math.max(1.4, Math.min(3.25, (1 / coverScale) * 1.18));
+    }, [mapFrameSize.height, mapFrameSize.width, mapImageNaturalSize.height, mapImageNaturalSize.width]);
+    const mapImageStyle = useMemo<CSSProperties>(() => ({
+        transform: `translate3d(${mapPan.x}px, ${mapPan.y}px, 0) scale(${mapZoom})`,
+    }), [mapPan.x, mapPan.y, mapZoom]);
     const isPlaceDataPending = hasSelectedUnit && (loading || data === null);
     // Keep the unit gallery fully local so "Sobre Nós" never depends on paid Places fetches.
     const isPhotoDataPending = isPlaceDataPending;
     const isReviewDataPending = hasSelectedUnit && reviewsLoadingInitial;
+
+    useEffect(() => {
+        setMapZoom((current) => Math.max(1, Math.min(current, mapMaxZoom)));
+    }, [mapMaxZoom]);
+
+    useEffect(() => {
+        setMapPan((current) => ({
+            x: clamp(current.x, -mapPanBounds.x, mapPanBounds.x),
+            y: clamp(current.y, -mapPanBounds.y, mapPanBounds.y),
+        }));
+    }, [mapPanBounds.x, mapPanBounds.y]);
+
+    const handleMapZoomIn = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMapZoom((current) => Math.min(mapMaxZoom, Number((current + 0.18).toFixed(2))));
+    }, [mapMaxZoom]);
+
+    const handleMapZoomOut = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMapZoom((current) => Math.max(1, Number((current - 0.18).toFixed(2))));
+    }, []);
+
+    const finishMapDrag = useCallback((currentTarget?: HTMLAnchorElement | HTMLDivElement | null) => {
+        const drag = mapDragStateRef.current;
+        if (drag && currentTarget?.hasPointerCapture?.(drag.pointerId)) {
+            currentTarget.releasePointerCapture(drag.pointerId);
+        }
+        mapDragStateRef.current = null;
+        setMapIsDragging(false);
+    }, []);
+
+    const handleMapPointerDown = useCallback((event: PointerEvent<HTMLAnchorElement | HTMLDivElement>) => {
+        if (mapZoom <= 1.001) return;
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        mapDragStateRef.current = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            originX: mapPan.x,
+            originY: mapPan.y,
+            moved: false,
+        };
+        mapSuppressClickRef.current = false;
+        setMapIsDragging(true);
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }, [mapPan.x, mapPan.y, mapZoom]);
+
+    const handleMapPointerMove = useCallback((event: PointerEvent<HTMLAnchorElement | HTMLDivElement>) => {
+        const drag = mapDragStateRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+
+        const deltaX = event.clientX - drag.startX;
+        const deltaY = event.clientY - drag.startY;
+        const nextX = clamp(drag.originX + deltaX, -mapPanBounds.x, mapPanBounds.x);
+        const nextY = clamp(drag.originY + deltaY, -mapPanBounds.y, mapPanBounds.y);
+
+        if (!drag.moved && (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3)) {
+            drag.moved = true;
+            mapSuppressClickRef.current = true;
+        }
+
+        setMapPan({ x: nextX, y: nextY });
+    }, [mapPanBounds.x, mapPanBounds.y]);
+
+    const handleMapPointerUp = useCallback((event: PointerEvent<HTMLAnchorElement | HTMLDivElement>) => {
+        finishMapDrag(event.currentTarget);
+    }, [finishMapDrag]);
+
+    const handleMapPointerCancel = useCallback((event: PointerEvent<HTMLAnchorElement | HTMLDivElement>) => {
+        finishMapDrag(event.currentTarget);
+    }, [finishMapDrag]);
+
+    const handleMapLinkClick = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
+        if (!mapSuppressClickRef.current) return;
+        mapSuppressClickRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+    }, []);
 
     const fetchReviewsPage = useCallback(
         async (pageToken: string | null, mode: "reset" | "append") => {
@@ -677,9 +829,9 @@ export default function AboutUsSection({
                 </div>
 
                 <div className="decisionCard__linksRow decisionCard__linksRow--spaced">
-                    <Link className="decisionCard__primary" href="/agendamento">
+                    <TrackedBookingLink className="decisionCard__primary" href="/agendamento" placement="about">
                         Agendar avaliação
-                    </Link>
+                    </TrackedBookingLink>
                     <Link className="decisionCard__secondary" href="/unidades">
                         Ver unidades
                     </Link>
@@ -842,7 +994,7 @@ export default function AboutUsSection({
                                 <div className="aboutHeaderActions" aria-label="Ações">
                                     {agendarUrl ? (
                                         <Link
-                                            className="aboutBtnPrimary"
+                                            className="cta cta--agende aboutBtnPrimary"
                                             href={bookingHref}
                                             onClick={() =>
                                                 trackBookingStart({
@@ -852,7 +1004,7 @@ export default function AboutUsSection({
                                                 })
                                             }
                                         >
-                                            Agendar
+                                            AGENDE
                                         </Link>
                                     ) : null}
 
@@ -870,15 +1022,28 @@ export default function AboutUsSection({
                                                 })
                                             }
                                         >
-                                            Fazer review
+                                            AVALIAR
                                         </a>
                                     ) : null}
                                 </div>
                             </div>
 
-                            <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade">
+                            <div className="aboutMapFrame aboutMapFrame--static" aria-label="Resumo de localização da unidade" ref={mapFrameRef}>
                                 {mapOpenUrl ? (
-                                    <a className="aboutMapStaticLink" href={mapOpenUrl} target="_blank" rel="noopener noreferrer" aria-label={`Abrir rota para ${title}`}>
+                                    <a
+                                        className="aboutMapStaticLink"
+                                        href={mapOpenUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        aria-label={`Abrir rota para ${title}`}
+                                        data-zoomed={mapZoom > 1 ? "true" : "false"}
+                                        data-dragging={mapIsDragging ? "true" : "false"}
+                                        onClick={handleMapLinkClick}
+                                        onPointerDown={handleMapPointerDown}
+                                        onPointerMove={handleMapPointerMove}
+                                        onPointerUp={handleMapPointerUp}
+                                        onPointerCancel={handleMapPointerCancel}
+                                    >
                                         {mapArtSrc ? (
                                             <Image
                                                 src={mapArtSrc}
@@ -886,6 +1051,13 @@ export default function AboutUsSection({
                                                 fill
                                                 sizes="(max-width: 900px) 100vw, 50vw"
                                                 className="aboutMapStaticImage"
+                                                style={mapImageStyle}
+                                                onLoadingComplete={(img) => {
+                                                    setMapImageNaturalSize({
+                                                        width: img.naturalWidth || 1536,
+                                                        height: img.naturalHeight || 1024,
+                                                    });
+                                                }}
                                             />
                                         ) : (
                                             <div className="aboutMapStaticFallback" aria-hidden="true" />
@@ -893,7 +1065,16 @@ export default function AboutUsSection({
                                         <UnitMapPin className="aboutMapStaticPin" />
                                     </a>
                                 ) : (
-                                    <div className="aboutMapStaticLink" aria-hidden="true">
+                                    <div
+                                        className="aboutMapStaticLink"
+                                        aria-hidden="true"
+                                        data-zoomed={mapZoom > 1 ? "true" : "false"}
+                                        data-dragging={mapIsDragging ? "true" : "false"}
+                                        onPointerDown={handleMapPointerDown}
+                                        onPointerMove={handleMapPointerMove}
+                                        onPointerUp={handleMapPointerUp}
+                                        onPointerCancel={handleMapPointerCancel}
+                                    >
                                         {mapArtSrc ? (
                                             <Image
                                                 src={mapArtSrc}
@@ -901,6 +1082,13 @@ export default function AboutUsSection({
                                                 fill
                                                 sizes="(max-width: 900px) 100vw, 50vw"
                                                 className="aboutMapStaticImage"
+                                                style={mapImageStyle}
+                                                onLoadingComplete={(img) => {
+                                                    setMapImageNaturalSize({
+                                                        width: img.naturalWidth || 1536,
+                                                        height: img.naturalHeight || 1024,
+                                                    });
+                                                }}
                                             />
                                         ) : (
                                             <div className="aboutMapStaticFallback" aria-hidden="true" />
@@ -908,6 +1096,28 @@ export default function AboutUsSection({
                                         <UnitMapPin className="aboutMapStaticPin" />
                                     </div>
                                 )}
+                                {mapArtSrc ? (
+                                    <div className="aboutMapZoomControls" aria-label="Controles de zoom do mapa">
+                                        <button
+                                            className="aboutMapZoomButton"
+                                            type="button"
+                                            onClick={handleMapZoomIn}
+                                            aria-label="Aumentar zoom do mapa"
+                                            disabled={mapZoom >= mapMaxZoom}
+                                        >
+                                            +
+                                        </button>
+                                        <button
+                                            className="aboutMapZoomButton"
+                                            type="button"
+                                            onClick={handleMapZoomOut}
+                                            aria-label="Reduzir zoom do mapa"
+                                            disabled={mapZoom <= 1}
+                                        >
+                                            −
+                                        </button>
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
 

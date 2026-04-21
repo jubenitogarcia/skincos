@@ -5,6 +5,8 @@ import DoctorPublicProfileCard from "@/components/DoctorPublicProfileCard";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import FloatingContact from "@/components/FloatingContact";
+import MetaMountEvent from "@/components/MetaMountEvent";
+import TrackedBookingLink from "@/components/TrackedBookingLink";
 import { doctorSlugMatchesQuery, canonicalDoctorSlugForMember, findMarketingDoctorByQuery } from "@/lib/doctorSlug";
 import { fetchActiveInjectorsResult } from "@/lib/injectorsDirectory";
 
@@ -112,6 +114,15 @@ export default async function DoctorPage({ params }: { params: Promise<{ slug: s
     <>
       <Header />
       <main className="container" style={{ paddingTop: 26 }}>
+        <MetaMountEvent
+          eventName="ViewContent"
+          dedupeKey={`doctor:${doc.slug}`}
+          params={{
+            content_type: "doctor",
+            content_name: doc.name,
+            content_ids: [doc.slug],
+          }}
+        />
         <section className="pageSection" style={{ marginTop: 0 }}>
           <div className="pageNarrative">
             <div className="pageNarrative__intro">
@@ -182,9 +193,9 @@ export default async function DoctorPage({ params }: { params: Promise<{ slug: s
                   Se quiser reservar com este especialista, use o atalho abaixo. Se preferir, compare outros perfis ou veja as unidades primeiro.
                 </p>
                 <div className="decisionCard__actions">
-                  <Link className="decisionCard__primary" href={bookingHref}>
+                  <TrackedBookingLink className="decisionCard__primary" href={bookingHref} placement="doctor" doctorName={doc.name}>
                     Agendar com este especialista
-                  </Link>
+                  </TrackedBookingLink>
                   <Link className="decisionCard__secondary" href="/doutores">
                     Ver outros especialistas
                   </Link>

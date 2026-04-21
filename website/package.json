@@ -26,19 +26,19 @@
     "tail:json": "wrangler tail espacofacial-site --format json",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "preview:snapshot": "npm run sync:online:snapshot && npm run preview",
-    "deploy": "node scripts/deploy-worker.mjs",
-    "deploy:skincos": "node scripts/deploy-worker.mjs --config wrangler-skincos.toml",
+    "deploy": "npm ci && node scripts/deploy-worker.mjs",
+    "deploy:skincos": "npm ci && node scripts/deploy-worker.mjs --config wrangler-skincos.toml",
     "deploy:esfa": "wrangler deploy -c workers/esfa-redirector/wrangler.toml"
   },
   "dependencies": {
     "@svg-maps/brazil": "^2.0.0",
-    "next": "^15.5.14",
+    "next": "15.5.15",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",
-    "@opennextjs/cloudflare": "^1.15.1",
+    "@opennextjs/cloudflare": "1.19.1",
     "@types/node": "20.14.10",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
@@ -51,7 +51,7 @@
     "pngjs": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "5.5.4",
-    "wrangler": "^4.60.0"
+    "wrangler": "4.82.1"
   },
   "overrides": {
     "@next/eslint-plugin-next": {
