@@ -11,6 +11,17 @@ function isPublicAsset(pathname: string): boolean {
     );
 }
 
+function normalizeRedirectPath(pathname: string): string {
+    let decoded = pathname;
+    try {
+        decoded = decodeURIComponent(pathname);
+    } catch {
+        decoded = pathname;
+    }
+    const trimmed = decoded.replace(/\/+$/, "");
+    return (trimmed.length ? trimmed : "/").toLowerCase();
+}
+
 export function middleware(req: NextRequest) {
     const host = req.headers.get("host") ?? "";
     const url = req.nextUrl.clone();
@@ -56,20 +67,9 @@ export function middleware(req: NextRequest) {
         return NextResponse.redirect(url, 308);
     }
 
-    if (!isPublicAsset(url.pathname) && !url.pathname.startsWith("/api/") && !isPathAllowedForSite(host, url.pathname)) {
-        return new NextResponse("Not Found", {
-            status: 404,
-            headers: {
-                "content-type": "text/plain; charset=utf-8",
-                "cache-control": "no-store",
-                "x-robots-tag": "noindex",
-            },
-        });
-    }
-
     if (!isPublicAsset(url.pathname)) {
         const pathname = url.pathname.replace(/\/+$/, "") || "/";
-        const normalizedPath = pathname.toLowerCase();
+        const normalizedPath = normalizeRedirectPath(pathname);
 
         const legacyRedirects: Record<string, string> = {
             // LONG URLs (export)
@@ -81,7 +81,13 @@ export function middleware(req: NextRequest) {
             "/barrashoppingsul/alopecia": "https://payment-link-v3.stone.com.br/pl_7ezVNbW1nym2D4cz4IVa2rR0DxXJYdLP",
             "/barrashoppingsul/clubebotox": "https://payment-link-v3.stone.com.br/pl_lqrbavJ9pR50k6HBBt48jYoAPENQXxek",
             "/barrashoppingsul/clubelavieen": "https://payment-link-v3.stone.com.br/pl_r1gLZjbQ3nX4E7UKQfXEYwRO9Eom7GlV",
-            "/barrashoppingsul/nosavalie": "https://g.page/r/CapdhpusWvC1EBM/review",
+            "/avalienossoespaço/bss": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/avalienossoespaco/bss": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/bss/avalienossoespaço": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/bss/avalienossoespaco": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/nosavalie/bss": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/barrashoppingsul/nosavalie": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/bss/nosavalie": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
             "/barrashoppingsul/vip": "https://chat.whatsapp.com/KsZ5LtGtXcCAg4HyyDWnSo",
 
             "/novohamburgo/comochegar": "https://www.google.com/maps/dir//Espaço+Facial+-+Av.+Dr.+Maurício+Cardoso,+1126+-+Jardim+Mauá,+Novo+Hamburgo+-+RS,+93548-515/@-29.6817035,-51.1190928,17z/data=!4m9!4m8!1m0!1m5!1m1!1s0x951943d467aca085:0x23f81b926e34d27b!2m2!1d-51.1190928!2d-29.6817035!3e0?entry=ttu&g_ep=EgoyMDI1MDMxMS4wIKXMDSoASAFQAw%3D%3D",
@@ -93,7 +99,13 @@ export function middleware(req: NextRequest) {
             "/novohamburgo/clubebotox": "https://payment-link-v3.stone.com.br/pl_2xNX5qopbEQAOw2iGHqbL9wdP8VRGYkB",
             "/novohamburgo/clubelavieen": "https://payment-link-v3.stone.com.br/pl_QypjlV90JAxoW7DzTnfY8X46qDe7EO15",
             "/novohamburgo/faleconosco": "https://wa.me/message/5ZD2K6FMTDVSC1",
-            "/novohamburgo/nosavalie": "https://g.page/r/CXvSNG6SG_gjEBM/review",
+            "/avalienossoespaço/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/avalienossoespaco/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/nh/avalienossoespaço": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/nh/avalienossoespaco": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/novohamburgo/nosavalie": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/nh/nosavalie": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+            "/nosavalie/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
             "/novohamburgo/vip": "https://chat.whatsapp.com/EldkIVerELzESZKW8Iephz",
 
             "/bebadessafonte": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+HealthBodyRun+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
@@ -180,6 +192,17 @@ export function middleware(req: NextRequest) {
             return NextResponse.redirect(destUrl.toString(), { status: 301 });
         }
 
+    }
+
+    if (!isPublicAsset(url.pathname) && !url.pathname.startsWith("/api/") && !isPathAllowedForSite(host, url.pathname)) {
+        return new NextResponse("Not Found", {
+            status: 404,
+            headers: {
+                "content-type": "text/plain; charset=utf-8",
+                "cache-control": "no-store",
+                "x-robots-tag": "noindex",
+            },
+        });
     }
 
     return NextResponse.next();

@@ -6,31 +6,13 @@ import TrustEvidenceSection from "@/components/TrustEvidenceSection";
 import HomePageSections from "@/components/HomePageSections";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import { resolveUnitFromSlug } from "@/lib/unitRoutes";
+import { UNIT_SELECTION_COOKIE_KEY } from "@/lib/unitSelection";
 import type { Metadata } from "next";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getSiteConfigFromHost } from "@/lib/site-config";
 import { SkincosHubPage } from "@/components/LegalContent";
 
 export const revalidate = 300;
-const UNIT_SELECTION_COOKIE_KEY = "ef_selected_unit";
-
-function readCookieFromHeader(cookieHeader: string | null, name: string): string {
-  if (!cookieHeader) return "";
-
-  const prefix = `${name}=`;
-  const match = cookieHeader
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix));
-
-  if (!match) return "";
-
-  try {
-    return decodeURIComponent(match.slice(prefix.length).trim());
-  } catch {
-    return match.slice(prefix.length).trim();
-  }
-}
 
 export async function generateMetadata(): Promise<Metadata> {
   const site = getSiteConfigFromHost((await headers()).get("host"));
@@ -80,6 +62,7 @@ export default async function HomePage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const requestHeaders = await headers();
+  const requestCookies = await cookies();
   const site = getSiteConfigFromHost(requestHeaders.get("host"));
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
 
@@ -101,10 +84,7 @@ export default async function HomePage({
       : Array.isArray(unitParamRaw)
         ? unitParamRaw[0] ?? ""
         : "";
-  const cookieUnitParam = readCookieFromHeader(
-    requestHeaders.get("cookie"),
-    UNIT_SELECTION_COOKIE_KEY,
-  );
+  const cookieUnitParam = requestCookies.get(UNIT_SELECTION_COOKIE_KEY)?.value ?? "";
   const resolvedUnit = resolveUnitFromSlug(unitParam || cookieUnitParam);
   const { items: heroItems } = await getHeroMediaItems({ variant, unitSlug: resolvedUnit?.slug ?? null });
 

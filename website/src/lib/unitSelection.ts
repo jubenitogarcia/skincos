@@ -1,6 +1,12 @@
 export const UNIT_SELECTION_STORAGE_KEY = "ef:selectedUnitSlug";
 export const UNIT_SELECTION_COOKIE_KEY = "ef_selected_unit";
 
+type SearchParamsLike =
+    | URLSearchParams
+    | {
+        entries(): IterableIterator<[string, string]>;
+    };
+
 function readCookie(name: string): string | null {
     if (typeof document === "undefined") return null;
     const cookies = document.cookie
@@ -39,4 +45,28 @@ export function setStoredUnitSlug(slug: string): void {
             // Ignore cookie failures as well.
         }
     }
+}
+
+export function buildUnitSelectionHref(params: {
+    pathname: string | null | undefined;
+    searchParams?: SearchParamsLike | null;
+    nextUnitSlug: string;
+}): string | null {
+    const pathname = (params.pathname ?? "").trim();
+    if (pathname !== "/agendamento") return null;
+
+    const nextSearchParams = new URLSearchParams(
+        params.searchParams ? Array.from(params.searchParams.entries()) : [],
+    );
+
+    nextSearchParams.set("unit", params.nextUnitSlug);
+
+    // Switching units should start a fresh booking context rather than replaying
+    // selection or confirmation state from the previous unit.
+    for (const key of ["doctor", "service", "autopick", "autopick_nonce", "booking", "statusToken"]) {
+        nextSearchParams.delete(key);
+    }
+
+    const query = nextSearchParams.toString();
+    return query ? `${pathname}?${query}#booking-flow` : `${pathname}#booking-flow`;
 }

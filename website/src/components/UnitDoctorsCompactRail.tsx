@@ -134,6 +134,15 @@ function CompactDoctorTooltip({
         setOpen(true);
     }, [clearTimers, mounted]);
 
+    const openInstagramFromTrigger = useCallback(() => {
+        if (!onOpenInstagram) return;
+        clearTimers();
+        setOpen(false);
+        setMounted(false);
+        setReady(false);
+        onOpenInstagram();
+    }, [clearTimers, onOpenInstagram]);
+
     return (
         <div className="unitDoctorsCompact__tooltipAnchor">
             <button
@@ -143,6 +152,10 @@ function CompactDoctorTooltip({
                 onMouseEnter={openTooltip}
                 onMouseLeave={scheduleClose}
                 onClick={() => {
+                    if (onOpenInstagram) {
+                        openInstagramFromTrigger();
+                        return;
+                    }
                     if (open || mounted) {
                         scheduleClose();
                         return;
@@ -188,11 +201,7 @@ function CompactDoctorTooltip({
                                     type="button"
                                     className="unitDoctorsCompact__tooltipInstagramBtn"
                                     onClick={() => {
-                                        clearTimers();
-                                        setOpen(false);
-                                        setMounted(false);
-                                        setReady(false);
-                                        onOpenInstagram();
+                                        openInstagramFromTrigger();
                                     }}
                                     onBlur={(event) => {
                                         const next = event.relatedTarget as Node | null;

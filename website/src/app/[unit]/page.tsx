@@ -1,11 +1,14 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import FloatingContact from "@/components/FloatingContact";
+import MetaMountEvent from "@/components/MetaMountEvent";
 import UnitsMapSection from "@/components/UnitsMapSection";
 import UnitDoctorsGrid from "@/components/UnitDoctorsGrid";
 import HeroMedia from "@/components/HeroMedia";
 import UnitSelectionSync from "@/components/UnitSelectionSync";
 import AboutUsSection from "@/components/AboutUsSection";
+import PageTitleBand from "@/components/PageTitleBand";
+import TrustEvidenceSection from "@/components/TrustEvidenceSection";
 import { getCanonicalDigitalUnitSlug, getNetworkUnitHref, isDigitalJourneyUnit, isIndexableUnitPath, normalizeUnitSlug, resolveUnitFromSlug } from "@/lib/unitRoutes";
 import { getHeroMediaItems, heroVariantFromUserAgent } from "@/lib/heroMedia.server";
 import { redirect } from "next/navigation";
@@ -148,6 +151,15 @@ export default async function UnitHomePage({
         <>
             <UnitSelectionSync slug={unit.slug} />
             <Header />
+            <MetaMountEvent
+                eventName="ViewContent"
+                dedupeKey={`unit:${unit.slug}`}
+                params={{
+                    content_type: "unit",
+                    content_name: unit.name,
+                    content_ids: [unit.slug],
+                }}
+            />
             {localBusinessJsonLd ? (
                 <script
                     type="application/ld+json"
@@ -158,18 +170,25 @@ export default async function UnitHomePage({
 
             <h1 className="srOnly">Espaço Facial</h1>
 
+            <PageTitleBand title="Harmonização facial com naturalidade" ariaLabel="Título da página da unidade" />
+
             <section className="hero" aria-label="Destaque">
                 <HeroMedia initialItems={heroItems} initialVariant={variant} initialUnitSlug={unit.slug} />
                 <div className="heroOverlay" />
             </section>
 
+            <TrustEvidenceSection context="home" />
+
             <main className="container">
                 <AboutUsSection />
 
                 <section id="doutores" className="pageSection">
-                    <h2 className="sectionTitle">Especialistas desta unidade</h2>
-                    <p className="sectionSub">Conheça quem atende nesta unidade e veja a melhor opção para o seu agendamento.</p>
-                    <UnitDoctorsGrid />
+                    <h2 className="sectionTitle">Conheça a equipe</h2>
+                    <p className="sectionSub">Escolher fica mais fácil quando você conhece o profissional.</p>
+                    <UnitDoctorsGrid variant="booking-compact" />
+                    <p className="small homeDoctorsAftercopy">
+                        Acompanhe os seus procedimentos em suas redes sociais e agende com confiança com um de nossos doutores especialistas.
+                    </p>
                 </section>
 
                 <section id="unidades" className="pageSection">

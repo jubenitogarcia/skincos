@@ -2,6 +2,7 @@
 "use client";
 
 import { buildBookingConfirmationViewModel, resolveBookingSiteUrl, type BookingConfirmationPayload } from "@/lib/bookingConfirmationView";
+import TrackedWhatsappLink from "@/components/TrackedWhatsappLink";
 
 type NotificationResult = {
     ok: boolean;
@@ -19,27 +20,10 @@ type BookingConfirmationCardProps = {
     variant?: "default" | "details_link";
 };
 
-function notificationLabel(result?: NotificationResult): string {
-    if (!result) return "Não informado";
-    if (result.status === "sent") return "Enviado";
-    if (result.status === "failed") return "Falhou";
-    if (result.error === "not_configured" || result.error === "smtp_not_configured_for_unit") return "Não configurado";
-    return "Pendente de configuração";
-}
-
-function notificationTone(result?: NotificationResult): "success" | "warning" | "danger" | "neutral" {
-    if (!result) return "neutral";
-    if (result.status === "sent") return "success";
-    if (result.status === "failed") return "danger";
-    if (result.error === "not_configured" || result.error === "smtp_not_configured_for_unit") return "warning";
-    return "neutral";
-}
-
 export default function BookingConfirmationCard(props: BookingConfirmationCardProps) {
     const model = buildBookingConfirmationViewModel(props.reservation, {
         siteUrl: resolveBookingSiteUrl(),
     });
-    const hasNotificationStatuses = !!props.notifications?.email || !!props.notifications?.whatsapp;
     const isDetailsLinkVariant = props.variant === "details_link";
 
     return (
@@ -49,7 +33,6 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                     <img src={model.logoUrl} alt="Espaço Facial" className="bookingConfirmation__logo" />
                 </div>
                 <div className="bookingConfirmation__check">✓</div>
-                <div className="bookingConfirmation__eyebrow">Confirmação de reserva</div>
                 <h2 className="bookingConfirmation__title">Sua reserva foi confirmada</h2>
                 <p className="bookingConfirmation__subtitle">
                     Recebemos seu agendamento com sucesso. Guarde os dados abaixo e use os canais da unidade se precisar de suporte.
@@ -117,32 +100,6 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                 </div>
             </div>
 
-            {hasNotificationStatuses ? (
-                <div className="bookingConfirmation__supportCard">
-                    <div>
-                        <div className="bookingConfirmation__sectionTitle">Canais da confirmação</div>
-                        <p className="bookingConfirmation__body">
-                            O site tenta enviar a confirmação automaticamente pelos canais abaixo. Quando algum deles não estiver configurado, a reserva continua válida.
-                        </p>
-                    </div>
-
-                    <div className="bookingConfirmation__statusGrid">
-                        <div className="bookingConfirmation__statusItem">
-                            <span className="bookingConfirmation__statusLabel">E-mail</span>
-                            <span className="bookingConfirmation__statusValue" data-tone={notificationTone(props.notifications?.email)}>
-                                {notificationLabel(props.notifications?.email)}
-                            </span>
-                        </div>
-                        <div className="bookingConfirmation__statusItem">
-                            <span className="bookingConfirmation__statusLabel">WhatsApp</span>
-                            <span className="bookingConfirmation__statusValue" data-tone={notificationTone(props.notifications?.whatsapp)}>
-                                {notificationLabel(props.notifications?.whatsapp)}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            ) : null}
-
             {!isDetailsLinkVariant ? (
                 <>
                     <div className="bookingConfirmation__supportCard">
@@ -161,9 +118,17 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                             <a href={model.teamContactUrl} className="bookingConfirmation__cta bookingConfirmation__cta--secondary">
                                 Falar com a equipe
                             </a>
-                            <a href={model.unitWhatsappUrl} className="bookingConfirmation__cta">
+                            <TrackedWhatsappLink
+                                rawUrl={model.unitWhatsappUrl}
+                                className="bookingConfirmation__cta"
+                                placement="booking_confirmation_primary"
+                                unitSlug={props.reservation.unitSlug}
+                                doctorName={props.reservation.doctorName}
+                                bookingId={props.reservation.id}
+                                source="booking_confirmation"
+                            >
                                 Abrir WhatsApp da unidade
-                            </a>
+                            </TrackedWhatsappLink>
                         </div>
                     </div>
 
@@ -182,9 +147,17 @@ export default function BookingConfirmationCard(props: BookingConfirmationCardPr
                         </div>
                         <div className="bookingConfirmation__footerCol">
                             <div className="bookingConfirmation__detailLabel">WhatsApp</div>
-                            <a href={model.unitWhatsappUrl} className="bookingConfirmation__footerLink">
+                            <TrackedWhatsappLink
+                                rawUrl={model.unitWhatsappUrl}
+                                className="bookingConfirmation__footerLink"
+                                placement="booking_confirmation_footer"
+                                unitSlug={props.reservation.unitSlug}
+                                doctorName={props.reservation.doctorName}
+                                bookingId={props.reservation.id}
+                                source="booking_confirmation"
+                            >
                                 {model.unitWhatsappLabel}
-                            </a>
+                            </TrackedWhatsappLink>
                         </div>
                         <div className="bookingConfirmation__footerAddress">
                             <div className="bookingConfirmation__detailLabel">Endereço da unidade</div>

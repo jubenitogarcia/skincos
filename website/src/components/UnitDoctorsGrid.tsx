@@ -8,6 +8,7 @@ import { canonicalDoctorSlugForMember } from "@/lib/doctorSlug";
 import { resolveDoctorAvatarPresentation, resolveDoctorAvatarUrl, resolveDoctorPublicName } from "@/lib/doctorAvatar";
 import { trackBookingStart, trackDoctorInstagramClick } from "@/lib/leadTracking";
 import DoctorInstagramModal, { InstagramIcon } from "@/components/DoctorInstagramModal";
+import TrackedBookingLink from "@/components/TrackedBookingLink";
 import UnitDoctorsCompactRail, { type UnitDoctorsCompactRailItem } from "@/components/UnitDoctorsCompactRail";
 import UnitQuickButtons from "@/components/UnitQuickButtons";
 
@@ -125,6 +126,8 @@ export default function UnitDoctorsGrid({
     const [activeInstagram, setActiveInstagram] = useState<{
         name: string;
         handle: string;
+        bookingHref: string | null;
+        unitSlug: string | null;
     } | null>(null);
 
     useEffect(() => {
@@ -225,7 +228,12 @@ export default function UnitDoctorsGrid({
                 : "/agendamento";
             const openInstagram = () => {
                 if (!instagramHandle) return;
-                setActiveInstagram({ name: fullName, handle: instagramHandle });
+                setActiveInstagram({
+                    name: fullName,
+                    handle: instagramHandle,
+                    bookingHref,
+                    unitSlug: unit?.slug ?? null,
+                });
                 trackDoctorInstagramClick({
                     unitSlug: unit?.slug ?? null,
                     doctorName: fullName,
@@ -265,9 +273,9 @@ export default function UnitDoctorsGrid({
                     <Link className="decisionCard__secondary" href="/doutores">
                         Ver especialistas
                     </Link>
-                    <Link className="decisionCard__primary" href="/agendamento">
+                    <TrackedBookingLink className="decisionCard__primary" href="/agendamento" placement="doctor_grid">
                         Ir para o agendamento
-                    </Link>
+                    </TrackedBookingLink>
                 </div>
             </>
         );
@@ -359,7 +367,12 @@ export default function UnitDoctorsGrid({
                     const directoryUnitTitle = directoryUnitLabel ?? undefined;
                     const openInstagram = () => {
                         if (!instagramHandle) return;
-                        setActiveInstagram({ name: fullName, handle: instagramHandle });
+                        setActiveInstagram({
+                            name: fullName,
+                            handle: instagramHandle,
+                            bookingHref,
+                            unitSlug: unit?.slug ?? null,
+                        });
                         trackDoctorInstagramClick({
                             unitSlug: unit?.slug ?? null,
                             doctorName: fullName,

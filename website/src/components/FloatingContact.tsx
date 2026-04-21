@@ -58,7 +58,7 @@ export default function FloatingContact() {
       ) : null}
 
       <a
-        className="fab"
+        className="cta cta--agende fab"
         href={bookingHref}
         aria-label="Agendar"
         onClick={() => trackBookingStart({ placement: "floating", unitSlug: unit?.slug ?? null, bookingUrl: bookingHref })}

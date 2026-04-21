@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import type { TrackingContext } from "@/lib/attribution";
 
 type D1PreparedStatement = {
     bind: (...values: unknown[]) => D1PreparedStatement;
@@ -35,6 +36,17 @@ export type BookingRequestRow = {
     decided_by: string | null;
     decision_note: string | null;
     override_conflict: number;
+    attribution_first_touch_json?: string | null;
+    attribution_last_touch_json?: string | null;
+    tracking_context_json?: string | null;
+    meta_event_id?: string | null;
+    marketing_consent?: number | null;
+    analytics_consent?: number | null;
+    fbp?: string | null;
+    fbc?: string | null;
+    fbclid?: string | null;
+    landing_page?: string | null;
+    referrer?: string | null;
 };
 
 type CloudflareEnv = {
@@ -96,6 +108,17 @@ async function ensureSchema(db: D1DatabaseLike) {
     await tryAddColumn(db, "booking_requests", "customer_cpf TEXT");
     await tryAddColumn(db, "booking_requests", "customer_address TEXT");
     await tryAddColumn(db, "booking_requests", "customer_id TEXT");
+    await tryAddColumn(db, "booking_requests", "attribution_first_touch_json TEXT");
+    await tryAddColumn(db, "booking_requests", "attribution_last_touch_json TEXT");
+    await tryAddColumn(db, "booking_requests", "tracking_context_json TEXT");
+    await tryAddColumn(db, "booking_requests", "meta_event_id TEXT");
+    await tryAddColumn(db, "booking_requests", "marketing_consent INTEGER NOT NULL DEFAULT 0");
+    await tryAddColumn(db, "booking_requests", "analytics_consent INTEGER NOT NULL DEFAULT 0");
+    await tryAddColumn(db, "booking_requests", "fbp TEXT");
+    await tryAddColumn(db, "booking_requests", "fbc TEXT");
+    await tryAddColumn(db, "booking_requests", "fbclid TEXT");
+    await tryAddColumn(db, "booking_requests", "landing_page TEXT");
+    await tryAddColumn(db, "booking_requests", "referrer TEXT");
 
     await db
         .prepare(
@@ -133,6 +156,60 @@ async function ensureSchema(db: D1DatabaseLike) {
     await db
         .prepare(
             "CREATE INDEX IF NOT EXISTS idx_booking_status_confirmby ON booking_requests(status, confirm_by_ms);",
+        )
+        .run();
+
+    await db
+        .prepare(
+            `CREATE TABLE IF NOT EXISTS meta_capi_delivery_logs (
+                id TEXT PRIMARY KEY,
+                channel TEXT NOT NULL,
+                event_name TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                ok INTEGER NOT NULL DEFAULT 0,
+                http_status INTEGER,
+                response_body TEXT,
+                error_message TEXT,
+                booking_id TEXT,
+                wa_click_id TEXT,
+                created_at_ms INTEGER NOT NULL
+            );`,
+        )
+        .run();
+
+    await db
+        .prepare(
+            "CREATE INDEX IF NOT EXISTS idx_meta_capi_event_id ON meta_capi_delivery_logs(event_id, created_at_ms);",
+        )
+        .run();
+
+    await db
+        .prepare(
+            `CREATE TABLE IF NOT EXISTS whatsapp_click_events (
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                wa_click_id TEXT NOT NULL,
+                placement TEXT,
+                source TEXT,
+                unit_slug TEXT,
+                doctor_name TEXT,
+                booking_id TEXT,
+                destination_url TEXT NOT NULL,
+                redirect_url TEXT NOT NULL,
+                page_url TEXT,
+                page_path TEXT,
+                tracking_context_json TEXT,
+                client_ip TEXT,
+                client_user_agent TEXT,
+                created_at_ms INTEGER NOT NULL
+            );`,
+        )
+        .run();
+
+    await db
+        .prepare(
+            "CREATE INDEX IF NOT EXISTS idx_whatsapp_click_event_id ON whatsapp_click_events(event_id, created_at_ms);",
         )
         .run();
 }
@@ -213,4 +290,173 @@ export function isValidDateKey(date: string): boolean {
 
 export function isValidTimeKey(time: string): boolean {
     return /^\d{2}:\d{2}$/.test((time ?? "").trim());
+}
+
+export function parseCookieHeader(cookieHeader: string | null | undefined): Record<string, string> {
+    const result: Record<string, string> = {};
+    const raw = (cookieHeader ?? "").trim();
+    if (!raw) return result;
+
+    for (const item of raw.split(";")) {
+        const [key, ...rest] = item.trim().split("=");
+        if (!key) continue;
+        result[key] = rest.join("=").trim();
+    }
+
+    return result;
+}
+
+export function safeJsonStringify(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return null;
+    }
+}
+
+function sanitizeNullableString(value: unknown, max = 1000): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = sanitizeOneLine(value);
+    if (!trimmed) return null;
+    return clampText(trimmed, max);
+}
+
+function sanitizeCampaignParams(raw: unknown): TrackingContext["params"] {
+    if (!raw || typeof raw !== "object") return {};
+    const allowed = ["gclid", "gbraid", "wbraid", "msclkid", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid"];
+    const result: TrackingContext["params"] = {};
+    for (const key of allowed) {
+        const value = (raw as Record<string, unknown>)[key];
+        const cleaned = sanitizeNullableString(value, 200);
+        if (cleaned) result[key as keyof TrackingContext["params"]] = cleaned;
+    }
+    return result;
+}
+
+function sanitizeTouch(raw: unknown): TrackingContext["firstTouch"] {
+    if (!raw || typeof raw !== "object") return null;
+    const capturedAtMs = Number((raw as { capturedAtMs?: unknown }).capturedAtMs ?? NaN);
+    const landingUrl = sanitizeNullableString((raw as { landingUrl?: unknown }).landingUrl, 1000);
+    const landingPath = sanitizeNullableString((raw as { landingPath?: unknown }).landingPath, 500);
+    if (!landingUrl || !landingPath) return null;
+
+    return {
+        capturedAtMs: Number.isFinite(capturedAtMs) ? capturedAtMs : Date.now(),
+        landingUrl,
+        landingPath,
+        referrer: sanitizeNullableString((raw as { referrer?: unknown }).referrer, 1000),
+        params: sanitizeCampaignParams((raw as { params?: unknown }).params),
+        fbclid: sanitizeNullableString((raw as { fbclid?: unknown }).fbclid, 255),
+        fbp: sanitizeNullableString((raw as { fbp?: unknown }).fbp, 255),
+        fbc: sanitizeNullableString((raw as { fbc?: unknown }).fbc, 255),
+    };
+}
+
+export function coerceTrackingContext(raw: unknown): TrackingContext | null {
+    if (!raw || typeof raw !== "object") return null;
+
+    const capturedAtMs = Number((raw as { capturedAtMs?: unknown }).capturedAtMs ?? NaN);
+    return {
+        capturedAtMs: Number.isFinite(capturedAtMs) ? capturedAtMs : Date.now(),
+        pageUrl: sanitizeNullableString((raw as { pageUrl?: unknown }).pageUrl, 1000),
+        pagePath: sanitizeNullableString((raw as { pagePath?: unknown }).pagePath, 500),
+        referrer: sanitizeNullableString((raw as { referrer?: unknown }).referrer, 1000),
+        consent: {
+            analytics: (raw as { consent?: { analytics?: unknown } }).consent?.analytics === true,
+            marketing: (raw as { consent?: { marketing?: unknown } }).consent?.marketing === true,
+        },
+        params: sanitizeCampaignParams((raw as { params?: unknown }).params),
+        fbclid: sanitizeNullableString((raw as { fbclid?: unknown }).fbclid, 255),
+        fbp: sanitizeNullableString((raw as { fbp?: unknown }).fbp, 255),
+        fbc: sanitizeNullableString((raw as { fbc?: unknown }).fbc, 255),
+        landingUrl: sanitizeNullableString((raw as { landingUrl?: unknown }).landingUrl, 1000),
+        landingPath: sanitizeNullableString((raw as { landingPath?: unknown }).landingPath, 500),
+        firstTouch: sanitizeTouch((raw as { firstTouch?: unknown }).firstTouch),
+        lastTouch: sanitizeTouch((raw as { lastTouch?: unknown }).lastTouch),
+    };
+}
+
+export async function insertMetaCapiDeliveryLog(
+    db: D1DatabaseLike,
+    entry: {
+        id: string;
+        channel: "server";
+        eventName: string;
+        eventId: string;
+        endpoint: string;
+        ok: boolean;
+        httpStatus: number | null;
+        responseBody: string | null;
+        errorMessage: string | null;
+        bookingId?: string | null;
+        waClickId?: string | null;
+        createdAtMs: number;
+    },
+): Promise<void> {
+    await db
+        .prepare(
+            "INSERT INTO meta_capi_delivery_logs (id, channel, event_name, event_id, endpoint, ok, http_status, response_body, error_message, booking_id, wa_click_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(
+            entry.id,
+            entry.channel,
+            entry.eventName,
+            entry.eventId,
+            entry.endpoint,
+            entry.ok ? 1 : 0,
+            entry.httpStatus,
+            entry.responseBody,
+            entry.errorMessage,
+            entry.bookingId ?? null,
+            entry.waClickId ?? null,
+            entry.createdAtMs,
+        )
+        .run();
+}
+
+export async function insertWhatsappClickEvent(
+    db: D1DatabaseLike,
+    entry: {
+        id: string;
+        eventId: string;
+        waClickId: string;
+        placement?: string | null;
+        source?: string | null;
+        unitSlug?: string | null;
+        doctorName?: string | null;
+        bookingId?: string | null;
+        destinationUrl: string;
+        redirectUrl: string;
+        pageUrl?: string | null;
+        pagePath?: string | null;
+        trackingContext?: TrackingContext | null;
+        clientIp?: string | null;
+        clientUserAgent?: string | null;
+        createdAtMs: number;
+    },
+): Promise<void> {
+    await db
+        .prepare(
+            "INSERT INTO whatsapp_click_events (id, event_id, wa_click_id, placement, source, unit_slug, doctor_name, booking_id, destination_url, redirect_url, page_url, page_path, tracking_context_json, client_ip, client_user_agent, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(
+            entry.id,
+            entry.eventId,
+            entry.waClickId,
+            entry.placement ?? null,
+            entry.source ?? null,
+            entry.unitSlug ?? null,
+            entry.doctorName ?? null,
+            entry.bookingId ?? null,
+            entry.destinationUrl,
+            entry.redirectUrl,
+            entry.pageUrl ?? null,
+            entry.pagePath ?? null,
+            safeJsonStringify(entry.trackingContext),
+            entry.clientIp ?? null,
+            entry.clientUserAgent ?? null,
+            entry.createdAtMs,
+        )
+        .run();
 }

@@ -3186,7 +3186,6 @@ button:focus-visible {
   border-bottom: 1px solid var(--border);
   overflow: hidden;
   background: linear-gradient(180deg, var(--hero-band-bg-top-live, #050505), var(--hero-band-bg-bottom-live, #050505));
-  transition: background 420ms ease;
 }
 
 .hero--experience,
@@ -3214,6 +3213,9 @@ button:focus-visible {
   min-height: 320px;
   position: relative;
   z-index: 1;
+  overflow: hidden;
+  isolation: isolate;
+  contain: paint;
   background: linear-gradient(180deg, var(--hero-band-bg-top, var(--hero-band-bg, #050505)), var(--hero-band-bg-bottom, var(--hero-band-bg, #050505)));
 }
 
@@ -3221,7 +3223,9 @@ button:focus-visible {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
-  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+  will-change: opacity;
 }
 
 .heroMediaLayer--active {
@@ -3229,37 +3233,19 @@ button:focus-visible {
   opacity: 1;
 }
 
-.heroMediaLayer--enter {
-  animation: heroFadeIn 560ms cubic-bezier(.22, .61, .36, 1);
-}
-
-@keyframes heroFadeIn {
-  from {
-    opacity: 0;
-    transform: scale(1.012);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 .heroMediaLayer--prev {
   z-index: 2;
   opacity: 1;
-  animation: heroFadeOut 560ms cubic-bezier(.22, .61, .36, 1) forwards;
+  animation: heroFadeOut 360ms ease forwards;
 }
 
 @keyframes heroFadeOut {
   from {
     opacity: 1;
-    transform: scale(1);
   }
 
   to {
     opacity: 0;
-    transform: scale(.992);
   }
 }
 
@@ -3268,7 +3254,9 @@ button:focus-visible {
   height: 100%;
   display: block;
   object-fit: contain;
-  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
 }
 
 video.heroMediaEl {
@@ -3922,6 +3910,19 @@ video.heroMediaEl {
   cursor: pointer;
   font-size: 20px;
   line-height: 1;
+  transition: transform 180ms ease, background 180ms ease, border-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
+}
+
+.modalClose:hover,
+.modalClose:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.modalClose--back {
+  font-size: 18px;
 }
 
 .modalBody {
@@ -4056,6 +4057,45 @@ video.heroMediaEl {
   flex-direction: column;
 }
 
+.instagramModalCard--viewer {
+  width: min(96vw, var(--instagram-viewer-card-width, 980px));
+}
+
+.instagramModalHeader {
+  align-items: flex-start;
+}
+
+.instagramModalHeaderCopy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.instagramModalHandle {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.2;
+}
+
+.instagramModalHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.instagramModalBookBtn {
+  min-width: 132px;
+  min-height: 38px;
+  padding: 12px 22px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .instagramModalBody {
   display: flex;
   flex-direction: column;
@@ -4064,6 +4104,34 @@ video.heroMediaEl {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+}
+
+.instagramModalBody::-webkit-scrollbar {
+  width: 9px;
+}
+
+.instagramModalBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.instagramModalBody::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background: rgba(255, 255, 255, 0);
+  background-clip: padding-box;
+  transition: background-color 180ms ease;
+}
+
+.instagramModalBody[data-scrolling="true"] {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.instagramModalBody[data-scrolling="true"]::-webkit-scrollbar-thumb,
+.instagramModalBody:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .instagramFallback {
@@ -4080,50 +4148,12 @@ video.heroMediaEl {
   gap: 10px;
 }
 
-.instagramGalleryIntro {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background:
-    radial-gradient(circle at top right, rgba(255, 255, 255, 0.08), transparent 30%),
-    rgba(255, 255, 255, 0.04);
-}
-
-.instagramGalleryIntroCopy {
-  min-width: 0;
-  display: grid;
-  gap: 8px;
-}
-
 .instagramGalleryEyebrow {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.58);
-}
-
-.instagramGalleryLead,
-.instagramGalleryBio {
-  margin: 0;
-}
-
-.instagramGalleryLead {
-  max-width: 58ch;
-  line-height: 1.55;
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.instagramGalleryBio {
-  max-width: 62ch;
-  font-size: 13px;
-  line-height: 1.55;
-  color: rgba(255, 255, 255, 0.62);
-  white-space: pre-wrap;
 }
 
 .instagramGalleryFacts {
@@ -4156,37 +4186,38 @@ video.heroMediaEl {
 }
 
 .instagramGalleryStats {
-  display: flex;
-  gap: 8px;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(72px, max-content));
+  gap: 18px;
+  justify-content: end;
   align-items: center;
-  overflow-x: auto;
-  scrollbar-width: thin;
+}
+
+.instagramGalleryStats--header {
+  gap: 16px;
 }
 
 .instagramGalleryStat {
   min-width: 0;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.04);
-  white-space: nowrap;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  text-align: center;
 }
 
 .instagramGalleryStat strong {
-  font-size: 14px;
+  font-size: 24px;
   line-height: 1;
 }
 
 .instagramGalleryStat span {
   font-size: 11px;
-  line-height: 1;
+  line-height: 1.2;
   color: rgba(255, 255, 255, 0.62);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
 }
 
 .instagramMediaBtn {
@@ -4227,126 +4258,95 @@ video.heroMediaEl {
 
 .instagramMediaOverlay {
   position: absolute;
-  inset: auto 10px 10px 10px;
+  left: 10px;
+  bottom: 10px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(7, 7, 8, 0.18), rgba(7, 7, 8, 0.72));
-  backdrop-filter: blur(10px);
+  justify-content: flex-start;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
   opacity: 0;
   transition: opacity 180ms ease;
 }
 
-.instagramMediaOverlayLabel,
-.instagramMediaOverlayAction,
 .instagramMediaDate,
-.instagramMediaOverlayMeta {
+.instagramMediaOverlayStat {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
 }
 
-.instagramMediaOverlayMeta {
-  color: rgba(255, 255, 255, 0.78);
-  margin-left: auto;
+.instagramMediaOverlayStat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
 }
 
-.instagramMediaOverlayAction {
-  color: rgba(255, 255, 255, 0.72);
+.instagramMediaOverlayStat svg {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 .instagramMediaBadge {
   position: absolute;
   top: 8px;
   right: 8px;
-  border-radius: 999px;
-  padding: 4px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.58);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.98);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+}
+
+.instagramMediaBadge svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .instagramMediaDate {
   position: absolute;
   left: 10px;
   top: 10px;
-  border-radius: 999px;
-  padding: 4px 8px;
+  padding: 0;
   color: rgba(255, 255, 255, 0.9);
-  background: rgba(0, 0, 0, 0.42);
-}
-
-.instagramViewer {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-  padding: 12px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.08), transparent 34%),
-    rgba(255, 255, 255, 0.04);
+  background: transparent;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
 }
 
 .instagramViewerShell {
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  grid-template-columns: minmax(0, var(--instagram-viewer-stage-width, 640px)) minmax(0, var(--instagram-viewer-sidebar-width, 340px));
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .instagramViewerStage {
   min-width: 0;
+  width: var(--instagram-viewer-stage-width, 640px);
 }
 
 .instagramViewerTop {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-}
-
-.instagramViewerMeta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.instagramViewerBadge,
-.instagramViewerCounter,
-.instagramViewerThumbBadge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-}
-
-.instagramViewerBadge,
-.instagramViewerThumbBadge {
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.96);
-}
-
-.instagramViewerCounter {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.75);
-}
-
-.instagramViewerNav {
-  display: flex;
-  gap: 8px;
 }
 
 .instagramViewerSidebar {
   display: flex;
   min-width: 0;
+  width: var(--instagram-viewer-sidebar-width, 340px);
   flex-direction: column;
+  align-self: start;
+  height: var(--instagram-viewer-stage-height, 640px);
+  max-height: var(--instagram-viewer-stage-height, 640px);
   gap: 14px;
   padding: 14px;
   border-radius: 16px;
@@ -4355,34 +4355,27 @@ video.heroMediaEl {
 }
 
 .instagramViewerCopy {
-  display: grid;
-  gap: 8px;
-}
-
-.instagramViewerHandle {
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.instagramViewerHandleRow {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.instagramViewerCopyHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
 }
 
 .instagramViewerDate {
+  padding-top: 1px;
+  line-height: 1.5;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.56);
-}
-
-.instagramHeaderMeta {
-  margin-left: 6px;
-  color: rgba(255, 255, 255, 0.52);
+  white-space: nowrap;
+  justify-self: end;
 }
 
 .instagramViewerBack,
@@ -4403,11 +4396,13 @@ video.heroMediaEl {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: clamp(340px, 62vh, 720px);
-  padding: 22px;
-  border-radius: 18px;
+  width: var(--instagram-viewer-stage-width, 640px);
+  height: var(--instagram-viewer-stage-height, 640px);
+  min-height: 0;
+  padding: 0;
+  border-radius: 20px;
   overflow: hidden;
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: transparent;
 }
 
 .instagramViewerMediaWrap::before,
@@ -4450,6 +4445,11 @@ video.heroMediaEl {
   backdrop-filter: blur(10px);
 }
 
+.instagramViewerArrow--jump {
+  font-size: 22px;
+  letter-spacing: -0.06em;
+}
+
 .instagramViewerArrow--left {
   left: 16px;
 }
@@ -4458,26 +4458,86 @@ video.heroMediaEl {
   right: 16px;
 }
 
+.instagramViewerDots {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+.instagramViewerDot {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 180ms ease;
+}
+
+.instagramViewerDot__core {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  transition: transform 180ms ease, background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.instagramViewerDot:hover,
+.instagramViewerDot:focus-visible {
+  transform: translateY(-1px);
+}
+
+.instagramViewerDot:hover .instagramViewerDot__core,
+.instagramViewerDot:focus-visible .instagramViewerDot__core {
+  transform: scale(1.32);
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.96);
+}
+
+.instagramViewerDot--active .instagramViewerDot__core {
+  transform: scale(1.42);
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(255, 255, 255, 1);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12), 0 8px 18px rgba(0, 0, 0, 0.22);
+}
+
 .instagramViewerMedia {
   position: relative;
   z-index: 1;
   display: block;
-  width: auto;
-  max-width: min(100%, 620px);
-  max-height: min(70vh, 720px);
-  height: auto;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
-  border-radius: 20px;
-  background: rgba(12, 12, 13, 0.18);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .instagramViewerCaption {
   font-size: 13px;
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.86);
-  white-space: pre-wrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   margin: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--instagram-viewer-caption-lines, 8);
+  text-overflow: ellipsis;
 }
 
 .instagramViewerFacts {
@@ -4489,6 +4549,7 @@ video.heroMediaEl {
 .instagramViewerFact {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   border-radius: 999px;
   padding: 5px 10px;
   font-size: 11px;
@@ -4497,6 +4558,106 @@ video.heroMediaEl {
   color: rgba(255, 255, 255, 0.88);
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.instagramViewerFact svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  transition: transform 180ms ease, color 180ms ease;
+}
+
+.instagramViewerFact:hover,
+.instagramViewerFact:focus-visible {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.18);
+}
+
+.instagramViewerFact:hover svg,
+.instagramViewerFact:focus-visible svg {
+  transform: scale(1.08);
+}
+
+.instagramViewerFact--likes:hover,
+.instagramViewerFact--likes:focus-visible {
+  color: #ffd8dd;
+  background: rgba(255, 127, 149, 0.16);
+  border-color: rgba(255, 127, 149, 0.34);
+}
+
+.instagramViewerFact--likes:hover svg,
+.instagramViewerFact--likes:focus-visible svg {
+  color: #ff8aa0;
+}
+
+.instagramViewerFact--comments:hover,
+.instagramViewerFact--comments:focus-visible {
+  color: #d8e8ff;
+  background: rgba(104, 170, 255, 0.16);
+  border-color: rgba(104, 170, 255, 0.34);
+}
+
+.instagramViewerFact--comments:hover svg,
+.instagramViewerFact--comments:focus-visible svg {
+  color: #82b8ff;
+}
+
+.instagramViewerFact--plays:hover,
+.instagramViewerFact--plays:focus-visible {
+  color: #d9ffe5;
+  background: rgba(66, 214, 123, 0.16);
+  border-color: rgba(66, 214, 123, 0.34);
+}
+
+.instagramViewerFact--plays:hover svg,
+.instagramViewerFact--plays:focus-visible svg {
+  color: #6ee7a2;
+}
+
+.instagramViewerFact--text:hover,
+.instagramViewerFact--text:focus-visible {
+  color: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.instagramViewerComments {
+  display: grid;
+  grid-auto-rows: min-content;
+  align-content: start;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.instagramViewerComment {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.instagramViewerCommentAuthor {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.instagramViewerCommentText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.86);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  text-overflow: ellipsis;
 }
 
 .instagramViewerCaption--muted {
@@ -4505,6 +4666,7 @@ video.heroMediaEl {
 
 .instagramViewerThumbs {
   display: flex;
+  flex: 0 0 auto;
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 2px;
@@ -4542,11 +4704,19 @@ video.heroMediaEl {
 
 .instagramViewerThumbBadge {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
-  padding: 4px 7px;
-  font-size: 10px;
-  background: rgba(0, 0, 0, 0.62);
+  top: 7px;
+  right: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.42);
+}
+
+.instagramViewerThumbBadge svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .instagramInlineError {
@@ -4893,28 +5063,54 @@ video.heroMediaEl {
 }
 
 @media (max-width: 900px) {
-  .instagramGalleryIntro {
-    flex-direction: column;
-    align-items: stretch;
+  .instagramModalHeader {
+    flex-wrap: wrap;
+  }
+
+  .instagramModalHeaderActions {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
   }
 
   .instagramGalleryStats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     justify-content: stretch;
-    overflow-x: auto;
   }
 
   .instagramViewerShell {
     grid-template-columns: 1fr;
+    width: 100%;
   }
 
+  .instagramViewerStage,
   .instagramViewerMediaWrap {
+    width: 100%;
+    height: auto;
     min-height: clamp(280px, 54vh, 560px);
-    padding: 14px;
+  }
+
+  .instagramViewerSidebar {
+    width: 100%;
+    height: fit-content;
+    max-height: none;
+  }
+
+  .instagramViewerCopyHeader {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .instagramViewerDate {
+    justify-self: start;
   }
 
   .instagramViewerMedia {
-    max-width: 100%;
-    max-height: min(58vh, 560px);
+    height: min(58vh, 560px);
+  }
+
+  .instagramViewerDots {
+    bottom: 12px;
   }
 }
 
@@ -5536,13 +5732,8 @@ video.heroMediaEl {
 }
 
 .aboutBtnPrimary {
-  background: #111;
-  color: #fff;
-  border-color: rgba(0, 0, 0, .25);
-}
-
-.aboutBtnPrimary:hover {
-  background: #000;
+  min-width: 132px;
+  padding: 12px 22px;
 }
 
 .aboutBtnPrimary:hover,
@@ -5665,11 +5856,24 @@ video.heroMediaEl {
   min-height: 340px;
   text-decoration: none;
   color: inherit;
+  cursor: pointer;
 }
 
 .aboutMapStaticImage {
   object-fit: cover;
   filter: grayscale(1) saturate(.15) contrast(1.06) brightness(1.03);
+  transform-origin: 50% 50%;
+  transition: transform 220ms ease;
+  will-change: transform;
+}
+
+.aboutMapStaticLink[data-zoomed="true"] {
+  touch-action: none;
+  cursor: grab;
+}
+
+.aboutMapStaticLink[data-dragging="true"] {
+  cursor: grabbing;
 }
 
 .aboutMapStaticFallback {
@@ -5699,6 +5903,53 @@ video.heroMediaEl {
   display: inline-flex;
   transform: translate(-50%, -100%);
   pointer-events: none;
+}
+
+.aboutMapZoomControls {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 3;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aboutMapZoomButton {
+  appearance: none;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(17, 17, 17, .76);
+  color: rgba(255, 255, 255, .96);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, .22);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: transform .22s ease, box-shadow .22s ease, background .22s ease, border-color .22s ease, color .22s ease;
+}
+
+.aboutMapZoomButton:hover,
+.aboutMapZoomButton:focus-visible {
+  transform: translateY(-2px) scale(1.04);
+  background: rgba(17, 17, 17, .88);
+  border-color: rgba(255, 255, 255, .34);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, .26);
+}
+
+.aboutMapZoomButton:disabled {
+  cursor: default;
+  opacity: .42;
+  transform: none;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, .12);
 }
 
 .aboutMapStaticPinMotion {
@@ -6355,6 +6606,16 @@ video.heroMediaEl {
   background: #f3f3f3;
 }
 
+.brTooltipItem--static {
+  cursor: default;
+  color: rgba(17, 17, 17, 0.56);
+  background: rgba(247, 247, 247, 0.96);
+}
+
+.brTooltipItem--static:hover {
+  background: rgba(247, 247, 247, 0.96);
+}
+
 .brTooltipNote {
   margin-top: 10px;
   font-size: 12px;
@@ -6474,7 +6735,7 @@ video.heroMediaEl {
   appearance: none;
   border: 0;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   width: 100%;
   display: grid;
   justify-items: center;
@@ -6534,6 +6795,16 @@ video.heroMediaEl {
 
 .unitsStateUnit:hover {
   background: #f3f3f3;
+}
+
+.unitsStateUnit--static {
+  cursor: default;
+  color: rgba(17, 17, 17, 0.56);
+  background: rgba(247, 247, 247, 0.96);
+}
+
+.unitsStateUnit--static:hover {
+  background: rgba(247, 247, 247, 0.96);
 }
 
 .card {
@@ -8064,15 +8335,11 @@ video.heroMediaEl {
 }
 
 .fab {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, .15);
-  background: rgba(0, 0, 0, .85);
-  color: #fff;
-  box-shadow: var(--shadow);
+  justify-content: center;
+  min-width: 132px;
+  text-decoration: none;
 }
 
 .fabInsta {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 
 const baseUrl = (process.env.SMOKE_BASE_URL ?? "https://espacofacial.com").replace(/\/$/, "");
+const expectedBuildSha = (process.env.SMOKE_EXPECT_BUILD_SHA ?? "").trim();
 
 function normalizeEnvValue(value) {
     if (typeof value !== "string") return "";
@@ -166,6 +167,13 @@ async function run() {
     {
         const { res, text } = await fetchText("/");
         assert(res.status === 200, `/ expected 200, got ${res.status}`);
+        if (expectedBuildSha) {
+            const receivedBuildSha = (res.headers.get("x-app-build") ?? "").trim();
+            assert(
+                receivedBuildSha === expectedBuildSha,
+                `/ expected x-app-build=${expectedBuildSha}, got ${receivedBuildSha || "(empty)"}`,
+            );
+        }
         assert(text.includes('href="/#sobre-nos"'), `Home HTML should include header link to /#sobre-nos`);
         // Validate a stable SSR marker for social presence.
         assert(

@@ -531,11 +531,10 @@ export async function getCachedInstagramFeed(params: {
     const hasMore = rows.length > pageSize;
     const windowRows = hasMore ? rows.slice(0, pageSize) : rows;
 
-    const items: InstagramApiMedia[] = windowRows
-        .map((row) => {
+    const items: InstagramApiMedia[] = windowRows.flatMap((row) => {
             const mediaType = row.media_type === "video" || row.media_type === "carousel" ? row.media_type : "image";
             const thumbnailUrl = (row.thumbnail_url ?? "").trim();
-            if (!thumbnailUrl) return null;
+            if (!thumbnailUrl) return [];
 
             const payload = parsePayloadObject(row.payload_json);
             const payloadLikeCount = normalizeCount(payload?.like_count);
@@ -549,29 +548,31 @@ export async function getCachedInstagramFeed(params: {
             const payloadResourcesCount = Array.isArray(payloadCarousel) ? payloadCarousel.length : null;
             const payloadPinned = normalizeBool(payload?.is_pinned);
 
-            return {
-                id: row.id,
-                code: row.code,
-                mediaType,
-                isReel: row.is_reel === 1,
-                isStory: row.is_story === 1,
-                caption: row.caption,
-                likeCount: row.like_count ?? payloadLikeCount,
-                commentCount: row.comment_count ?? payloadCommentCount,
-                playCount: row.play_count ?? payloadPlayCount,
-                viewCount: row.view_count ?? payloadViewCount,
-                durationSeconds: row.duration_seconds ?? payloadDurationSeconds,
-                locationName: row.location_name ?? payloadLocationName,
-                productType: row.product_type ?? payloadProductType,
-                resourcesCount: row.resources_count ?? payloadResourcesCount,
-                isPinned: row.is_pinned === 1 || payloadPinned === true,
-                takenAtMs: row.taken_at_ms,
-                thumbnailUrl,
-                videoUrl: row.video_url,
-                permalink: row.permalink,
-            } satisfies InstagramApiMedia;
-        })
-        .filter((item): item is InstagramApiMedia => !!item);
+            return [
+                {
+                    id: row.id,
+                    code: row.code,
+                    mediaType,
+                    isReel: row.is_reel === 1,
+                    isStory: row.is_story === 1,
+                    caption: row.caption,
+                    likeCount: row.like_count ?? payloadLikeCount,
+                    commentCount: row.comment_count ?? payloadCommentCount,
+                    playCount: row.play_count ?? payloadPlayCount,
+                    viewCount: row.view_count ?? payloadViewCount,
+                    durationSeconds: row.duration_seconds ?? payloadDurationSeconds,
+                    locationName: row.location_name ?? payloadLocationName,
+                    productType: row.product_type ?? payloadProductType,
+                    resourcesCount: row.resources_count ?? payloadResourcesCount,
+                    isPinned: row.is_pinned === 1 || payloadPinned === true,
+                    takenAtMs: row.taken_at_ms,
+                    thumbnailUrl,
+                    videoUrl: row.video_url,
+                    permalink: row.permalink,
+                    payloadJson: row.payload_json ?? null,
+                } satisfies InstagramApiMedia,
+            ];
+        });
 
     if (!items.length) return null;
 
@@ -638,10 +639,7 @@ export async function fetchLiveInstagramFeedPage(params: {
 
     const uniqueById = new Map<string, InstagramApiMedia>();
     for (const item of [...stories, ...feedItems]) uniqueById.set(item.id, item);
-    const items = [...uniqueById.values()].map((item) => ({
-        ...item,
-        payloadJson: null,
-    }));
+    const items = [...uniqueById.values()];
 
     const nextCursor = typeof feed.next_max_id === "string" && feed.next_max_id.trim() ? feed.next_max_id : null;
     const hasMore = Boolean(feed.more_available && nextCursor);

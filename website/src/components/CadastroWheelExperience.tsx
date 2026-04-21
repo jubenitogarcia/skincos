@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import TrackedWhatsappLink from "@/components/TrackedWhatsappLink";
 import { trackEvent } from "@/lib/analytics";
 import { trackLeadConversion } from "@/lib/conversions";
 import { CADASTRO_WHEEL_PRIZES, type CadastroPrize } from "@/lib/cadastroWheelPrizes";
@@ -1101,15 +1102,18 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
 
                                                 {ctaVisible && whatsappUrl ? (
                                                     <div className={`${styles.ctaRow} ${styles.ctaRowVisible}`}>
-                                                        <a
-                                                            href={whatsappUrl}
+                                                        <TrackedWhatsappLink
+                                                            rawUrl={whatsappUrl}
                                                             target="_blank"
                                                             rel="noreferrer"
                                                             className={styles.ctaPrimary}
+                                                            placement="cadastro"
+                                                            unitSlug={currentUnit?.slug ?? null}
+                                                            source="cadastro_wheel"
                                                             onClick={handleWhatsappClick}
                                                         >
                                                             Clique e agende
-                                                        </a>
+                                                        </TrackedWhatsappLink>
                                                     </div>
                                                 ) : null}
                                             </>

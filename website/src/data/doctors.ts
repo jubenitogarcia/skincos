@@ -11,42 +11,42 @@ export const doctors: Doctor[] = [
     "slug": "drmarcelogsoares",
     "name": "Dr. Marcelo Soares",
     "days": "Sexta-feira",
-    "bookingUrl": "https://www.espacofacial.com/drmarcelogsoares"
+    "bookingUrl": "https://espacofacial.com/drmarcelogsoares"
   },
   {
     "slug": "drasamarassilva",
     "name": "Dra. Samara Silva",
     "days": "Sábado",
-    "bookingUrl": "https://www.espacofacial.com/drasamarassilva"
+    "bookingUrl": "https://espacofacial.com/drasamarassilva"
   },
   {
     "slug": "dravivianemondin",
     "name": "Dra. Viviane Mondin",
     "days": "Segunda-feira, Quinta-feira",
-    "bookingUrl": "https://www.espacofacial.com/dravivianemondin"
+    "bookingUrl": "https://espacofacial.com/dravivianemondin"
   },
   {
     "slug": "drajosielesouza",
     "name": "Dra. Josiele de Souza",
     "days": "Segunda-feira, Terça-feira, Sexta-feira",
-    "bookingUrl": "https://www.espacofacial.com/drajosielesouza"
+    "bookingUrl": "https://espacofacial.com/drajosielesouza"
   },
   {
     "slug": "dramarinalima",
     "name": "Dra. Marina Lima",
     "days": "Quinta-feira",
-    "bookingUrl": "https://www.espacofacial.com/dramarinalima"
+    "bookingUrl": "https://espacofacial.com/dramarinalima"
   },
   {
     "slug": "drviniciusvieira",
     "name": "Dr. Vinícius Vieira",
     "days": "Terça-feira, Quarta-feira",
-    "bookingUrl": "https://www.espacofacial.com/drviniciusvieira"
+    "bookingUrl": "https://espacofacial.com/drviniciusvieira"
   },
   {
     "slug": "dragabrielamenegat",
     "name": "Dra. Gabriela Menegat",
     "days": "Quarta-feira, Sábado",
-    "bookingUrl": "https://www.espacofacial.com/dragabrielamenegat"
+    "bookingUrl": "https://espacofacial.com/dragabrielamenegat"
   }
 ];
