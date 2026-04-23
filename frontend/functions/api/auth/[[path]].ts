@@ -76,6 +76,14 @@ export async function onRequest(context: any): Promise<Response> {
         }
         copySetCookieHeaders(upstream.headers, outHeaders, rewriteCookie)
 
+        const hasAuthCookies = (outHeaders.get('set-cookie') || '').includes('session=')
+        if (sharedDomain && hasAuthCookies) {
+            const secureAttr = url.protocol === 'https:' ? '; Secure' : ''
+            const sameSite = url.protocol === 'https:' ? 'None' : 'Lax'
+            outHeaders.append('Set-Cookie', `session=deleted; Path=/; Max-Age=0; SameSite=${sameSite}${secureAttr}; HttpOnly`)
+            outHeaders.append('Set-Cookie', `csrfToken=deleted; Path=/; Max-Age=0; SameSite=${sameSite}${secureAttr}`)
+        }
+
         // Backward-compat: old deployments could have host-only auth cookies.
         // On logout, clear both host-only and shared-domain variants.
         if (rest === '/logout' && method === 'POST') {

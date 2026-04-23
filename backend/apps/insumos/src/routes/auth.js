@@ -351,8 +351,10 @@ export async function handleAuthRoutes({
 	                    allowedUnits: userDb.allowedUnits || [],
 	                    allowedModules: userDb.allowedModules || [],
 	                };
-                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
-                return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
+                // `/auth/me` is read-only. Rotating cookies here invalidates CSRF tokens
+                // cached by other open tabs/modules and causes intermittent mutation failures.
+                const csrfToken = cookies.csrfToken || sessionCsrf || null;
+                return withCORS(JSON.stringify({ success: true, user, csrfToken }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ error: `Auth error: ${err.message}` }), { status: 500 }, appOrigin);
             }

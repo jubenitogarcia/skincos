@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { getCsrfToken } from '@/csrf'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { LoadingPercentText } from '@/LoadingPattern'
@@ -61,7 +62,8 @@ async function insumosApiJson<T>(
   const method = (opts.method || 'GET').toUpperCase()
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
-  if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
+  const effectiveCsrfToken = getCsrfToken() || opts.csrfToken || null
+  if (effectiveCsrfToken) headers['x-csrf-token'] = effectiveCsrfToken
 
   let url = ''
   if (path.startsWith('/api/')) {
