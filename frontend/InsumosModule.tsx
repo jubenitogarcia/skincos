@@ -12,6 +12,7 @@ import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { getCsrfToken } from '@/csrf'
 
 type InsumosHealth = {
   ok?: boolean
@@ -966,7 +967,8 @@ async function apiJson<T>(
   const method = String(opts.method || 'GET').toUpperCase()
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
-  if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
+  const effectiveCsrfToken = getCsrfToken() || opts.csrfToken || null
+  if (effectiveCsrfToken) headers['x-csrf-token'] = effectiveCsrfToken
   if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey
 
   const url = path.startsWith('/api/insumos') ? path : `/api/insumos${path.startsWith('/') ? '' : '/'}${path}`

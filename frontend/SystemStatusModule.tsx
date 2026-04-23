@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/switch'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 import { LoadingPercentButton, LoadingPercentText } from '@/LoadingPattern'
+import { getCsrfToken } from '@/csrf'
 
 type StatusKind = 'ok' | 'warn' | 'error' | 'unknown'
 
@@ -102,7 +103,8 @@ async function apiJson<T>(
   const method = opts.method || 'GET'
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
-  if (opts.csrfToken) headers['x-csrf-token'] = opts.csrfToken
+  const effectiveCsrfToken = getCsrfToken() || opts.csrfToken || null
+  if (effectiveCsrfToken) headers['x-csrf-token'] = effectiveCsrfToken
 
   let url = ''
   if (path.startsWith('/api/')) {

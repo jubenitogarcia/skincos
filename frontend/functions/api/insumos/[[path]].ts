@@ -62,15 +62,33 @@ export async function onRequest(context: any): Promise<Response> {
     outHeaders.set('Cache-Control', 'no-store')
 
     try {
+        const host = url.hostname
+        const sharedDomain = host === 'skincos.com.br' || host.endsWith('.skincos.com.br')
+          ? '.skincos.com.br'
+          : ''
         const rewriteCookie = (cookie: string) => {
             if (!cookie) return cookie
             const parts = cookie.split(';').map(part => part.trim()).filter(Boolean)
             if (!parts.length) return cookie
             const [nameValue, ...attrs] = parts
             const filtered = attrs.filter(attr => !attr.toLowerCase().startsWith('domain='))
+            if (sharedDomain) filtered.push(`Domain=${sharedDomain}`)
             return [nameValue, ...filtered].join('; ')
         }
         copySetCookieHeaders(upstream.headers, outHeaders, rewriteCookie)
+
+        // Backward-compat: older proxy behavior could leave host-only auth cookies
+        // alongside the shared-domain cookies. Clear the host-only variants once the
+        // worker refreshes auth cookies to keep session/csrf pairs aligned.
+        const hasAuthCookies =
+          rest.startsWith('/auth/') &&
+          (outHeaders.get('set-cookie') || '').includes('session=')
+        if (sharedDomain && hasAuthCookies) {
+          const secureAttr = url.protocol === 'https:' ? '; Secure' : ''
+          const sameSite = url.protocol === 'https:' ? 'None' : 'Lax'
+          outHeaders.append('Set-Cookie', `session=deleted; Path=/; Max-Age=0; SameSite=${sameSite}${secureAttr}; HttpOnly`)
+          outHeaders.append('Set-Cookie', `csrfToken=deleted; Path=/; Max-Age=0; SameSite=${sameSite}${secureAttr}`)
+        }
     } catch {
         // ignore
     }
