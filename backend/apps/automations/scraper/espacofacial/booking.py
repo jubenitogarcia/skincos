@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
 
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -123,6 +124,7 @@ class BookingRequest:
         duration_minutes = _first_int(payload, "duration_minutes", "durationMinutes", "duracao_minutos")
         start_time, end_time = _coerce_times(start_time, end_time, time_range, duration_minutes)
 
+        doctor_slug = _first_text(payload, "doctorSlug", "doctor_slug")
         professional_name = _first_text(
             payload,
             "doctorName",
@@ -132,6 +134,7 @@ class BookingRequest:
             "profissional",
             "injetor",
         )
+        professional_name = _canonical_professional_name(professional_name, doctor_slug)
         procedure_name = _first_text(
             payload,
             "procedureName",
@@ -214,6 +217,50 @@ class BookingError(RuntimeError):
     pass
 
 
+def _canonical_professional_name(name: str, doctor_slug: str = "") -> str:
+    normalized_name = _normalize_match(name)
+    normalized_slug = _normalize_match(doctor_slug)
+    alias_to_canonical = {
+        _normalize_match("dragabrielamenegat"): "Gabriela Menegat",
+        _normalize_match("drajosielesouza"): "Josiele Maiara de Souza",
+        _normalize_match("drmarcelogsoares"): "Marcelo Gomes Soares",
+        _normalize_match("dramarinalima"): "Marina Pereira Lima",
+        _normalize_match("drraulrosariojunior"): "Raul Rosario Junior",
+        _normalize_match("drasamarassilva"): "Samara Silva",
+        _normalize_match("drviniciusvieira"): "Vinícius Vieira",
+        _normalize_match("dravivianemondin"): "Viviane Mondin",
+        _normalize_match("dr. gabriela menegat"): "Gabriela Menegat",
+        _normalize_match("gabriela menegat"): "Gabriela Menegat",
+        _normalize_match("dra. josiele de souza"): "Josiele Maiara de Souza",
+        _normalize_match("dra. josiele maiara de souza"): "Josiele Maiara de Souza",
+        _normalize_match("josiele de souza"): "Josiele Maiara de Souza",
+        _normalize_match("josiele maiara de souza"): "Josiele Maiara de Souza",
+        _normalize_match("dr. marcelo soares"): "Marcelo Gomes Soares",
+        _normalize_match("dr. marcelo gomes soares"): "Marcelo Gomes Soares",
+        _normalize_match("marcelo soares"): "Marcelo Gomes Soares",
+        _normalize_match("marcelo gomes soares"): "Marcelo Gomes Soares",
+        _normalize_match("dra. marina lima"): "Marina Pereira Lima",
+        _normalize_match("dra. marina pereira lima"): "Marina Pereira Lima",
+        _normalize_match("marina lima"): "Marina Pereira Lima",
+        _normalize_match("marina pereira lima"): "Marina Pereira Lima",
+        _normalize_match("dr. raul rosario junior"): "Raul Rosario Junior",
+        _normalize_match("raul rosario junior"): "Raul Rosario Junior",
+        _normalize_match("dra. samara silva"): "Samara Silva",
+        _normalize_match("samara silva"): "Samara Silva",
+        _normalize_match("dr. vinicius vieira"): "Vinícius Vieira",
+        _normalize_match("dr. vinícius vieira"): "Vinícius Vieira",
+        _normalize_match("vinicius vieira"): "Vinícius Vieira",
+        _normalize_match("vinícius vieira"): "Vinícius Vieira",
+        _normalize_match("dra. viviane mondin"): "Viviane Mondin",
+        _normalize_match("viviane mondin"): "Viviane Mondin",
+    }
+    if normalized_slug and normalized_slug in alias_to_canonical:
+        return alias_to_canonical[normalized_slug]
+    if normalized_name and normalized_name in alias_to_canonical:
+        return alias_to_canonical[normalized_name]
+    return _normalize_spaces(name)
+
+
 def _coerce_payload(payload: dict) -> dict:
     booking = payload.get("booking")
     if not isinstance(booking, dict):
@@ -283,6 +330,10 @@ def _coerce_payload(payload: dict) -> dict:
     notes = booking.get("notes")
     if notes and "notes" not in flattened:
         flattened["notes"] = notes
+
+    is_website_booking = _normalize_match(str(payload.get("event") or "")) == _normalize_match("booking.created")
+    if is_website_booking and not _first_text(flattened, "customer_origin", "customerOrigin", "origem", "origem_cliente"):
+        flattened["customerOrigin"] = "Site"
 
     start_at_ms = booking.get("startAtMs")
     end_at_ms = booking.get("endAtMs")
@@ -546,6 +597,158 @@ def _booking_dialog_still_open(driver: WebDriver) -> bool:
     )
 
 
+def _find_injector_access_modal(driver: WebDriver):
+    modal_markers = (
+        _normalize_match("Acesso injetor"),
+        _normalize_match("Escaneie o QR Code"),
+        _normalize_match("Instruções"),
+    )
+    for dialog in driver.find_elements(By.XPATH, "//*[@role='dialog']"):
+        try:
+            if not dialog.is_displayed():
+                continue
+            text = _normalize_match(dialog.text)
+        except Exception:
+            continue
+        if any(marker in text for marker in modal_markers):
+            return dialog
+    return None
+
+
+def _dismiss_injector_access_modal(driver: WebDriver, *, timeout: int = 4) -> bool:
+    deadline = time.time() + timeout
+    dismissed = False
+
+    while time.time() < deadline:
+        modal = _find_injector_access_modal(driver)
+        if modal is None:
+            return dismissed
+        dismissed = True
+
+        try:
+            modal_rect = driver.execute_script(
+                """
+                const rect = arguments[0].getBoundingClientRect();
+                return {left: rect.left, top: rect.top, width: rect.width, height: rect.height};
+                """,
+                modal,
+            )
+        except Exception:
+            modal_rect = None
+
+        close_candidates: list = []
+        seen_ids: set[str] = set()
+        try:
+            raw_candidates = modal.find_elements(
+                By.XPATH,
+                ".//button | .//*[@role='button'] | .//*[contains(@class,'icon-x')] | .//*[contains(@class,'ph-x')]",
+            )
+        except Exception:
+            raw_candidates = []
+
+        for raw_candidate in raw_candidates:
+            candidates_to_try = [raw_candidate]
+            current = raw_candidate
+            for _ in range(4):
+                try:
+                    current = current.find_element(By.XPATH, "./..")
+                except Exception:
+                    break
+                candidates_to_try.append(current)
+            for candidate in candidates_to_try:
+                try:
+                    if not candidate.is_displayed():
+                        continue
+                    candidate_id = getattr(candidate, "id", None) or ""
+                except Exception:
+                    continue
+                if candidate_id in seen_ids:
+                    continue
+                seen_ids.add(candidate_id)
+                close_candidates.append(candidate)
+
+        scored: list[tuple[float, object]] = []
+        for candidate in close_candidates:
+            try:
+                text = _normalize_match(candidate.text)
+                aria = _normalize_match(candidate.get_attribute("aria-label") or "")
+                title = _normalize_match(candidate.get_attribute("title") or "")
+                class_name = _normalize_match(candidate.get_attribute("class") or "")
+                rect = driver.execute_script(
+                    """
+                    const rect = arguments[0].getBoundingClientRect();
+                    return {left: rect.left, top: rect.top, width: rect.width, height: rect.height};
+                    """,
+                    candidate,
+                )
+            except Exception:
+                continue
+            width = float(rect.get("width") or 0)
+            height = float(rect.get("height") or 0)
+            if width <= 0 or height <= 0:
+                continue
+            center_x = float(rect.get("left") or 0) + width / 2
+            center_y = float(rect.get("top") or 0) + height / 2
+            in_top_right = False
+            if modal_rect:
+                modal_left = float(modal_rect.get("left") or 0)
+                modal_top = float(modal_rect.get("top") or 0)
+                modal_width = float(modal_rect.get("width") or 0)
+                modal_height = float(modal_rect.get("height") or 0)
+                in_top_right = (
+                    center_x >= modal_left + modal_width * 0.62
+                    and center_y <= modal_top + modal_height * 0.32
+                )
+            area = width * height
+            keyword_score = 0
+            if any(
+                token in text or token in aria or token in title or token in class_name
+                for token in ("fechar", "close", "icon-x", "ph-x", "xmark")
+            ):
+                keyword_score += 500000
+            if in_top_right:
+                keyword_score += 250000
+            score = keyword_score - area + center_x - center_y
+            scored.append((score, candidate))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+
+        for _, candidate in scored:
+            if not _real_click(driver, candidate):
+                continue
+            time.sleep(0.35)
+            if _find_injector_access_modal(driver) is None:
+                return True
+
+        try:
+            driver.execute_script(
+                """
+                for (const dialog of Array.from(document.querySelectorAll('[role="dialog"]'))) {
+                  const text = (dialog.innerText || '').toLowerCase();
+                  if (!text.includes('acesso injetor') && !text.includes('escaneie o qr code')) continue;
+                  dialog.style.display = 'none';
+                  dialog.setAttribute('aria-hidden', 'true');
+                  let parent = dialog.parentElement;
+                  for (let i = 0; i < 3 && parent; i += 1) {
+                    const parentText = (parent.innerText || '').toLowerCase();
+                    if (parentText.includes('acesso injetor') || parentText.includes('escaneie o qr code')) {
+                      parent.style.display = 'none';
+                      parent.setAttribute('aria-hidden', 'true');
+                    }
+                    parent = parent.parentElement;
+                  }
+                }
+                """,
+            )
+        except Exception:
+            pass
+        time.sleep(0.2)
+        if _find_injector_access_modal(driver) is None:
+            return True
+
+    return dismissed
+
+
 def _date_to_iso(date_ddmmyyyy: str) -> str:
     return datetime.strptime(date_ddmmyyyy, "%d/%m/%Y").strftime("%Y-%m-%d")
 
@@ -597,20 +800,13 @@ def _agenda_text_contains_request(driver: WebDriver, request: BookingRequest) ->
     client_full = _normalize_match(request.client_name)
     client_anchor = _normalize_match(" ".join(_normalize_spaces(request.client_name).split()[:3]))
     time_range = _normalize_match(f"{request.start_time} - {request.end_time}")
-    professional = _normalize_match(request.professional_name)
     service = _normalize_match(request.service_name)
 
     if client_full and client_full in body_text and time_range in body_text:
-        if not professional or professional in body_text:
-            return True
+        return True
 
     if client_anchor and client_anchor in body_text and time_range in body_text:
-        if not professional or professional in body_text:
-            return True
-
-    if client_anchor and client_anchor in body_text and professional and professional in body_text:
-        if not request.end_time or request.start_time in body_text:
-            return True
+        return True
 
     if client_anchor and client_anchor in body_text and service and service in body_text:
         return True
@@ -664,8 +860,6 @@ def _event_element_matches_request(driver: WebDriver, element, request: BookingR
     client_anchor = _normalize_match(" ".join(_normalize_spaces(request.client_name).split()[:3]))
     time_range = _normalize_match(f"{request.start_time} - {request.end_time}")
     appointment_type = _normalize_match(_resolve_booking_type(request))
-    professional = _normalize_match(request.professional_name)
-
     event_date = _event_element_date(driver, element)
     target_date = _date_to_iso(request.appointment_date)
     if event_date and event_date != target_date:
@@ -680,9 +874,6 @@ def _event_element_matches_request(driver: WebDriver, element, request: BookingR
     if appointment_type and appointment_type not in text:
         return False
 
-    if professional and not _text_matches_value(text_raw, request.professional_name):
-        return False
-
     return True
 
 
@@ -691,6 +882,86 @@ def _find_calendar_event(driver: WebDriver, request: BookingRequest):
         if _event_element_matches_request(driver, element, request):
             return element
     return None
+
+
+def _calendar_events_for_date(driver: WebDriver, appointment_date: str) -> list:
+    target_iso = _date_to_iso(appointment_date)
+    try:
+        elements = driver.execute_script(
+            """
+            const targetDate = arguments[0];
+            const selectors = [
+              `.fc-timegrid-col[data-date="${targetDate}"] .fc-event`,
+              `.fc-daygrid-day[data-date="${targetDate}"] .fc-event`,
+              `[data-date="${targetDate}"] .fc-event`,
+            ];
+            const out = [];
+            const seen = new Set();
+            for (const selector of selectors) {
+              for (const el of document.querySelectorAll(selector)) {
+                if (seen.has(el)) continue;
+                seen.add(el);
+                out.push(el);
+              }
+            }
+            return out;
+            """,
+            target_iso,
+        )
+    except Exception:
+        return []
+    return list(elements or [])
+
+
+def _calendar_event_candidate_score(element, request: BookingRequest) -> int:
+    try:
+        text_raw = _normalize_spaces(element.text)
+    except Exception:
+        text_raw = ""
+    text = _normalize_match(text_raw)
+    score = 0
+    client_full = _normalize_match(request.client_name)
+    client_anchor = _normalize_match(" ".join(_normalize_spaces(request.client_name).split()[:3]))
+    time_range = _normalize_match(f"{request.start_time} - {request.end_time}")
+    start_time = _normalize_match(request.start_time)
+    service = _normalize_match(request.service_name)
+    if client_full and client_full in text:
+        score += 10
+    elif client_anchor and client_anchor in text:
+        score += 6
+    if time_range and time_range in text:
+        score += 8
+    elif start_time and start_time in text:
+        score += 4
+    if service and service in text:
+        score += 2
+    return score
+
+
+def _verify_booking_in_date_candidates(driver: WebDriver, request: BookingRequest) -> bool:
+    candidates = []
+    for element in _calendar_events_for_date(driver, request.appointment_date):
+        try:
+            if not element.is_displayed():
+                continue
+        except Exception:
+            continue
+        candidates.append(element)
+
+    candidates.sort(key=lambda element: _calendar_event_candidate_score(element, request), reverse=True)
+
+    for element in candidates[:24]:
+        if not _real_click(driver, element):
+            continue
+        try:
+            if _verify_booking_modal_fields(driver, request):
+                _close_booking_sheet(driver)
+                return True
+        except Exception:
+            pass
+        _close_booking_sheet(driver)
+        time.sleep(0.2)
+    return False
 
 
 def _close_booking_sheet(driver: WebDriver) -> None:
@@ -730,9 +1001,6 @@ def _verify_booking_modal_fields(driver: WebDriver, request: BookingRequest) -> 
         actual_cpf = _input_value_by_placeholder(dialog, ["Digite o CPF"])
         if not _input_value_matches(actual_cpf, request.client_cpf):
             return False
-
-    if request.professional_name and not _multiselect_has_selected_label(dialog, request.professional_name):
-        return False
 
     if request.service_name:
         service_values: list[str] = []
@@ -826,6 +1094,8 @@ def _verify_booking_in_agenda(driver: WebDriver, request: BookingRequest, *, tim
                     _close_booking_sheet(driver)
                     return True
                 _close_booking_sheet(driver)
+            if _verify_booking_in_date_candidates(driver, request):
+                return True
             if _agenda_text_contains_request(driver, request):
                 return True
         except Exception:
@@ -921,9 +1191,8 @@ def _click_text_in_scope(scope, texts: Sequence[str]) -> bool:
                 continue
             if any(target == text or target in text or text in target for target in normalized_targets):
                 try:
-                    el.parent.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
-                    el.parent.execute_script("arguments[0].click();", el)
-                    return True
+                    if _real_click(el.parent, el):
+                        return True
                 except Exception:
                     continue
     return False
@@ -991,6 +1260,12 @@ def _dispatch_input_events(driver: WebDriver, element) -> None:
     driver.execute_script(
         """
         const el = arguments[0];
+        el.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: null,
+        }));
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -1040,7 +1315,19 @@ def _set_input_value(driver: WebDriver, element, value: str) -> None:
         const el = arguments[0];
         const value = arguments[1];
         el.focus();
-        if ('value' in el) {
+        if (el.isContentEditable || (el.getAttribute('contenteditable') || '').toLowerCase() === 'true') {
+          const paragraph = document.createElement('p');
+          paragraph.textContent = value;
+          el.replaceChildren(paragraph);
+          const selection = window.getSelection && window.getSelection();
+          if (selection) {
+            const range = document.createRange();
+            range.selectNodeContents(paragraph);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        } else if ('value' in el) {
           const proto = el.tagName === 'TEXTAREA'
             ? HTMLTextAreaElement.prototype
             : HTMLInputElement.prototype;
@@ -1060,13 +1347,35 @@ def _set_input_value(driver: WebDriver, element, value: str) -> None:
     _dispatch_input_events(driver, element)
 
 
+def _field_value(driver: WebDriver, element) -> str:
+    try:
+        return _normalize_spaces(
+            driver.execute_script(
+                """
+                const el = arguments[0];
+                if (el.isContentEditable || (el.getAttribute('contenteditable') || '').toLowerCase() === 'true') {
+                  return (el.innerText || el.textContent || '').trim();
+                }
+                return (el.value || '').trim();
+                """,
+                element,
+            )
+            or ""
+        )
+    except Exception:
+        try:
+            return _normalize_spaces((element.get_attribute("value") or "").strip())
+        except Exception:
+            return ""
+
+
 def _find_container_by_labels(scope, labels: Sequence[str], *, timeout: int = 12):
     normalized_labels = [_normalize_match(label) for label in labels if _normalize_spaces(label)]
     deadline = time.time() + timeout
     while time.time() < deadline:
         containers = scope.find_elements(
             By.XPATH,
-            "//*[self::div or self::section or self::fieldset or self::form or self::label][.//input or .//textarea or .//select or .//*[@role='combobox'] or .//button]",
+            "//*[self::div or self::section or self::fieldset or self::form or self::label][.//input or .//textarea or .//select or .//*[@role='combobox'] or .//*[@contenteditable='true'] or .//button]",
         )
         best = None
         best_len = 10**9
@@ -1118,7 +1427,16 @@ def _fill_field_by_labels(driver: WebDriver, scope, labels: Sequence[str], value
         container = _find_container_by_labels(scope, labels, timeout=timeout)
         field = _find_input_in_container(container)
         _set_input_value(driver, field, value)
-        return True
+        current = _field_value(driver, field)
+        if _input_value_matches(current, value):
+            return True
+        try:
+            field.click()
+            field.send_keys(value)
+        except Exception:
+            return False
+        current = _field_value(driver, field)
+        return _input_value_matches(current, value)
     except Exception:
         return False
 
@@ -1233,7 +1551,7 @@ def _input_value_by_placeholder(scope, placeholders: Sequence[str]) -> str:
             continue
         if any(target == placeholder or target in placeholder or placeholder in target for target in targets):
             try:
-                value = el.parent.execute_script("return arguments[0].value || '';", el)
+                value = el.get_attribute("value") or ""
             except Exception:
                 value = el.get_attribute("value") or ""
             return _normalize_spaces(value or "")
@@ -1290,6 +1608,7 @@ def _type_input_by_placeholder(driver: WebDriver, scope, placeholders: Sequence[
                     for char in typed_value:
                         el.send_keys(char)
                         time.sleep(0.03)
+                    el.send_keys(Keys.TAB)
                 except Exception:
                     pass
                 current = _normalize_spaces(driver.execute_script("return arguments[0].value || '';", el) or "")
@@ -1390,7 +1709,7 @@ def _open_multiselect_by_placeholder(driver: WebDriver, scope, placeholders: Seq
 
 
 def _multiselect_has_selected_label(scope, value: str) -> bool:
-    for el in scope.find_elements(By.XPATH, ".//*[contains(@class, 'multiselect-single-label')]"):
+    for el in scope.find_elements(By.XPATH, ".//*[contains(@class, 'multiselect-single-label') and not(contains(@class, 'multiselect-single-label-el'))]"):
         try:
             if not el.is_displayed():
                 continue
@@ -1399,6 +1718,32 @@ def _multiselect_has_selected_label(scope, value: str) -> bool:
             continue
         if _text_matches_value(text, value):
             return True
+    try:
+        texts = (
+            scope.parent.execute_script(
+                """
+                const root = arguments[0];
+                return Array.from(
+                  root.querySelectorAll(
+                    '.multiselect-single-label, .multiselect-tag, .multiselect-label'
+                  )
+                ).filter((el) => {
+                  const className = String(el.className || '');
+                  if (className.includes('multiselect-single-label-el')) return false;
+                  const option = el.closest('[role="option"], .multiselect-option');
+                  if (option) return false;
+                  return true;
+                }).map((el) => (el.innerText || el.textContent || '').trim()).filter(Boolean);
+                """,
+                scope,
+            )
+            or []
+        )
+    except Exception:
+        texts = []
+    for text in texts:
+        if _text_matches_value(str(text), value):
+            return True
     return False
 
 
@@ -1406,6 +1751,100 @@ def _select_multiselect_option(driver: WebDriver, container, value: str, *, time
     target = _normalize_match(value)
     digits = _strip_non_digits(value)
     deadline = time.time() + timeout
+
+    def _selected_now() -> bool:
+        return _multiselect_has_selected_label(container, value)
+
+    def _finalize_selection() -> None:
+        search = _search_input()
+        if search is not None:
+            for key in (Keys.ESCAPE, Keys.TAB):
+                try:
+                    search.send_keys(key)
+                    time.sleep(0.1)
+                except Exception:
+                    continue
+        try:
+            driver.execute_script(
+                """
+                const root = arguments[0];
+                const active = document.activeElement;
+                if (active && typeof active.blur === 'function') {
+                  active.blur();
+                }
+                const wrapper = root.querySelector('.multiselect-wrapper');
+                if (wrapper && typeof wrapper.blur === 'function') {
+                  wrapper.blur();
+                }
+                if (document.body) {
+                  document.body.click();
+                }
+                """,
+                container,
+            )
+        except Exception:
+            pass
+        time.sleep(0.2)
+
+    def _search_input():
+        try:
+            return container.find_element(By.XPATH, ".//input[contains(@class, 'multiselect-search')]")
+        except Exception:
+            return None
+
+    def _type_search(query: str) -> None:
+        search = _search_input()
+        if search is None:
+            return
+        try:
+            driver.execute_script("arguments[0].focus();", search)
+        except Exception:
+            pass
+        try:
+            driver.execute_script("arguments[0].value = '';", search)
+            _dispatch_input_events(driver, search)
+        except Exception:
+            pass
+        try:
+            search.clear()
+        except Exception:
+            pass
+        try:
+            search.send_keys(query)
+        except Exception:
+            _set_input_value(driver, search, query)
+        _dispatch_input_events(driver, search)
+        time.sleep(0.35)
+
+    search_queries: list[str] = []
+    normalized_value = _normalize_spaces(value)
+    if normalized_value:
+        search_queries.append(normalized_value)
+    token_query = " ".join(_normalize_tokens(value)[:3]).strip()
+    if token_query and token_query not in search_queries:
+        search_queries.append(token_query)
+
+    for query in search_queries:
+        _type_search(query)
+    if _selected_now():
+        _finalize_selection()
+        return True
+    search = _search_input()
+    if search is not None:
+        for keys in ((Keys.ARROW_DOWN, Keys.ENTER), (Keys.ENTER,)):
+            try:
+                search.click()
+            except Exception:
+                pass
+            try:
+                for key in keys:
+                    search.send_keys(key)
+                    time.sleep(0.15)
+            except Exception:
+                pass
+            if _selected_now():
+                _finalize_selection()
+                return True
     while time.time() < deadline:
         options = container.find_elements(By.XPATH, ".//*[@role='option'] | .//li[contains(@class, 'multiselect-option')]")
         for el in options:
@@ -1418,7 +1857,26 @@ def _select_multiselect_option(driver: WebDriver, container, value: str, *, time
             if not text:
                 continue
             if target in text or text in target or _text_matches_value(text, value) or (digits and digits in _strip_non_digits(text)):
-                return _real_click(driver, el)
+                if _real_click(driver, el):
+                    time.sleep(0.25)
+                    if _selected_now():
+                        _finalize_selection()
+                        return True
+                    search = _search_input()
+                    if search is not None:
+                        try:
+                            search.send_keys(Keys.ENTER)
+                            time.sleep(0.2)
+                        except Exception:
+                            pass
+                        if _selected_now():
+                            _finalize_selection()
+                            return True
+        try:
+            dropdown = container.find_element(By.XPATH, ".//*[contains(@class, 'multiselect-dropdown')]")
+            driver.execute_script("arguments[0].scrollTop = arguments[0].scrollTop + Math.max(arguments[0].clientHeight, 120);", dropdown)
+        except Exception:
+            pass
         time.sleep(0.25)
     return False
 
@@ -1888,6 +2346,7 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
     if booking_type and not _scope_has_pressed_text(dialog, [booking_type]):
         _click_text_in_scope(dialog, [booking_type])
         time.sleep(0.3)
+        dialog = _find_booking_sheet(driver, timeout=8)
 
     sheet_datetimes_ok = _set_sheet_datetimes(driver, dialog, request)
     _adjust_duration_buttons(driver, dialog, request)
@@ -1899,51 +2358,97 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
         )
 
     if request.professional_name:
+        if _dismiss_injector_access_modal(driver):
+            time.sleep(0.3)
+            dialog = _find_booking_sheet(driver, timeout=8)
         selected_prof = _multiselect_has_selected_label(dialog, request.professional_name)
         professional_multiselect = None
         if not selected_prof:
             professional_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione o Injetor"], timeout=8)
+            if professional_multiselect is None and _dismiss_injector_access_modal(driver):
+                time.sleep(0.3)
+                dialog = _find_booking_sheet(driver, timeout=8)
+                professional_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione o Injetor"], timeout=8)
             if professional_multiselect is not None:
                 selected_prof = _select_multiselect_option(driver, professional_multiselect, request.professional_name, timeout=8)
-            if not selected_prof:
-                selected_prof = _select_or_fill(driver, dialog, ["Profissional", "Injetor"], request.professional_name, timeout=8)
+                if not selected_prof and _dismiss_injector_access_modal(driver):
+                    time.sleep(0.3)
+                    dialog = _find_booking_sheet(driver, timeout=8)
+                    professional_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione o Injetor"], timeout=8)
+                    if professional_multiselect is not None:
+                        selected_prof = _select_multiselect_option(driver, professional_multiselect, request.professional_name, timeout=8)
             selected_prof = selected_prof and _multiselect_has_selected_label(professional_multiselect or dialog, request.professional_name)
+        if selected_prof:
+            try:
+                driver.execute_script("document.body.click();")
+            except Exception:
+                pass
+            time.sleep(0.2)
+            dialog = _find_booking_sheet(driver, timeout=8)
         log(f"Booking fill: professional {'ok' if selected_prof else 'not-found'} ({request.professional_name})")
         if not selected_prof:
-            raise BookingError(f"professional not selected: {request.professional_name}")
+            raise BookingError(f"professional not selected from list: {request.professional_name}")
 
     if _should_fill_service(request):
-        selected_service_value = ""
         service_values: list[str] = []
         for value in [*request.service_candidates, request.service_name]:
             normalized = _normalize_spaces(value)
             if normalized and normalized not in service_values and not _is_generic_service_name(normalized):
                 service_values.append(normalized)
-        selected_service = _service_summary_contains_any(dialog, service_values)
-        if selected_service:
-            selected_service_value = next((value for value in service_values if _service_summary_contains(dialog, value)), service_values[0])
-        else:
-            services_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione o serviço"], timeout=8)
-            for service_value in service_values:
-                if services_multiselect is not None:
-                    selected_service = _select_multiselect_option(driver, services_multiselect, service_value, timeout=8)
-                if not selected_service:
-                    selected_service = _select_or_fill(
-                        driver,
-                        dialog,
-                        ["Serviços", "Serviços do agendamento", "Selecione o serviço"],
-                        service_value,
-                        timeout=8,
-                    )
+
+        selected_service = False
+        selected_service_value = ""
+        stale_error: StaleElementReferenceException | None = None
+        for _ in range(3):
+            try:
+                dialog = _find_booking_sheet(driver, timeout=8)
+                selected_service = _service_summary_contains_any(dialog, service_values)
                 if selected_service:
-                    selected_service_value = service_value
-                    break
-            selected_service = selected_service and _service_summary_contains_any(dialog, [selected_service_value, *service_values])
+                    selected_service_value = next(
+                        (value for value in service_values if _service_summary_contains(dialog, value)),
+                        service_values[0],
+                    )
+                else:
+                    services_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione o serviço"], timeout=8)
+                    for service_value in service_values:
+                        if services_multiselect is not None:
+                            selected_service = _select_multiselect_option(driver, services_multiselect, service_value, timeout=8)
+                        if not selected_service:
+                            selected_service = _select_or_fill(
+                                driver,
+                                dialog,
+                                ["Serviços", "Serviços do agendamento", "Selecione o serviço"],
+                                service_value,
+                                timeout=8,
+                            )
+                        if selected_service:
+                            selected_service_value = service_value
+                            break
+                    selected_service = selected_service and _service_summary_contains_any(dialog, [selected_service_value, *service_values])
+                stale_error = None
+                break
+            except StaleElementReferenceException as exc:
+                stale_error = exc
+                time.sleep(0.3)
+                continue
+        if stale_error is not None and not selected_service:
+            raise stale_error
+        if selected_service:
+            try:
+                driver.execute_script("document.body.click();")
+            except Exception:
+                pass
+            time.sleep(0.2)
+            dialog = _find_booking_sheet(driver, timeout=8)
         log(f"Booking fill: service {'ok' if selected_service else 'not-found'} ({selected_service_value or request.service_name})")
         if service_values and not selected_service:
             raise BookingError(f"service not selected: {selected_service_value or request.service_name}")
 
-    name_ok = _fill_input_by_placeholder(driver, dialog, ["Digite o nome"], request.client_name, timeout=8)
+    name_ok = _type_input_by_placeholder(driver, dialog, ["Digite o nome"], request.client_name, timeout=8)
+    if not name_ok:
+        name_ok = _fill_input_by_placeholder(driver, dialog, ["Digite o nome"], request.client_name, timeout=6)
+    if not name_ok:
+        name_ok = _fill_field_by_labels(driver, dialog, ["Nome do cliente", "Nome"], request.client_name, timeout=6)
     if name_ok:
         try:
             driver.execute_script("arguments[0].click();", dialog)
@@ -1951,7 +2456,19 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
             pass
         time.sleep(0.2)
     name_value = _input_value_by_placeholder(dialog, ["Digite o nome"])
-    log(f"Booking fill: client {'ok' if _normalize_spaces(name_value) == _normalize_spaces(request.client_name) else 'not-found'} ({request.client_name})")
+    if not _input_value_matches(name_value, request.client_name):
+        name_ok = _fill_field_by_labels(driver, dialog, ["Nome do cliente", "Nome"], request.client_name, timeout=4)
+        if name_ok:
+            try:
+                driver.execute_script("arguments[0].click();", dialog)
+            except Exception:
+                pass
+            time.sleep(0.2)
+            name_value = _input_value_by_placeholder(dialog, ["Digite o nome"])
+    name_matches = _input_value_matches(name_value, request.client_name)
+    log(f"Booking fill: client {'ok' if name_matches else 'not-found'} ({request.client_name})")
+    if not name_matches:
+        raise BookingError(f"client name not filled: {request.client_name}")
     if request.client_phone:
         phone_value_for_ui = _normalize_phone_for_ui(request.client_phone)
         phone_ok = _type_input_by_placeholder(driver, dialog, ["Digite o WhatsApp"], phone_value_for_ui, timeout=8)
@@ -1963,12 +2480,39 @@ def _try_fill_current_step(driver: WebDriver, request: BookingRequest) -> None:
         log(f"Booking fill: cpf {'ok' if cpf_ok and _input_value_matches(cpf_value, request.client_cpf) else 'not-found'} ({request.client_cpf})")
     if request.customer_origin:
         selected_origin = False
-        if _open_multiselect_by_placeholder(driver, dialog, ["Selecione a origem do cliente"], timeout=8):
-            selected_origin = _select_option(driver, request.customer_origin, timeout=8)
+        origin_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione a origem do cliente"], timeout=8)
+        if origin_multiselect is not None:
+            selected_origin = _select_multiselect_option(driver, origin_multiselect, request.customer_origin, timeout=8)
         if not selected_origin:
-            _select_or_fill(driver, dialog, ["Origem do cliente", "Origem"], request.customer_origin, timeout=8)
+            selected_origin = _select_or_fill(driver, dialog, ["Origem do cliente", "Origem"], request.customer_origin, timeout=8)
+        if selected_origin:
+            try:
+                driver.execute_script("document.body.click();")
+            except Exception:
+                pass
+            time.sleep(0.2)
+            dialog = _find_booking_sheet(driver, timeout=8)
+        log(f"Booking fill: customer-origin {'ok' if selected_origin else 'not-found'} ({request.customer_origin})")
     if request.notes:
-        _fill_or_select(driver, dialog, ["Observações", "Observacoes", "Observação", "Observacao"], request.notes)
+        notes_ok = _fill_input_by_placeholder(driver, dialog, ["Digite aqui"], request.notes, timeout=6)
+        if not notes_ok:
+            notes_ok = _fill_or_select(driver, dialog, ["Observações", "Observacoes", "Observação", "Observacao"], request.notes, timeout=8)
+        log(f"Booking fill: notes {'ok' if notes_ok else 'not-found'}")
+    if request.professional_name:
+        final_prof_selected = _multiselect_has_selected_label(dialog, request.professional_name)
+        if not final_prof_selected:
+            professional_multiselect = _open_multiselect_by_placeholder(driver, dialog, ["Selecione o Injetor"], timeout=5)
+            if professional_multiselect is not None:
+                final_prof_selected = _select_multiselect_option(driver, professional_multiselect, request.professional_name, timeout=6)
+        if final_prof_selected:
+            try:
+                driver.execute_script("document.body.click();")
+            except Exception:
+                pass
+            time.sleep(0.2)
+        log(f"Booking fill: professional-final {'ok' if final_prof_selected else 'not-found'} ({request.professional_name})")
+        if not final_prof_selected:
+            raise BookingError(f"professional not persisted in form before save: {request.professional_name}")
 
 
 def _advance_until_review(driver: WebDriver, request: BookingRequest) -> None:
