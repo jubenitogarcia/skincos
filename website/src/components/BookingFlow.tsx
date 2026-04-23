@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getDigitalJourneyUnits, units } from "@/data/units";
 import { services, type Service } from "@/data/services";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
@@ -356,6 +356,7 @@ function HoverScrollPicker(props: {
 
 export default function BookingFlow() {
     const currentUnit = useCurrentUnit();
+    const router = useRouter();
     const searchParams = useSearchParams();
     const turnstileSiteKey = (process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "").trim();
     const { members, error: membersError, loading: membersLoading } = useTeamDirectory();
@@ -877,8 +878,8 @@ export default function BookingFlow() {
                     selectedServiceIds,
                     durationMinutes,
                     includes: {
-                        avaliacao: true,
-                        procedimento: false,
+                        avaliacao: false,
+                        procedimento: true,
                         revisao: false,
                     },
                     date: dateKey,
@@ -979,6 +980,18 @@ export default function BookingFlow() {
                     doctorName: json.doctorName || effectiveDoctor.name,
                 },
             });
+            if (typeof window !== "undefined") {
+                const storageKey = `${BOOKING_STATUS_SESSION_PREFIX}${json.id}`;
+                if (json.statusToken) sessionStorage.setItem(storageKey, json.statusToken);
+                const nextUrl = new URL(window.location.href);
+                nextUrl.searchParams.set("booking", json.id);
+                nextUrl.searchParams.set("unit", unitSlug);
+                nextUrl.searchParams.delete("statusToken");
+                nextUrl.searchParams.delete("autopick");
+                nextUrl.searchParams.delete("autopick_nonce");
+                if (!nextUrl.hash) nextUrl.hash = "booking-flow";
+                router.replace(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`, { scroll: false });
+            }
             trackMetaStandardEvent(
                 "Schedule",
                 {
@@ -1519,7 +1532,8 @@ export default function BookingFlow() {
                                                     const active = timeKey === s.time;
                                                     const isPast = s.reason === "past";
                                                     const isOccupied = s.reason === "agenda" || s.reason === "booked";
-                                                    const hasTooltip = isPast || isOccupied || s.available;
+                                                    const isLockedTime = isPast || isOccupied;
+                                                    const hasTooltip = isLockedTime || s.available;
                                                     const tooltip = isPast ? "passou" : isOccupied ? "ocupado" : s.available ? "disponível" : "";
                                                     const tooltipTone = isPast ? "neutral" : isOccupied ? "occupied" : s.available ? "available" : "neutral";
                                                     const ariaDisabled = !s.available;
@@ -1538,7 +1552,7 @@ export default function BookingFlow() {
                                                             disabled={nativeDisabled}
                                                             aria-disabled={ariaDisabled}
                                                             data-reason={s.reason ?? ""}
-                                                            data-locked={hasTooltip ? "true" : "false"}
+                                                            data-locked={isLockedTime ? "true" : "false"}
                                                             data-tooltip={hasTooltip ? tooltip : undefined}
                                                             data-tooltip-tone={hasTooltip ? tooltipTone : undefined}
                                                             className="bookingFlow__selectItem bookingFlow__timeBtn"

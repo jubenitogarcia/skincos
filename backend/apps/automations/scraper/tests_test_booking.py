@@ -6,8 +6,10 @@ from unittest.mock import patch
 
 from espacofacial.booking import BookingRequest, _is_generic_service_name, _should_fill_service
 from espacofacial.appointments import (
+    _extract_active_appointment_type_button,
     _collapse_repeated_phrase,
     _extract_event_info,
+    _extract_service_value_from_container,
     _find_value_by_label_in_text,
     _is_invalid_field_value,
     parse_duration_minutes_from_time_text,
@@ -62,6 +64,40 @@ class BookingRequestTests(unittest.TestCase):
             _find_value_by_label_in_text(text, labels=["Tipo de Agendamento", "Tipo de agendamento", "Tipo do agendamento"]),
             "Avaliação",
         )
+
+    def test_extract_service_value_prefers_selected_leaf_over_parent_group(self) -> None:
+        class FakeContainer:
+            text = "Serviços\nSelecione o serviço\nBioestimulador\nDiamond"
+
+        with patch("espacofacial.appointments._extract_multiselect_value_from_container", return_value="Bioestimulador"):
+            self.assertEqual(_extract_service_value_from_container(FakeContainer()), "Diamond")
+
+    def test_extract_active_appointment_type_button_prefers_active_toggle(self) -> None:
+        class FakeButton:
+            def __init__(self, text: str, *, style: str = "", class_name: str = "", aria_pressed: str = "", data_selected: str = "") -> None:
+                self.text = text
+                self._attrs = {
+                    "style": style,
+                    "class": class_name,
+                    "aria-pressed": aria_pressed,
+                    "data-selected": data_selected,
+                }
+
+            def is_displayed(self) -> bool:
+                return True
+
+            def get_attribute(self, name: str) -> str:
+                return self._attrs.get(name, "")
+
+        class FakeModal:
+            def find_elements(self, *_args, **_kwargs):
+                return [
+                    FakeButton("Avaliação", style="background: none; border: 1px solid #eaecf0;"),
+                    FakeButton("Procedimento", style="background: #e6f2ff; border: 1px solid #007aff;"),
+                    FakeButton("Revisão", style="background: none; border: 1px solid #eaecf0;"),
+                ]
+
+        self.assertEqual(_extract_active_appointment_type_button(FakeModal()), "Procedimento")
 
     def test_parses_portuguese_payload(self) -> None:
         request = BookingRequest.from_payload(
@@ -125,7 +161,26 @@ class BookingRequestTests(unittest.TestCase):
         self.assertEqual(request.end_time, "09:30")
         self.assertEqual(request.service_name, "Avaliação")
         self.assertEqual(request.professional_name, "Gabriela Menegat")
+        self.assertEqual(request.customer_origin, "Site")
         self.assertTrue(request.dry_run)
+
+    def test_maps_public_doctor_alias_to_system_name(self) -> None:
+        request = BookingRequest.from_payload(
+            {
+                "event": "booking.created",
+                "booking": {
+                    "unitSlug": "barrashoppingsul",
+                    "doctorSlug": "drmarcelogsoares",
+                    "doctorName": "Marcelo Soares",
+                    "durationMinutes": 30,
+                    "service": {"id": "botox", "name": "Botox"},
+                    "startAtMs": 1777060800000,
+                    "endAtMs": 1777062600000,
+                    "patientName": "Maria Silva",
+                },
+            }
+        )
+        self.assertEqual(request.professional_name, "Marcelo Gomes Soares")
 
     def test_merges_selected_services_into_candidates(self) -> None:
         request = BookingRequest.from_payload(

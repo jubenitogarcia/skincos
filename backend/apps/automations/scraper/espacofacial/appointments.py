@@ -27,6 +27,28 @@ from selenium.webdriver.support import expected_conditions as EC
 from .auth import log, log_exception, log_file_only
 
 
+APPOINTMENT_TYPE_KEYS = {
+    "avaliacao",
+    "compra antecipada",
+    "procedimento",
+    "revisao",
+    "retorno",
+    "consulta",
+}
+
+
+def _normalize_key(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    no_accents = "".join(ch for ch in unicodedata.normalize("NFD", raw) if unicodedata.category(ch) != "Mn")
+    return re.sub(r"\s+", " ", no_accents).strip()
+
+
+def _is_appointment_type(value: str) -> bool:
+    return _normalize_key(value) in APPOINTMENT_TYPE_KEYS
+
+
 def _ensure_monthly_view(driver: WebDriver) -> None:
     """Best-effort: switch FullCalendar to Month/Mês view if the control exists."""
 
@@ -363,24 +385,6 @@ def navigate_to_reception(driver: WebDriver, reception_url: str, *, timeout_seco
 
 def _extract_event_info(title_text: str, time_text: str) -> dict[str, str]:
     parts = [p.strip() for p in title_text.split(" - ")]
-    appointment_type_keys = {
-        "avaliacao",
-        "compra antecipada",
-        "procedimento",
-        "revisao",
-        "retorno",
-        "consulta",
-    }
-
-    def _normalize_key(value: str) -> str:
-        raw = (value or "").strip().lower()
-        if not raw:
-            return ""
-        no_accents = "".join(ch for ch in unicodedata.normalize("NFD", raw) if unicodedata.category(ch) != "Mn")
-        return re.sub(r"\s+", " ", no_accents).strip()
-
-    def _is_appointment_type(value: str) -> bool:
-        return _normalize_key(value) in appointment_type_keys
 
     cliente = parts[0] if len(parts) > 0 else ""
     tipo = ""
@@ -701,6 +705,90 @@ def _extract_multiselect_value_from_container(container) -> str:
     return ""
 
 
+def _extract_meaningful_lines_from_container(container, *, blocked_values: list[str] | None = None) -> list[str]:
+    blocked = {_normalize_signature_text(v) for v in (blocked_values or []) if v}
+    lines: list[str] = []
+    try:
+        raw_text = container.text or ""
+    except Exception:
+        raw_text = ""
+
+    for raw_line in raw_text.split("\n"):
+        line = _normalize_spaces(raw_line)
+        if not line:
+            continue
+        line_norm = _normalize_signature_text(line)
+        if not line_norm:
+            continue
+        if line_norm in blocked:
+            continue
+        cleaned = _clean_placeholder(line)
+        if not cleaned:
+            continue
+        if lines and _normalize_signature_text(lines[-1]) == line_norm:
+            continue
+        lines.append(cleaned)
+    return lines
+
+
+def _extract_service_value_from_container(container) -> str:
+    primary = _clean_placeholder(_extract_multiselect_value_from_container(container))
+    lines = _extract_meaningful_lines_from_container(
+        container,
+        blocked_values=["Serviços", "Servicos", "Selecione o serviço", "Selecione o servico"],
+    )
+    if len(lines) > 1:
+        last = lines[-1]
+        if _normalize_signature_text(last) != _normalize_signature_text(primary):
+            return last
+    if primary:
+        return primary
+    return lines[-1] if lines else ""
+
+
+def _appointment_type_button_is_active(button) -> bool:
+    try:
+        aria_pressed = (button.get_attribute("aria-pressed") or "").strip().lower()
+        if aria_pressed == "true":
+            return True
+        data_selected = (button.get_attribute("data-selected") or "").strip().lower()
+        if data_selected == "true":
+            return True
+        class_name = (button.get_attribute("class") or "").strip().lower()
+        if "active" in class_name or "selected" in class_name:
+            return True
+        style = " ".join((button.get_attribute("style") or "").strip().lower().split())
+        if "#007aff" in style or "#e6f2ff" in style:
+            return True
+        background_match = re.search(r"background:\s*([^;]+)", style)
+        if background_match:
+            background_value = background_match.group(1).strip()
+            if background_value and background_value != "none":
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _extract_active_appointment_type_button(modal) -> str:
+    try:
+        buttons = modal.find_elements(By.XPATH, ".//button | .//*[@role='button']")
+    except Exception:
+        return ""
+    for button in buttons:
+        try:
+            if not button.is_displayed():
+                continue
+            text = _clean_placeholder(_normalize_spaces(button.text or ""))
+        except Exception:
+            continue
+        if not text or not _is_appointment_type(text):
+            continue
+        if _appointment_type_button_is_active(button):
+            return text
+    return ""
+
+
 def _extract_value_by_label(modal, *, labels: list[str], prefer_multiselect: bool = False, allow_input: bool = True) -> str:
     for label in labels:
         container = _find_field_container_by_label(modal, label)
@@ -852,6 +940,9 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
             prefer_multiselect=True,
             allow_input=True,
         )
+        active_type = _extract_active_appointment_type_button(modal)
+        if active_type:
+            details["Tipo de Agendamento"] = active_type
         if _is_invalid_field_value(
             details["Tipo de Agendamento"],
             blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Tipo do agendamento", "Status", "Origem do cliente"],
@@ -888,7 +979,7 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
             if c is None:
                 c = _find_field_container_by_label(modal, "Selecione o serviço")
             if c is not None:
-                details["Serviço a realizar"] = _clean_placeholder(_extract_multiselect_value_from_container(c))
+                details["Serviço a realizar"] = _clean_placeholder(_extract_service_value_from_container(c))
         except Exception:
             pass
 
@@ -1014,6 +1105,9 @@ def _try_modal_details(driver: WebDriver) -> dict[str, str]:
                 blocked_labels=["Injetor", "Profissional", "Tipo de Agendamento", "Tipo do agendamento", "Status", "Origem do cliente"],
             ):
                 details["Tipo de Agendamento"] = by_text_type
+        active_type = _extract_active_appointment_type_button(modal)
+        if active_type:
+            details["Tipo de Agendamento"] = active_type
         if not details["Observações"]:
             lines = text.split("\n")
             for idx, line in enumerate(lines):
