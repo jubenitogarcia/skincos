@@ -93,7 +93,7 @@ jobs:
             cd ..
           fi
 
-          if [[ ! -s "$SESSION_FILE" && -n "${INSTAGRAPI_SESSION_JSON:-}" ]]; then
+          if [[ -n "${INSTAGRAPI_SESSION_JSON:-}" ]]; then
             printf "%s" "${INSTAGRAPI_SESSION_JSON}" > "$SESSION_FILE"
           fi
 
