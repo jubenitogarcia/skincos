@@ -7,6 +7,7 @@ import {
     normalizeInstagramHandleInput,
     syncInstagramHandle,
 } from "@/lib/instagramSync";
+import { shouldRefreshInstagramFeed } from "@/lib/instagramFeedRouteShared";
 
 export const dynamic = "force-dynamic";
 
@@ -81,13 +82,18 @@ export async function GET(req: Request) {
 
         const isFirstPage = !cursor;
         const stale = isFirstPage ? await isInstagramProfileStale(handle, INSTAGRAM_SYNC_TTL_MS) : false;
-        const shouldSync = forceRefresh || !page || (isFirstPage && stale && !page?.items?.length);
+        const shouldSync = shouldRefreshInstagramFeed({
+            forceRefresh,
+            isFirstPage,
+            stale,
+            page,
+        });
 
         if (shouldSync) {
             await syncInstagramHandle(handle, {
                 includeStories,
                 maxFeedItems: 72,
-                source: forceRefresh ? "api_refresh" : "api_cache_miss",
+                source: forceRefresh ? "api_refresh" : stale ? "api_stale_refresh" : "api_cache_miss",
             });
 
             page = await getCachedInstagramFeed({

@@ -370,10 +370,17 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
         }
         try:
             user = self.user_info_v1(int(user_id))
-        except (PrivateError, ValidationError):
-            user = self.user_short_gql(int(user_id))
-        self.username = user.username
-        self.cookie_dict["ds_user_id"] = user.pk
+            self.username = user.username
+            self.cookie_dict["ds_user_id"] = user.pk
+        except Exception:
+            try:
+                current_user = self.private_request("accounts/current_user/?edit=true").get(
+                    "user", {}
+                )
+            except Exception:
+                current_user = {}
+            self.username = current_user.get("username", self.username or "")
+            self.cookie_dict["ds_user_id"] = current_user.get("pk", user_id)
         return True
 
     def login(
