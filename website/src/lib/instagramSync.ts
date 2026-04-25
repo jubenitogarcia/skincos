@@ -1,3 +1,4 @@
+import { units } from "@/data/units";
 import { fetchActiveInjectors } from "@/lib/injectorsDirectory";
 import {
     getInstagramCachedProfile,
@@ -71,6 +72,55 @@ export type InstagramFeedPage = {
     items: InstagramApiMedia[];
     hasMore: boolean;
     nextCursor: string | null;
+};
+
+export type InstagramSyncTarget = {
+    handle: string;
+    kind: "doctor" | "unit";
+    label: string | null;
+};
+
+export type InstagramExternalProfileInput = {
+    userId?: string | null;
+    username?: string | null;
+    fullName?: string | null;
+    biography?: string | null;
+    avatarUrl?: string | null;
+    isVerified?: boolean | null;
+    isPrivate?: boolean | null;
+    isBusiness?: boolean | null;
+    isProfessional?: boolean | null;
+    externalUrl?: string | null;
+    categoryName?: string | null;
+    publicEmail?: string | null;
+    publicPhone?: string | null;
+    followersCount?: number | null;
+    followingCount?: number | null;
+    mediaCount?: number | null;
+    payloadJson?: string | null;
+};
+
+export type InstagramExternalMediaInput = {
+    mediaId?: string | null;
+    code?: string | null;
+    mediaType?: "image" | "video" | "carousel" | null;
+    isReel?: boolean | null;
+    isStory?: boolean | null;
+    caption?: string | null;
+    likeCount?: number | null;
+    commentCount?: number | null;
+    playCount?: number | null;
+    viewCount?: number | null;
+    durationSeconds?: number | null;
+    locationName?: string | null;
+    productType?: string | null;
+    resourcesCount?: number | null;
+    isPinned?: boolean | null;
+    takenAtMs?: number | null;
+    thumbnailUrl?: string | null;
+    videoUrl?: string | null;
+    permalink?: string | null;
+    payloadJson?: string | null;
 };
 
 type InstagramProfileResponse = {
@@ -160,6 +210,18 @@ function sanitizeHandle(input: string): string {
         .replace(/^@/, "")
         .replace(/[^a-zA-Z0-9._]/g, "")
         .toLowerCase();
+}
+
+function extractInstagramHandleFromUrl(input: string): string | null {
+    const raw = (input ?? "").trim();
+    if (!raw) return null;
+    try {
+        const url = new URL(raw);
+        const segments = url.pathname.split("/").map((segment) => segment.trim()).filter(Boolean);
+        return sanitizeHandle(segments[0] ?? "") || null;
+    } catch {
+        return null;
+    }
 }
 
 function sanitizeUserId(input: string): string {
@@ -602,6 +664,232 @@ export async function getCachedInstagramFeed(params: {
     };
 }
 
+function normalizeExternalMediaItem(params: {
+    handle: string;
+    item: InstagramExternalMediaInput;
+}): InstagramApiMedia | null {
+    const { handle, item } = params;
+    const mediaId = normalizeText(item.mediaId ?? item.code ?? null);
+    if (!mediaId) return null;
+
+    const mediaType = item.mediaType === "video" || item.mediaType === "carousel" ? item.mediaType : "image";
+    const isStory = item.isStory === true;
+    const thumbnailUrl = normalizeText(item.thumbnailUrl) ?? normalizeText(item.videoUrl) ?? null;
+    if (!thumbnailUrl) return null;
+
+    return {
+        id: `${handle}:${isStory ? "story:" : ""}${mediaId}`,
+        code: normalizeText(item.code),
+        mediaType,
+        isReel: item.isReel === true || normalizeText(item.productType) === "clips",
+        isStory,
+        caption: normalizeText(item.caption),
+        likeCount: normalizeCount(item.likeCount),
+        commentCount: normalizeCount(item.commentCount),
+        playCount: normalizeCount(item.playCount),
+        viewCount: normalizeCount(item.viewCount),
+        durationSeconds: normalizeDuration(item.durationSeconds),
+        locationName: normalizeText(item.locationName),
+        productType: normalizeText(item.productType),
+        resourcesCount: normalizeCount(item.resourcesCount),
+        isPinned: item.isPinned === true,
+        takenAtMs: normalizeCount(item.takenAtMs),
+        thumbnailUrl,
+        videoUrl: normalizeText(item.videoUrl),
+        permalink: normalizeText(item.permalink),
+        payloadJson: item.payloadJson ?? serializePayload(item, MAX_MEDIA_PAYLOAD_CHARS),
+    };
+}
+
+export async function ingestInstagramHandleSnapshot(
+    handleRaw: string,
+    snapshot: {
+        profile: InstagramExternalProfileInput;
+        items: InstagramExternalMediaInput[];
+    },
+    opts?: {
+        source?: string;
+    },
+): Promise<SyncHandleResult> {
+    const handle = sanitizeHandle(handleRaw);
+    const startedAtMs = Date.now();
+    const runId = newInstagramSyncRunId();
+
+    if (!handle) {
+        const error = "invalid_handle";
+        await insertInstagramSyncRun({
+            id: runId,
+            source: opts?.source ?? null,
+            handle: handleRaw,
+            startedAtMs,
+            finishedAtMs: Date.now(),
+            success: false,
+            fetchedItems: 0,
+            fetchedStories: 0,
+            upsertedItems: 0,
+            error,
+        });
+        return {
+            handle: handleRaw,
+            ok: false,
+            userId: null,
+            fetchedItems: 0,
+            fetchedStories: 0,
+            upsertedItems: 0,
+            error,
+        };
+    }
+
+    await markInstagramSyncAttempt({ handle, attemptAtMs: startedAtMs, error: null });
+
+    try {
+        const profile = snapshot.profile ?? {};
+        const userId = sanitizeUserId(profile.userId ?? "");
+        if (!userId) {
+            const error = "invalid_snapshot_profile";
+            await markInstagramSyncAttempt({ handle, attemptAtMs: Date.now(), error });
+            await insertInstagramSyncRun({
+                id: runId,
+                source: opts?.source ?? null,
+                handle,
+                startedAtMs,
+                finishedAtMs: Date.now(),
+                success: false,
+                fetchedItems: 0,
+                fetchedStories: 0,
+                upsertedItems: 0,
+                error,
+            });
+            return {
+                handle,
+                ok: false,
+                userId: null,
+                fetchedItems: 0,
+                fetchedStories: 0,
+                upsertedItems: 0,
+                error,
+            };
+        }
+
+        const normalizedItems = (Array.isArray(snapshot.items) ? snapshot.items : [])
+            .map((item) => normalizeExternalMediaItem({ handle, item }))
+            .filter((item): item is InstagramApiMedia => !!item);
+
+        const syncedAtMs = Date.now();
+        await upsertInstagramCachedProfile({
+            handle,
+            userId,
+            username: sanitizeHandle(profile.username ?? "") || handle,
+            fullName: normalizeText(profile.fullName),
+            biography: normalizeText(profile.biography),
+            avatarUrl: normalizeText(profile.avatarUrl),
+            isVerified: normalizeBool(profile.isVerified) ?? null,
+            isPrivate: normalizeBool(profile.isPrivate) ?? null,
+            isBusiness: normalizeBool(profile.isBusiness) ?? null,
+            isProfessional: normalizeBool(profile.isProfessional) ?? null,
+            externalUrl: normalizeText(profile.externalUrl),
+            categoryName: normalizeText(profile.categoryName),
+            publicEmail: normalizeText(profile.publicEmail),
+            publicPhone: normalizeText(profile.publicPhone),
+            profilePayloadJson: profile.payloadJson ?? serializePayload(profile, MAX_PROFILE_PAYLOAD_CHARS),
+            lastError: null,
+            syncedAtMs,
+        });
+
+        await upsertInstagramCachedProfileStats({
+            handle,
+            followersCount: normalizeCount(profile.followersCount),
+            followingCount: normalizeCount(profile.followingCount),
+            mediaCount: normalizeCount(profile.mediaCount),
+            syncedAtMs,
+        });
+
+        const upsertedItems = await upsertInstagramMediaBatch(
+            normalizedItems.map((item) => ({
+                id: item.id,
+                handle,
+                mediaId: item.id.replace(`${handle}:`, ""),
+                code: item.code,
+                mediaType: item.mediaType,
+                isReel: item.isReel,
+                isStory: item.isStory,
+                caption: item.caption,
+                likeCount: item.likeCount,
+                commentCount: item.commentCount,
+                playCount: item.playCount,
+                viewCount: item.viewCount,
+                durationSeconds: item.durationSeconds,
+                locationName: item.locationName,
+                productType: item.productType,
+                resourcesCount: item.resourcesCount,
+                isPinned: item.isPinned,
+                takenAtMs: item.takenAtMs,
+                thumbnailUrl: item.thumbnailUrl,
+                videoUrl: item.videoUrl,
+                permalink: item.permalink,
+                payloadJson: item.payloadJson ?? null,
+                updatedAtMs: syncedAtMs,
+            })),
+        );
+
+        await pruneInstagramCache({
+            handle,
+            keepPosts: INSTAGRAM_KEEP_POSTS_PER_HANDLE,
+            removeStoriesOlderThanMs: syncedAtMs - INSTAGRAM_STORIES_RETENTION_MS,
+        });
+
+        const fetchedStories = normalizedItems.filter((item) => item.isStory).length;
+        const fetchedItems = normalizedItems.length - fetchedStories;
+
+        await insertInstagramSyncRun({
+            id: runId,
+            source: opts?.source ?? null,
+            handle,
+            startedAtMs,
+            finishedAtMs: Date.now(),
+            success: true,
+            fetchedItems,
+            fetchedStories,
+            upsertedItems,
+            error: null,
+        });
+
+        return {
+            handle,
+            ok: true,
+            userId,
+            fetchedItems,
+            fetchedStories,
+            upsertedItems,
+            error: null,
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "snapshot_ingest_exception";
+        await markInstagramSyncAttempt({ handle, attemptAtMs: Date.now(), error: message });
+        await insertInstagramSyncRun({
+            id: runId,
+            source: opts?.source ?? null,
+            handle,
+            startedAtMs,
+            finishedAtMs: Date.now(),
+            success: false,
+            fetchedItems: 0,
+            fetchedStories: 0,
+            upsertedItems: 0,
+            error: message,
+        });
+        return {
+            handle,
+            ok: false,
+            userId: null,
+            fetchedItems: 0,
+            fetchedStories: 0,
+            upsertedItems: 0,
+            error: message,
+        };
+    }
+}
+
 export async function fetchLiveInstagramFeedPage(params: {
     handle: string;
     cursor?: string | null;
@@ -883,6 +1171,41 @@ export async function resolveDoctorInstagramHandles(): Promise<string[]> {
     } catch {
         return [];
     }
+}
+
+export async function resolveInstagramSyncTargets(): Promise<InstagramSyncTarget[]> {
+    const unique = new Map<string, InstagramSyncTarget>();
+
+    try {
+        const members = await fetchActiveInjectors();
+        for (const member of members) {
+            const handle = sanitizeHandle(member.instagramHandle ?? "");
+            if (!handle || unique.has(handle)) continue;
+            unique.set(handle, {
+                handle,
+                kind: "doctor",
+                label: normalizeText(member.name),
+            });
+        }
+    } catch {
+        // Best effort: units still provide stable targets even if the directory is unavailable.
+    }
+
+    for (const unit of units) {
+        const handle = extractInstagramHandleFromUrl(unit.instagram ?? "");
+        if (!handle || unique.has(handle)) continue;
+        unique.set(handle, {
+            handle,
+            kind: "unit",
+            label: normalizeText(unit.name),
+        });
+    }
+
+    return [...unique.values()].sort((a, b) => a.handle.localeCompare(b.handle));
+}
+
+export async function resolveInstagramSyncHandles(): Promise<string[]> {
+    return (await resolveInstagramSyncTargets()).map((target) => target.handle);
 }
 
 export async function syncInstagramHandlesBatch(params: {

@@ -4,7 +4,7 @@ import {
     INSTAGRAM_SYNC_TTL_MS,
     isInstagramProfileStale,
     normalizeInstagramHandleInput,
-    resolveDoctorInstagramHandles,
+    resolveInstagramSyncHandles,
     type SyncHandleResult,
     syncInstagramHandlesBatch,
 } from "@/lib/instagramSync";
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
         ? payload.handles.map((h) => normalizeInstagramHandleInput(String(h ?? ""))).filter(Boolean)
         : [];
 
-    const discoveredHandles = requestedHandles.length ? requestedHandles : await resolveDoctorInstagramHandles();
+    const discoveredHandles = requestedHandles.length ? requestedHandles : await resolveInstagramSyncHandles();
     const uniqueHandles = [...new Set(discoveredHandles)].sort();
 
     if (!uniqueHandles.length) {

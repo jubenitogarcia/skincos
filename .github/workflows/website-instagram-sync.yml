@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Forçar sync completo"
+        description: "Forcar sync completo"
         required: false
         default: "false"
       include_stories:
@@ -26,6 +26,15 @@ jobs:
     env:
       INSTAGRAM_SYNC_TOKEN: ${{ secrets.INSTAGRAM_SYNC_TOKEN }}
       WEBSITE_BASE_URL: https://espacofacial.com
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      INSTAGRAPI_LOGIN_USERNAME: ${{ secrets.INSTAGRAPI_LOGIN_USERNAME }}
+      INSTAGRAPI_LOGIN_PASSWORD: ${{ secrets.INSTAGRAPI_LOGIN_PASSWORD }}
+      INSTAGRAPI_SESSIONID: ${{ secrets.INSTAGRAPI_SESSIONID }}
+      INSTAGRAPI_VERIFICATION_CODE: ${{ secrets.INSTAGRAPI_VERIFICATION_CODE }}
+      INSTAGRAPI_SESSION_JSON: ${{ secrets.INSTAGRAPI_SESSION_JSON }}
+      INSTAGRAPI_SESSION_BUCKET: skincos-espacofacial-instagram-sync
+      INSTAGRAPI_SESSION_OBJECT: production/instagrapi-session.json
 
     steps:
       - name: Guard sync settings
@@ -33,16 +42,110 @@ jobs:
         run: |
           if [[ -z "${INSTAGRAM_SYNC_TOKEN:-}" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "INSTAGRAM_SYNC_TOKEN não configurado; pulando sync."
+            echo "INSTAGRAM_SYNC_TOKEN nao configurado; pulando sync."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Trigger website Instagram sync
+      - name: Checkout
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Setup Python
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install website dependencies
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: website
+        run: npm ci
+
+      - name: Install instagrapi runtime
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: |
+          python -m venv .venv-instagram-sync
+          . .venv-instagram-sync/bin/activate
+          pip install -r backend/apps/instagram/instagrapi/requirements.txt
+
+      - name: Restore instagrapi session
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        id: restore_session
+        run: |
+          set -euo pipefail
+          SESSION_DIR="$RUNNER_TEMP/instagram-sync"
+          SESSION_FILE="$SESSION_DIR/instagrapi-session.json"
+          mkdir -p "$SESSION_DIR"
+
+          if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            cd website
+            npx wrangler r2 bucket create "${INSTAGRAPI_SESSION_BUCKET}" >/dev/null 2>&1 || true
+            npx wrangler r2 object get "${INSTAGRAPI_SESSION_BUCKET}/${INSTAGRAPI_SESSION_OBJECT}" --remote --file "$SESSION_FILE" >/dev/null 2>&1 || true
+            cd ..
+          fi
+
+          if [[ ! -s "$SESSION_FILE" && -n "${INSTAGRAPI_SESSION_JSON:-}" ]]; then
+            printf "%s" "${INSTAGRAPI_SESSION_JSON}" > "$SESSION_FILE"
+          fi
+
+          echo "session_file=$SESSION_FILE" >> "$GITHUB_OUTPUT"
+          echo "summary_file=$SESSION_DIR/summary.json" >> "$GITHUB_OUTPUT"
+
+      - name: Run primary instagrapi sync
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        id: primary
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          FORCE_INPUT="${{ github.event.inputs.force || 'false' }}"
+          STORIES_INPUT="${{ github.event.inputs.include_stories || 'true' }}"
+
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            FORCE_INPUT="false"
+            STORIES_INPUT="true"
+          fi
+
+          . .venv-instagram-sync/bin/activate
+          INSTAGRAPI_INCLUDE_STORIES="$STORIES_INPUT" \
+          INSTAGRAPI_MAX_FEED_ITEMS="120" \
+          INSTAGRAPI_SYNC_SUMMARY_FILE="${{ steps.restore_session.outputs.summary_file }}" \
+          INSTAGRAPI_SESSION_FILE="${{ steps.restore_session.outputs.session_file }}" \
+          WEBSITE_BASE_URL="${WEBSITE_BASE_URL}" \
+          PYTHONPATH="backend/apps/instagram/instagrapi" \
+          python backend/apps/instagram/module/instagram_site_sync.py \
+            --summary-file "${{ steps.restore_session.outputs.summary_file }}" \
+            --session-file "${{ steps.restore_session.outputs.session_file }}" \
+            --max-feed-items 120
+
+      - name: Persist instagrapi session
         if: ${{ steps.guard.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
+          SESSION_FILE="${{ steps.restore_session.outputs.session_file }}"
+          if [[ ! -s "$SESSION_FILE" ]]; then
+            exit 0
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            exit 0
+          fi
+          cd website
+          npx wrangler r2 bucket create "${INSTAGRAPI_SESSION_BUCKET}" >/dev/null 2>&1 || true
+          npx wrangler r2 object put "${INSTAGRAPI_SESSION_BUCKET}/${INSTAGRAPI_SESSION_OBJECT}" --remote --file "$SESSION_FILE" --content-type "application/json"
 
+      - name: Fallback to website web sync when needed
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: |
+          set -euo pipefail
+          SUMMARY_FILE="${{ steps.restore_session.outputs.summary_file }}"
           FORCE_INPUT="${{ github.event.inputs.force || 'false' }}"
           STORIES_INPUT="${{ github.event.inputs.include_stories || 'true' }}"
 
@@ -60,42 +163,64 @@ jobs:
             0|false|no) stories_bool="false" ;;
           esac
 
-          payload=$(printf '{"force":%s,"includeStories":%s,"maxFeedItems":120,"concurrency":3,"maxHandleRetries":2,"retryDelayMs":1200,"source":"github_actions_schedule_enriched"}' \
-            "${force_bool}" "${stories_bool}")
+          fallback_handles="[]"
+          fallback_reason=""
 
-          max_http_attempts=3
-          http_success="false"
-          status="000"
+          if [[ ! -f "$SUMMARY_FILE" ]]; then
+            fallback_reason="missing_primary_summary"
+          else
+            cat "$SUMMARY_FILE"
+            echo
 
-          for attempt in $(seq 1 "${max_http_attempts}"); do
-            echo "POST ${WEBSITE_BASE_URL}/api/instagram/sync (tentativa ${attempt}/${max_http_attempts})"
-            status=$(curl -sS -o response.json -w "%{http_code}" \
-              -X POST "${WEBSITE_BASE_URL}/api/instagram/sync" \
-              -H "content-type: application/json" \
-              -H "authorization: Bearer ${INSTAGRAM_SYNC_TOKEN}" \
-              --data "$payload" || true)
+            primary_ok=$(jq -r '.ok // false' "$SUMMARY_FILE")
+            configuration_status=$(jq -r '.configurationStatus // ""' "$SUMMARY_FILE")
+            failure_count=$(jq -r '.failureCount // 0' "$SUMMARY_FILE")
 
-            if [[ "$status" -ge 200 && "$status" -lt 300 ]] && jq -e '.ok == true' response.json >/dev/null 2>&1; then
-              http_success="true"
-              break
+            if [[ "$primary_ok" == "true" && "$failure_count" -eq 0 ]]; then
+              echo "Primary instagrapi sync completed without fallback."
+              exit 0
             fi
 
-            if [[ "$attempt" -lt "$max_http_attempts" ]]; then
-              sleep $((attempt * 5))
+            if [[ "$failure_count" -gt 0 ]]; then
+              fallback_handles=$(jq -c '.failedHandles // []' "$SUMMARY_FILE")
+              fallback_reason="primary_partial_failure"
+            else
+              fallback_reason="${configuration_status:-primary_unavailable}"
             fi
-          done
+          fi
+
+          payload=$(jq -cn \
+            --argjson force "$force_bool" \
+            --argjson includeStories "$stories_bool" \
+            --argjson handles "$fallback_handles" \
+            --arg source "github_actions_fallback_after_instagrapi:${fallback_reason}" \
+            '{
+              force: $force,
+              includeStories: $includeStories,
+              maxFeedItems: 120,
+              concurrency: 3,
+              maxHandleRetries: 2,
+              retryDelayMs: 1200,
+              source: $source
+            } + (if ($handles | length) > 0 then {handles: $handles} else {} end)')
+
+          status=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "${WEBSITE_BASE_URL}/api/instagram/sync" \
+            -H "content-type: application/json" \
+            -H "authorization: Bearer ${INSTAGRAM_SYNC_TOKEN}" \
+            --data "$payload")
 
           cat response.json
           echo
 
-          if [[ "$http_success" != "true" ]]; then
-            echo "Sync falhou após ${max_http_attempts} tentativas (último HTTP ${status})"
+          if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+            echo "Fallback sync failed with HTTP ${status}"
             exit 1
           fi
 
-          failure_count=$(jq -r '.failureCount // 0' response.json)
-          if [[ "$failure_count" -gt 0 ]]; then
-            echo "Sync concluído com ${failure_count} falhas após retries internos por handle."
+          fallback_failure_count=$(jq -r '.failureCount // 0' response.json)
+          if [[ "$fallback_failure_count" -gt 0 ]]; then
+            echo "Fallback sync still has ${fallback_failure_count} hard failures."
             jq -c '.results[] | select(.ok != true) | {handle,error,attempts}' response.json || true
             exit 1
           fi
