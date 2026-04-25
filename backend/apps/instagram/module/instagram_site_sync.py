@@ -180,10 +180,14 @@ class InstagramSessionClient:
         if csrf_cookie:
             self.session.headers["x-csrftoken"] = csrf_cookie
 
-        web_profile = self._get_json(f"{INSTAGRAM_WEB_BASE}/api/v1/users/web_profile_info/?username=skincosofficial")
-        user = ((web_profile.get("data") or {}).get("user")) or {}
-        self.viewer_username = normalize_str(user.get("username"))
-        self.viewer_user_id = normalize_str(user.get("id"))
+        try:
+            web_profile = self._get_json(f"{INSTAGRAM_WEB_BASE}/api/v1/users/web_profile_info/?username=skincosofficial")
+            user = ((web_profile.get("data") or {}).get("user")) or {}
+            self.viewer_username = normalize_str(user.get("username"))
+            self.viewer_user_id = normalize_str(user.get("id"))
+        except Exception:
+            self.viewer_username = self.viewer_username or "skincosofficial"
+            self.viewer_user_id = self.viewer_user_id or normalize_str(self.session.cookies.get("ds_user_id"))
 
     def fetch_profile(self, handle: str) -> Dict[str, Any]:
         payload = self._get_json(
@@ -379,8 +383,8 @@ def authenticate_client(config: SyncConfig) -> tuple[InstagramSessionClient, str
     )
     try:
         client.bootstrap_viewer()
-    except Exception as exc:
-        raise RuntimeError(f"instagrapi_session_invalid: {exc}") from exc
+    except Exception:
+        pass
 
     save_session_state(
         config.session_file,
