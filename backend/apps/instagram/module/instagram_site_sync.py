@@ -130,7 +130,7 @@ class HandleSummary:
 
 
 class InstagramSessionClient:
-    def __init__(self, *, sessionid: str, request_timeout_seconds: int):
+    def __init__(self, *, sessionid: str, request_timeout_seconds: int, cookies: Optional[Dict[str, str]] = None):
         self.sessionid = sessionid
         self.request_timeout_seconds = request_timeout_seconds
         self.session = requests.Session()
@@ -148,9 +148,25 @@ class InstagramSessionClient:
                 "referer": f"{INSTAGRAM_WEB_BASE}/",
             }
         )
-        self.session.cookies.set("sessionid", sessionid, domain=".instagram.com")
+        cookie_values = {key: value for key, value in (cookies or {}).items() if normalize_str(value)}
+        cookie_values["sessionid"] = sessionid
+        for name, value in cookie_values.items():
+            self.session.cookies.set(name, value, domain=".instagram.com")
+        csrf_token = cookie_values.get("csrftoken")
+        if csrf_token:
+            self.session.headers["x-csrftoken"] = csrf_token
         self.viewer_username: Optional[str] = None
         self.viewer_user_id: Optional[str] = None
+
+    def export_cookies(self) -> Dict[str, str]:
+        cookies: Dict[str, str] = {}
+        for cookie in self.session.cookies:
+            if not cookie.name or "instagram.com" not in (cookie.domain or ""):
+                continue
+            value = normalize_str(cookie.value)
+            if value:
+                cookies[cookie.name] = value
+        return cookies
 
     def _get_json(self, url: str) -> Dict[str, Any]:
         response = self.session.get(url, timeout=self.request_timeout_seconds)
@@ -160,6 +176,9 @@ class InstagramSessionClient:
     def bootstrap_viewer(self) -> None:
         response = self.session.get(f"{INSTAGRAM_WEB_BASE}/", timeout=self.request_timeout_seconds)
         response.raise_for_status()
+        csrf_cookie = normalize_str(self.session.cookies.get("csrftoken"))
+        if csrf_cookie:
+            self.session.headers["x-csrftoken"] = csrf_cookie
 
         web_profile = self._get_json(f"{INSTAGRAM_WEB_BASE}/api/v1/users/web_profile_info/?username=skincosofficial")
         user = ((web_profile.get("data") or {}).get("user")) or {}
@@ -300,29 +319,41 @@ def ensure_session_parent(session_file: Path) -> None:
     session_file.parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_saved_sessionid(session_file: Path) -> str:
+def load_saved_session_state(session_file: Path) -> Dict[str, Any]:
     if not session_file.exists():
-        return ""
+        return {}
     try:
         payload = json.loads(session_file.read_text())
     except Exception:
-        return ""
-    if isinstance(payload, dict):
-        direct = normalize_str(payload.get("sessionid"))
-        if direct:
-            return direct
-        cookies = payload.get("cookies")
-        if isinstance(cookies, dict):
-            return normalize_str(cookies.get("sessionid")) or ""
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_saved_sessionid(session_file: Path) -> str:
+    payload = load_saved_session_state(session_file)
+    direct = normalize_str(payload.get("sessionid"))
+    if direct:
+        return direct
+    cookies = payload.get("cookies")
+    if isinstance(cookies, dict):
+        return normalize_str(cookies.get("sessionid")) or ""
     return ""
 
 
-def save_session_state(session_file: Path, *, sessionid: str, viewer_username: Optional[str], viewer_user_id: Optional[str]) -> None:
+def save_session_state(
+    session_file: Path,
+    *,
+    sessionid: str,
+    cookies: Dict[str, str],
+    viewer_username: Optional[str],
+    viewer_user_id: Optional[str],
+) -> None:
     ensure_session_parent(session_file)
     session_file.write_text(
         json.dumps(
             {
                 "sessionid": sessionid,
+                "cookies": cookies,
                 "viewer_username": viewer_username,
                 "viewer_user_id": viewer_user_id,
                 "saved_at": utc_now_iso(),
@@ -334,13 +365,17 @@ def save_session_state(session_file: Path, *, sessionid: str, viewer_username: O
 
 
 def authenticate_client(config: SyncConfig) -> tuple[InstagramSessionClient, str]:
-    sessionid = config.sessionid or load_saved_sessionid(config.session_file)
+    saved_payload = load_saved_session_state(config.session_file)
+    saved_cookies = saved_payload.get("cookies")
+    cookie_bundle = saved_cookies if isinstance(saved_cookies, dict) else {}
+    sessionid = config.sessionid or normalize_str(cookie_bundle.get("sessionid")) or load_saved_sessionid(config.session_file)
     if not sessionid:
         raise RuntimeError("instagrapi_not_configured")
 
     client = InstagramSessionClient(
         sessionid=sessionid,
         request_timeout_seconds=config.request_timeout_seconds,
+        cookies={str(key): str(value) for key, value in cookie_bundle.items()},
     )
     try:
         client.bootstrap_viewer()
@@ -350,6 +385,7 @@ def authenticate_client(config: SyncConfig) -> tuple[InstagramSessionClient, str
     save_session_state(
         config.session_file,
         sessionid=sessionid,
+        cookies=client.export_cookies(),
         viewer_username=client.viewer_username,
         viewer_user_id=client.viewer_user_id,
     )
