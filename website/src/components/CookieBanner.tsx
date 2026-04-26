@@ -68,8 +68,9 @@ export default function CookieBanner() {
             </button>
             <div className={`cookieBannerInner ${showPreferences ? "cookieBannerInner--expanded" : "cookieBannerInner--compact"}`.trim()}>
                 <div className="cookieBannerText">
-                    Usamos cookies essenciais e, com seu consentimento, cookies de análise e marketing para melhorar
-                    sua experiência, medir resultados e oferecer conteúdos relevantes.
+                    Usamos cookies essenciais para manter tudo firme e no lugar. Com seu consentimento, também
+                    usamos cookies de análise e marketing para dar mais glow à sua experiência. Nada de
+                    procedimento invasivo: você aceita, recusa ou retoca suas preferências. 🍪
                     <span style={{ display: "inline-block", marginLeft: 6 }}>
                         <Link href="/privacidade" style={{ textDecoration: "underline" }}>
                             Saiba mais
@@ -125,47 +126,27 @@ export default function CookieBanner() {
                 ) : null}
 
                 <div className="cookieBannerActions">
-                    {!showPreferences ? (
-                        <button
-                            className="cookieBannerButton cookieBannerButton--ghost"
-                            onClick={() => {
-                                setShowPreferences(true);
-                            }}
-                        >
-                            Personalizar
-                        </button>
-                    ) : null}
                     <button
                         className="cookieBannerButton cookieBannerButton--ghost"
-                        onClick={() => {
-                            applyConsent({ analytics: false, marketing: false });
-                        }}
-                    >
-                        Rejeitar opcionais
-                    </button>
-                    <button
-                        className="cookieBannerButton"
                         onClick={() => {
                             if (showPreferences) {
                                 applyConsent(preferences);
                                 return;
                             }
 
+                            setShowPreferences(true);
+                        }}
+                    >
+                        Retocar
+                    </button>
+                    <button
+                        className="cookieBannerButton"
+                        onClick={() => {
                             applyConsent({ analytics: true, marketing: true });
                         }}
                     >
-                        {showPreferences ? "Salvar preferências" : "Aceitar tudo"}
+                        Aceitar
                     </button>
-                    {showPreferences ? (
-                        <button
-                            className="cookieBannerButton cookieBannerButton--soft"
-                            onClick={() => {
-                                applyConsent({ analytics: true, marketing: true });
-                            }}
-                        >
-                            Aceitar tudo
-                        </button>
-                    ) : null}
                 </div>
             </div>
         </div>

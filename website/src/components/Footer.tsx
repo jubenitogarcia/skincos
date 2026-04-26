@@ -50,7 +50,7 @@ export default function Footer({ siteKey = "espacofacial" }: { siteKey?: SiteKey
               50.090.741/0001-89 &nbsp;&nbsp; Skincare &amp; Cosmetics Ltda. <br />
               54.425.741/0001-43 &nbsp;&nbsp; Skincare &amp; Cosmetics POA Ltda.
             </div>
-            <div className="footerSmall" style={{ marginTop: 10 }}>
+            <div className="footerSmall footerLegal" style={{ marginTop: 10 }}>
               <Link href="/privacidade" style={{ textDecoration: "underline" }}>Privacidade e Cookies</Link>
               {" · "}
               <CookiePreferencesLink />

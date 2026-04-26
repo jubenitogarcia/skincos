@@ -405,7 +405,7 @@ export async function POST(request: Request) {
     if (wantsAnyDoctor) {
         const doctorsForSelection = daySchedule ? doctorsAvailableBySchedule : doctors;
 
-        const pick = doctorsForSelection.find((doctor) => {
+        const pick = doctorsForSelection.find(() => {
             return !hasAgendaConflictForDoctor({
                 agendaRanges,
                 startAtMs,

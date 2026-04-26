@@ -421,7 +421,6 @@ export default function DoctorInstagramModal(props: {
     const [instagramMediaCount, setInstagramMediaCount] = useState<number | null>(null);
     const [instagramIsPrivate, setInstagramIsPrivate] = useState<boolean | null>(null);
     const [instagramIsBusiness, setInstagramIsBusiness] = useState<boolean | null>(null);
-    const [instagramCategoryName, setInstagramCategoryName] = useState<string | null>(null);
     const [instagramPublicEmail, setInstagramPublicEmail] = useState<string | null>(null);
     const [instagramPublicPhone, setInstagramPublicPhone] = useState<string | null>(null);
     const [instagramNextCursor, setInstagramNextCursor] = useState<string | null>(null);
@@ -512,7 +511,6 @@ export default function DoctorInstagramModal(props: {
             setInstagramMediaCount(null);
             setInstagramIsPrivate(null);
             setInstagramIsBusiness(null);
-            setInstagramCategoryName(null);
             setInstagramPublicEmail(null);
             setInstagramPublicPhone(null);
             setInstagramNextCursor(null);
@@ -540,7 +538,6 @@ export default function DoctorInstagramModal(props: {
                 setInstagramMediaCount(typeof json.user?.mediaCount === "number" ? json.user.mediaCount : null);
                 setInstagramIsPrivate(typeof json.user?.isPrivate === "boolean" ? json.user.isPrivate : null);
                 setInstagramIsBusiness(typeof json.user?.isBusiness === "boolean" ? json.user.isBusiness : null);
-                setInstagramCategoryName(typeof json.user?.categoryName === "string" && json.user.categoryName.trim() ? json.user.categoryName.trim() : null);
                 setInstagramPublicEmail(typeof json.user?.publicEmail === "string" && json.user.publicEmail.trim() ? json.user.publicEmail.trim() : null);
                 setInstagramPublicPhone(typeof json.user?.publicPhone === "string" && json.user.publicPhone.trim() ? json.user.publicPhone.trim() : null);
                 setInstagramNextCursor(json.nextCursor ?? null);
@@ -653,6 +650,7 @@ export default function DoctorInstagramModal(props: {
             "--instagram-viewer-caption-lines": String(instagramViewerCaptionLineClamp),
         } as CSSProperties;
     }, [activeInstagramMediaId, activeInstagramViewerAspectRatio, instagramViewerCaptionLineClamp, viewportMetrics.height, viewportMetrics.width]);
+    const showInstagramInitialLoading = instagramLoading && instagramItems.length === 0;
 
     const hasPrevInstagramMedia = activeInstagramMediaIndex > 0;
     const hasNextInstagramMedia = activeInstagramMediaIndex >= 0 && activeInstagramMediaIndex < instagramItems.length - 1;
@@ -876,16 +874,40 @@ export default function DoctorInstagramModal(props: {
                     </div>
                     <div className="instagramModalHeaderActions">
                         <div className="instagramGalleryStats instagramGalleryStats--header" aria-label="Resumo do perfil">
-                            <div className="instagramGalleryStat">
-                                <strong>{formatSocialCount(instagramMediaCount ?? instagramItems.length)}</strong>
+                            <div className={`instagramGalleryStat ${showInstagramInitialLoading ? "instagramGalleryStat--loading" : ""}`.trim()}>
+                                <strong>
+                                    {showInstagramInitialLoading ? (
+                                        <span className="instagramStatLoading" role="status" aria-label="Carregando publicações">
+                                            <span className="instagramStatSpinner" aria-hidden="true" />
+                                        </span>
+                                    ) : (
+                                        formatSocialCount(instagramMediaCount ?? instagramItems.length)
+                                    )}
+                                </strong>
                                 <span>publicações</span>
                             </div>
-                            <div className="instagramGalleryStat">
-                                <strong>{formatSocialCount(instagramFollowersCount)}</strong>
+                            <div className={`instagramGalleryStat ${showInstagramInitialLoading ? "instagramGalleryStat--loading" : ""}`.trim()}>
+                                <strong>
+                                    {showInstagramInitialLoading ? (
+                                        <span className="instagramStatLoading" role="status" aria-label="Carregando seguidores">
+                                            <span className="instagramStatSpinner" aria-hidden="true" />
+                                        </span>
+                                    ) : (
+                                        formatSocialCount(instagramFollowersCount)
+                                    )}
+                                </strong>
                                 <span>seguidores</span>
                             </div>
-                            <div className="instagramGalleryStat">
-                                <strong>{formatSocialCount(instagramFollowingCount)}</strong>
+                            <div className={`instagramGalleryStat ${showInstagramInitialLoading ? "instagramGalleryStat--loading" : ""}`.trim()}>
+                                <strong>
+                                    {showInstagramInitialLoading ? (
+                                        <span className="instagramStatLoading" role="status" aria-label="Carregando contas seguidas">
+                                            <span className="instagramStatSpinner" aria-hidden="true" />
+                                        </span>
+                                    ) : (
+                                        formatSocialCount(instagramFollowingCount)
+                                    )}
+                                </strong>
                                 <span>seguindo</span>
                             </div>
                         </div>
@@ -930,7 +952,14 @@ export default function DoctorInstagramModal(props: {
                         }, 560);
                     }}
                 >
-                    {instagramLoading && instagramItems.length === 0 ? <div className="instagramFallback">Carregando publicações e reels…</div> : null}
+                    {showInstagramInitialLoading ? (
+                        <div className="instagramFallback instagramFallback--loading" role="status" aria-live="polite">
+                            <div className="instagramLoadingLabel">Carregando publicações e reels…</div>
+                            <div className="instagramLoadingBar" aria-hidden="true">
+                                <span className="instagramLoadingBarFill" />
+                            </div>
+                        </div>
+                    ) : null}
 
                     {!instagramLoading && instagramItems.length === 0 ? (
                         <div className="instagramFallback">
@@ -1097,9 +1126,8 @@ export default function DoctorInstagramModal(props: {
 
                     {instagramItems.length > 0 && !activeInstagramMedia ? (
                         <>
-                            {instagramCategoryName || instagramPublicEmail || instagramPublicPhone || instagramIsPrivate != null || instagramIsBusiness != null ? (
+                            {instagramPublicEmail || instagramPublicPhone || instagramIsPrivate != null || instagramIsBusiness != null ? (
                                 <div className="instagramGalleryFacts" aria-label="Metadados do perfil">
-                                    {instagramCategoryName ? <span className="instagramGalleryFact">categoria: {instagramCategoryName}</span> : null}
                                     {instagramIsPrivate === true ? <span className="instagramGalleryFact">perfil privado</span> : null}
                                     {instagramIsBusiness === true ? <span className="instagramGalleryFact">conta business</span> : null}
                                     {instagramPublicEmail ? <span className="instagramGalleryFact">{instagramPublicEmail}</span> : null}
@@ -1182,7 +1210,12 @@ export default function DoctorInstagramModal(props: {
                     ) : null}
 
                     {instagramHasMore ? <div className="instagramInfiniteSentinel" ref={instagramInfiniteSentinelRef} aria-hidden="true" /> : null}
-                    {instagramLoadingMore ? <div className="instagramLoadingMoreInline">Carregando mais publicações…</div> : null}
+                    {instagramLoadingMore ? (
+                        <div className="instagramLoadingMoreInline" role="status" aria-live="polite">
+                            <span className="instagramLoadingMoreSpinner" aria-hidden="true" />
+                            <span>Carregando mais publicações…</span>
+                        </div>
+                    ) : null}
                 </div>
             </div>
         </div>
