@@ -4142,6 +4142,35 @@ video.heroMediaEl {
   font-size: 14px;
 }
 
+.instagramFallback--loading {
+  display: grid;
+  gap: 12px;
+}
+
+.instagramLoadingLabel {
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.instagramLoadingBar {
+  position: relative;
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.instagramLoadingBarFill {
+  display: block;
+  width: 36%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.88) 50%, rgba(255, 255, 255, 0.18) 100%);
+  background-size: 220% 100%;
+  animation: skeletonShimmer 1.15s linear infinite;
+}
+
 .instagramGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4209,6 +4238,35 @@ video.heroMediaEl {
 .instagramGalleryStat strong {
   font-size: 24px;
   line-height: 1;
+}
+
+.instagramGalleryStat--loading strong {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.instagramStatLoading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.instagramStatSpinner,
+.instagramLoadingMoreSpinner {
+  display: inline-block;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  animation: instagramSpinnerRotate 0.9s linear infinite;
+}
+
+.instagramStatSpinner {
+  width: 18px;
+  height: 18px;
 }
 
 .instagramGalleryStat span {
@@ -4730,8 +4788,17 @@ video.heroMediaEl {
 }
 
 .instagramLoadingMoreInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.8);
+}
+
+.instagramLoadingMoreSpinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .modalActions {
@@ -8253,6 +8320,12 @@ video.heroMediaEl {
   }
 }
 
+@keyframes instagramSpinnerRotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .footer {
   margin-top: 60px;
   padding: 34px 0 50px;
@@ -8281,6 +8354,7 @@ video.heroMediaEl {
   font-weight: 900;
   letter-spacing: .2px;
   color: #fff;
+  padding-left: clamp(22px, 3.2vw, 56px);
 }
 
 .brand--footer .brandMark {
@@ -8321,6 +8395,15 @@ video.heroMediaEl {
   font-size: 12px;
   color: rgba(255, 255, 255, .72);
   line-height: 1.45;
+}
+
+.footerLegal {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  text-align: center;
 }
 
 .fabDock {
@@ -8709,7 +8792,15 @@ video.heroMediaEl {
     text-align: center;
   }
 
+  .footerBrand {
+    padding-left: 0;
+  }
+
   .footerMeta {
     text-align: center;
+  }
+
+  .footerLegal {
+    justify-content: center;
   }
 }

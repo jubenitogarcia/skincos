@@ -505,10 +505,8 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
                             if (kind !== "active") return;
                             goNext();
                         }}
-                        onLoad={(event) => {
-                            const img = event.currentTarget;
+                        onLoad={() => {
                             markImageReady(layerItem.src);
-                            if (kind !== "active") return;
                         }}
                         style={{ objectFit: imageFit, background: `linear-gradient(180deg, ${layerColors.top}, ${layerColors.bottom})` }}
                     />
