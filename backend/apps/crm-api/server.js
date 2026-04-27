@@ -29,6 +29,7 @@ import { registerPontoRoutes } from './server/pontoRoutes.js'
 // Harmonia (atendimento de leads via WhatsApp - Decision API)
 import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { startHarmoniaWorker } from './server/harmonia/worker.js'
+import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -913,6 +914,13 @@ try {
     console.log('✅ Harmonia routes registered')
 } catch (e) {
     console.warn('⚠️  Harmonia routes failed to register:', e?.message || String(e))
+}
+
+try {
+    app.use('/api/tracking', createTrackingDashboardRouter())
+    console.log('✅ Tracking dashboard routes registered')
+} catch (e) {
+    console.warn('⚠️  Tracking dashboard routes failed to register:', e?.message || String(e))
 }
 
 try {

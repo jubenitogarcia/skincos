@@ -3,6 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="${ROOT_DIR:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
+WORKSPACE_ENV="$ROOT_DIR/backend/config/workspace.local.env"
+if [[ -f "$WORKSPACE_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$WORKSPACE_ENV"
+  set +a
+fi
 DEFAULT_EVOLUTION_ENV_IN_REPO="$ROOT_DIR/backend/apps/whatsapp/evolution-api/.env"
 DEFAULT_EVOLUTION_ENV_LEGACY="$HOME/Automation/n8n/evolution-api/.env"
 EVOLUTION_ENV="${EVOLUTION_ENV:-$DEFAULT_EVOLUTION_ENV_IN_REPO}"
