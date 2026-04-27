@@ -18,6 +18,9 @@ jobs:
     permissions:
       contents: read
     env:
+      NEXT_PUBLIC_META_PIXEL_ID: ${{ secrets.NEXT_PUBLIC_META_PIXEL_ID != '' && secrets.NEXT_PUBLIC_META_PIXEL_ID || secrets.META_PIXEL_ID }}
+      META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+      META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
       AGENDA_SYNC_TOKEN: ${{ secrets.AGENDA_SYNC_TOKEN }}
       TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
       CADASTRO_WHEEL_SECRET: ${{ secrets.CADASTRO_WHEEL_SECRET }}
@@ -87,7 +90,7 @@ jobs:
         run: npm run lint
 
       - name: Sync worker secrets (optional)
-        if: ${{ steps.guard.outputs.skip != 'true' && (env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.BOOKING_EMAIL_FROM != '' || env.RESEND_API_KEY != '' || env.BOOKING_EMAIL_WEBHOOK_URL != '' || env.BOOKING_EMAIL_WEBHOOK_SECRET != '' || env.BOOKING_WHATSAPP_WEBHOOK_URL != '' || env.BOOKING_WHATSAPP_WEBHOOK_SECRET != '' || env.BOOKING_WEBHOOK_URL != '' || env.BOOKING_WEBHOOK_SECRET != '' || env.TRACKING_DASHBOARD_TOKEN != '' || env.BOOKING_EMAIL_LOGO_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
+        if: ${{ steps.guard.outputs.skip != 'true' && (env.NEXT_PUBLIC_META_PIXEL_ID != '' || env.META_PIXEL_ID != '' || env.META_ACCESS_TOKEN != '' || env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.BOOKING_EMAIL_FROM != '' || env.RESEND_API_KEY != '' || env.BOOKING_EMAIL_WEBHOOK_URL != '' || env.BOOKING_EMAIL_WEBHOOK_SECRET != '' || env.BOOKING_WHATSAPP_WEBHOOK_URL != '' || env.BOOKING_WHATSAPP_WEBHOOK_SECRET != '' || env.BOOKING_WEBHOOK_URL != '' || env.BOOKING_WEBHOOK_SECRET != '' || env.TRACKING_DASHBOARD_TOKEN != '' || env.BOOKING_EMAIL_LOGO_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
         continue-on-error: true
         working-directory: website
         run: |
@@ -104,6 +107,9 @@ jobs:
             fi
           }
 
+          put_secret "NEXT_PUBLIC_META_PIXEL_ID" "${NEXT_PUBLIC_META_PIXEL_ID}"
+          put_secret "META_PIXEL_ID" "${META_PIXEL_ID}"
+          put_secret "META_ACCESS_TOKEN" "${META_ACCESS_TOKEN}"
           put_secret "AGENDA_SYNC_TOKEN" "${AGENDA_SYNC_TOKEN}"
           put_secret "TURNSTILE_SECRET_KEY" "${TURNSTILE_SECRET_KEY}"
           put_secret "CADASTRO_WHEEL_SECRET" "${CADASTRO_WHEEL_SECRET}"
@@ -137,6 +143,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEXT_PUBLIC_META_PIXEL_ID: ${{ secrets.NEXT_PUBLIC_META_PIXEL_ID != '' && secrets.NEXT_PUBLIC_META_PIXEL_ID || secrets.META_PIXEL_ID }}
           NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
           NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
@@ -148,6 +155,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEXT_PUBLIC_META_PIXEL_ID: ${{ secrets.NEXT_PUBLIC_META_PIXEL_ID != '' && secrets.NEXT_PUBLIC_META_PIXEL_ID || secrets.META_PIXEL_ID }}
           NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
           NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
