@@ -153,10 +153,34 @@ function incrementMap(map: Map<string, number>, key: string | null) {
     map.set(normalized, (map.get(normalized) ?? 0) + 1);
 }
 
+function normalizeDashboardLabel(params: {
+    value: string | null;
+    hasTrackingContext: boolean;
+    emptyLabel: string;
+}) {
+    const normalized = (params.value ?? "").trim();
+    if (normalized) return normalized;
+    return params.hasTrackingContext ? params.emptyLabel : "sem_tracking_context";
+}
+
 function sortMapEntries(map: Map<string, number>, valueKey: string) {
     return Array.from(map.entries())
         .sort((a, b) => b[1] - a[1])
         .map(([label, count]) => ({ [valueKey]: label, count }));
+}
+
+async function readMetaConfigStatus() {
+    const pixelId =
+        ((await getRuntimeSecret("META_PIXEL_ID")) ?? "").trim() ||
+        ((process.env.NEXT_PUBLIC_META_PIXEL_ID ?? "").trim());
+    const accessToken = ((await getRuntimeSecret("META_ACCESS_TOKEN")) ?? "").trim();
+    const dashboardToken = ((await getRuntimeSecret("TRACKING_DASHBOARD_TOKEN")) ?? "").trim();
+
+    return {
+        metaPixelConfigured: Boolean(pixelId),
+        metaCapiConfigured: Boolean(pixelId && accessToken),
+        dashboardTokenConfigured: Boolean(dashboardToken),
+    };
 }
 
 export async function GET(request: Request) {
@@ -170,6 +194,7 @@ export async function GET(request: Request) {
     const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
 
     const db = await getBookingDb();
+    const config = await readMetaConfigStatus();
 
     const bookingRows = (
         await db
@@ -218,17 +243,20 @@ export async function GET(request: Request) {
     let bookingsWithTrackingContext = 0;
     let bookingsWithMetaEventId = 0;
     let bookingsWithMarketingConsent = 0;
+    let bookingsWithAnalyticsConsent = 0;
     let bookingsWithFbIdentifiers = 0;
 
     const recentBookings = bookingRows.slice(0, limit).map((row) => {
         const tracking = normalizeAttribution(safeJsonParse(row.tracking_context_json));
-        incrementMap(sourceCounts, tracking.utmSource);
-        incrementMap(campaignCounts, tracking.utmCampaign);
+        const hasTrackingContext = Boolean(row.tracking_context_json);
+        incrementMap(sourceCounts, normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" }));
+        incrementMap(campaignCounts, normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" }));
         incrementMap(unitCounts, row.unit_slug);
 
         if (row.tracking_context_json) bookingsWithTrackingContext += 1;
         if (row.meta_event_id) bookingsWithMetaEventId += 1;
         if ((row.marketing_consent ?? 0) === 1) bookingsWithMarketingConsent += 1;
+        if ((row.analytics_consent ?? 0) === 1) bookingsWithAnalyticsConsent += 1;
         if (row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc) bookingsWithFbIdentifiers += 1;
 
         return {
@@ -242,8 +270,8 @@ export async function GET(request: Request) {
             metaEventId: row.meta_event_id ?? null,
             marketingConsent: (row.marketing_consent ?? 0) === 1,
             analyticsConsent: (row.analytics_consent ?? 0) === 1,
-            utmSource: tracking.utmSource,
-            utmCampaign: tracking.utmCampaign,
+            utmSource: normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" }),
+            utmCampaign: normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" }),
             utmMedium: tracking.utmMedium,
             landingPage: row.landing_page ?? tracking.landingPage,
             hasFacebookIds: Boolean(row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc),
@@ -252,12 +280,14 @@ export async function GET(request: Request) {
 
     for (const row of bookingRows.slice(limit)) {
         const tracking = normalizeAttribution(safeJsonParse(row.tracking_context_json));
-        incrementMap(sourceCounts, tracking.utmSource);
-        incrementMap(campaignCounts, tracking.utmCampaign);
+        const hasTrackingContext = Boolean(row.tracking_context_json);
+        incrementMap(sourceCounts, normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" }));
+        incrementMap(campaignCounts, normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" }));
         incrementMap(unitCounts, row.unit_slug);
         if (row.tracking_context_json) bookingsWithTrackingContext += 1;
         if (row.meta_event_id) bookingsWithMetaEventId += 1;
         if ((row.marketing_consent ?? 0) === 1) bookingsWithMarketingConsent += 1;
+        if ((row.analytics_consent ?? 0) === 1) bookingsWithAnalyticsConsent += 1;
         if (row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc) bookingsWithFbIdentifiers += 1;
     }
 
@@ -284,22 +314,37 @@ export async function GET(request: Request) {
 
     let capiScheduleOk = 0;
     let capiScheduleFailed = 0;
+    let capiScheduleSkippedNoConfig = 0;
+    let capiScheduleSkippedConsent = 0;
     let capiContactOk = 0;
     let capiContactFailed = 0;
-    const recentCapiFailures = [];
+    let capiContactSkippedNoConfig = 0;
+    let capiContactSkippedConsent = 0;
+    const capiIssueReasonCounts = new Map<string, number>();
+    const recentCapiIssues = [];
 
     for (const row of capiRows) {
         const ok = row.ok === 1;
+        const errorReason = (row.error_message ?? "").trim() || "delivery_failed";
+        const skippedNoConfig = errorReason === "missing_meta_capi_config";
+        const skippedConsent = errorReason === "marketing_consent_denied";
         if (row.event_name === "Schedule") {
             if (ok) capiScheduleOk += 1;
+            else if (skippedNoConfig) capiScheduleSkippedNoConfig += 1;
+            else if (skippedConsent) capiScheduleSkippedConsent += 1;
             else capiScheduleFailed += 1;
         }
         if (row.event_name === "Contact") {
             if (ok) capiContactOk += 1;
+            else if (skippedNoConfig) capiContactSkippedNoConfig += 1;
+            else if (skippedConsent) capiContactSkippedConsent += 1;
             else capiContactFailed += 1;
         }
-        if (!ok && recentCapiFailures.length < limit) {
-            recentCapiFailures.push({
+        if (!ok) {
+            incrementMap(capiIssueReasonCounts, errorReason);
+        }
+        if (!ok && recentCapiIssues.length < limit) {
+            recentCapiIssues.push({
                 id: row.id,
                 createdAtMs: row.created_at_ms,
                 eventName: row.event_name,
@@ -325,19 +370,26 @@ export async function GET(request: Request) {
             bookingsWithTrackingContext,
             bookingsWithMetaEventId,
             bookingsWithMarketingConsent,
+            bookingsWithAnalyticsConsent,
             bookingsWithFacebookIds: bookingsWithFbIdentifiers,
             whatsappClicks: whatsappRows.length,
             whatsappClicksWithTrackingContext: whatsappClicksWithTracking,
             capiScheduleOk,
             capiScheduleFailed,
+            capiScheduleSkippedNoConfig,
+            capiScheduleSkippedConsent,
             capiContactOk,
             capiContactFailed,
+            capiContactSkippedNoConfig,
+            capiContactSkippedConsent,
         },
+        config,
         topSources: sortMapEntries(sourceCounts, "utmSource").slice(0, 6),
         topCampaigns: sortMapEntries(campaignCounts, "utmCampaign").slice(0, 6),
         byUnit: sortMapEntries(unitCounts, "unitSlug").slice(0, 6),
         recentBookings,
         recentWhatsappClicks,
-        recentCapiFailures,
+        capiIssueReasons: sortMapEntries(capiIssueReasonCounts, "reason").slice(0, 8),
+        recentCapiIssues,
     });
 }

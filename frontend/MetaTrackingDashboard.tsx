@@ -22,6 +22,11 @@ type TrackingOverviewResponse = {
     error?: string
     sourceUrl?: string
     data?: {
+      config?: {
+        metaPixelConfigured: boolean
+        metaCapiConfigured: boolean
+        dashboardTokenConfigured: boolean
+      }
       summary?: Record<string, number>
       topSources?: Array<{ utmSource: string; count: number }>
       topCampaigns?: Array<{ utmCampaign: string; count: number }>
@@ -57,7 +62,11 @@ type TrackingOverviewResponse = {
         utmSource: string | null
         utmCampaign: string | null
       }>
-      recentCapiFailures?: Array<{
+      capiIssueReasons?: Array<{
+        reason: string
+        count: number
+      }>
+      recentCapiIssues?: Array<{
         id: string
         createdAtMs: number
         eventName: string
@@ -117,6 +126,14 @@ function formatNumber(value: number | string | null | undefined): string {
 function formatPercent(numerator: number, denominator: number): number {
   if (!denominator) return 0
   return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)))
+}
+
+function formatDashboardLabel(value: string | null | undefined): string {
+  const normalized = String(value || '').trim()
+  if (!normalized) return '—'
+  if (normalized === 'sem_tracking_context') return 'sem tracking_context'
+  if (normalized === 'sem_campanha') return 'sem campanha'
+  return normalized
 }
 
 function formatDateTime(value: number | string | null | undefined): string {
@@ -234,7 +251,16 @@ export function MetaTrackingDashboard() {
   }, [days, refreshTick])
 
   const websiteSummary = data?.website?.data?.summary || {}
+  const websiteConfig = data?.website?.data?.config
   const whatsappSummary = data?.whatsapp?.data?.summary || {}
+  const scheduleSkipped =
+    Number(websiteSummary.capiScheduleSkippedNoConfig || 0) +
+    Number(websiteSummary.capiScheduleSkippedConsent || 0)
+  const contactSkipped =
+    Number(websiteSummary.capiContactSkippedNoConfig || 0) +
+    Number(websiteSummary.capiContactSkippedConsent || 0)
+  const scheduleAttempted = Number(websiteSummary.capiScheduleOk || 0) + Number(websiteSummary.capiScheduleFailed || 0)
+  const contactAttempted = Number(websiteSummary.capiContactOk || 0) + Number(websiteSummary.capiContactFailed || 0)
 
   const siteCoverage = useMemo(() => {
     const confirmed = Number(websiteSummary.confirmedBookings || 0)
@@ -242,6 +268,8 @@ export function MetaTrackingDashboard() {
       tracking: formatPercent(Number(websiteSummary.bookingsWithTrackingContext || 0), confirmed),
       metaEvent: formatPercent(Number(websiteSummary.bookingsWithMetaEventId || 0), confirmed),
       facebookIds: formatPercent(Number(websiteSummary.bookingsWithFacebookIds || 0), confirmed),
+      analyticsConsent: formatPercent(Number(websiteSummary.bookingsWithAnalyticsConsent || 0), confirmed),
+      marketingConsent: formatPercent(Number(websiteSummary.bookingsWithMarketingConsent || 0), confirmed),
     }
   }, [websiteSummary])
 
@@ -258,15 +286,19 @@ export function MetaTrackingDashboard() {
   }, [websiteSummary])
 
   const topSourceItems = (data?.website?.data?.topSources || []).map((item) => ({
-    label: item.utmSource || 'direto',
+    label: formatDashboardLabel(item.utmSource || 'direto'),
     value: formatNumber(item.count),
   }))
   const topCampaignItems = (data?.website?.data?.topCampaigns || []).map((item) => ({
-    label: item.utmCampaign || 'sem campanha',
+    label: formatDashboardLabel(item.utmCampaign || 'sem_campanha'),
     value: formatNumber(item.count),
   }))
   const whatsappSourceItems = (data?.whatsapp?.data?.topSources || []).map((item) => ({
-    label: item.utmSource || 'direto',
+    label: formatDashboardLabel(item.utmSource || 'direto'),
+    value: formatNumber(item.count),
+  }))
+  const capiIssueItems = (data?.website?.data?.capiIssueReasons || []).map((item) => ({
+    label: formatDashboardLabel(item.reason),
     value: formatNumber(item.count),
   }))
 
@@ -338,6 +370,19 @@ export function MetaTrackingDashboard() {
             </div>
           ) : null}
 
+          {websiteConfig?.metaCapiConfigured === false ? (
+            <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-5 text-red-100">
+              <div className="flex items-center gap-2 font-medium">
+                <WarningCircle className="h-5 w-5" />
+                Conversions API sem configuração válida no runtime do site
+              </div>
+              <p className="mt-2 text-sm text-red-100/80">
+                O painel live indica que o browser pode até disparar Pixel, mas o envio server-side ainda não está pronto
+                para a Meta neste ambiente.
+              </p>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 xl:grid-cols-4">
             <div className="rounded-2xl border border-blue-400/20 bg-blue-500/10 p-4">
               <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Clique WhatsApp no site</div>
@@ -366,14 +411,42 @@ export function MetaTrackingDashboard() {
             <MetricCard
               title="Schedule via CAPI OK"
               value={formatNumber(websiteSummary.capiScheduleOk || 0)}
-              hint={`${scheduleDeliveryRate}% de sucesso no envio server-side no periodo.`}
-              tone={scheduleDeliveryRate >= 90 ? 'success' : scheduleDeliveryRate >= 70 ? 'warning' : 'danger'}
+              hint={
+                scheduleAttempted > 0
+                  ? `${scheduleDeliveryRate}% de sucesso nos envios tentados. ${formatNumber(scheduleSkipped)} skip(s).`
+                  : `${formatNumber(scheduleSkipped)} skip(s) e nenhum envio efetivamente tentado no periodo.`
+              }
+              tone={
+                scheduleAttempted > 0
+                  ? scheduleDeliveryRate >= 90
+                    ? 'success'
+                    : scheduleDeliveryRate >= 70
+                      ? 'warning'
+                      : 'danger'
+                  : scheduleSkipped > 0 || websiteConfig?.metaCapiConfigured === false
+                    ? 'danger'
+                    : 'warning'
+              }
             />
             <MetricCard
               title="Contact via CAPI OK"
               value={formatNumber(websiteSummary.capiContactOk || 0)}
-              hint={`${contactDeliveryRate}% de sucesso nos cliques para WhatsApp.`}
-              tone={contactDeliveryRate >= 90 ? 'success' : contactDeliveryRate >= 70 ? 'warning' : 'danger'}
+              hint={
+                contactAttempted > 0
+                  ? `${contactDeliveryRate}% de sucesso nos envios tentados. ${formatNumber(contactSkipped)} skip(s).`
+                  : `${formatNumber(contactSkipped)} skip(s) e nenhum envio efetivamente tentado no periodo.`
+              }
+              tone={
+                contactAttempted > 0
+                  ? contactDeliveryRate >= 90
+                    ? 'success'
+                    : contactDeliveryRate >= 70
+                      ? 'warning'
+                      : 'danger'
+                  : contactSkipped > 0 || websiteConfig?.metaCapiConfigured === false
+                    ? 'danger'
+                    : 'warning'
+              }
             />
             <MetricCard
               title="Cobertura de tracking no booking"
@@ -393,6 +466,18 @@ export function MetaTrackingDashboard() {
               hint="Bookings com fbp/fbc/fbclid presentes."
               tone={siteCoverage.facebookIds >= 70 ? 'success' : siteCoverage.facebookIds >= 40 ? 'warning' : 'danger'}
             />
+            <MetricCard
+              title="Consentimento analytics"
+              value={`${siteCoverage.analyticsConsent}%`}
+              hint="Bookings confirmados com analytics permitido."
+              tone={siteCoverage.analyticsConsent >= 70 ? 'success' : siteCoverage.analyticsConsent >= 40 ? 'warning' : 'danger'}
+            />
+            <MetricCard
+              title="Consentimento marketing"
+              value={`${siteCoverage.marketingConsent}%`}
+              hint="Bookings confirmados aptos a enviar sinais de marketing."
+              tone={siteCoverage.marketingConsent >= 60 ? 'success' : siteCoverage.marketingConsent >= 30 ? 'warning' : 'danger'}
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -400,6 +485,8 @@ export function MetaTrackingDashboard() {
             <SmallList title="Top campanhas do site" items={topCampaignItems} emptyLabel="Sem campanhas registradas no periodo." />
             <SmallList title="Top fontes no WhatsApp correlacionado" items={whatsappSourceItems} emptyLabel="Sem source_tracking nas conversas correlacionadas." />
           </div>
+
+          <SmallList title="Principais motivos de issue no CAPI" items={capiIssueItems} emptyLabel="Sem falhas ou skips registrados no periodo." />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card className="glass-card border-white/10">
@@ -433,6 +520,20 @@ export function MetaTrackingDashboard() {
                     <span>{siteCoverage.facebookIds}%</span>
                   </div>
                   <Progress value={siteCoverage.facebookIds} className="h-2" />
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-sm text-blue-100/70">
+                    <span>Consentimento analytics</span>
+                    <span>{siteCoverage.analyticsConsent}%</span>
+                  </div>
+                  <Progress value={siteCoverage.analyticsConsent} className="h-2" />
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-sm text-blue-100/70">
+                    <span>Consentimento marketing</span>
+                    <span>{siteCoverage.marketingConsent}%</span>
+                  </div>
+                  <Progress value={siteCoverage.marketingConsent} className="h-2" />
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-blue-100/75">
                   <div className="flex items-center gap-2 font-medium text-white">
@@ -495,12 +596,17 @@ export function MetaTrackingDashboard() {
                         <div>
                           <div className="font-medium text-white">{item.patient || 'Paciente oculto'}</div>
                           <div className="text-sm text-blue-100/65">
-                            {item.unitSlug} • {item.utmSource || 'direto'} • {item.utmCampaign || 'sem campanha'}
+                            {item.unitSlug} • {formatDashboardLabel(item.utmSource || 'direto')} • {formatDashboardLabel(item.utmCampaign || 'sem_campanha')}
                           </div>
                         </div>
-                        <Badge variant="outline" className={item.hasFacebookIds ? 'border-emerald-300/30 text-emerald-100' : 'border-amber-300/30 text-amber-100'}>
-                          {item.hasFacebookIds ? 'FB IDs OK' : 'FB IDs faltando'}
-                        </Badge>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline" className={item.hasFacebookIds ? 'border-emerald-300/30 text-emerald-100' : 'border-amber-300/30 text-amber-100'}>
+                            {item.hasFacebookIds ? 'FB IDs OK' : 'FB IDs faltando'}
+                          </Badge>
+                          <Badge variant="outline" className={item.marketingConsent ? 'border-emerald-300/30 text-emerald-100' : 'border-white/15 text-blue-100'}>
+                            {item.marketingConsent ? 'marketing ok' : 'sem marketing'}
+                          </Badge>
+                        </div>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
                         <span>{formatDateTime(item.createdAtMs)}</span>
@@ -555,36 +661,39 @@ export function MetaTrackingDashboard() {
             </Card>
           </div>
 
-          <Card className="glass-card border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Falhas recentes de entrega server-side</CardTitle>
-              <CardDescription className="text-blue-100/70">
-                Erros do `Contact` ou `Schedule` enviados pela camada server-side do site.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(data?.website?.data?.recentCapiFailures || []).length === 0 ? (
-                <div className="text-sm text-emerald-200/90">Nenhuma falha recente registrada no periodo consultado.</div>
-              ) : (
-                data?.website?.data?.recentCapiFailures?.map((item) => (
-                  <div key={item.id} className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="font-medium text-red-100">
-                        {item.eventName} • status {item.httpStatus || 'sem HTTP'}
+            <Card className="glass-card border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white">Falhas e skips recentes de entrega server-side</CardTitle>
+                <CardDescription className="text-blue-100/70">
+                  Erros reais e skips intencionais do `Contact` ou `Schedule` enviados pela camada server-side do site.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(data?.website?.data?.recentCapiIssues || []).length === 0 ? (
+                  <div className="text-sm text-emerald-200/90">Nenhuma falha recente registrada no periodo consultado.</div>
+                ) : (
+                  data?.website?.data?.recentCapiIssues?.map((item) => {
+                    const reason = String(item.errorMessage || '').trim()
+                    const isSkip = reason === 'missing_meta_capi_config' || reason === 'marketing_consent_denied'
+                    return (
+                    <div key={item.id} className={`rounded-2xl p-4 ${isSkip ? 'border border-amber-400/20 bg-amber-500/10' : 'border border-red-400/20 bg-red-500/10'}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className={`font-medium ${isSkip ? 'text-amber-100' : 'text-red-100'}`}>
+                          {item.eventName} • status {item.httpStatus || 'sem HTTP'}
+                        </div>
+                        <div className={`text-xs ${isSkip ? 'text-amber-100/70' : 'text-red-100/70'}`}>{formatDateTime(item.createdAtMs)}</div>
                       </div>
-                      <div className="text-xs text-red-100/70">{formatDateTime(item.createdAtMs)}</div>
+                      <div className={`mt-2 text-sm ${isSkip ? 'text-amber-100/80' : 'text-red-100/80'}`}>
+                        {formatDashboardLabel(item.errorMessage || 'Sem mensagem de erro detalhada.')}
+                      </div>
+                      <div className={`mt-2 text-xs ${isSkip ? 'text-amber-100/65' : 'text-red-100/65'}`}>
+                        event_id: {item.eventId} {item.waClickId ? `• wa_click_id: ${item.waClickId}` : ''}
+                      </div>
                     </div>
-                    <div className="mt-2 text-sm text-red-100/80">
-                      {item.errorMessage || 'Sem mensagem de erro detalhada.'}
-                    </div>
-                    <div className="mt-2 text-xs text-red-100/65">
-                      event_id: {item.eventId} {item.waClickId ? `• wa_click_id: ${item.waClickId}` : ''}
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+                  )})
+                )}
+              </CardContent>
+            </Card>
         </CardContent>
       </Card>
     </div>

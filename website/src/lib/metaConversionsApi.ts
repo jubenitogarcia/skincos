@@ -83,16 +83,42 @@ export async function sendMetaServerEvent(
     } = {},
 ): Promise<{ ok: boolean; skipped?: string; httpStatus?: number | null; responseBody?: string | null; error?: string | null }> {
     const config = await resolveConfig();
+    const endpoint = config.pixelId
+        ? `https://graph.facebook.com/${config.apiVersion}/${config.pixelId}/events`
+        : "meta_capi_not_configured";
+
     if (!config.pixelId || !config.accessToken) {
+        await options.logDelivery?.({
+            channel: "server",
+            eventName: event.eventName,
+            eventId: event.eventId,
+            endpoint,
+            ok: false,
+            httpStatus: null,
+            responseBody: null,
+            errorMessage: "missing_meta_capi_config",
+            bookingId: event.bookingId ?? null,
+            waClickId: event.waClickId ?? null,
+        });
         return { ok: false, skipped: "missing_meta_capi_config" };
     }
 
     const consent = event.trackingContext?.consent;
     if (consent?.marketing === false) {
+        await options.logDelivery?.({
+            channel: "server",
+            eventName: event.eventName,
+            eventId: event.eventId,
+            endpoint,
+            ok: false,
+            httpStatus: null,
+            responseBody: null,
+            errorMessage: "marketing_consent_denied",
+            bookingId: event.bookingId ?? null,
+            waClickId: event.waClickId ?? null,
+        });
         return { ok: false, skipped: "marketing_consent_denied" };
     }
-
-    const endpoint = `https://graph.facebook.com/${config.apiVersion}/${config.pixelId}/events`;
     const eventTime = event.eventTime ?? Math.floor(Date.now() / 1000);
 
     const email = normalizeEmail(event.userData?.email);
