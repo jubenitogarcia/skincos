@@ -4,6 +4,7 @@
         "/api/health",
         "/api/auth/*",
         "/api/crm/*",
+        "/api/tracking/*",
         "/api/insumos/*",
         "/api/placeholder/*",
         "/api/share/*",

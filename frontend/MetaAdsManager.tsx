@@ -13,6 +13,7 @@ import { Progress } from "@/progress"
 import { ScrollArea } from "@/scroll-area"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/dialog"
 import { toast } from 'sonner'
+import { MetaTrackingDashboard } from '@/MetaTrackingDashboard'
 import {
   FacebookLogo,
   InstagramLogo,
@@ -122,7 +123,7 @@ interface AudienceInsight {
 }
 
 export function MetaAdsManager() {
-  const [activeTab, setActiveTab] = useState("campaigns")
+  const [activeTab, setActiveTab] = useState("tracking")
   const [campaigns, setCampaigns] = useKV<MetaAdCampaign[]>("meta-campaigns", [])
   const [selectedCampaign, setSelectedCampaign] = useState<string | null>(null)
   const [isCreatingCampaign, setIsCreatingCampaign] = useState(false)
@@ -365,7 +366,13 @@ export function MetaAdsManager() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
-        <TabsList className="grid grid-cols-4 w-full max-w-3xl glass-morphism p-2 border-white/20 shadow-premium">
+        <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full max-w-4xl glass-morphism p-2 border-white/20 shadow-premium">
+          <TabsTrigger
+            value="tracking"
+            className="glass-morphism-dark text-blue-100/80 data-[state=active]:text-white data-[state=active]:bg-white/[0.12] data-[state=active]:shadow-premium transition-all duration-300 hover:text-white hover:bg-white/[0.08]"
+          >
+            Tracking
+          </TabsTrigger>
           <TabsTrigger 
             value="campaigns" 
             className="glass-morphism-dark text-blue-100/80 data-[state=active]:text-white data-[state=active]:bg-white/[0.12] data-[state=active]:shadow-premium transition-all duration-300 hover:text-white hover:bg-white/[0.08]"
@@ -391,6 +398,10 @@ export function MetaAdsManager() {
             Insights
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="tracking" className="space-y-6">
+          <MetaTrackingDashboard />
+        </TabsContent>
 
         <TabsContent value="campaigns" className="space-y-6">
           {/* Campaign Performance Overview */}
