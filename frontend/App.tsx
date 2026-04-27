@@ -153,7 +153,7 @@ const NotificationCenter = lazy(() => import('@/NotificationCenter').then(m => (
 const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
 const AccountingModule = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
 const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
-const MetaAdsManager = lazy(() => import('@/MetaCampaignControlCenter').then(m => ({ default: m.MetaCampaignControlCenter })))
+const MetaAdsManager = lazy(() => import('@/MetaAdsManager').then(m => ({ default: m.MetaAdsManager })))
 const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
 const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m => ({ default: m.MetaSentimentMonitor })))
