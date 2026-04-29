@@ -18,5 +18,5 @@ export async function GET(req: Request, { params }: { params: Promise<{ sigla: s
         },
     });
     if (!redirectUrl) return NextResponse.redirect(mergedDestination, { status: 301 });
-    return NextResponse.redirect(redirectUrl, { status: 301 });
+    return NextResponse.redirect(new URL(redirectUrl, req.url), { status: 301 });
 }
