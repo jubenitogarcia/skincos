@@ -57,7 +57,7 @@ type TrackingOverviewResponse = {
         utmSource: string | null
         utmCampaign: string | null
       }>
-      recentCapiFailures?: Array<{
+      recentCapiIssues?: Array<{
         id: string
         createdAtMs: number
         eventName: string
@@ -644,10 +644,10 @@ export function MetaTrackingDashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {(data?.website?.data?.recentCapiFailures || []).length === 0 ? (
+              {(data?.website?.data?.recentCapiIssues || []).length === 0 ? (
                 <div className="text-sm text-emerald-200/90">Nenhuma falha recente registrada no periodo consultado.</div>
               ) : (
-                data?.website?.data?.recentCapiFailures?.map((item) => (
+                data?.website?.data?.recentCapiIssues?.map((item) => (
                   <div key={item.id} className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="font-medium text-red-100">
