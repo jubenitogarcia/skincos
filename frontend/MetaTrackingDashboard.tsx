@@ -22,11 +22,6 @@ type TrackingOverviewResponse = {
     error?: string
     sourceUrl?: string
     data?: {
-      config?: {
-        metaPixelConfigured: boolean
-        metaCapiConfigured: boolean
-        dashboardTokenConfigured: boolean
-      }
       summary?: Record<string, number>
       topSources?: Array<{ utmSource: string; count: number }>
       topCampaigns?: Array<{ utmCampaign: string; count: number }>
@@ -62,11 +57,7 @@ type TrackingOverviewResponse = {
         utmSource: string | null
         utmCampaign: string | null
       }>
-      capiIssueReasons?: Array<{
-        reason: string
-        count: number
-      }>
-      recentCapiIssues?: Array<{
+      recentCapiFailures?: Array<{
         id: string
         createdAtMs: number
         eventName: string
@@ -126,14 +117,6 @@ function formatNumber(value: number | string | null | undefined): string {
 function formatPercent(numerator: number, denominator: number): number {
   if (!denominator) return 0
   return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)))
-}
-
-function formatDashboardLabel(value: string | null | undefined): string {
-  const normalized = String(value || '').trim()
-  if (!normalized) return '—'
-  if (normalized === 'sem_tracking_context') return 'sem tracking_context'
-  if (normalized === 'sem_campanha') return 'sem campanha'
-  return normalized
 }
 
 function formatDateTime(value: number | string | null | undefined): string {
@@ -251,27 +234,27 @@ export function MetaTrackingDashboard() {
   }, [days, refreshTick])
 
   const websiteSummary = data?.website?.data?.summary || {}
-  const websiteConfig = data?.website?.data?.config
   const whatsappSummary = data?.whatsapp?.data?.summary || {}
-  const scheduleSkipped =
-    Number(websiteSummary.capiScheduleSkippedNoConfig || 0) +
-    Number(websiteSummary.capiScheduleSkippedConsent || 0)
-  const contactSkipped =
-    Number(websiteSummary.capiContactSkippedNoConfig || 0) +
-    Number(websiteSummary.capiContactSkippedConsent || 0)
-  const scheduleAttempted = Number(websiteSummary.capiScheduleOk || 0) + Number(websiteSummary.capiScheduleFailed || 0)
-  const contactAttempted = Number(websiteSummary.capiContactOk || 0) + Number(websiteSummary.capiContactFailed || 0)
+  const confirmedBookings = Number(websiteSummary.confirmedBookings || 0)
+  const siteWhatsappClicks = Number(websiteSummary.whatsappClicks || 0)
+  const whatsappConversationTotal = Number(whatsappSummary.conversations_total || 0)
+  const whatsappAppointmentTotal = Number(whatsappSummary.appointments_total || 0)
 
   const siteCoverage = useMemo(() => {
-    const confirmed = Number(websiteSummary.confirmedBookings || 0)
     return {
-      tracking: formatPercent(Number(websiteSummary.bookingsWithTrackingContext || 0), confirmed),
-      metaEvent: formatPercent(Number(websiteSummary.bookingsWithMetaEventId || 0), confirmed),
-      facebookIds: formatPercent(Number(websiteSummary.bookingsWithFacebookIds || 0), confirmed),
-      analyticsConsent: formatPercent(Number(websiteSummary.bookingsWithAnalyticsConsent || 0), confirmed),
-      marketingConsent: formatPercent(Number(websiteSummary.bookingsWithMarketingConsent || 0), confirmed),
+      tracking: formatPercent(Number(websiteSummary.bookingsWithTrackingContext || 0), confirmedBookings),
+      metaEvent: formatPercent(Number(websiteSummary.bookingsWithMetaEventId || 0), confirmedBookings),
+      facebookIds: formatPercent(Number(websiteSummary.bookingsWithFacebookIds || 0), confirmedBookings),
     }
-  }, [websiteSummary])
+  }, [websiteSummary, confirmedBookings])
+
+  const siteBehaviorCoverage = useMemo(() => {
+    return {
+      marketingConsent: formatPercent(Number(websiteSummary.bookingsWithMarketingConsent || 0), confirmedBookings),
+      analyticsConsent: formatPercent(Number(websiteSummary.bookingsWithAnalyticsConsent || 0), confirmedBookings),
+      whatsappTracking: formatPercent(Number(websiteSummary.whatsappClicksWithTrackingContext || 0), siteWhatsappClicks),
+    }
+  }, [websiteSummary, confirmedBookings, siteWhatsappClicks])
 
   const scheduleDeliveryRate = useMemo(() => {
     const ok = Number(websiteSummary.capiScheduleOk || 0)
@@ -286,21 +269,54 @@ export function MetaTrackingDashboard() {
   }, [websiteSummary])
 
   const topSourceItems = (data?.website?.data?.topSources || []).map((item) => ({
-    label: formatDashboardLabel(item.utmSource || 'direto'),
+    label: item.utmSource || 'direto',
     value: formatNumber(item.count),
   }))
   const topCampaignItems = (data?.website?.data?.topCampaigns || []).map((item) => ({
-    label: formatDashboardLabel(item.utmCampaign || 'sem_campanha'),
+    label: item.utmCampaign || 'sem campanha',
     value: formatNumber(item.count),
   }))
-  const whatsappSourceItems = (data?.whatsapp?.data?.topSources || []).map((item) => ({
-    label: formatDashboardLabel(item.utmSource || 'direto'),
+  const unitItems = (data?.website?.data?.byUnit || []).map((item) => ({
+    label: item.unitSlug || 'sem unidade',
     value: formatNumber(item.count),
   }))
-  const capiIssueItems = (data?.website?.data?.capiIssueReasons || []).map((item) => ({
-    label: formatDashboardLabel(item.reason),
-    value: formatNumber(item.count),
-  }))
+  const whatsappAttributionReady = whatsappConversationTotal > 0 || whatsappAppointmentTotal > 0
+  const siteInsights = useMemo(() => {
+    const insights: Array<{ tone: 'success' | 'warning' | 'danger'; text: string }> = []
+
+    if (!confirmedBookings) {
+      insights.push({ tone: 'warning', text: 'Ainda não há agendamentos confirmados no período selecionado para auditar a qualidade final da atribuição.' })
+      return insights
+    }
+
+    if (siteCoverage.tracking < 80) {
+      insights.push({ tone: 'danger', text: `O tracking_context está chegando em apenas ${siteCoverage.tracking}% dos agendamentos confirmados.` })
+    } else {
+      insights.push({ tone: 'success', text: `O tracking_context está presente em ${siteCoverage.tracking}% dos agendamentos confirmados.` })
+    }
+
+    if (siteCoverage.facebookIds === 0) {
+      insights.push({ tone: 'danger', text: 'fbp, fbc e fbclid ainda não chegaram em nenhum agendamento confirmado do período.' })
+    } else if (siteCoverage.facebookIds < 70) {
+      insights.push({ tone: 'warning', text: `Os identificadores Facebook chegaram em ${siteCoverage.facebookIds}% dos agendamentos.` })
+    } else {
+      insights.push({ tone: 'success', text: `Os identificadores Facebook chegaram em ${siteCoverage.facebookIds}% dos agendamentos.` })
+    }
+
+    if (Number(websiteSummary.capiScheduleOk || 0) === 0) {
+      insights.push({ tone: 'warning', text: 'A CAPI do evento Schedule está configurada, mas ainda não há entregas confirmadas no período atual.' })
+    } else if (scheduleDeliveryRate < 90) {
+      insights.push({ tone: 'warning', text: `A taxa de sucesso do Schedule via CAPI está em ${scheduleDeliveryRate}%.` })
+    } else {
+      insights.push({ tone: 'success', text: `A taxa de sucesso do Schedule via CAPI está em ${scheduleDeliveryRate}%.` })
+    }
+
+    if (siteWhatsappClicks > 0 && siteBehaviorCoverage.whatsappTracking < 100) {
+      insights.push({ tone: 'warning', text: `Os cliques para WhatsApp do site têm contexto persistido em ${siteBehaviorCoverage.whatsappTracking}%.` })
+    }
+
+    return insights
+  }, [confirmedBookings, scheduleDeliveryRate, siteBehaviorCoverage.whatsappTracking, siteCoverage.facebookIds, siteCoverage.tracking, siteWhatsappClicks, websiteSummary])
 
   return (
     <div className="space-y-6">
@@ -313,8 +329,9 @@ export function MetaTrackingDashboard() {
                 Acompanhamento de Tracking e Conversao
               </CardTitle>
               <CardDescription className="text-blue-100/70 max-w-3xl">
-                Visao consolidada do funil site - Meta - WhatsApp - agendamento, usando os eventos reais publicados no
-                website e os registros correlacionados no CRM/n8n.
+                Painel operacional dos sinais reais do site `espacofacial.com`, com foco em atribuicao, CAPI, booking
+                confirmado e cliques para WhatsApp. A correlacao CRM/n8n fica secundaria enquanto essa camada nao for a
+                prioridade.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -370,83 +387,56 @@ export function MetaTrackingDashboard() {
             </div>
           ) : null}
 
-          {websiteConfig?.metaCapiConfigured === false ? (
-            <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-5 text-red-100">
+          {!whatsappAttributionReady ? (
+            <div className="rounded-2xl border border-blue-400/30 bg-blue-500/10 p-5 text-blue-100">
               <div className="flex items-center gap-2 font-medium">
-                <WarningCircle className="h-5 w-5" />
-                Conversions API sem configuração válida no runtime do site
+                <CheckCircle className="h-5 w-5" />
+                Modo foco site ativo
               </div>
-              <p className="mt-2 text-sm text-red-100/80">
-                O painel live indica que o browser pode até disparar Pixel, mas o envio server-side ainda não está pronto
-                para a Meta neste ambiente.
+              <p className="mt-2 text-sm text-blue-100/80">
+                O dashboard está priorizando leitura do `espacofacial.com`. A parte de conversa/agendamento atribuídos
+                no CRM via WhatsApp permanece disponível, mas ainda sem volume integrado.
               </p>
             </div>
           ) : null}
 
           <div className="grid gap-4 xl:grid-cols-4">
+            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
+              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Agendamentos confirmados no site</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(confirmedBookings)}</div>
+            </div>
             <div className="rounded-2xl border border-blue-400/20 bg-blue-500/10 p-4">
               <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Clique WhatsApp no site</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(data?.funnel?.siteWhatsappClicks || 0)}</div>
-            </div>
-            <div className="flex items-center justify-center text-blue-100/50">
-              <ArrowRight className="h-6 w-6" />
-            </div>
-            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Conversas com wa_click_id</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(data?.funnel?.crmAttributedConversations || 0)}</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(siteWhatsappClicks)}</div>
             </div>
             <div className="rounded-2xl border border-fuchsia-400/20 bg-fuchsia-500/10 p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Agendamentos WhatsApp atribuidos</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(data?.funnel?.crmAttributedAppointments || 0)}</div>
+              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Schedule via CAPI OK</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(websiteSummary.capiScheduleOk || 0)}</div>
+            </div>
+            <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4">
+              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Cobertura tracking_context</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{siteCoverage.tracking}%</div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <MetricCard
               title="Agendamentos confirmados no site"
-              value={formatNumber(websiteSummary.confirmedBookings || 0)}
+              value={formatNumber(confirmedBookings)}
               hint="Base do evento principal Schedule."
               tone="success"
             />
             <MetricCard
               title="Schedule via CAPI OK"
               value={formatNumber(websiteSummary.capiScheduleOk || 0)}
-              hint={
-                scheduleAttempted > 0
-                  ? `${scheduleDeliveryRate}% de sucesso nos envios tentados. ${formatNumber(scheduleSkipped)} skip(s).`
-                  : `${formatNumber(scheduleSkipped)} skip(s) e nenhum envio efetivamente tentado no periodo.`
-              }
-              tone={
-                scheduleAttempted > 0
-                  ? scheduleDeliveryRate >= 90
-                    ? 'success'
-                    : scheduleDeliveryRate >= 70
-                      ? 'warning'
-                      : 'danger'
-                  : scheduleSkipped > 0 || websiteConfig?.metaCapiConfigured === false
-                    ? 'danger'
-                    : 'warning'
-              }
+              hint={`${scheduleDeliveryRate}% de sucesso no envio server-side no periodo.`}
+              tone={scheduleDeliveryRate >= 90 ? 'success' : scheduleDeliveryRate >= 70 ? 'warning' : 'danger'}
             />
             <MetricCard
               title="Contact via CAPI OK"
               value={formatNumber(websiteSummary.capiContactOk || 0)}
-              hint={
-                contactAttempted > 0
-                  ? `${contactDeliveryRate}% de sucesso nos envios tentados. ${formatNumber(contactSkipped)} skip(s).`
-                  : `${formatNumber(contactSkipped)} skip(s) e nenhum envio efetivamente tentado no periodo.`
-              }
-              tone={
-                contactAttempted > 0
-                  ? contactDeliveryRate >= 90
-                    ? 'success'
-                    : contactDeliveryRate >= 70
-                      ? 'warning'
-                      : 'danger'
-                  : contactSkipped > 0 || websiteConfig?.metaCapiConfigured === false
-                    ? 'danger'
-                    : 'warning'
-              }
+              hint={`${contactDeliveryRate}% de sucesso nos cliques para WhatsApp.`}
+              tone={contactDeliveryRate >= 90 ? 'success' : contactDeliveryRate >= 70 ? 'warning' : 'danger'}
             />
             <MetricCard
               title="Cobertura de tracking no booking"
@@ -467,26 +457,30 @@ export function MetaTrackingDashboard() {
               tone={siteCoverage.facebookIds >= 70 ? 'success' : siteCoverage.facebookIds >= 40 ? 'warning' : 'danger'}
             />
             <MetricCard
-              title="Consentimento analytics"
-              value={`${siteCoverage.analyticsConsent}%`}
-              hint="Bookings confirmados com analytics permitido."
-              tone={siteCoverage.analyticsConsent >= 70 ? 'success' : siteCoverage.analyticsConsent >= 40 ? 'warning' : 'danger'}
+              title="Consentimento de marketing"
+              value={`${siteBehaviorCoverage.marketingConsent}%`}
+              hint="Bookings com marketing consentido na conversao."
+              tone={siteBehaviorCoverage.marketingConsent >= 70 ? 'success' : siteBehaviorCoverage.marketingConsent >= 40 ? 'warning' : 'danger'}
             />
             <MetricCard
-              title="Consentimento marketing"
-              value={`${siteCoverage.marketingConsent}%`}
-              hint="Bookings confirmados aptos a enviar sinais de marketing."
-              tone={siteCoverage.marketingConsent >= 60 ? 'success' : siteCoverage.marketingConsent >= 30 ? 'warning' : 'danger'}
+              title="Consentimento de analytics"
+              value={`${siteBehaviorCoverage.analyticsConsent}%`}
+              hint="Bookings com analytics consentido na conversao."
+              tone={siteBehaviorCoverage.analyticsConsent >= 70 ? 'success' : siteBehaviorCoverage.analyticsConsent >= 40 ? 'warning' : 'danger'}
+            />
+            <MetricCard
+              title="Contexto nos cliques WhatsApp"
+              value={`${siteBehaviorCoverage.whatsappTracking}%`}
+              hint="Cliques para WhatsApp com tracking persistido."
+              tone={siteBehaviorCoverage.whatsappTracking >= 85 ? 'success' : siteBehaviorCoverage.whatsappTracking >= 60 ? 'warning' : 'danger'}
             />
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <SmallList title="Top fontes do site" items={topSourceItems} emptyLabel="Sem origem UTM suficiente no periodo." />
             <SmallList title="Top campanhas do site" items={topCampaignItems} emptyLabel="Sem campanhas registradas no periodo." />
-            <SmallList title="Top fontes no WhatsApp correlacionado" items={whatsappSourceItems} emptyLabel="Sem source_tracking nas conversas correlacionadas." />
+            <SmallList title="Unidades com mais bookings" items={unitItems} emptyLabel="Sem unidades registradas no periodo." />
           </div>
-
-          <SmallList title="Principais motivos de issue no CAPI" items={capiIssueItems} emptyLabel="Sem falhas ou skips registrados no periodo." />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card className="glass-card border-white/10">
@@ -521,20 +515,6 @@ export function MetaTrackingDashboard() {
                   </div>
                   <Progress value={siteCoverage.facebookIds} className="h-2" />
                 </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-sm text-blue-100/70">
-                    <span>Consentimento analytics</span>
-                    <span>{siteCoverage.analyticsConsent}%</span>
-                  </div>
-                  <Progress value={siteCoverage.analyticsConsent} className="h-2" />
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-sm text-blue-100/70">
-                    <span>Consentimento marketing</span>
-                    <span>{siteCoverage.marketingConsent}%</span>
-                  </div>
-                  <Progress value={siteCoverage.marketingConsent} className="h-2" />
-                </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-blue-100/75">
                   <div className="flex items-center gap-2 font-medium text-white">
                     <CheckCircle className="h-4 w-4 text-emerald-300" />
@@ -548,29 +528,27 @@ export function MetaTrackingDashboard() {
             <Card className="glass-card border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <WhatsappLogo className="h-5 w-5 text-emerald-300" />
-                  Fechamento via WhatsApp
+                  <ChartBar className="h-5 w-5 text-emerald-300" />
+                  Leitura operacional do site
                 </CardTitle>
                 <CardDescription className="text-blue-100/70">
-                  Correlacao entre clique first-party, conversa e agendamento.
+                  Diagnostico objetivo do que o CRM ja consegue concluir apenas pelos sinais do site.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                    <div className="text-xs uppercase tracking-[0.15em] text-blue-100/60">Conversas atribuídas</div>
-                    <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(whatsappSummary.conversations_attributed || 0)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                    <div className="text-xs uppercase tracking-[0.15em] text-blue-100/60">Agendamentos atribuídos</div>
-                    <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(whatsappSummary.appointments_attributed || 0)}</div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {(data?.whatsapp?.data?.stages || []).slice(0, 5).map((stage) => (
-                    <div key={stage.funnelStatus} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm">
-                      <span className="text-blue-100/75">{stage.funnelStatus}</span>
-                      <span className="font-medium text-white">{formatNumber(stage.count)}</span>
+                <div className="space-y-3">
+                  {siteInsights.map((item, index) => (
+                    <div
+                      key={`${item.tone}-${index}`}
+                      className={`rounded-2xl border p-4 text-sm ${
+                        item.tone === 'success'
+                          ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
+                          : item.tone === 'danger'
+                            ? 'border-red-400/20 bg-red-500/10 text-red-100'
+                            : 'border-amber-400/20 bg-amber-500/10 text-amber-100'
+                      }`}
+                    >
+                      {item.text}
                     </div>
                   ))}
                 </div>
@@ -578,7 +556,7 @@ export function MetaTrackingDashboard() {
             </Card>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className={`grid grid-cols-1 gap-4 ${whatsappAttributionReady ? 'xl:grid-cols-2' : ''}`}>
             <Card className="glass-card border-white/10">
               <CardHeader>
                 <CardTitle className="text-white">Ultimos agendamentos confirmados no site</CardTitle>
@@ -596,17 +574,12 @@ export function MetaTrackingDashboard() {
                         <div>
                           <div className="font-medium text-white">{item.patient || 'Paciente oculto'}</div>
                           <div className="text-sm text-blue-100/65">
-                            {item.unitSlug} • {formatDashboardLabel(item.utmSource || 'direto')} • {formatDashboardLabel(item.utmCampaign || 'sem_campanha')}
+                            {item.unitSlug} • {item.utmSource || 'direto'} • {item.utmCampaign || 'sem campanha'}
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Badge variant="outline" className={item.hasFacebookIds ? 'border-emerald-300/30 text-emerald-100' : 'border-amber-300/30 text-amber-100'}>
-                            {item.hasFacebookIds ? 'FB IDs OK' : 'FB IDs faltando'}
-                          </Badge>
-                          <Badge variant="outline" className={item.marketingConsent ? 'border-emerald-300/30 text-emerald-100' : 'border-white/15 text-blue-100'}>
-                            {item.marketingConsent ? 'marketing ok' : 'sem marketing'}
-                          </Badge>
-                        </div>
+                        <Badge variant="outline" className={item.hasFacebookIds ? 'border-emerald-300/30 text-emerald-100' : 'border-amber-300/30 text-amber-100'}>
+                          {item.hasFacebookIds ? 'FB IDs OK' : 'FB IDs faltando'}
+                        </Badge>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
                         <span>{formatDateTime(item.createdAtMs)}</span>
@@ -623,77 +596,76 @@ export function MetaTrackingDashboard() {
               </CardContent>
             </Card>
 
-            <Card className="glass-card border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white">Ultimos fechamentos correlacionados no WhatsApp</CardTitle>
-                <CardDescription className="text-blue-100/70">
-                  Conversas e agendamentos com `wa_click_id` ja reconhecido no CRM/n8n.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {(data?.whatsapp?.data?.recentAppointments || []).length === 0 ? (
-                  <div className="text-sm text-blue-100/60">Sem agendamentos correlacionados no periodo.</div>
-                ) : (
-                  data?.whatsapp?.data?.recentAppointments?.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-white">{item.unitSlug || 'sem unidade'} • {item.status}</div>
-                          <div className="text-sm text-blue-100/65">
-                            {item.utmSource || 'direto'} • {item.utmCampaign || 'sem campanha'}
+            {whatsappAttributionReady ? (
+              <Card className="glass-card border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white">Ultimos fechamentos correlacionados no WhatsApp</CardTitle>
+                  <CardDescription className="text-blue-100/70">
+                    Conversas e agendamentos com `wa_click_id` ja reconhecido no CRM/n8n.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {(data?.whatsapp?.data?.recentAppointments || []).length === 0 ? (
+                    <div className="text-sm text-blue-100/60">Sem agendamentos correlacionados no periodo.</div>
+                  ) : (
+                    data?.whatsapp?.data?.recentAppointments?.map((item) => (
+                      <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="font-medium text-white">{item.unitSlug || 'sem unidade'} • {item.status}</div>
+                            <div className="text-sm text-blue-100/65">
+                              {item.utmSource || 'direto'} • {item.utmCampaign || 'sem campanha'}
+                            </div>
                           </div>
+                          <Badge variant="outline" className="border-blue-300/30 text-blue-100">
+                            {item.waClickId}
+                          </Badge>
                         </div>
-                        <Badge variant="outline" className="border-blue-300/30 text-blue-100">
-                          {item.waClickId}
-                        </Badge>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
+                          <span>Criado {formatDateTime(item.createdAt)}</span>
+                          <span>•</span>
+                          <span>Inicio {formatDateTime(item.startAt)}</span>
+                          <span>•</span>
+                          <span>{item.phone || 'telefone oculto'}</span>
+                        </div>
                       </div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
-                        <span>Criado {formatDateTime(item.createdAt)}</span>
-                        <span>•</span>
-                        <span>Inicio {formatDateTime(item.startAt)}</span>
-                        <span>•</span>
-                        <span>{item.phone || 'telefone oculto'}</span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </CardContent>
-            </Card>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
           </div>
 
-            <Card className="glass-card border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white">Falhas e skips recentes de entrega server-side</CardTitle>
-                <CardDescription className="text-blue-100/70">
-                  Erros reais e skips intencionais do `Contact` ou `Schedule` enviados pela camada server-side do site.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {(data?.website?.data?.recentCapiIssues || []).length === 0 ? (
-                  <div className="text-sm text-emerald-200/90">Nenhuma falha recente registrada no periodo consultado.</div>
-                ) : (
-                  data?.website?.data?.recentCapiIssues?.map((item) => {
-                    const reason = String(item.errorMessage || '').trim()
-                    const isSkip = reason === 'missing_meta_capi_config' || reason === 'marketing_consent_denied'
-                    return (
-                    <div key={item.id} className={`rounded-2xl p-4 ${isSkip ? 'border border-amber-400/20 bg-amber-500/10' : 'border border-red-400/20 bg-red-500/10'}`}>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className={`font-medium ${isSkip ? 'text-amber-100' : 'text-red-100'}`}>
-                          {item.eventName} • status {item.httpStatus || 'sem HTTP'}
-                        </div>
-                        <div className={`text-xs ${isSkip ? 'text-amber-100/70' : 'text-red-100/70'}`}>{formatDateTime(item.createdAtMs)}</div>
+          <Card className="glass-card border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white">Falhas recentes de entrega server-side</CardTitle>
+              <CardDescription className="text-blue-100/70">
+                Erros do `Contact` ou `Schedule` enviados pela camada server-side do site.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {(data?.website?.data?.recentCapiFailures || []).length === 0 ? (
+                <div className="text-sm text-emerald-200/90">Nenhuma falha recente registrada no periodo consultado.</div>
+              ) : (
+                data?.website?.data?.recentCapiFailures?.map((item) => (
+                  <div key={item.id} className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-medium text-red-100">
+                        {item.eventName} • status {item.httpStatus || 'sem HTTP'}
                       </div>
-                      <div className={`mt-2 text-sm ${isSkip ? 'text-amber-100/80' : 'text-red-100/80'}`}>
-                        {formatDashboardLabel(item.errorMessage || 'Sem mensagem de erro detalhada.')}
-                      </div>
-                      <div className={`mt-2 text-xs ${isSkip ? 'text-amber-100/65' : 'text-red-100/65'}`}>
-                        event_id: {item.eventId} {item.waClickId ? `• wa_click_id: ${item.waClickId}` : ''}
-                      </div>
+                      <div className="text-xs text-red-100/70">{formatDateTime(item.createdAtMs)}</div>
                     </div>
-                  )})
-                )}
-              </CardContent>
-            </Card>
+                    <div className="mt-2 text-sm text-red-100/80">
+                      {item.errorMessage || 'Sem mensagem de erro detalhada.'}
+                    </div>
+                    <div className="mt-2 text-xs text-red-100/65">
+                      event_id: {item.eventId} {item.waClickId ? `• wa_click_id: ${item.waClickId}` : ''}
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
         </CardContent>
       </Card>
     </div>
