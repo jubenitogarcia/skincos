@@ -60,6 +60,28 @@ function assert(condition, message) {
     if (!condition) throw new Error(message);
 }
 
+function assertPublicRedirectLocation(loc, pathUnderTest) {
+    assert(loc, `${pathUnderTest} expected Location header`);
+
+    if (/^https:\/\//.test(loc)) return;
+
+    if (!loc.startsWith("/")) {
+        throw new Error(`${pathUnderTest} expected absolute https Location or first-party relative redirect, got ${loc}`);
+    }
+
+    const url = new URL(loc, `${baseUrl}/`);
+    assert(
+        url.pathname === "/api/whatsapp/redirect",
+        `${pathUnderTest} expected /api/whatsapp/redirect when Location is relative, got ${url.pathname}`,
+    );
+
+    const dest = url.searchParams.get("dest") || "";
+    assert(
+        /^https:\/\/(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)\//.test(dest),
+        `${pathUnderTest} expected first-party redirect to point at WhatsApp, got dest=${dest || "(empty)"}`,
+    );
+}
+
 async function run() {
     console.log(`Smoke base URL: ${baseUrl}`);
 
@@ -160,7 +182,7 @@ async function run() {
         const res = await fetchHead(path, { redirect: "manual" });
         assert([301, 302, 307, 308].includes(res.status), `${path} expected redirect, got ${res.status}`);
         const loc = res.headers.get("location");
-        assert(loc && /^https:\/\//.test(loc), `${path} expected https Location, got ${loc}`);
+        assertPublicRedirectLocation(loc, path);
     }
 
     // Header markers (ensure we're not serving an older deployment)
