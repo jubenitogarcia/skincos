@@ -12,6 +12,7 @@
     "test": "tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
     "smoke:strict": "SMOKE_REQUIRE_AGENDA=1 node scripts/smoke.mjs",
+    "tracking:governance": "node scripts/audit-tracking-governance.mjs",
     "quality:pr": "npm run audit:360:ci",
     "quality:check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run smoke",
     "quality:ci": "npm ci && npm run quality:check",

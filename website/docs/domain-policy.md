@@ -47,3 +47,16 @@ Esta política define qual domínio pertence a qual stack e como cada host deve 
    - snapshots públicos
    - checklist de validação
    - documentação de tracking
+
+## Allowlist operacional de saídas públicas aceitáveis
+
+1. `espacofacial.com.br`
+   - permitido apenas quando a navegação pública precisar apontar explicitamente para a stack oficial da franquia
+2. `app.espacofacial.com.br`
+   - permitido apenas quando houver necessidade explícita de integração com o app externo da franquia
+3. `crm.skincos.com.br`
+   - não deve ser destino público de campanhas ou CTAs do funil deste site
+4. `orb.skincos.com.br`
+   - uso exclusivamente técnico/interno
+5. `wa.skincos.com.br`
+   - uso exclusivamente técnico/interno

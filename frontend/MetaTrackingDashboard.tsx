@@ -3,7 +3,7 @@ import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { Progress } from '@/progress'
-import { ArrowRight, ChartBar, CheckCircle, CirclesThreePlus, Funnel, LinkBreak, Spinner, WarningCircle, WhatsappLogo } from '@phosphor-icons/react'
+import { ChartBar, CheckCircle, CirclesThreePlus, Funnel, LinkBreak, Spinner, WarningCircle, WhatsappLogo } from '@phosphor-icons/react'
 
 type TrackingOverviewResponse = {
   ok: boolean
@@ -16,6 +16,89 @@ type TrackingOverviewResponse = {
     siteWhatsappClicks: number
     crmAttributedConversations: number
     crmAttributedAppointments: number
+  }
+  coverage?: {
+    confirmedBookings: number
+    whatsappClicks: number
+    trackingContext: number
+    metaEventId: number
+    facebookIds: number
+    marketingConsent: number
+    analyticsConsent: number
+    whatsappTracking: number
+    scheduleDelivery: number
+    contactDelivery: number
+  }
+  previousCoverage?: {
+    trackingContext: number
+    facebookIds: number
+    marketingConsent: number
+  }
+  alerts?: Array<{
+    severity: 'critical' | 'warning'
+    code: string
+    title: string
+    message: string
+  }>
+  health?: {
+    status: 'healthy' | 'degraded' | 'critical'
+    label: string
+    summary: string
+  }
+  reconciliation?: {
+    buckets?: Array<{
+      bucket: 'sem_origem' | 'origem_first_party' | 'origem_meta_completa'
+      label: string
+      count: number
+      percent: number
+    }>
+    incompleteBookings?: Array<{
+      id: string
+      createdAtMs: number
+      unitSlug: string
+      patient: string | null
+      utmSource: string | null
+      utmCampaign: string | null
+      landingPage: string | null
+      metaEventId: string | null
+      hasFacebookIds: boolean
+      coverageBucket: string
+      incompleteCauses: string[]
+      primaryCause: string
+      scheduleStatus: string | null
+    }>
+    retryCandidates?: Array<{
+      id: string
+      createdAtMs: number
+      eventName: string
+      eventId: string
+      bookingId: string | null
+      waClickId: string | null
+      httpStatus: number | null
+      errorMessage: string | null
+      normalizedReason: string
+    }>
+  }
+  governance?: {
+    campaignRule: string
+    validExamples: string[]
+    invalidExamples: string[]
+    crossDomainAllowlist: Array<{
+      host: string
+      purpose: string
+      allowedFromPublicSite: boolean
+    }>
+  }
+  validationCadence?: {
+    smoke: string
+    functional: string
+    coverageAudit: string
+    recurringChecks: string[]
+  }
+  whatsappContract?: {
+    status: string
+    lifecycle: string[]
+    description: string
   }
   website?: {
     available: boolean
@@ -66,8 +149,14 @@ type TrackingOverviewResponse = {
         waClickId: string | null
         httpStatus: number | null
         errorMessage: string | null
+        normalizedReason?: string
+        retryable?: boolean
       }>
     }
+  }
+  previousWebsite?: {
+    available: boolean
+    error?: string
   }
   whatsapp?: {
     available: boolean
@@ -117,6 +206,11 @@ function formatNumber(value: number | string | null | undefined): string {
 function formatPercent(numerator: number, denominator: number): number {
   if (!denominator) return 0
   return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)))
+}
+
+function buildDelta(current: number, previous: number): string {
+  const delta = Math.round((current - previous) * 10) / 10
+  return `${delta >= 0 ? '+' : ''}${delta}`
 }
 
 function formatDateTime(value: number | string | null | undefined): string {
@@ -194,6 +288,49 @@ function SmallList({
   )
 }
 
+function AlertPanel({
+  alerts,
+}: {
+  alerts: Array<{ severity: 'critical' | 'warning'; code: string; title: string; message: string }>
+}) {
+  return (
+    <Card className="glass-card border-white/10">
+      <CardHeader>
+        <CardTitle className="text-white">Alertas operacionais</CardTitle>
+        <CardDescription className="text-blue-100/70">
+          Regras automáticas para cobertura, consentimento e falhas de entrega.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {alerts.length === 0 ? (
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+            Nenhum alerta ativo no período consultado.
+          </div>
+        ) : (
+          alerts.map((alert) => (
+            <div
+              key={alert.code}
+              className={`rounded-2xl border p-4 text-sm ${
+                alert.severity === 'critical'
+                  ? 'border-red-400/20 bg-red-500/10 text-red-100'
+                  : 'border-amber-400/20 bg-amber-500/10 text-amber-100'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-medium">{alert.title}</div>
+                <Badge variant="outline" className={alert.severity === 'critical' ? 'border-red-300/30 text-red-100' : 'border-amber-300/30 text-amber-100'}>
+                  {alert.severity === 'critical' ? 'Crítico' : 'Alerta'}
+                </Badge>
+              </div>
+              <div className="mt-2 text-sm opacity-90">{alert.message}</div>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function MetaTrackingDashboard() {
   const [days, setDays] = useState(30)
   const [loading, setLoading] = useState(true)
@@ -235,38 +372,54 @@ export function MetaTrackingDashboard() {
 
   const websiteSummary = data?.website?.data?.summary || {}
   const whatsappSummary = data?.whatsapp?.data?.summary || {}
-  const confirmedBookings = Number(websiteSummary.confirmedBookings || 0)
-  const siteWhatsappClicks = Number(websiteSummary.whatsappClicks || 0)
+  const confirmedBookings = Number(data?.coverage?.confirmedBookings ?? websiteSummary.confirmedBookings ?? 0)
+  const siteWhatsappClicks = Number(data?.coverage?.whatsappClicks ?? websiteSummary.whatsappClicks ?? 0)
   const whatsappConversationTotal = Number(whatsappSummary.conversations_total || 0)
   const whatsappAppointmentTotal = Number(whatsappSummary.appointments_total || 0)
 
   const siteCoverage = useMemo(() => {
+    if (data?.coverage) {
+      return {
+        tracking: data.coverage.trackingContext,
+        metaEvent: data.coverage.metaEventId,
+        facebookIds: data.coverage.facebookIds,
+      }
+    }
     return {
       tracking: formatPercent(Number(websiteSummary.bookingsWithTrackingContext || 0), confirmedBookings),
       metaEvent: formatPercent(Number(websiteSummary.bookingsWithMetaEventId || 0), confirmedBookings),
       facebookIds: formatPercent(Number(websiteSummary.bookingsWithFacebookIds || 0), confirmedBookings),
     }
-  }, [websiteSummary, confirmedBookings])
+  }, [data?.coverage, websiteSummary, confirmedBookings])
 
   const siteBehaviorCoverage = useMemo(() => {
+    if (data?.coverage) {
+      return {
+        marketingConsent: data.coverage.marketingConsent,
+        analyticsConsent: data.coverage.analyticsConsent,
+        whatsappTracking: data.coverage.whatsappTracking,
+      }
+    }
     return {
       marketingConsent: formatPercent(Number(websiteSummary.bookingsWithMarketingConsent || 0), confirmedBookings),
       analyticsConsent: formatPercent(Number(websiteSummary.bookingsWithAnalyticsConsent || 0), confirmedBookings),
       whatsappTracking: formatPercent(Number(websiteSummary.whatsappClicksWithTrackingContext || 0), siteWhatsappClicks),
     }
-  }, [websiteSummary, confirmedBookings, siteWhatsappClicks])
+  }, [data?.coverage, websiteSummary, confirmedBookings, siteWhatsappClicks])
 
   const scheduleDeliveryRate = useMemo(() => {
+    if (data?.coverage) return data.coverage.scheduleDelivery
     const ok = Number(websiteSummary.capiScheduleOk || 0)
     const fail = Number(websiteSummary.capiScheduleFailed || 0)
     return formatPercent(ok, ok + fail)
-  }, [websiteSummary])
+  }, [data?.coverage, websiteSummary])
 
   const contactDeliveryRate = useMemo(() => {
+    if (data?.coverage) return data.coverage.contactDelivery
     const ok = Number(websiteSummary.capiContactOk || 0)
     const fail = Number(websiteSummary.capiContactFailed || 0)
     return formatPercent(ok, ok + fail)
-  }, [websiteSummary])
+  }, [data?.coverage, websiteSummary])
 
   const topSourceItems = (data?.website?.data?.topSources || []).map((item) => ({
     label: item.utmSource || 'direto',
@@ -280,6 +433,12 @@ export function MetaTrackingDashboard() {
     label: item.unitSlug || 'sem unidade',
     value: formatNumber(item.count),
   }))
+  const reconciliationBuckets = data?.reconciliation?.buckets || []
+  const incompleteBookings = data?.reconciliation?.incompleteBookings || []
+  const retryCandidates = data?.reconciliation?.retryCandidates || []
+  const previousTracking = Number(data?.previousCoverage?.trackingContext || 0)
+  const previousFacebookIds = Number(data?.previousCoverage?.facebookIds || 0)
+  const previousMarketingConsent = Number(data?.previousCoverage?.marketingConsent || 0)
   const whatsappAttributionReady = whatsappConversationTotal > 0 || whatsappAppointmentTotal > 0
   const siteInsights = useMemo(() => {
     const insights: Array<{ tone: 'success' | 'warning' | 'danger'; text: string }> = []
@@ -387,6 +546,38 @@ export function MetaTrackingDashboard() {
             </div>
           ) : null}
 
+          {data?.health ? (
+            <div
+              className={`rounded-2xl border p-5 ${
+                data.health.status === 'healthy'
+                  ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+                  : data.health.status === 'critical'
+                    ? 'border-red-400/30 bg-red-500/10 text-red-100'
+                    : 'border-amber-400/30 bg-amber-500/10 text-amber-100'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 font-medium">
+                  {data.health.status === 'healthy' ? <CheckCircle className="h-5 w-5" /> : <WarningCircle className="h-5 w-5" />}
+                  Saúde do tracking: {data.health.label}
+                </div>
+                <Badge
+                  variant="outline"
+                  className={
+                    data.health.status === 'healthy'
+                      ? 'border-emerald-300/30 text-emerald-100'
+                      : data.health.status === 'critical'
+                        ? 'border-red-300/30 text-red-100'
+                        : 'border-amber-300/30 text-amber-100'
+                  }
+                >
+                  janela {days}d
+                </Badge>
+              </div>
+              <p className="mt-2 text-sm opacity-90">{data.health.summary}</p>
+            </div>
+          ) : null}
+
           {!whatsappAttributionReady ? (
             <div className="rounded-2xl border border-blue-400/30 bg-blue-500/10 p-5 text-blue-100">
               <div className="flex items-center gap-2 font-medium">
@@ -477,6 +668,29 @@ export function MetaTrackingDashboard() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <MetricCard
+              title="Tracking_context vs janela anterior"
+              value={`${buildDelta(siteCoverage.tracking, previousTracking)} pp`}
+              hint={`Atual ${siteCoverage.tracking}% • anterior ${previousTracking}%`}
+              tone={siteCoverage.tracking >= previousTracking ? 'success' : 'warning'}
+            />
+            <MetricCard
+              title="FB IDs vs janela anterior"
+              value={`${buildDelta(siteCoverage.facebookIds, previousFacebookIds)} pp`}
+              hint={`Atual ${siteCoverage.facebookIds}% • anterior ${previousFacebookIds}%`}
+              tone={siteCoverage.facebookIds >= previousFacebookIds ? 'success' : 'warning'}
+            />
+            <MetricCard
+              title="Consentimento marketing vs anterior"
+              value={`${buildDelta(siteBehaviorCoverage.marketingConsent, previousMarketingConsent)} pp`}
+              hint={`Atual ${siteBehaviorCoverage.marketingConsent}% • anterior ${previousMarketingConsent}%`}
+              tone={siteBehaviorCoverage.marketingConsent >= previousMarketingConsent ? 'success' : 'warning'}
+            />
+          </div>
+
+          <AlertPanel alerts={data?.alerts || []} />
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <SmallList title="Top fontes do site" items={topSourceItems} emptyLabel="Sem origem UTM suficiente no periodo." />
             <SmallList title="Top campanhas do site" items={topCampaignItems} emptyLabel="Sem campanhas registradas no periodo." />
             <SmallList title="Unidades com mais bookings" items={unitItems} emptyLabel="Sem unidades registradas no periodo." />
@@ -554,6 +768,22 @@ export function MetaTrackingDashboard() {
                 </div>
               </CardContent>
             </Card>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            {reconciliationBuckets.map((item) => (
+              <Card key={item.bucket} className="glass-card border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-base text-white">{item.label}</CardTitle>
+                  <CardDescription className="text-blue-100/70">
+                    {item.percent}% dos bookings confirmados na janela atual.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-semibold text-white">{formatNumber(item.count)}</div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
 
           <div className={`grid grid-cols-1 gap-4 ${whatsappAttributionReady ? 'xl:grid-cols-2' : ''}`}>
@@ -636,6 +866,76 @@ export function MetaTrackingDashboard() {
             ) : null}
           </div>
 
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <Card className="glass-card border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white">Bookings com tracking incompleto</CardTitle>
+                <CardDescription className="text-blue-100/70">
+                  Lista priorizada por data com a principal causa diagnosticada.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {incompleteBookings.length === 0 ? (
+                  <div className="text-sm text-emerald-200/90">Nenhum booking incompleto na janela consultada.</div>
+                ) : (
+                  incompleteBookings.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-white">{item.patient || 'Paciente oculto'}</div>
+                          <div className="text-sm text-blue-100/65">
+                            {item.unitSlug} • {item.utmSource || 'direto'} • {item.utmCampaign || 'sem campanha'}
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="border-amber-300/30 text-amber-100">
+                          {item.primaryCause}
+                        </Badge>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
+                        <span>{formatDateTime(item.createdAtMs)}</span>
+                        <span>•</span>
+                        <span>{item.coverageBucket}</span>
+                        <span>•</span>
+                        <span>{item.incompleteCauses.join(', ')}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="glass-card border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white">Falhas retryable para reprocessamento</CardTitle>
+                <CardDescription className="text-blue-100/70">
+                  Eventos server-side com perfil transitório de erro na Meta.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {retryCandidates.length === 0 ? (
+                  <div className="text-sm text-emerald-200/90">Nenhuma falha transitória recente detectada.</div>
+                ) : (
+                  retryCandidates.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="font-medium text-amber-100">
+                          {item.eventName} • status {item.httpStatus || 'sem HTTP'}
+                        </div>
+                        <Badge variant="outline" className="border-amber-300/30 text-amber-100">
+                          {item.normalizedReason}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 text-sm text-amber-100/85">{item.errorMessage || 'Sem mensagem detalhada.'}</div>
+                      <div className="mt-2 text-xs text-amber-100/70">
+                        {formatDateTime(item.createdAtMs)} • event_id {item.eventId}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
           <Card className="glass-card border-white/10">
             <CardHeader>
               <CardTitle className="text-white">Falhas recentes de entrega server-side</CardTitle>
@@ -664,6 +964,110 @@ export function MetaTrackingDashboard() {
                   </div>
                 ))
               )}
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <Card className="glass-card border-white/10 xl:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-white">Governança de campanhas e links</CardTitle>
+                <CardDescription className="text-blue-100/70">
+                  Convenção operacional para manter origem, deduplicação e domínio corretos.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm text-blue-100/80">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">{data?.governance?.campaignRule}</div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <div className="mb-2 font-medium text-white">Exemplos válidos</div>
+                    <div className="space-y-2">
+                      {(data?.governance?.validExamples || []).map((item) => (
+                        <div key={item} className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-emerald-100 break-all">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-2 font-medium text-white">Exemplos inválidos</div>
+                    <div className="space-y-2">
+                      {(data?.governance?.invalidExamples || []).map((item) => (
+                        <div key={item} className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-red-100 break-all">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-2 font-medium text-white">Allowlist cross-domain pública</div>
+                  <div className="space-y-2">
+                    {(data?.governance?.crossDomainAllowlist || []).map((item) => (
+                      <div key={item.host} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                        <div>
+                          <div className="text-white">{item.host}</div>
+                          <div className="text-xs text-blue-100/70">{item.purpose}</div>
+                        </div>
+                        <Badge variant="outline" className={item.allowedFromPublicSite ? 'border-blue-300/30 text-blue-100' : 'border-white/20 text-blue-100/70'}>
+                          {item.allowedFromPublicSite ? 'Saída pública permitida' : 'Uso interno/técnico'}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="glass-card border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white">Rotina contínua</CardTitle>
+                <CardDescription className="text-blue-100/70">
+                  Cadência mínima para manter o tracking auditável.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm text-blue-100/80">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="font-medium text-white">Smoke</div>
+                  <div>{data?.validationCadence?.smoke}</div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="font-medium text-white">Validação funcional</div>
+                  <div>{data?.validationCadence?.functional}</div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="font-medium text-white">Auditoria de cobertura</div>
+                  <div>{data?.validationCadence?.coverageAudit}</div>
+                </div>
+                <div className="space-y-2">
+                  {(data?.validationCadence?.recurringChecks || []).map((item) => (
+                    <div key={item} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="glass-card border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <WhatsappLogo className="h-5 w-5 text-emerald-300" />
+                Contrato do loop WhatsApp/CRM
+              </CardTitle>
+              <CardDescription className="text-blue-100/70">
+                Preparação do que o CRM deve exibir quando a frente n8n voltar a ser prioridade.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm text-blue-100/80">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">{data?.whatsappContract?.description}</div>
+              <div className="flex flex-wrap gap-2">
+                {(data?.whatsappContract?.lifecycle || []).map((step) => (
+                  <Badge key={step} variant="outline" className="border-blue-300/30 text-blue-100">
+                    {step}
+                  </Badge>
+                ))}
+              </div>
             </CardContent>
           </Card>
         </CardContent>

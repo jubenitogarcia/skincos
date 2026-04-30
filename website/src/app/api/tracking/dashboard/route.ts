@@ -169,6 +169,68 @@ function sortMapEntries(map: Map<string, number>, valueKey: string) {
         .map(([label, count]) => ({ [valueKey]: label, count }));
 }
 
+function classifyCoverageBucket(params: {
+    hasTrackingContext: boolean;
+    hasMetaEventId: boolean;
+    hasFacebookIds: boolean;
+    marketingConsent: boolean;
+    hasAnyAttribution: boolean;
+}) {
+    if (params.hasTrackingContext && params.hasMetaEventId && params.hasFacebookIds && params.marketingConsent) {
+        return "origem_meta_completa";
+    }
+    if (params.hasAnyAttribution || params.hasTrackingContext || params.hasMetaEventId || params.hasFacebookIds) {
+        return "origem_first_party";
+    }
+    return "sem_origem";
+}
+
+function buildIncompleteTrackingCauses(params: {
+    hasTrackingContext: boolean;
+    hasMetaEventId: boolean;
+    hasFacebookIds: boolean;
+    marketingConsent: boolean;
+    analyticsConsent: boolean;
+    scheduleStatus: string | null;
+}) {
+    const causes: string[] = [];
+    if (!params.hasTrackingContext) causes.push("sem_tracking_context");
+    if (!params.hasMetaEventId) causes.push("sem_meta_event_id");
+    if (!params.hasFacebookIds) causes.push("sem_fb_ids");
+    if (!params.marketingConsent) causes.push("marketing_sem_consentimento");
+    if (!params.analyticsConsent) causes.push("analytics_sem_consentimento");
+    if (params.scheduleStatus === "failed") causes.push("schedule_capi_falhou");
+    if (params.scheduleStatus === "skipped_no_config") causes.push("schedule_capi_sem_config");
+    return causes;
+}
+
+function normalizeMetaFailureReason(message: string | null | undefined, httpStatus: number | null | undefined) {
+    const normalized = (message ?? "").trim().toLowerCase();
+    if (normalized === "missing_meta_capi_config") return "missing_meta_capi_config";
+    if (normalized === "marketing_consent_denied") return "marketing_consent_denied";
+    if (normalized.includes("invalid oauth") || normalized.includes("cannot parse access token")) return "invalid_oauth_token";
+    if (normalized.includes("permission") || normalized.includes("not authorized")) return "meta_permission_denied";
+    if (normalized.includes("timeout") || normalized.includes("timed out")) return "meta_timeout";
+    if (normalized.includes("network") || normalized.includes("fetch failed") || normalized.includes("connection")) return "meta_network_error";
+    if (httpStatus === 429) return "meta_rate_limited";
+    if (httpStatus === 408 || httpStatus === 500 || httpStatus === 502 || httpStatus === 503 || httpStatus === 504) {
+        return "meta_transient_http_error";
+    }
+    if (httpStatus === 400) return "meta_bad_request";
+    if (httpStatus === 401 || httpStatus === 403) return "meta_auth_error";
+    return normalized || "delivery_failed";
+}
+
+function isRetryableMetaFailure(message: string | null | undefined, httpStatus: number | null | undefined) {
+    const reason = normalizeMetaFailureReason(message, httpStatus);
+    return new Set([
+        "meta_timeout",
+        "meta_network_error",
+        "meta_rate_limited",
+        "meta_transient_http_error",
+    ]).has(reason);
+}
+
 async function readMetaConfigStatus() {
     const pixelId =
         ((await getRuntimeSecret("META_PIXEL_ID")) ?? "").trim() ||
@@ -190,8 +252,10 @@ export async function GET(request: Request) {
 
     const url = new URL(request.url);
     const days = Math.min(parsePositiveInt(url.searchParams.get("days"), 30), 90);
+    const offsetDays = Math.min(parsePositiveInt(url.searchParams.get("offsetDays"), 0), 365);
     const limit = Math.min(parsePositiveInt(url.searchParams.get("limit"), 12), 50);
-    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    const untilMs = Date.now() - offsetDays * 24 * 60 * 60 * 1000;
+    const sinceMs = untilMs - days * 24 * 60 * 60 * 1000;
 
     const db = await getBookingDb();
     const config = await readMetaConfigStatus();
@@ -203,10 +267,10 @@ export async function GET(request: Request) {
                         tracking_context_json, meta_event_id, marketing_consent, analytics_consent, fbp, fbc, fbclid,
                         landing_page, referrer
                  FROM booking_requests
-                 WHERE created_at_ms >= ? AND status = 'confirmed'
+                 WHERE created_at_ms >= ? AND created_at_ms < ? AND status = 'confirmed'
                  ORDER BY created_at_ms DESC`,
             )
-            .bind(sinceMs)
+            .bind(sinceMs, untilMs)
             .all<BookingRequestRow>()
     ).results ?? [];
 
@@ -216,10 +280,10 @@ export async function GET(request: Request) {
                 `SELECT id, event_id, wa_click_id, placement, source, unit_slug, doctor_name, booking_id,
                         destination_url, redirect_url, page_url, page_path, tracking_context_json, created_at_ms
                  FROM whatsapp_click_events
-                 WHERE created_at_ms >= ?
+                 WHERE created_at_ms >= ? AND created_at_ms < ?
                  ORDER BY created_at_ms DESC`,
             )
-            .bind(sinceMs)
+            .bind(sinceMs, untilMs)
             .all<WhatsappClickRow>()
     ).results ?? [];
 
@@ -229,10 +293,10 @@ export async function GET(request: Request) {
                 `SELECT id, channel, event_name, event_id, endpoint, ok, http_status, response_body, error_message,
                         booking_id, wa_click_id, created_at_ms
                  FROM meta_capi_delivery_logs
-                 WHERE created_at_ms >= ?
+                 WHERE created_at_ms >= ? AND created_at_ms < ?
                  ORDER BY created_at_ms DESC`,
             )
-            .bind(sinceMs)
+            .bind(sinceMs, untilMs)
             .all<MetaDeliveryRow>()
     ).results ?? [];
 
@@ -245,51 +309,12 @@ export async function GET(request: Request) {
     let bookingsWithMarketingConsent = 0;
     let bookingsWithAnalyticsConsent = 0;
     let bookingsWithFbIdentifiers = 0;
-
-    const recentBookings = bookingRows.slice(0, limit).map((row) => {
-        const tracking = normalizeAttribution(safeJsonParse(row.tracking_context_json));
-        const hasTrackingContext = Boolean(row.tracking_context_json);
-        incrementMap(sourceCounts, normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" }));
-        incrementMap(campaignCounts, normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" }));
-        incrementMap(unitCounts, row.unit_slug);
-
-        if (row.tracking_context_json) bookingsWithTrackingContext += 1;
-        if (row.meta_event_id) bookingsWithMetaEventId += 1;
-        if ((row.marketing_consent ?? 0) === 1) bookingsWithMarketingConsent += 1;
-        if ((row.analytics_consent ?? 0) === 1) bookingsWithAnalyticsConsent += 1;
-        if (row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc) bookingsWithFbIdentifiers += 1;
-
-        return {
-            id: row.id,
-            createdAtMs: row.created_at_ms,
-            unitSlug: row.unit_slug,
-            doctorSlug: row.doctor_slug,
-            serviceId: row.service_id,
-            patient: maskPersonName(row.patient_name),
-            whatsapp: maskPhone(row.whatsapp),
-            metaEventId: row.meta_event_id ?? null,
-            marketingConsent: (row.marketing_consent ?? 0) === 1,
-            analyticsConsent: (row.analytics_consent ?? 0) === 1,
-            utmSource: normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" }),
-            utmCampaign: normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" }),
-            utmMedium: tracking.utmMedium,
-            landingPage: row.landing_page ?? tracking.landingPage,
-            hasFacebookIds: Boolean(row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc),
-        };
-    });
-
-    for (const row of bookingRows.slice(limit)) {
-        const tracking = normalizeAttribution(safeJsonParse(row.tracking_context_json));
-        const hasTrackingContext = Boolean(row.tracking_context_json);
-        incrementMap(sourceCounts, normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" }));
-        incrementMap(campaignCounts, normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" }));
-        incrementMap(unitCounts, row.unit_slug);
-        if (row.tracking_context_json) bookingsWithTrackingContext += 1;
-        if (row.meta_event_id) bookingsWithMetaEventId += 1;
-        if ((row.marketing_consent ?? 0) === 1) bookingsWithMarketingConsent += 1;
-        if ((row.analytics_consent ?? 0) === 1) bookingsWithAnalyticsConsent += 1;
-        if (row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc) bookingsWithFbIdentifiers += 1;
-    }
+    const coverageBucketCounts = new Map<string, number>([
+        ["sem_origem", 0],
+        ["origem_first_party", 0],
+        ["origem_meta_completa", 0],
+    ]);
+    const scheduleStatusByBookingId = new Map<string, string>();
 
     let whatsappClicksWithTracking = 0;
     const recentWhatsappClicks = whatsappRows.slice(0, limit).map((row) => {
@@ -322,6 +347,7 @@ export async function GET(request: Request) {
     let capiContactSkippedConsent = 0;
     const capiIssueReasonCounts = new Map<string, number>();
     const recentCapiIssues = [];
+    const recentRetryCandidates = [];
 
     for (const row of capiRows) {
         const ok = row.ok === 1;
@@ -333,6 +359,12 @@ export async function GET(request: Request) {
             else if (skippedNoConfig) capiScheduleSkippedNoConfig += 1;
             else if (skippedConsent) capiScheduleSkippedConsent += 1;
             else capiScheduleFailed += 1;
+            if (row.booking_id && !scheduleStatusByBookingId.has(row.booking_id)) {
+                scheduleStatusByBookingId.set(
+                    row.booking_id,
+                    ok ? "ok" : skippedNoConfig ? "skipped_no_config" : skippedConsent ? "skipped_consent" : "failed",
+                );
+            }
         }
         if (row.event_name === "Contact") {
             if (ok) capiContactOk += 1;
@@ -341,7 +373,7 @@ export async function GET(request: Request) {
             else capiContactFailed += 1;
         }
         if (!ok) {
-            incrementMap(capiIssueReasonCounts, errorReason);
+            incrementMap(capiIssueReasonCounts, normalizeMetaFailureReason(row.error_message, row.http_status));
         }
         if (!ok && recentCapiIssues.length < limit) {
             recentCapiIssues.push({
@@ -353,9 +385,110 @@ export async function GET(request: Request) {
                 waClickId: row.wa_click_id,
                 httpStatus: row.http_status,
                 errorMessage: row.error_message,
+                normalizedReason: normalizeMetaFailureReason(row.error_message, row.http_status),
+                retryable: isRetryableMetaFailure(row.error_message, row.http_status),
+            });
+        }
+        if (!ok && isRetryableMetaFailure(row.error_message, row.http_status) && recentRetryCandidates.length < limit) {
+            recentRetryCandidates.push({
+                id: row.id,
+                createdAtMs: row.created_at_ms,
+                eventName: row.event_name,
+                eventId: row.event_id,
+                bookingId: row.booking_id,
+                waClickId: row.wa_click_id,
+                httpStatus: row.http_status,
+                errorMessage: row.error_message,
+                normalizedReason: normalizeMetaFailureReason(row.error_message, row.http_status),
             });
         }
     }
+
+    const normalizedBookings = bookingRows.map((row) => {
+        const tracking = normalizeAttribution(safeJsonParse(row.tracking_context_json));
+        const hasTrackingContext = Boolean(row.tracking_context_json);
+        const marketingConsent = (row.marketing_consent ?? 0) === 1;
+        const analyticsConsent = (row.analytics_consent ?? 0) === 1;
+        const hasMetaEventId = Boolean(row.meta_event_id);
+        const hasFacebookIds = Boolean(row.fbp || row.fbc || row.fbclid || tracking.fbclid || tracking.fbp || tracking.fbc);
+        const utmSource = normalizeDashboardLabel({ value: tracking.utmSource, hasTrackingContext, emptyLabel: "direto" });
+        const utmCampaign = normalizeDashboardLabel({ value: tracking.utmCampaign, hasTrackingContext, emptyLabel: "sem_campanha" });
+        const utmMedium = tracking.utmMedium;
+        const landingPage = row.landing_page ?? tracking.landingPage;
+        const referrer = row.referrer ?? null;
+        const hasAnyAttribution =
+            hasTrackingContext ||
+            hasMetaEventId ||
+            hasFacebookIds ||
+            Boolean((landingPage ?? "").trim()) ||
+            Boolean((referrer ?? "").trim()) ||
+            (utmSource !== "sem_tracking_context" && utmSource !== "direto") ||
+            (utmCampaign !== "sem_tracking_context" && utmCampaign !== "sem_campanha");
+        const coverageBucket = classifyCoverageBucket({
+            hasTrackingContext,
+            hasMetaEventId,
+            hasFacebookIds,
+            marketingConsent,
+            hasAnyAttribution,
+        });
+        const scheduleStatus = scheduleStatusByBookingId.get(row.id) ?? null;
+        const incompleteCauses = buildIncompleteTrackingCauses({
+            hasTrackingContext,
+            hasMetaEventId,
+            hasFacebookIds,
+            marketingConsent,
+            analyticsConsent,
+            scheduleStatus,
+        });
+
+        incrementMap(sourceCounts, utmSource);
+        incrementMap(campaignCounts, utmCampaign);
+        incrementMap(unitCounts, row.unit_slug);
+
+        if (hasTrackingContext) bookingsWithTrackingContext += 1;
+        if (hasMetaEventId) bookingsWithMetaEventId += 1;
+        if (marketingConsent) bookingsWithMarketingConsent += 1;
+        if (analyticsConsent) bookingsWithAnalyticsConsent += 1;
+        if (hasFacebookIds) bookingsWithFbIdentifiers += 1;
+        coverageBucketCounts.set(coverageBucket, (coverageBucketCounts.get(coverageBucket) ?? 0) + 1);
+
+        return {
+            id: row.id,
+            createdAtMs: row.created_at_ms,
+            unitSlug: row.unit_slug,
+            doctorSlug: row.doctor_slug,
+            serviceId: row.service_id,
+            patient: maskPersonName(row.patient_name),
+            whatsapp: maskPhone(row.whatsapp),
+            metaEventId: row.meta_event_id ?? null,
+            marketingConsent,
+            analyticsConsent,
+            utmSource,
+            utmCampaign,
+            utmMedium,
+            landingPage,
+            referrer,
+            hasFacebookIds,
+            coverageBucket,
+            incompleteCauses,
+            scheduleStatus,
+        };
+    });
+
+    const recentBookings = normalizedBookings.slice(0, limit);
+    const recentIncompleteBookings = normalizedBookings
+        .filter((row) => row.coverageBucket !== "origem_meta_completa" || row.incompleteCauses.length > 0)
+        .slice(0, limit)
+        .map((row) => ({
+            ...row,
+            primaryCause: row.incompleteCauses[0] ?? "sem_causa_normalizada",
+        }));
+
+    const coverageBuckets = [
+        { bucket: "sem_origem", label: "Sem origem", count: coverageBucketCounts.get("sem_origem") ?? 0 },
+        { bucket: "origem_first_party", label: "Origem first-party", count: coverageBucketCounts.get("origem_first_party") ?? 0 },
+        { bucket: "origem_meta_completa", label: "Origem Meta completa", count: coverageBucketCounts.get("origem_meta_completa") ?? 0 },
+    ];
 
     return json({
         ok: true,
@@ -364,6 +497,8 @@ export async function GET(request: Request) {
         window: {
             days,
             sinceMs,
+            untilMs,
+            offsetDays,
         },
         summary: {
             confirmedBookings: bookingRows.length,
@@ -388,8 +523,11 @@ export async function GET(request: Request) {
         topCampaigns: sortMapEntries(campaignCounts, "utmCampaign").slice(0, 6),
         byUnit: sortMapEntries(unitCounts, "unitSlug").slice(0, 6),
         recentBookings,
+        recentIncompleteBookings,
         recentWhatsappClicks,
+        coverageBuckets,
         capiIssueReasons: sortMapEntries(capiIssueReasonCounts, "reason").slice(0, 8),
         recentCapiIssues,
+        recentRetryCandidates,
     });
 }
