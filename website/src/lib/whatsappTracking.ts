@@ -1,4 +1,5 @@
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
+import { mergeCampaignParamsIntoUrl } from "@/lib/mergeCampaignParams";
 import type { TrackingContext } from "@/lib/attribution";
 
 export type WhatsappTrackingPayload = {
@@ -80,6 +81,26 @@ export function buildWhatsappRedirectHref(params: {
     }
 
     return `${url.pathname}${url.search}`;
+}
+
+export function buildWhatsappRedirectHrefFromRequest(params: {
+    requestUrl: string;
+    rawUrl?: string | null;
+    phone?: string | null;
+    text?: string | null;
+    tracking?: WhatsappTrackingPayload;
+}): string | null {
+    const destinationUrl =
+        normalizeUrl(params.rawUrl) ??
+        (params.phone ? buildWhatsAppUrl(params.phone, params.text ?? "") : null);
+    if (!destinationUrl) return null;
+    if (!isSupportedWhatsappUrl(destinationUrl)) return null;
+
+    const mergedDestination = mergeCampaignParamsIntoUrl(destinationUrl, params.requestUrl);
+    return buildWhatsappRedirectHref({
+        rawUrl: mergedDestination,
+        tracking: params.tracking,
+    });
 }
 
 export function buildWhatsappClickToken(waClickId: string): string {

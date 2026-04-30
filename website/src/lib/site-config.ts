@@ -1,4 +1,9 @@
 export type SiteKey = "espacofacial" | "skincos";
+export type OfficialHostFamily =
+  | "espacofacial-public"
+  | "espacofacial-external"
+  | "skincos"
+  | "unknown";
 
 export type SiteConfig = {
   key: SiteKey;
@@ -16,7 +21,24 @@ export type SiteConfig = {
   allowedPaths: ReadonlySet<string>;
 };
 
-const SKINCOS_HOSTS = new Set(["skincos.com.br", "www.skincos.com.br"]);
+export const ESPACOFACIAL_PUBLIC_HOSTS = new Set([
+  "espacofacial.com",
+  "www.espacofacial.com",
+]);
+
+export const ESPACOFACIAL_EXTERNAL_HOSTS = new Set([
+  "espacofacial.com.br",
+  "www.espacofacial.com.br",
+  "app.espacofacial.com.br",
+]);
+
+export const SKINCOS_HOSTS = new Set([
+  "skincos.com.br",
+  "www.skincos.com.br",
+  "crm.skincos.com.br",
+  "orb.skincos.com.br",
+  "wa.skincos.com.br",
+]);
 
 const ESPACOFACIAL_ALLOWED_PATHS = new Set<string>(["*"]);
 
@@ -41,6 +63,15 @@ function normalizeHost(host: string | null | undefined): string {
     .trim()
     .toLowerCase()
     .replace(/:\d+$/, "");
+}
+
+export function getOfficialHostFamily(host: string | null | undefined): OfficialHostFamily {
+  const normalizedHost = normalizeHost(host);
+  if (!normalizedHost) return "unknown";
+  if (SKINCOS_HOSTS.has(normalizedHost)) return "skincos";
+  if (ESPACOFACIAL_PUBLIC_HOSTS.has(normalizedHost)) return "espacofacial-public";
+  if (ESPACOFACIAL_EXTERNAL_HOSTS.has(normalizedHost)) return "espacofacial-external";
+  return "unknown";
 }
 
 export function getSiteKeyFromHost(host: string | null | undefined): SiteKey {

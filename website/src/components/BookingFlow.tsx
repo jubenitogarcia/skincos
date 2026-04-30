@@ -3,16 +3,19 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDigitalJourneyUnits, units } from "@/data/units";
 import { services, type Service } from "@/data/services";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { useTeamDirectory } from "@/hooks/useTeamDirectory";
 import { clearBookingDraft, persistBookingDraft, readBookingDraft, type BookingDraftState } from "@/lib/bookingDraft";
+import { COOKIE_CONSENT_EVENT, dispatchConsent, getCookieConsent, setCookieConsent, type CookieConsent } from "@/lib/cookieConsent";
+import { shouldShowBookingMeasurementOptIn } from "@/lib/bookingConsent";
 import { doctorSlugFromTeamMember, doctorSlugMatchesQuery, normalizeDoctorSlug } from "@/lib/doctorSlug";
 import { trackBookingFunnelStep, trackBookingRequestSubmitted } from "@/lib/leadTracking";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
-import { buildTrackingContextFromBrowser } from "@/lib/campaign";
+import { buildTrackingContextFromBrowser, persistAttributionSnapshot } from "@/lib/campaign";
 import { createMetaEventId, trackMetaStandardEvent } from "@/lib/metaBrowser";
 import TurnstileWidget from "@/components/TurnstileWidget";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
@@ -387,6 +390,9 @@ export default function BookingFlow() {
 
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
+    const [privacyAccepted, setPrivacyAccepted] = useState(false);
+    const [measurementOptIn, setMeasurementOptIn] = useState(false);
+    const [storedConsent, setStoredConsent] = useState<CookieConsent | null>(() => getCookieConsent());
     const [dateAvailability, setDateAvailability] = useState<Record<string, boolean>>({});
 
     const [submitted, setSubmitted] = useState<SubmittedReservation | null>(null);
@@ -405,6 +411,20 @@ export default function BookingFlow() {
     const isReservationDetailsView = step === "submitted" && !!submitted && bookingIdQuery.length > 0;
 
     const allowedUnitSlugs = useMemo(() => new Set(getDigitalJourneyUnits().map((unit) => unit.slug)), []);
+
+    useEffect(() => {
+        setStoredConsent(getCookieConsent());
+    }, []);
+
+    useEffect(() => {
+        function onConsent(event: Event) {
+            const detail = (event as CustomEvent<CookieConsent>).detail;
+            setStoredConsent(detail ?? getCookieConsent());
+        }
+
+        window.addEventListener(COOKIE_CONSENT_EVENT, onConsent);
+        return () => window.removeEventListener(COOKIE_CONSENT_EVENT, onConsent);
+    }, []);
 
     useEffect(() => {
         const draft = readBookingDraft();
@@ -859,9 +879,30 @@ export default function BookingFlow() {
             trackBookingFunnelStep({ step: "submit_error", errorReason: "missing_whatsapp", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
             return;
         }
+        if (!privacyAccepted) {
+            setSubmitError("Confirme a Política de Privacidade e os Termos de Uso para concluir o agendamento.");
+            trackBookingFunnelStep({ step: "submit_error", errorReason: "privacy_unchecked", unitSlug, doctorSlug: effectiveDoctor.slug, serviceId: primaryService.id, date: dateKey, time: timeKey, detailsStage: "contact" });
+            return;
+        }
 
         setSubmitting(true);
         try {
+            if (showMeasurementOptIn && measurementOptIn) {
+                const nextConsent: CookieConsent = { analytics: true, marketing: true };
+                setCookieConsent(nextConsent);
+                dispatchConsent(nextConsent);
+                setStoredConsent(nextConsent);
+                if (typeof window !== "undefined") {
+                    persistAttributionSnapshot({
+                        searchParams: new URLSearchParams(window.location.search),
+                        pageUrl: window.location.href,
+                        pagePath: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+                        referrer: document.referrer,
+                        consent: nextConsent,
+                    });
+                }
+            }
+
             const metaEventId = createMetaEventId("schedule");
             const trackingContext = buildTrackingContextFromBrowser({
                 pageUrl: typeof window !== "undefined" ? window.location.href : null,
@@ -1102,12 +1143,14 @@ export default function BookingFlow() {
     const whatsappDigits = whatsapp.replace(/\D/g, "");
     const whatsappSeemsValid = whatsappDigits.length >= 10;
     const hasTurnstileWidget = !!turnstileSiteKey;
+    const showMeasurementOptIn = shouldShowBookingMeasurementOptIn(storedConsent);
     const canSubmit =
         !!selectedSlot &&
         !!patientName.trim() &&
         !!patientGender &&
         emailSeemsValid &&
-        whatsappSeemsValid;
+        whatsappSeemsValid &&
+        privacyAccepted;
 
     const showDetailsModal = step === "details" && !!unitSlug && !!primaryService && !!dateKey && !!timeKey;
 
@@ -1122,6 +1165,9 @@ export default function BookingFlow() {
 
     useEffect(() => {
         if (!showDetailsModal) return;
+        setPrivacyAccepted(false);
+        setMeasurementOptIn(false);
+        setStoredConsent(getCookieConsent());
         const timer = window.setTimeout(() => {
             patientNameInputRef.current?.focus();
         }, 0);
@@ -1780,6 +1826,45 @@ export default function BookingFlow() {
                             {!whatsappSeemsValid && whatsapp.length > 0 ? (
                                 <div className="bookingFlow__fieldError">Informe DDD + número (ex.: (51) 99999-9999).</div>
                             ) : null}
+
+                            <div className="bookingFlow__consentPanel">
+                                <label className="bookingFlow__consentItem bookingFlow__consentItem--required">
+                                    <input
+                                        type="checkbox"
+                                        checked={privacyAccepted}
+                                        onChange={(event) => setPrivacyAccepted(event.target.checked)}
+                                    />
+                                    <span>
+                                        Li e concordo com a{" "}
+                                        <Link href="/privacidade" target="_blank" rel="noreferrer">
+                                            Política de Privacidade
+                                        </Link>{" "}
+                                        e com os{" "}
+                                        <Link href="/termos" target="_blank" rel="noreferrer">
+                                            Termos de Uso
+                                        </Link>{" "}
+                                        para realizar meu agendamento.
+                                    </span>
+                                </label>
+
+                                {showMeasurementOptIn ? (
+                                    <label className="bookingFlow__consentItem">
+                                        <input
+                                            type="checkbox"
+                                            checked={measurementOptIn}
+                                            onChange={(event) => setMeasurementOptIn(event.target.checked)}
+                                        />
+                                        <span>
+                                            Autorizo o uso de cookies e tecnologias de análise e marketing para medir a
+                                            origem desta reserva, avaliar campanhas e melhorar minha experiência.
+                                        </span>
+                                    </label>
+                                ) : null}
+                            </div>
+
+                            <div className="small" style={{ color: "var(--muted)" }}>
+                                O botão de confirmação só é liberado depois do aceite de privacidade.
+                            </div>
 
                             {hasTurnstileWidget ? (
                                 <div style={{ display: "grid", gap: 8 }}>

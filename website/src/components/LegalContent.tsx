@@ -88,16 +88,17 @@ export function SkincosHubPage() {
           <div className="card" style={{ padding: 18 }}>
             <h2 style={{ marginTop: 0, fontSize: 18 }}>Domínio institucional</h2>
             <p style={{ marginBottom: 0 }}>
-              <strong>skincos.com.br</strong> concentra a apresentação pública e as páginas
-              jurídicas do app.
+              <strong>skincos.com.br</strong> concentra as páginas institucionais e jurídicas da
+              SKINCOS e do app.
             </p>
           </div>
 
           <div className="card" style={{ padding: 18 }}>
             <h2 style={{ marginTop: 0, fontSize: 18 }}>Domínio operacional</h2>
             <p style={{ marginBottom: 0 }}>
-              <strong>orb.skincos.com.br</strong> é usado como subdomínio técnico para o ambiente
-              operacional e integrações em desenvolvimento.
+              <strong>orb.skincos.com.br</strong>, <strong>crm.skincos.com.br</strong> e{" "}
+              <strong>wa.skincos.com.br</strong> são usados como subdomínios técnicos e
+              operacionais da SKINCOS.
             </p>
           </div>
 
@@ -190,9 +191,10 @@ export function SkincosPrivacyContent() {
           Facebook, Instagram, Threads e WhatsApp, quando operadas pela SKINCOS.
         </p>
         <p>
-          O subdomínio <strong>orb.skincos.com.br</strong> pode ser utilizado como ambiente técnico
-          e operacional do app. As páginas jurídicas permanecem vinculadas preferencialmente ao
-          domínio principal.
+          Os subdomínios <strong>orb.skincos.com.br</strong>, <strong>crm.skincos.com.br</strong>{" "}
+          e <strong>wa.skincos.com.br</strong> podem ser utilizados como ambientes técnicos e
+          operacionais. As páginas jurídicas permanecem vinculadas preferencialmente ao domínio
+          principal.
         </p>
 
         <h2>3. Quais dados podem ser tratados</h2>
