@@ -48,12 +48,13 @@ function readJsonPathString(input, paths) {
     return null
 }
 
-async function fetchWebsiteTrackingOverview({ days, limit }) {
+async function fetchWebsiteTrackingOverview({ days, limit, offsetDays = 0 }) {
     const baseUrl = sanitizeBaseUrl(process.env.TRACKING_WEBSITE_BASE_URL)
     const token = String(process.env.TRACKING_DASHBOARD_TOKEN || '').trim()
     const requestUrl = new URL('/api/tracking/dashboard', baseUrl)
     requestUrl.searchParams.set('days', String(days))
     requestUrl.searchParams.set('limit', String(limit))
+    requestUrl.searchParams.set('offsetDays', String(offsetDays))
 
     const headers = { accept: 'application/json' }
     if (token) headers.authorization = `Bearer ${token}`
@@ -88,6 +89,263 @@ async function fetchWebsiteTrackingOverview({ days, limit }) {
             sourceUrl: requestUrl.toString(),
             error: error instanceof Error ? error.message : 'website_fetch_failed',
         }
+    }
+}
+
+function toNumber(value) {
+    const parsed = Number(value || 0)
+    return Number.isFinite(parsed) ? parsed : 0
+}
+
+function percent(numerator, denominator) {
+    if (!denominator) return 0
+    return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)))
+}
+
+function normalizeCapiIssueReason(reason) {
+    return String(reason || '').trim() || 'delivery_failed'
+}
+
+function buildCoverage(summary = {}) {
+    const confirmedBookings = toNumber(summary.confirmedBookings)
+    const whatsappClicks = toNumber(summary.whatsappClicks)
+    const scheduleOk = toNumber(summary.capiScheduleOk)
+    const scheduleFailed = toNumber(summary.capiScheduleFailed)
+    const contactOk = toNumber(summary.capiContactOk)
+    const contactFailed = toNumber(summary.capiContactFailed)
+
+    return {
+        confirmedBookings,
+        whatsappClicks,
+        trackingContext: percent(toNumber(summary.bookingsWithTrackingContext), confirmedBookings),
+        metaEventId: percent(toNumber(summary.bookingsWithMetaEventId), confirmedBookings),
+        facebookIds: percent(toNumber(summary.bookingsWithFacebookIds), confirmedBookings),
+        marketingConsent: percent(toNumber(summary.bookingsWithMarketingConsent), confirmedBookings),
+        analyticsConsent: percent(toNumber(summary.bookingsWithAnalyticsConsent), confirmedBookings),
+        whatsappTracking: percent(toNumber(summary.whatsappClicksWithTrackingContext), whatsappClicks),
+        scheduleDelivery: percent(scheduleOk, scheduleOk + scheduleFailed),
+        contactDelivery: percent(contactOk, contactOk + contactFailed),
+    }
+}
+
+function buildDelta(currentValue, previousValue) {
+    return Math.round((currentValue - previousValue) * 10) / 10
+}
+
+function pushAlert(alerts, alert) {
+    alerts.push({
+        severity: alert.severity,
+        code: alert.code,
+        title: alert.title,
+        message: alert.message,
+    })
+}
+
+function buildOperationalAlerts({
+    website,
+    previousWebsite,
+    coverage,
+    previousCoverage,
+    summary,
+    recentRetryCandidates,
+}) {
+    const alerts = []
+
+    if (!website.available) {
+        pushAlert(alerts, {
+            severity: 'critical',
+            code: 'website_unavailable',
+            title: 'Site indisponível para observabilidade',
+            message: `O CRM não conseguiu ler o dashboard do website: ${website.error || 'unavailable'}.`,
+        })
+        return alerts
+    }
+
+    const config = website.data?.config || {}
+    if (!config.metaPixelConfigured || !config.metaCapiConfigured) {
+        pushAlert(alerts, {
+            severity: 'critical',
+            code: 'meta_runtime_not_configured',
+            title: 'Meta Pixel ou CAPI sem configuração válida',
+            message: 'O runtime do site ainda não está com Pixel e CAPI completos para produção.',
+        })
+    }
+
+    if (coverage.confirmedBookings > 0 && coverage.trackingContext < 80) {
+        pushAlert(alerts, {
+            severity: coverage.trackingContext < 50 ? 'critical' : 'warning',
+            code: 'low_tracking_context_coverage',
+            title: 'Cobertura baixa de tracking_context',
+            message: `${coverage.trackingContext}% dos bookings confirmados chegaram com tracking_context no período atual.`,
+        })
+    }
+
+    if (coverage.confirmedBookings > 0 && coverage.facebookIds < 70) {
+        pushAlert(alerts, {
+            severity: coverage.facebookIds < 30 ? 'critical' : 'warning',
+            code: 'low_facebook_ids_coverage',
+            title: 'Cobertura baixa de identificadores Facebook',
+            message: `${coverage.facebookIds}% dos bookings confirmados chegaram com fbp/fbc/fbclid no período atual.`,
+        })
+    }
+
+    if (coverage.confirmedBookings > 0 && coverage.marketingConsent < 60) {
+        pushAlert(alerts, {
+            severity: coverage.marketingConsent < 30 ? 'critical' : 'warning',
+            code: 'low_marketing_consent',
+            title: 'Consentimento de marketing abaixo do esperado',
+            message: `${coverage.marketingConsent}% dos bookings confirmados tinham consentimento de marketing no período atual.`,
+        })
+    }
+
+    if (toNumber(summary.capiScheduleFailed) > 0) {
+        pushAlert(alerts, {
+            severity: coverage.scheduleDelivery < 70 ? 'critical' : 'warning',
+            code: 'schedule_capi_failures',
+            title: 'Falhas no evento Schedule via CAPI',
+            message: `${toNumber(summary.capiScheduleFailed)} envios de Schedule falharam no período atual.`,
+        })
+    }
+
+    if (toNumber(summary.capiContactFailed) > 0) {
+        pushAlert(alerts, {
+            severity: coverage.contactDelivery < 70 ? 'critical' : 'warning',
+            code: 'contact_capi_failures',
+            title: 'Falhas no evento Contact via CAPI',
+            message: `${toNumber(summary.capiContactFailed)} envios de Contact falharam no período atual.`,
+        })
+    }
+
+    if (recentRetryCandidates.length > 0) {
+        pushAlert(alerts, {
+            severity: 'warning',
+            code: 'meta_retry_candidates',
+            title: 'Falhas retryable aguardando reprocessamento',
+            message: `${recentRetryCandidates.length} falhas recentes parecem transitórias e podem ser reprocessadas com segurança.`,
+        })
+    }
+
+    if (previousWebsite?.available && previousCoverage.confirmedBookings > 0 && coverage.confirmedBookings > 0) {
+        const trackingDrop = buildDelta(coverage.trackingContext, previousCoverage.trackingContext)
+        const facebookDrop = buildDelta(coverage.facebookIds, previousCoverage.facebookIds)
+        const marketingDrop = buildDelta(coverage.marketingConsent, previousCoverage.marketingConsent)
+
+        if (trackingDrop <= -20) {
+            pushAlert(alerts, {
+                severity: 'warning',
+                code: 'tracking_context_drop',
+                title: 'Queda brusca na cobertura de tracking_context',
+                message: `A cobertura caiu ${Math.abs(trackingDrop)} pontos percentuais contra a janela anterior equivalente.`,
+            })
+        }
+
+        if (facebookDrop <= -20) {
+            pushAlert(alerts, {
+                severity: 'warning',
+                code: 'facebook_ids_drop',
+                title: 'Queda brusca na cobertura de fbp/fbc/fbclid',
+                message: `A cobertura de identificadores Facebook caiu ${Math.abs(facebookDrop)} pontos percentuais contra a janela anterior.`,
+            })
+        }
+
+        if (marketingDrop <= -20) {
+            pushAlert(alerts, {
+                severity: 'warning',
+                code: 'marketing_consent_drop',
+                title: 'Queda brusca no consentimento de marketing',
+                message: `A taxa de consentimento caiu ${Math.abs(marketingDrop)} pontos percentuais contra a janela anterior.`,
+            })
+        }
+    }
+
+    return alerts
+}
+
+function buildHealthStatus(alerts) {
+    if (alerts.some((alert) => alert.severity === 'critical')) {
+        return {
+            status: 'critical',
+            label: 'crítico',
+            summary: 'A instrumentação existe, mas há bloqueios sérios de cobertura ou entrega que pedem ação imediata.',
+        }
+    }
+    if (alerts.some((alert) => alert.severity === 'warning')) {
+        return {
+            status: 'degraded',
+            label: 'degradado',
+            summary: 'O tracking está operacional, mas a cobertura e a qualidade ainda precisam de correção ou vigilância.',
+        }
+    }
+    return {
+        status: 'healthy',
+        label: 'saudável',
+        summary: 'A camada de tracking do site está sem alertas críticos no período consultado.',
+    }
+}
+
+function buildReconciliation(websiteData = {}) {
+    const buckets = Array.isArray(websiteData.coverageBuckets) ? websiteData.coverageBuckets : []
+    const total = buckets.reduce((acc, item) => acc + toNumber(item.count), 0)
+    return {
+        buckets: buckets.map((item) => ({
+            bucket: item.bucket,
+            label: item.label,
+            count: toNumber(item.count),
+            percent: percent(toNumber(item.count), total),
+        })),
+        incompleteBookings: Array.isArray(websiteData.recentIncompleteBookings) ? websiteData.recentIncompleteBookings : [],
+        retryCandidates: Array.isArray(websiteData.recentRetryCandidates) ? websiteData.recentRetryCandidates : [],
+    }
+}
+
+function buildGovernance() {
+    return {
+        campaignRule: 'Toda campanha paga com objetivo de booking deve apontar para https://espacofacial.com, sempre com utm_source, utm_medium, utm_campaign e utm_content.',
+        validExamples: [
+            'https://espacofacial.com/agendamento?utm_source=meta&utm_medium=paid_social&utm_campaign=bss_botox&utm_content=video_a',
+            'https://espacofacial.com/novohamburgo?utm_source=meta&utm_medium=paid_social&utm_campaign=nh_avaliacao&utm_content=carrossel_1',
+        ],
+        invalidExamples: [
+            'https://espacofacial.com.br/agendamento?utm_source=meta',
+            'https://wa.me/message/MT7UGL6U6KYWA1',
+            'https://espacofacial.com/agendamento',
+        ],
+        crossDomainAllowlist: [
+            { host: 'espacofacial.com.br', purpose: 'franquia oficial', allowedFromPublicSite: true },
+            { host: 'app.espacofacial.com.br', purpose: 'aplicação oficial externa da franquia', allowedFromPublicSite: true },
+            { host: 'crm.skincos.com.br', purpose: 'CRM interno e observabilidade', allowedFromPublicSite: false },
+            { host: 'orb.skincos.com.br', purpose: 'orquestração/n8n', allowedFromPublicSite: false },
+            { host: 'wa.skincos.com.br', purpose: 'stack técnica de WhatsApp', allowedFromPublicSite: false },
+        ],
+    }
+}
+
+function buildValidationCadence() {
+    return {
+        smoke: 'a cada deploy',
+        functional: 'semanal',
+        coverageAudit: 'quinzenal',
+        recurringChecks: [
+            'entrada com utm_source, utm_medium, utm_campaign e utm_content',
+            'entrada com fbclid',
+            'consentimento aceito e recusado',
+            'booking completo até confirmação',
+            'clique de WhatsApp via /api/whatsapp/redirect',
+            'deduplicação browser/server do Schedule',
+        ],
+    }
+}
+
+function buildWhatsappContract() {
+    return {
+        status: 'pending_n8n_phase',
+        lifecycle: [
+            'conversation_started',
+            'appointment_created',
+            'appointment_confirmed',
+            'sale_closed',
+        ],
+        description: 'Quando a frente n8n voltar a ser prioridade, o CRM deve exibir claramente clique no site, conversa aberta e desfecho final por atendimento.',
     }
 }
 
@@ -303,17 +561,32 @@ export async function getTrackingDashboardOverview(params = {}) {
     }
 
     const sinceIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-    const [website, whatsapp] = await Promise.all([
-        fetchWebsiteTrackingOverview({ days, limit }),
+    const [website, previousWebsite, whatsapp] = await Promise.all([
+        fetchWebsiteTrackingOverview({ days, limit, offsetDays: 0 }),
+        fetchWebsiteTrackingOverview({ days, limit: Math.min(limit, 5), offsetDays: days }),
         fetchWhatsappAttributionOverview({ sinceIso, limit }),
     ])
 
     const warnings = []
     if (!website.available) warnings.push(`website:${website.error || 'unavailable'}`)
+    if (!previousWebsite.available) warnings.push(`website_previous:${previousWebsite.error || 'unavailable'}`)
     if (!whatsapp.available) warnings.push(`whatsapp:${whatsapp.error || 'unavailable'}`)
 
     const websiteSummary = website.available ? website.data?.summary || {} : {}
     const whatsappSummary = whatsapp.available ? whatsapp.data?.summary || {} : {}
+    const previousWebsiteSummary = previousWebsite.available ? previousWebsite.data?.summary || {} : {}
+    const coverage = buildCoverage(websiteSummary)
+    const previousCoverage = buildCoverage(previousWebsiteSummary)
+    const reconciliation = buildReconciliation(website.data || {})
+    const alerts = buildOperationalAlerts({
+        website,
+        previousWebsite,
+        coverage,
+        previousCoverage,
+        summary: websiteSummary,
+        recentRetryCandidates: reconciliation.retryCandidates,
+    })
+    const health = buildHealthStatus(alerts)
 
     const funnel = {
         siteConfirmedBookings: Number(websiteSummary.confirmedBookings || 0),
@@ -329,8 +602,17 @@ export async function getTrackingDashboardOverview(params = {}) {
         partial: warnings.length > 0,
         warnings,
         website,
+        previousWebsite,
         whatsapp,
         funnel,
+        coverage,
+        previousCoverage,
+        alerts,
+        health,
+        reconciliation,
+        governance: buildGovernance(),
+        validationCadence: buildValidationCadence(),
+        whatsappContract: buildWhatsappContract(),
     }
 
     cache = {
