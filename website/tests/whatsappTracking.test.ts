@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWhatsappRedirectHref, buildWhatsappClickToken, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
+import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
 
 test("buildWhatsappRedirectHref wraps supported whatsapp destination with tracking params", () => {
     const href = buildWhatsappRedirectHref({
@@ -27,6 +27,23 @@ test("parseWhatsappDestination extracts phone and text from api.whatsapp.com", (
         phone: "5551999999999",
         text: "Oi teste",
     });
+});
+
+test("buildWhatsappRedirectHrefFromRequest preserves attribution params on the destination", () => {
+    const href = buildWhatsappRedirectHrefFromRequest({
+        requestUrl: "https://espacofacial.com/novohamburgo/faleconosco?utm_source=meta&utm_campaign=abril&fbclid=fbclid_123",
+        rawUrl: "https://api.whatsapp.com/send?phone=5551999999999&text=Oi",
+        tracking: {
+            placement: "legacy_redirect",
+            unitSlug: "novo-hamburgo",
+            source: "legacy_redirect:/novohamburgo/faleconosco",
+        },
+    });
+
+    assert.equal(
+        href,
+        "/api/whatsapp/redirect?dest=https%3A%2F%2Fapi.whatsapp.com%2Fsend%3Fphone%3D5551999999999%26text%3DOi%26utm_source%3Dmeta%26utm_campaign%3Dabril%26fbclid%3Dfbclid_123&placement=legacy_redirect&unit_slug=novo-hamburgo&source=legacy_redirect%3A%2Fnovohamburgo%2Ffaleconosco",
+    );
 });
 
 test("injectWhatsappToken appends short token once", () => {

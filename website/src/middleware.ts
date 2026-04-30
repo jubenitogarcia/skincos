@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isPathAllowedForSite } from "@/lib/site-config";
+import { buildWhatsappRedirectHrefFromRequest, isSupportedWhatsappUrl } from "@/lib/whatsappTracking";
+import { mergeCampaignParamsIntoUrl } from "@/lib/mergeCampaignParams";
 
 function isPublicAsset(pathname: string): boolean {
     return (
@@ -20,6 +22,16 @@ function normalizeRedirectPath(pathname: string): string {
     }
     const trimmed = decoded.replace(/\/+$/, "");
     return (trimmed.length ? trimmed : "/").toLowerCase();
+}
+
+function inferLegacyWhatsappUnitSlug(pathname: string): string | null {
+    if (pathname.startsWith("/barrashoppingsul") || pathname.startsWith("/bss") || pathname.endsWith("/bss")) {
+        return "barrashoppingsul";
+    }
+    if (pathname.startsWith("/novohamburgo") || pathname.startsWith("/novo-hamburgo") || pathname.startsWith("/nh") || pathname.endsWith("/nh")) {
+        return "novo-hamburgo";
+    }
+    return null;
 }
 
 export function middleware(req: NextRequest) {
@@ -179,6 +191,24 @@ export function middleware(req: NextRequest) {
 
         const legacyDest = legacyRedirects[normalizedPath];
         if (legacyDest) {
+            const mergedLegacyDest = mergeCampaignParamsIntoUrl(legacyDest, req.url);
+            if (isSupportedWhatsappUrl(mergedLegacyDest)) {
+                const trackedRedirect = buildWhatsappRedirectHrefFromRequest({
+                    requestUrl: req.url,
+                    rawUrl: legacyDest,
+                    tracking: {
+                        placement: "legacy_redirect",
+                        unitSlug: inferLegacyWhatsappUnitSlug(normalizedPath),
+                        source: `legacy_redirect:${normalizedPath}`,
+                        pageUrl: req.url,
+                    },
+                });
+
+                if (trackedRedirect) {
+                    return NextResponse.redirect(new URL(trackedRedirect, req.url), { status: 301 });
+                }
+            }
+
             const destUrl = new URL(legacyDest);
             if (req.nextUrl.search) {
                 const destParams = new URLSearchParams(destUrl.search);

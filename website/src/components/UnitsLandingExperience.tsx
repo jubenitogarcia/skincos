@@ -3,8 +3,10 @@
 import Link from "next/link";
 import ExperienceTracker from "@/components/ExperienceTracker";
 import TrackedBookingLink from "@/components/TrackedBookingLink";
+import TrackedWhatsappLink from "@/components/TrackedWhatsappLink";
 import { trackExperienceShortcutClick } from "@/lib/leadTracking";
 import { getUnitHref } from "@/lib/unitRoutes";
+import { resolveFaleConoscoDestination } from "@/lib/faleconoscoRedirect";
 
 export type UnitsFeaturedCard = {
     slug: string;
@@ -117,6 +119,7 @@ export default function UnitsLandingExperience({ featuredUnits, unitsByState }: 
                 <div className="decisionCards">
                     {featuredUnits.map((unit) => {
                         const unitHref = getUnitHref(unit.slug);
+                        const whatsappDestination = resolveFaleConoscoDestination(unit.slug);
                         return (
                             <article key={unit.slug} className="decisionCard decisionCard--unit">
                                 <div className="decisionCard__eyebrow">{unit.city || unit.state || "Unidade"}</div>
@@ -163,7 +166,28 @@ export default function UnitsLandingExperience({ featuredUnits, unitsByState }: 
                                         Ver detalhes da unidade
                                     </Link>
 
-                                    {unit.contactUrl ? (
+                                    {whatsappDestination ? (
+                                        <TrackedWhatsappLink
+                                            rawUrl={whatsappDestination}
+                                            className="decisionCard__link"
+                                            placement="units_page"
+                                            unitSlug={unit.slug}
+                                            source="units_page"
+                                            onClick={() =>
+                                                trackExperienceShortcutClick({
+                                                    page: "/unidades",
+                                                    shortcut: `Contato unidade ${unit.slug}`,
+                                                    destination: whatsappDestination,
+                                                    placement: "units_page",
+                                                    unitSlug: unit.slug,
+                                                    experience: EXPERIENCE_KEY,
+                                                    variant: EXPERIENCE_VARIANT,
+                                                })
+                                            }
+                                        >
+                                            Falar com a unidade
+                                        </TrackedWhatsappLink>
+                                    ) : unit.contactUrl ? (
                                         <Link
                                             href={unit.contactUrl}
                                             prefetch={false}
