@@ -49,8 +49,11 @@ async function openEscalaModule(page: Page) {
 
 async function dismissPlanningAssistantIfVisible(page: Page) {
   const modal = page.getByTestId('escala-planning-assistant-modal')
+  if (!(await modal.isVisible().catch(() => false))) {
+    await modal.waitFor({ state: 'visible', timeout: 1500 }).catch(() => {})
+  }
   if (!(await modal.isVisible().catch(() => false))) return
-  await page.keyboard.press('Escape')
+  await modal.getByRole('button', { name: 'Close' }).click()
   await expect(modal).not.toBeVisible()
 }
 
