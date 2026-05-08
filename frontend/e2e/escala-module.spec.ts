@@ -1,4 +1,58 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+
+async function mockEscalaAuth(page: Page) {
+  await page.route('**/api/auth/me**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
+    })
+  })
+
+  await page.route('**/api/insumos/auth/me**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
+    })
+  })
+}
+
+async function mockEscalaPrefill(
+  page: Page,
+  payload: { ok: true; suggestions: Array<{ date: string; professional: string; confidence: number; sampleSize: number }>; windowMonths: string[] } = {
+    ok: true,
+    suggestions: [],
+    windowMonths: ['2026-03', '2026-02', '2026-01'],
+  },
+) {
+  await page.route('**/api/escala/prefill**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'x-request-id': 'e2e-prefill' },
+      body: JSON.stringify(payload),
+    })
+  })
+}
+
+async function openEscalaModule(page: Page) {
+  await page.goto('/')
+  await page.evaluate(() => {
+    localStorage.setItem('app.activeModule', 'escala-profissionais')
+  })
+  await page.reload()
+  const escalaButton = page.getByRole('button', { name: 'Escala' })
+  await escalaButton.waitFor({ state: 'visible', timeout: 30000 })
+  await escalaButton.evaluate((element: HTMLElement) => element.click())
+}
+
+async function dismissPlanningAssistantIfVisible(page: Page) {
+  const modal = page.getByTestId('escala-planning-assistant-modal')
+  if (!(await modal.isVisible().catch(() => false))) return
+  await page.keyboard.press('Escape')
+  await expect(modal).not.toBeVisible()
+}
 
 test.describe('escala', () => {
   test.describe.configure({ mode: 'serial' })
@@ -9,21 +63,8 @@ test.describe('escala', () => {
   )
 
   test('renders overview and schedule from API', async ({ page }) => {
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -33,19 +74,19 @@ test.describe('escala', () => {
       })
     })
 
-	    await page.route('**/api/escala/professionals**', async (route) => {
-	      await route.fulfill({
-	        status: 200,
-	        contentType: 'application/json',
-	        body: JSON.stringify({
-	          ok: true,
-	          data: [
-	            { name: 'Dra. Ana', status: '', units: ['novo-hamburgo'], role: '', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
-	            { name: 'Bruna', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Consultor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '' },
-	            { name: 'Carla', status: 'Inativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#ef4444' }
-	          ]
-	        })
-	      })
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: '', units: ['novo-hamburgo'], role: '', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Bruna', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Consultor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '' },
+            { name: 'Carla', status: 'Inativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#ef4444' }
+          ]
+        })
+      })
     })
 
     await page.route('**/api/escala/schedule**', async (route) => {
@@ -64,9 +105,11 @@ test.describe('escala', () => {
       })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-planning-assistant-modal')).toHaveCount(0)
+    await expect(page.getByTestId('escala-autoprefill-status')).toHaveCount(0)
     await expect(page.getByTestId('escala-day-2026-03-05')).toBeVisible()
     await expect(page.getByText('Dra. Ana').first()).toBeVisible()
     await expect(page.getByText('Dr. Agenda').first()).toBeVisible()
@@ -90,21 +133,8 @@ test.describe('escala', () => {
   })
 
   test('keeps team members visible when the selected month has no schedule entries', async ({ page }) => {
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -141,9 +171,11 @@ test.describe('escala', () => {
       })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-planning-assistant-modal')).toBeVisible()
+    await dismissPlanningAssistantIfVisible(page)
     await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
     await expect(page.getByTestId('escala-team-member-dr-bruno')).toBeVisible()
     await page.getByRole('combobox', { name: '' }).nth(3).click()
@@ -152,21 +184,8 @@ test.describe('escala', () => {
   })
 
   test('shows team load failure as an error state instead of an empty team', async ({ page }) => {
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -197,13 +216,95 @@ test.describe('escala', () => {
       })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await dismissPlanningAssistantIfVisible(page)
     await expect(page.getByTestId('escala-team-error')).toContainText('Falha ao carregar a equipe')
     await expect(page.getByText('Nenhum injetor encontrado para a unidade selecionada.')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-add')).toBeDisabled()
     await expect(page.getByTestId('escala-team-edit')).toBeDisabled()
+  })
+
+  test('shows planning suggestions explicitly and applies them in batch', async ({ page }) => {
+    const replacePayloads: any[] = []
+
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page, {
+      ok: true,
+      windowMonths: ['2026-03', '2026-02', '2026-01'],
+      suggestions: [
+        { date: '2026-04-14', professional: 'Dra. Ana', confidence: 0.6667, sampleSize: 3 },
+        { date: '2026-04-15', professional: 'Dr. Bruno', confidence: 1, sampleSize: 2 },
+      ],
+    })
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-04'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Bruno', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' },
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: true,
+            schedule: [],
+            closedDays: [],
+            holidays: []
+          })
+        })
+        return
+      }
+
+      replacePayloads.push(route.request().postDataJSON())
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'x-request-id': 'e2e-schedule-put' },
+        body: JSON.stringify({ ok: true, updatedDates: 2, updatedEntries: 2 })
+      })
+    })
+
+    await openEscalaModule(page)
+
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-planning-assistant-modal')).toBeVisible()
+    await expect(page.getByTestId('escala-autoprefill-status')).toContainText('Sugestões prontas para aplicar')
+    await expect(page.getByTestId('escala-prefill-apply')).toBeVisible()
+    await page.getByTestId('escala-prefill-apply').click()
+
+    await expect.poll(() => replacePayloads.length).toBe(1)
+    expect(replacePayloads[0]).toEqual({
+      unit: 'Novo Hamburgo',
+      entries: [
+        { date: '2026-04-14', professionals: ['Dra. Ana'] },
+        { date: '2026-04-15', professionals: ['Dr. Bruno'] },
+      ],
+    })
+
+    await expect(page.getByTestId('escala-day-2026-04-14')).toContainText('Auto')
+    await expect(page.getByTestId('escala-day-2026-04-15')).toContainText('Auto')
+    await expect(page.getByTestId('escala-highlight-auto')).toContainText('2')
   })
 
   test('edits schedule entries directly from the day card modal', async ({ page }) => {
@@ -216,21 +317,8 @@ test.describe('escala', () => {
       holidays: [] as any[]
     }
 
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -290,7 +378,7 @@ test.describe('escala', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
     await page.getByTestId('escala-day-2026-03-15').click()
     await page.getByRole('dialog').getByText('Dr. Lucas').click()
@@ -322,21 +410,8 @@ test.describe('escala', () => {
   test('permite editar dias com feriado legado sem tratá-los como bloqueio', async ({ page }) => {
     const replacePayloads: any[] = []
 
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -381,7 +456,7 @@ test.describe('escala', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
     await page.getByTestId('escala-day-2026-03-20').click()
     await expect(page.getByRole('dialog')).toBeVisible()
@@ -394,21 +469,8 @@ test.describe('escala', () => {
   })
 
   test('clicking a professional badge syncs the header filter and highlights matching days', async ({ page }) => {
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -454,7 +516,7 @@ test.describe('escala', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
     await page.getByTestId('escala-pill-2026-03-05-dra-ana').click()
 
@@ -466,12 +528,15 @@ test.describe('escala', () => {
     await expect(page.getByRole('combobox', { name: '' }).nth(3)).toContainText('–')
     await expect(page.getByText('Injetores do dia')).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Destacar dias laborais' }).click({ force: true })
+    await page.getByRole('button', { name: 'Destacar dias manual' }).click({ force: true })
     await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
     await expect(page.getByTestId('escala-day-2026-03-20')).not.toHaveClass(/escala-day-card--tracked/)
 
-    await page.getByRole('button', { name: 'Destacar dias sem atendimento' }).click({ force: true })
+    await page.getByRole('button', { name: 'Destacar dias vazio' }).click({ force: true })
     await expect(page.getByTestId('escala-day-2026-03-01')).toHaveClass(/escala-day-card--tracked/)
+    await expect(page.getByTestId('escala-day-2026-03-20')).not.toHaveClass(/escala-day-card--tracked/)
+
+    await page.getByRole('button', { name: 'Destacar dias bloq' }).click({ force: true })
     await expect(page.getByTestId('escala-day-2026-03-20')).toHaveClass(/escala-day-card--tracked/)
   })
 
@@ -497,21 +562,8 @@ test.describe('escala', () => {
       holidays: [] as any[]
     }
 
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -571,7 +623,7 @@ test.describe('escala', () => {
       })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
     const calendarPanelBefore = await page.getByTestId('escala-calendar-panel').boundingBox()
     const teamPanelBefore = await page.getByTestId('escala-team-panel').boundingBox()
@@ -661,21 +713,8 @@ test.describe('escala', () => {
       }
     ]
 
-    await page.route('**/api/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] } })
-      })
-    })
-
-    await page.route('**/api/insumos/auth/me**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, user: { username: 'e2e', role: 'GESTOR', allowedUnits: [] }, csrfToken: 'e2e' })
-      })
-    })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
 
     await page.route('**/api/escala/overview', async (route) => {
       await route.fulfill({
@@ -716,8 +755,9 @@ test.describe('escala', () => {
       })
     })
 
-    await page.goto('/?module=escala-profissionais')
+    await openEscalaModule(page)
 
+    await dismissPlanningAssistantIfVisible(page)
     await page.getByTestId('escala-team-add').click()
     await page.getByTestId('escala-team-field-name').fill('Paula Nova')
     await page.getByTestId('escala-team-field-status').click()

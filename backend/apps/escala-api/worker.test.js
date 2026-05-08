@@ -60,6 +60,13 @@ class FakeD1 {
     return new FakeStatement(this, sql)
   }
 
+  async batch(statements) {
+    for (const statement of statements) {
+      await statement.run()
+    }
+    return statements.map(() => ({ success: true }))
+  }
+
   first(sql, params) {
     const query = normalizeSql(sql)
 
@@ -189,6 +196,28 @@ class FakeD1 {
           updated_by: updatedBy,
         })
       }
+      return
+    }
+
+    if (query.startsWith('delete from schedule_entries where date = ?1 and unit = ?2')) {
+      this.scheduleEntries = this.scheduleEntries.filter(
+        (entry) => !(entry.date === params[0] && entry.unit === params[1]),
+      )
+      return
+    }
+
+    if (query.startsWith('insert into schedule_entries')) {
+      const [id, date, unit, professionalName, createdAt, updatedAt, createdBy, updatedBy] = params
+      this.scheduleEntries.push({
+        id,
+        date,
+        unit,
+        professional_name: professionalName,
+        created_at: createdAt,
+        updated_at: updatedAt,
+        created_by: createdBy,
+        updated_by: updatedBy,
+      })
       return
     }
 
@@ -452,6 +481,88 @@ test('Escala rejects actors without management role', async () => {
   assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN' })
 })
 
+test('Escala schedule PUT accepts batch date updates in a single request', async () => {
+  const db = new FakeD1()
+  db.professionals.push({
+    id: 'prof-1',
+    name: 'Dra. Ana',
+    status: 'Ativo',
+    role: 'Injetor',
+    shift: '',
+    nickname: '',
+    phone: '',
+    email: '',
+    instagram: '',
+    color: '#22c55e',
+    units_json: JSON.stringify(['Novo Hamburgo']),
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  })
+  db.professionals.push({
+    id: 'prof-2',
+    name: 'Dr. Bruno',
+    status: 'Ativo',
+    role: 'Injetor',
+    shift: '',
+    nickname: '',
+    phone: '',
+    email: '',
+    instagram: '',
+    color: '#0ea5e9',
+    units_json: JSON.stringify(['Novo Hamburgo']),
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  })
+  db.scheduleEntries.push({
+    id: 'existing-1',
+    date: '2026-06-01',
+    unit: 'Novo Hamburgo',
+    professional_name: 'Dr. Bruno',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    created_by: 'seed',
+    updated_by: 'seed',
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+  const actor = {
+    id: 'gestor-1',
+    email: 'gestor@local.test',
+    role: 'GESTOR',
+    allowedUnits: ['Novo Hamburgo'],
+  }
+
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/schedule', {
+      method: 'PUT',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: {
+        unit: 'Novo Hamburgo',
+        entries: [
+          { date: '2026-06-01', professionals: ['Dra. Ana'] },
+          { date: '2026-06-02', professionals: ['Dr. Bruno'] },
+        ],
+      },
+    }),
+    env,
+  )
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(
+    db.scheduleEntries
+      .map((entry) => ({ date: entry.date, unit: entry.unit, professional: entry.professional_name }))
+      .sort((left, right) => `${left.date}:${left.professional}`.localeCompare(`${right.date}:${right.professional}`)),
+    [
+      { date: '2026-06-01', unit: 'Novo Hamburgo', professional: 'Dra. Ana' },
+      { date: '2026-06-02', unit: 'Novo Hamburgo', professional: 'Dr. Bruno' },
+    ],
+  )
+})
+
 test('Escala enforces allowed unit scope on read operations', async () => {
   const db = new FakeD1()
   db.professionals.push({
@@ -477,6 +588,173 @@ test('Escala enforces allowed unit scope on read operations', async () => {
 
   const response = await worker.fetch(
     await signedRequest('https://escala.local/api/escala/professionals?unit=BarraShoppingSul', {
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: {
+        id: 'gestor-1',
+        email: 'gestor@local.test',
+        role: 'GESTOR',
+        allowedUnits: ['Novo Hamburgo'],
+      },
+    }),
+    env,
+  )
+
+  assert.equal(response.status, 403)
+  assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN_UNIT' })
+})
+
+test('Escala prefill returns deterministic weekday suggestions for the selected month', async () => {
+  const db = new FakeD1()
+  db.scheduleEntries.push(
+    {
+      id: 'hist-1',
+      date: '2026-01-05',
+      unit: 'Novo Hamburgo',
+      professional_name: 'Dra. Ana',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      created_by: 'seed',
+      updated_by: 'seed',
+    },
+    {
+      id: 'hist-2',
+      date: '2026-02-02',
+      unit: 'Novo Hamburgo',
+      professional_name: 'Dra. Ana',
+      created_at: '2026-02-01T00:00:00.000Z',
+      updated_at: '2026-02-01T00:00:00.000Z',
+      created_by: 'seed',
+      updated_by: 'seed',
+    },
+    {
+      id: 'hist-3',
+      date: '2026-03-02',
+      unit: 'Novo Hamburgo',
+      professional_name: 'Dr. Bruno',
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      created_by: 'seed',
+      updated_by: 'seed',
+    },
+    {
+      id: 'hist-4',
+      date: '2026-03-03',
+      unit: 'Novo Hamburgo',
+      professional_name: 'Dra. Marina',
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      created_by: 'seed',
+      updated_by: 'seed',
+    },
+    {
+      id: 'current-1',
+      date: '2026-04-06',
+      unit: 'Novo Hamburgo',
+      professional_name: 'Dra. Ana',
+      created_at: '2026-04-01T00:00:00.000Z',
+      updated_at: '2026-04-01T00:00:00.000Z',
+      created_by: 'seed',
+      updated_by: 'seed',
+    },
+  )
+  db.closedDays.push({
+    date: '2026-04-07',
+    unit: 'Novo Hamburgo',
+    reason: 'Treinamento',
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+
+  const RealDate = Date
+  const fixedNow = new RealDate('2026-04-10T12:00:00.000Z')
+  globalThis.Date = class extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(fixedNow.toISOString())
+        return
+      }
+      super(...args)
+    }
+
+    static now() {
+      return fixedNow.getTime()
+    }
+  }
+
+  let response
+  try {
+    response = await worker.fetch(
+      await signedRequest('https://escala.local/api/escala/prefill?unit=Novo%20Hamburgo&month=2026-04', {
+        secret: env.ESCALA_ACTOR_HMAC_KEY,
+        actor: {
+          id: 'gestor-1',
+          email: 'gestor@local.test',
+          role: 'GESTOR',
+          allowedUnits: ['Novo Hamburgo'],
+        },
+      }),
+      env,
+    )
+  } finally {
+    globalThis.Date = RealDate
+  }
+
+  assert.equal(response.status, 200)
+  const json = await response.json()
+  assert.deepEqual(json.windowMonths, ['2026-03', '2026-02', '2026-01'])
+  assert.deepEqual(json.suggestions, [
+    {
+      date: '2026-04-13',
+      professional: 'Dra. Ana',
+      confidence: 0.6667,
+      sampleSize: 3,
+    },
+    {
+      date: '2026-04-14',
+      professional: 'Dra. Marina',
+      confidence: 1,
+      sampleSize: 1,
+    },
+    {
+      date: '2026-04-20',
+      professional: 'Dra. Ana',
+      confidence: 0.6667,
+      sampleSize: 3,
+    },
+    {
+      date: '2026-04-21',
+      professional: 'Dra. Marina',
+      confidence: 1,
+      sampleSize: 1,
+    },
+    {
+      date: '2026-04-27',
+      professional: 'Dra. Ana',
+      confidence: 0.6667,
+      sampleSize: 3,
+    },
+    {
+      date: '2026-04-28',
+      professional: 'Dra. Marina',
+      confidence: 1,
+      sampleSize: 1,
+    },
+  ])
+})
+
+test('Escala prefill enforces allowed unit scope', async () => {
+  const db = new FakeD1()
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/prefill?unit=BarraShoppingSul&month=2026-04', {
       secret: env.ESCALA_ACTOR_HMAC_KEY,
       actor: {
         id: 'gestor-1',
