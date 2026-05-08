@@ -40,6 +40,7 @@ function emitPrefillTelemetry(event: string, payload: Record<string, unknown>) {
 }
 
 export function useEscalaPrefill(params: {
+  enabled: boolean
   selectedUnit: string
   selectedMonth: string
   loadingSchedule: boolean
@@ -50,6 +51,7 @@ export function useEscalaPrefill(params: {
   onScheduleApplied: (next: EscalaScheduleEntry[]) => void
 }) {
   const {
+    enabled,
     selectedUnit,
     selectedMonth,
     loadingSchedule,
@@ -89,6 +91,10 @@ export function useEscalaPrefill(params: {
   }, [])
 
   useEffect(() => {
+    if (!enabled) {
+      clearState()
+      return
+    }
     if (!selectedUnit || !selectedMonth) {
       clearState()
       return
@@ -186,7 +192,7 @@ export function useEscalaPrefill(params: {
     return () => {
       cancelled = true
     }
-  }, [cacheKey, clearState, loadingSchedule, scheduleVersion, selectedMonth, selectedUnit])
+  }, [cacheKey, clearState, enabled, loadingSchedule, scheduleVersion, selectedMonth, selectedUnit])
 
   const ignoreSuggestions = useCallback(() => {
     if (!cacheKey) return

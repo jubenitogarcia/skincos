@@ -621,6 +621,7 @@ export function EscalaProfissionaisModule() {
   const [isDayAssignModalOpen, setIsDayAssignModalOpen] = useState(false)
   const [isBulkSelectionMode, setIsBulkSelectionMode] = useState(false)
   const [isBulkAssignModalOpen, setIsBulkAssignModalOpen] = useState(false)
+  const [isPlanningAssistantModalOpen, setIsPlanningAssistantModalOpen] = useState(false)
   const [highlightMode, setHighlightMode] = useState<'manual' | 'auto' | 'blocked' | 'empty' | null>(null)
   const [multiDateBlockReason, setMultiDateBlockReason] = useState('')
   const [selectedTeamMember, setSelectedTeamMember] = useState<string>('')
@@ -632,6 +633,7 @@ export function EscalaProfissionaisModule() {
   const selectedDatesRef = useRef<string[]>([])
   const selectedPeriodRef = useRef<{ year: string; monthNumber: string }>({ year: DEFAULT_YEAR, monthNumber: DEFAULT_MONTH_NUMBER })
   const monthSelectionTouchedRef = useRef(false)
+  const dismissedPlanningAssistantRef = useRef(new Set<string>())
   const teamPanelExpanded = teamFormMode !== 'idle'
   const selectedMonth = useMemo(
     () => (selectedYear && selectedMonthNumber ? `${selectedYear}-${selectedMonthNumber}` : ''),
@@ -897,6 +899,10 @@ export function EscalaProfissionaisModule() {
     () => (selectedMonth ? buildScheduleVersion(scheduleForMonth, closedDaysForMonth, selectedMonth) : ''),
     [closedDaysForMonth, scheduleForMonth, selectedMonth],
   )
+  const totalScheduledDays = useMemo(() => {
+    return new Set(scheduleForMonth.map((entry) => entry.date)).size
+  }, [scheduleForMonth])
+  const planningAssistantEnabled = Boolean(selectedUnit && selectedMonth && totalScheduledDays === 0)
   const {
     prefillState: autoPrefillState,
     activeSuggestionMap,
@@ -905,6 +911,7 @@ export function EscalaProfissionaisModule() {
     ignoreSuggestions,
     retryAnalysis,
   } = useEscalaPrefill({
+    enabled: planningAssistantEnabled,
     selectedUnit,
     selectedMonth,
     loadingSchedule,
@@ -914,6 +921,10 @@ export function EscalaProfissionaisModule() {
     scheduleVersion,
     onScheduleApplied: setSchedule,
   })
+  const planningAssistantSessionKey = useMemo(
+    () => (selectedUnit && selectedMonth ? `${selectedUnit}__${selectedMonth}__${scheduleVersion}` : ''),
+    [scheduleVersion, selectedMonth, selectedUnit],
+  )
 
   useEffect(() => {
     if (selectedDates.length <= 1) {
@@ -939,9 +950,6 @@ export function EscalaProfissionaisModule() {
     return `${preview.join(', ')}${suffix}`
   }, [selectedDates])
 
-  const totalScheduledDays = useMemo(() => {
-    return new Set(scheduleForMonth.map((entry) => entry.date)).size
-  }, [scheduleForMonth])
   const monthPlanMetrics = useMemo(
     () => buildMonthPlanMetrics(calendarCells, scheduleByDate, closedBlockedDates, appliedSuggestionMap),
     [appliedSuggestionMap, calendarCells, closedBlockedDates, scheduleByDate],
@@ -975,6 +983,42 @@ export function EscalaProfissionaisModule() {
       ? `1 data selecionada: ${selectedDatesLabel}`
       : `${selectedDates.length} datas selecionadas: ${selectedDatesLabel}`
   }, [selectedDates.length, selectedDatesLabel])
+  const planningAssistantTitle = useMemo(() => {
+    if (autoPrefillState.status === 'analyzing') return 'Analisando histórico'
+    if (autoPrefillState.status === 'ready') return 'Sugestões prontas para aplicar'
+    if (autoPrefillState.status === 'applying') return 'Aplicando sugestões'
+    if (autoPrefillState.status === 'done') return 'Sugestões concluídas'
+    if (autoPrefillState.status === 'ignored') return 'Sugestões ignoradas neste mês'
+    if (autoPrefillState.status === 'error') return 'Falha ao analisar sugestões'
+    return 'Assistente de planejamento'
+  }, [autoPrefillState.status])
+  const planningAssistantProgressLabel = useMemo(() => {
+    if (autoPrefillState.status === 'ready') return `${autoPrefillState.total || 0} prontas`
+    if ((autoPrefillState.status === 'done' || autoPrefillState.status === 'ignored') && !autoPrefillState.total) return 'Sem sugestões'
+    if (autoPrefillState.status === 'error') return 'Ação necessária'
+    return `${autoPrefillState.completed}/${autoPrefillState.total || 0}`
+  }, [autoPrefillState.completed, autoPrefillState.status, autoPrefillState.total])
+
+  useEffect(() => {
+    if (!planningAssistantEnabled || !planningAssistantSessionKey || loadingSchedule || autoPrefillState.status === 'idle') {
+      setIsPlanningAssistantModalOpen(false)
+      return
+    }
+    if (dismissedPlanningAssistantRef.current.has(planningAssistantSessionKey)) return
+    setIsPlanningAssistantModalOpen(true)
+  }, [
+    autoPrefillState.status,
+    loadingSchedule,
+    planningAssistantEnabled,
+    planningAssistantSessionKey,
+  ])
+
+  const handlePlanningAssistantOpenChange = useCallback((open: boolean) => {
+    setIsPlanningAssistantModalOpen(open)
+    if (!open && planningAssistantSessionKey) {
+      dismissedPlanningAssistantRef.current.add(planningAssistantSessionKey)
+    }
+  }, [planningAssistantSessionKey])
 
   useEffect(() => {
     try {
@@ -1590,155 +1634,21 @@ export function EscalaProfissionaisModule() {
           <CardContent className="flex flex-col gap-2 pt-3">
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_344px]">
               <div className="flex flex-col gap-2" data-testid="escala-calendar-panel">
-                <div className="flex flex-wrap items-start justify-between gap-2 pb-1">
-                  {autoPrefillState.status !== 'idle' ? (
-                    <div
-                      data-testid="escala-autoprefill-status"
-                      className={cn(
-                        'min-w-[280px] max-w-[540px] rounded-2xl border px-3 py-3',
-                        autoPrefillState.status === 'error'
-                          ? 'border-rose-300/35 bg-rose-500/10'
-                          : autoPrefillState.status === 'done'
-                            ? 'border-emerald-300/28 bg-emerald-500/10'
-                            : autoPrefillState.status === 'ignored'
-                              ? 'border-slate-300/20 bg-white/[0.04]'
-                              : 'border-sky-300/25 bg-sky-500/10',
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-300/65">
-                            Assistente de planejamento
-                          </div>
-                          <div className="mt-1 text-sm font-medium text-slate-50">
-                            {autoPrefillState.status === 'analyzing' && 'Analisando histórico'}
-                            {autoPrefillState.status === 'ready' && 'Sugestões prontas para aplicar'}
-                            {autoPrefillState.status === 'applying' && 'Aplicando sugestões'}
-                            {autoPrefillState.status === 'done' && 'Sugestões concluídas'}
-                            {autoPrefillState.status === 'ignored' && 'Sugestões ignoradas neste mês'}
-                            {autoPrefillState.status === 'error' && 'Falha ao analisar sugestões'}
-                          </div>
-                          <div className="mt-1 text-[11px] text-slate-100/90">
-                            {autoPrefillState.message}
-                          </div>
-                          {prefillWindowLabel ? (
-                            <div className="mt-2 text-[10px] text-slate-300/70">
-                              Base histórica: {prefillWindowLabel}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          {autoPrefillState.status === 'ready' ? (
-                            <>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="shrink-0"
-                                onClick={ignoreSuggestions}
-                                data-testid="escala-prefill-ignore"
-                              >
-                                Ignorar neste mês
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="premium"
-                                className="shrink-0"
-                                onClick={() => void applySuggestions()}
-                                data-testid="escala-prefill-apply"
-                              >
-                                Aplicar sugestões
-                              </Button>
-                            </>
-                          ) : null}
-                          {autoPrefillState.status === 'error' ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="shrink-0"
-                              onClick={retryAnalysis}
-                              data-testid="escala-prefill-retry"
-                            >
-                              Tentar novamente
-                            </Button>
-                          ) : null}
-                        </div>
-                      </div>
-                      {autoPrefillState.status !== 'error' ? (
-                        <div className="mt-3 space-y-1.5">
-                          <Progress value={autoPrefillProgress} className="h-1.5 bg-white/10 [&_[data-slot=progress-indicator]]:bg-sky-300" />
-                          <div className="flex items-center justify-between text-[10px] text-slate-300/70">
-                            <span>{formatMonthLabel(selectedMonth)}</span>
-                            <span>
-                              {autoPrefillState.status === 'ready'
-                                ? `${autoPrefillState.total || 0} prontas`
-                                : `${autoPrefillState.completed}/${autoPrefillState.total || 0}`}
-                            </span>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : <div />}
+                <div className="flex flex-wrap items-start justify-end gap-2 pb-1">
                   {loadingSchedule ? (
                     <div className="text-[11px] text-slate-300/75">
                       <LoadingPercentText label="Atualizando agenda" showPercent={false} />
                     </div>
                   ) : null}
                 </div>
-                <div className="grid gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-3 py-3">
-                  <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-300/65">
-                    <span>Resumo do mês</span>
-                    <span className="text-slate-400/55">{formatMonthLabel(selectedMonth)}</span>
-                    {selectedDates.length ? (
-                      <span className="rounded-full border border-sky-300/24 bg-sky-400/10 px-2 py-0.5 text-[9px] tracking-[0.16em] text-sky-100/80">
-                        {selectionScopeLabel}
-                      </span>
-                    ) : null}
+                {selectedDates.length ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-sky-300/16 bg-sky-400/8 px-3 py-2 text-[11px] text-sky-100/80">
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-sky-100/60">
+                      Seleção ativa
+                    </span>
+                    <span>{selectionScopeLabel}</span>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                    {[
-                      { key: 'manual', label: 'Manuais', value: monthPlanMetrics.manual, tone: 'border-sky-300/25 bg-sky-400/10 text-sky-100/85' },
-                      { key: 'auto', label: 'Automáticos', value: monthPlanMetrics.auto, tone: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100/85' },
-                      { key: 'blocked', label: 'Bloqueados', value: monthPlanMetrics.blocked, tone: 'border-rose-300/25 bg-rose-400/10 text-rose-100/85' },
-                      { key: 'empty', label: 'Vazios', value: monthPlanMetrics.empty, tone: 'border-amber-300/25 bg-amber-400/10 text-amber-100/85' },
-                    ].map((item) => (
-                      <button
-                        key={item.key}
-                        type="button"
-                        data-escala-preserve-filter="true"
-                        onClick={() => setHighlightMode((prev) => (prev === item.key ? null : item.key as 'manual' | 'auto' | 'blocked' | 'empty'))}
-                        className={cn(
-                          'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition hover:border-white/20',
-                          item.tone,
-                          highlightMode === item.key && 'ring-2 ring-white/15'
-                        )}
-                        data-testid={`escala-highlight-${item.key}`}
-                      >
-                        <span className="text-[10px] uppercase tracking-[0.16em]">{item.label}</span>
-                        <span className="text-sm font-semibold">{item.value}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-300/75">
-                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1">
-                      Cobertura {monthPlanMetrics.covered}
-                    </span>
-                    <span className="rounded-full border border-emerald-300/18 bg-emerald-500/8 px-2 py-1 text-emerald-100/80">
-                      Auto = sugestão aplicada
-                    </span>
-                    <span className="rounded-full border border-sky-300/18 bg-sky-500/8 px-2 py-1 text-sky-100/80">
-                      Manual = ajuste humano
-                    </span>
-                    <span className="rounded-full border border-rose-300/18 bg-rose-500/8 px-2 py-1 text-rose-100/80">
-                      Bloqueado = sem atendimento
-                    </span>
-                    <span className="rounded-full border border-amber-300/18 bg-amber-500/8 px-2 py-1 text-amber-100/80">
-                      Vazio = sem definição
-                    </span>
-                  </div>
-                </div>
+                ) : null}
                 <div className="grid grid-cols-7 gap-1.5 text-[10px] uppercase tracking-[0.2em] text-slate-300/70">
                   {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((label) => (
                     <div key={label} className="text-center">
@@ -2494,6 +2404,93 @@ export function EscalaProfissionaisModule() {
               </div>
             </>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isPlanningAssistantModalOpen} onOpenChange={handlePlanningAssistantOpenChange}>
+        <DialogContent
+          className="border-white/14 bg-[#121a2d]/96 text-white shadow-2xl shadow-slate-950/60 backdrop-blur-xl sm:max-w-lg"
+          data-testid="escala-planning-assistant-modal"
+        >
+          <div
+            data-testid="escala-autoprefill-status"
+            className={cn(
+              'rounded-2xl border px-4 py-4',
+              autoPrefillState.status === 'error'
+                ? 'border-rose-300/35 bg-rose-500/10'
+                : autoPrefillState.status === 'done'
+                  ? 'border-emerald-300/28 bg-emerald-500/10'
+                  : autoPrefillState.status === 'ignored'
+                    ? 'border-slate-300/20 bg-white/[0.04]'
+                    : 'border-sky-300/25 bg-sky-500/10',
+            )}
+          >
+            <DialogHeader className="space-y-2 text-left">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-300/65">
+                Assistente de planejamento
+              </div>
+              <DialogTitle className="text-base text-slate-50">
+                {planningAssistantTitle}
+              </DialogTitle>
+              <DialogDescription className="text-[11px] leading-5 text-slate-100/88">
+                {autoPrefillState.message}
+              </DialogDescription>
+            </DialogHeader>
+
+            {prefillWindowLabel ? (
+              <div className="mt-3 text-[10px] text-slate-300/72">
+                Base histórica: {prefillWindowLabel}
+              </div>
+            ) : null}
+
+            {autoPrefillState.status !== 'error' ? (
+              <div className="mt-4 space-y-1.5">
+                <Progress value={autoPrefillProgress} className="h-1.5 bg-white/10 [&_[data-slot=progress-indicator]]:bg-sky-300" />
+                <div className="flex items-center justify-between text-[10px] text-slate-300/70">
+                  <span>{formatMonthLabel(selectedMonth)}</span>
+                  <span>{planningAssistantProgressLabel}</span>
+                </div>
+              </div>
+            ) : null}
+
+            {(autoPrefillState.status === 'ready' || autoPrefillState.status === 'error') ? (
+              <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                {autoPrefillState.status === 'ready' ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={ignoreSuggestions}
+                      data-testid="escala-prefill-ignore"
+                    >
+                      Ignorar neste mês
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="premium"
+                      onClick={() => void applySuggestions()}
+                      data-testid="escala-prefill-apply"
+                    >
+                      Aplicar sugestões
+                    </Button>
+                  </>
+                ) : null}
+                {autoPrefillState.status === 'error' ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={retryAnalysis}
+                    data-testid="escala-prefill-retry"
+                  >
+                    Tentar novamente
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

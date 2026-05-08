@@ -668,18 +668,39 @@ test('Escala prefill returns deterministic weekday suggestions for the selected 
     ESCALA_ACTOR_HMAC_KEY: 'test-secret',
   }
 
-  const response = await worker.fetch(
-    await signedRequest('https://escala.local/api/escala/prefill?unit=Novo%20Hamburgo&month=2026-04', {
-      secret: env.ESCALA_ACTOR_HMAC_KEY,
-      actor: {
-        id: 'gestor-1',
-        email: 'gestor@local.test',
-        role: 'GESTOR',
-        allowedUnits: ['Novo Hamburgo'],
-      },
-    }),
-    env,
-  )
+  const RealDate = Date
+  const fixedNow = new RealDate('2026-04-10T12:00:00.000Z')
+  globalThis.Date = class extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(fixedNow.toISOString())
+        return
+      }
+      super(...args)
+    }
+
+    static now() {
+      return fixedNow.getTime()
+    }
+  }
+
+  let response
+  try {
+    response = await worker.fetch(
+      await signedRequest('https://escala.local/api/escala/prefill?unit=Novo%20Hamburgo&month=2026-04', {
+        secret: env.ESCALA_ACTOR_HMAC_KEY,
+        actor: {
+          id: 'gestor-1',
+          email: 'gestor@local.test',
+          role: 'GESTOR',
+          allowedUnits: ['Novo Hamburgo'],
+        },
+      }),
+      env,
+    )
+  } finally {
+    globalThis.Date = RealDate
+  }
 
   assert.equal(response.status, 200)
   const json = await response.json()

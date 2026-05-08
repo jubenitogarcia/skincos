@@ -47,6 +47,13 @@ async function openEscalaModule(page: Page) {
   await escalaButton.evaluate((element: HTMLElement) => element.click())
 }
 
+async function dismissPlanningAssistantIfVisible(page: Page) {
+  const modal = page.getByTestId('escala-planning-assistant-modal')
+  if (!(await modal.isVisible().catch(() => false))) return
+  await page.keyboard.press('Escape')
+  await expect(modal).not.toBeVisible()
+}
+
 test.describe('escala', () => {
   test.describe.configure({ mode: 'serial' })
 
@@ -100,7 +107,9 @@ test.describe('escala', () => {
 
     await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-planning-assistant-modal')).toHaveCount(0)
+    await expect(page.getByTestId('escala-autoprefill-status')).toHaveCount(0)
     await expect(page.getByTestId('escala-day-2026-03-05')).toBeVisible()
     await expect(page.getByText('Dra. Ana').first()).toBeVisible()
     await expect(page.getByText('Dr. Agenda').first()).toBeVisible()
@@ -164,7 +173,9 @@ test.describe('escala', () => {
 
     await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-planning-assistant-modal')).toBeVisible()
+    await dismissPlanningAssistantIfVisible(page)
     await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
     await expect(page.getByTestId('escala-team-member-dr-bruno')).toBeVisible()
     await page.getByRole('combobox', { name: '' }).nth(3).click()
@@ -207,7 +218,8 @@ test.describe('escala', () => {
 
     await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await dismissPlanningAssistantIfVisible(page)
     await expect(page.getByTestId('escala-team-error')).toContainText('Falha ao carregar a equipe')
     await expect(page.getByText('Nenhum injetor encontrado para a unidade selecionada.')).toHaveCount(0)
     await expect(page.getByTestId('escala-team-add')).toBeDisabled()
@@ -275,7 +287,8 @@ test.describe('escala', () => {
 
     await openEscalaModule(page)
 
-    await expect(page.getByRole('heading', { name: 'Escala' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('escala-planning-assistant-modal')).toBeVisible()
     await expect(page.getByTestId('escala-autoprefill-status')).toContainText('Sugestões prontas para aplicar')
     await expect(page.getByTestId('escala-prefill-apply')).toBeVisible()
     await page.getByTestId('escala-prefill-apply').click()
@@ -744,6 +757,7 @@ test.describe('escala', () => {
 
     await openEscalaModule(page)
 
+    await dismissPlanningAssistantIfVisible(page)
     await page.getByTestId('escala-team-add').click()
     await page.getByTestId('escala-team-field-name').fill('Paula Nova')
     await page.getByTestId('escala-team-field-status').click()

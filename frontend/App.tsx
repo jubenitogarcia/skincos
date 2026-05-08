@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
 import { useKV } from '@/spark-mock'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
-import { Download } from 'lucide-react'
+import { CalendarX2, CheckCircle2, Download, Pencil, Shield, Sparkles } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -153,7 +153,7 @@ const NotificationCenter = lazy(() => import('@/NotificationCenter').then(m => (
 const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
 const AccountingModule = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
 const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
-const MetaAdsManager = lazy(() => import('@/MetaAdsManager').then(m => ({ default: m.MetaAdsManager })))
+const MetaAdsManager = lazy(() => import('@/MetaCampaignControlCenter').then(m => ({ default: m.MetaCampaignControlCenter })))
 const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
 const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m => ({ default: m.MetaSentimentMonitor })))
@@ -351,7 +351,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'escala-profissionais', 'meta-ads']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'escala-profissionais']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
@@ -1404,29 +1404,29 @@ export default function AppFunctionalNeatlab() {
                                                         {
                                                             key: 'manual',
                                                             label: 'Manual',
+                                                            icon: <Pencil className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.manualDays ?? escalaHeaderState?.totalScheduledDays ?? 0,
-                                                            description: `Atendimentos ajustados manualmente: ${escalaHeaderState?.manualDays ?? escalaHeaderState?.totalScheduledDays ?? 0}`,
                                                             activeClass: 'border-sky-300/55 bg-sky-300/16 text-sky-50 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]',
                                                         },
                                                         {
                                                             key: 'auto',
                                                             label: 'Auto',
+                                                            icon: <Sparkles className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.autoDays ?? 0,
-                                                            description: `Sugestões automáticas aplicadas: ${escalaHeaderState?.autoDays ?? 0}`,
                                                             activeClass: 'border-emerald-300/55 bg-emerald-300/16 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.16)]',
                                                         },
                                                         {
                                                             key: 'blocked',
-                                                            label: 'Bloq',
+                                                            label: 'Bloqueado',
+                                                            icon: <Shield className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.blockedDays ?? 0,
-                                                            description: `Datas bloqueadas: ${escalaHeaderState?.blockedDays ?? 0}`,
                                                             activeClass: 'border-rose-300/55 bg-rose-300/16 text-rose-50 shadow-[0_0_0_1px_rgba(253,164,175,0.16)]',
                                                         },
                                                         {
                                                             key: 'empty',
                                                             label: 'Vazio',
+                                                            icon: <CalendarX2 className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.emptyDays ?? escalaHeaderState?.unavailableDaysCount ?? 0,
-                                                            description: `Datas sem definição: ${escalaHeaderState?.emptyDays ?? escalaHeaderState?.unavailableDaysCount ?? 0}`,
                                                             activeClass: 'border-amber-300/55 bg-amber-300/14 text-amber-50 shadow-[0_0_0_1px_rgba(252,211,77,0.16)]',
                                                         },
                                                     ].map((item) => (
@@ -1434,8 +1434,9 @@ export default function AppFunctionalNeatlab() {
                                                             <TooltipTrigger asChild>
                                                                 <button
                                                                     type="button"
-                                                                    className={`escala-kpi-badge inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === item.key ? item.activeClass : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
+                                                                    className={`escala-kpi-badge inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-all ${escalaHeaderState?.highlightMode === item.key ? item.activeClass : 'border-white/15 bg-white/[0.06] text-blue-50'}`}
                                                                     data-escala-preserve-filter="true"
+                                                                    data-testid={`escala-highlight-${item.key}`}
                                                                     aria-label={`Destacar dias ${item.label.toLowerCase()}`}
                                                                     onClick={() => {
                                                                         try {
@@ -1443,23 +1444,26 @@ export default function AppFunctionalNeatlab() {
                                                                         } catch { /* ignore */ }
                                                                     }}
                                                                 >
-                                                                    <span className="text-[10px] uppercase tracking-[0.14em]">{item.label}</span>
+                                                                    {item.icon}
+                                                                    <span className="sr-only">{item.label}</span>
                                                                     <span>{item.value}</span>
                                                                 </button>
                                                             </TooltipTrigger>
                                                             <TooltipContent>
-                                                                {item.description}
+                                                                {item.label}
                                                             </TooltipContent>
                                                         </Tooltip>
                                                     ))}
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
-                                                            <span className="inline-flex h-8 items-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-xs text-blue-50" data-escala-preserve-filter="true">
-                                                                Cobertura {escalaHeaderState?.coveredDays ?? escalaHeaderState?.totalScheduledDays ?? 0}
+                                                            <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-xs text-blue-50" data-escala-preserve-filter="true">
+                                                                <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                                                                <span className="sr-only">Cobertura</span>
+                                                                <span>{escalaHeaderState?.coveredDays ?? escalaHeaderState?.totalScheduledDays ?? 0}</span>
                                                             </span>
                                                         </TooltipTrigger>
                                                         <TooltipContent>
-                                                            Dias cobertos no mês: {escalaHeaderState?.coveredDays ?? escalaHeaderState?.totalScheduledDays ?? 0}
+                                                            Cobertura
                                                         </TooltipContent>
                                                     </Tooltip>
 	                                            <Tooltip>
