@@ -16,6 +16,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
 import { useKV } from '@/spark-mock'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
+import { dispatchEscalaHeaderAction, subscribeEscalaHeaderState } from '@/escalaHeaderBridge'
+import type { EscalaHeaderState, EscalaHighlightMode } from '@/escalaTypes'
+import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insumosBridge'
+import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
 import { CalendarX2, CheckCircle2, Download, Pencil, Shield, Sparkles } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
@@ -44,26 +48,6 @@ function formatMonthLabelHeader(value: string) {
     return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
-function hashEscalaValue(value: string) {
-    let hash = 0
-    for (let index = 0; index < value.length; index += 1) {
-        hash = value.charCodeAt(index) + ((hash << 5) - hash)
-    }
-    return Math.abs(hash)
-}
-
-function getEscalaProfessionalTriggerStyle(name: string) {
-    const hue = hashEscalaValue(name) % 360
-    return {
-        background: `linear-gradient(135deg, hsla(${hue}, 78%, 56%, 0.2), hsla(${(hue + 24) % 360}, 78%, 58%, 0.1))`,
-        borderColor: `hsla(${hue}, 84%, 72%, 0.42)`,
-        color: `hsl(${hue} 88% 92%)`,
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
-    } as React.CSSProperties
-}
-
-type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
-
 type ApiError = {
     error?: string
     message?: string
@@ -90,29 +74,6 @@ type AtendimentoHeaderState = {
     }
     ticketFilter: 'total' | 'open' | 'overdue' | 'resolved'
     paused: boolean
-}
-
-type EscalaHeaderState = {
-    units: string[]
-    monthOptions: string[]
-    yearOptions: string[]
-    selectedUnit: string
-    selectedMonth: string
-    selectedMonthNumber: string
-    selectedYear: string
-    selectedProfessional: string
-    professionalOptions: string[]
-    totalScheduledDays: number
-    unavailableDaysCount?: number
-    manualDays?: number
-    autoDays?: number
-    blockedDays?: number
-    emptyDays?: number
-    coveredDays?: number
-    activeInjectors: number
-    selectedDatesCount: number
-    highlightMode?: 'manual' | 'auto' | 'blocked' | 'empty' | null
-    loadingOverview: boolean
 }
 
 async function insumosApiJson<T>(
@@ -351,7 +312,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'escala-profissionais']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'escala-profissionais']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
@@ -403,20 +364,8 @@ export default function AppFunctionalNeatlab() {
 	    const [search, setSearch] = useState('')
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
-				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<{
-			        online: boolean | null
-			        authed: boolean | null
-			        integrated: boolean | null
-			        unidades: string[]
-			        allowedUnits: string[]
-			    } | null>(null)
-				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<{
-                        value: number | null
-                        loading: boolean
-                        percent: number | null
-                        entradaValor?: number | null
-                        saidaValor?: number | null
-                    } | null>(null)
+				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<InsumosHeaderState['status']>(null)
+				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<InsumosHeaderState['stock']>(null)
                     const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
                     const [estoqueThresholds, setEstoqueThresholds] = useState<{ warning: number; critical: number }>(() => {
                         try {
@@ -448,7 +397,6 @@ export default function AppFunctionalNeatlab() {
 				    React.useEffect(() => {
 				        effectiveUnitRef.current = effectiveUnit
 				    }, [effectiveUnit])
-				    const insumosHeaderFetchRef = React.useRef<{ lastAt: number; inflight: boolean }>({ lastAt: 0, inflight: false })
 				    const canonicalUnitValues = useMemo(() => unitOptions.map((o) => o.value), [unitOptions])
 				    const insumosUnitsForHeaderSelect = useMemo(() => {
 				        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
@@ -540,28 +488,17 @@ export default function AppFunctionalNeatlab() {
 			        if (!insumosMounted) return
 			        if (lastInsumosUnitRef.current === effectiveUnit) return
 			        lastInsumosUnitRef.current = effectiveUnit
-			        try {
-			            window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: effectiveUnit } }))
-			        } catch { /* ignore */ }
+			        dispatchInsumosHeaderAction({ type: 'set-unit', value: effectiveUnit })
 			    }, [effectiveUnit, insumosMounted])
 
                 React.useEffect(() => {
-                    const handler = (event: Event) => {
-                        const detail = (event as CustomEvent)?.detail || {}
-                        const rawValue = detail?.value
-                        const value = rawValue == null || Number.isNaN(Number(rawValue)) ? null : Number(rawValue)
-                        const entradaValor = Number.isFinite(Number(detail?.entradaValor)) ? Number(detail?.entradaValor) : null
-                        const saidaValor = Number.isFinite(Number(detail?.saidaValor)) ? Number(detail?.saidaValor) : null
-                        setInsumosHeaderEstoque({
-                            value,
-                            loading: Boolean(detail?.loading),
-                            percent: typeof detail?.percent === 'number' ? detail.percent : null,
-                            entradaValor,
-                            saidaValor
-                        })
-                    }
-                    window.addEventListener('skincos:insumos:estoque', handler)
-                    return () => window.removeEventListener('skincos:insumos:estoque', handler)
+                    return subscribeInsumosHeaderState((detail) => {
+                        setInsumosHeaderStatus(detail?.status || null)
+                        setInsumosHeaderEstoque(detail?.stock || null)
+                        if (detail?.selectedUnit && detail.selectedUnit !== effectiveUnitRef.current) {
+                            setSelectedUnitRef.current(detail.selectedUnit)
+                        }
+                    })
                 }, [])
 
                 React.useEffect(() => {
@@ -584,16 +521,9 @@ export default function AppFunctionalNeatlab() {
                 }, [])
 
                 React.useEffect(() => {
-                    const handler = (event: Event) => {
-                        const detail = (event as CustomEvent<EscalaHeaderState | null>)?.detail || null
-                        if (!detail || typeof detail !== 'object') {
-                            setEscalaHeaderState(null)
-                            return
-                        }
+                    return subscribeEscalaHeaderState((detail) => {
                         setEscalaHeaderState(detail)
-                    }
-                    window.addEventListener('skincos:escala:header', handler as EventListener)
-                    return () => window.removeEventListener('skincos:escala:header', handler as EventListener)
+                    })
                 }, [])
 
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
@@ -628,66 +558,9 @@ export default function AppFunctionalNeatlab() {
 				    React.useEffect(() => {
 				        if (active !== 'insumos' || !isAuthenticated) {
 				            setInsumosHeaderStatus(null)
-				            return
+				            setInsumosHeaderEstoque(null)
 				        }
-
-		        const ac = new AbortController()
-		        const now = Date.now()
-		        if (insumosHeaderFetchRef.current.inflight) return () => ac.abort()
-		        if (now - insumosHeaderFetchRef.current.lastAt < 2500) return () => ac.abort()
-		        insumosHeaderFetchRef.current.inflight = true
-		        insumosHeaderFetchRef.current.lastAt = now
-
-		        ;(async () => {
-		            try {
-		                const healthRes = await fetch('/api/insumos/health', { credentials: 'include', signal: ac.signal }).catch(() => null)
-
-                let online: boolean | null = null
-                let integrated: boolean | null = null
-                let unidades: string[] = []
-                if (healthRes?.ok) {
-                    const h: any = await healthRes.json().catch(() => null)
-                    const ready =
-                        typeof h?.ready === 'boolean'
-                            ? h.ready
-                            : (typeof h?.dbConfigured === 'boolean' ? h.dbConfigured : Boolean(h?.ok))
-                    online = true
-                    integrated = typeof ready === 'boolean' ? Boolean(ready) : null
-                    unidades = Array.isArray(h?.unidades) ? h.unidades.filter(Boolean).map((x: any) => String(x)) : []
-                } else if (healthRes) {
-                    online = false
-                }
-
-		                const authed: boolean | null = Boolean(user?.username)
-		                const allowedUnits: string[] = Array.isArray(user?.allowedUnits)
-		                    ? user.allowedUnits.filter(Boolean).map((x: any) => String(x))
-		                    : []
-
-	                const candidateUnits = unidades.length ? unidades : ['novo-hamburgo', 'barra-shopping-sul']
-	                const filteredUnits = allowedUnits.length
-	                    ? candidateUnits.filter((u) => allowedUnits.includes(u))
-	                    : candidateUnits
-	                const options = filteredUnits.length ? filteredUnits : candidateUnits
-
-		                const currentUnit = effectiveUnitRef.current
-		                let nextUnit = currentUnit
-		                try {
-		                    const saved = localStorage.getItem(INSUMOS_UNIT_KEY)
-		                    if (saved) nextUnit = saved
-		                } catch { /* ignore */ }
-			                if (!options.includes(nextUnit)) nextUnit = options[0]
-			                if (nextUnit && nextUnit !== currentUnit) setSelectedUnitRef.current(nextUnit)
-
-			                setInsumosHeaderStatus({ online, authed, integrated, unidades: options, allowedUnits })
-			            } catch {
-			                setInsumosHeaderStatus({ online: false, authed: false, integrated: null, unidades: [], allowedUnits: [] })
-			            } finally {
-			                insumosHeaderFetchRef.current.inflight = false
-			            }
-		        })()
-
-				        return () => ac.abort()
-						    }, [active, isAuthenticated, user?.allowedUnits?.join('|'), user?.username])
+				    }, [active, isAuthenticated])
 
 		    const lastInsumosOverviewRef = React.useRef<string | null>(null)
 		    React.useEffect(() => {
@@ -695,13 +568,10 @@ export default function AppFunctionalNeatlab() {
 		        const nextKey = `${insumosOverviewPeriod}|${insumosOverviewFrom}|${insumosOverviewTo}`
 		        if (lastInsumosOverviewRef.current === nextKey) return
 		        lastInsumosOverviewRef.current = nextKey
-		        try {
-		            window.dispatchEvent(
-		                new CustomEvent('skincos:insumos:overview', {
-		                    detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo }
-		                })
-		            )
-		        } catch { /* ignore */ }
+		        dispatchInsumosHeaderAction({
+		            type: 'set-overview',
+		            value: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: insumosOverviewTo },
+		        })
 		    }, [insumosMounted, insumosOverviewFrom, insumosOverviewPeriod, insumosOverviewTo])
 
     const modulesSorted = useMemo(() => {
@@ -1146,9 +1016,7 @@ export default function AppFunctionalNeatlab() {
 				                                                            const next = (v as any) as InsumosOverviewPeriod
 				                                                            setInsumosOverviewPeriod(next)
 				                                                            try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
-				                                                            try {
-				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } }))
-				                                                            } catch { /* ignore */ }
+				                                                            dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } })
 				                                                        }}
 				                                                    >
 					                                                    <SelectTrigger className="h-8 w-40 bg-white/[0.06] border-white/20 text-white">
@@ -1169,9 +1037,7 @@ export default function AppFunctionalNeatlab() {
 				                                                                onChange={(next) => {
 				                                                                    setInsumosOverviewFrom(next)
 				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
-				                                                                    try {
-				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } }))
-				                                                                    } catch { /* ignore */ }
+				                                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } })
 					                                                                }}
 					                                                                placeholder="De (DD/MM/AA)"
 					                                                                className="h-8 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
@@ -1182,9 +1048,7 @@ export default function AppFunctionalNeatlab() {
 				                                                                onChange={(next) => {
 				                                                                    setInsumosOverviewTo(next)
 				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
-				                                                                    try {
-				                                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } }))
-				                                                                    } catch { /* ignore */ }
+				                                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } })
 					                                                                }}
 					                                                                placeholder="Até (DD/MM/AA)"
 					                                                                className="h-8 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
@@ -1198,9 +1062,7 @@ export default function AppFunctionalNeatlab() {
 						                                                        variant="ghost"
 						                                                        className="h-9 w-9 rounded-md bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35"
 					                                                        onClick={() => {
-				                                                            try {
-				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
-				                                                            } catch { /* ignore */ }
+				                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
 	                                                        }}
 			                                                        title="Entrada"
 			                                                        aria-label="Entrada"
@@ -1212,9 +1074,7 @@ export default function AppFunctionalNeatlab() {
 						                                                        variant="ghost"
 						                                                        className="h-9 w-9 rounded-md bg-rose-500/30 text-rose-100 hover:bg-rose-500/40"
 					                                                        onClick={() => {
-				                                                            try {
-				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
-				                                                            } catch { /* ignore */ }
+				                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
 	                                                        }}
 			                                                        title="Saída"
 			                                                        aria-label="Saída"
@@ -1226,9 +1086,7 @@ export default function AppFunctionalNeatlab() {
 				                                                        variant="ghost"
 				                                                        className="h-9 w-9 rounded-md bg-sky-500/30 text-sky-100 hover:bg-sky-500/40"
 				                                                        onClick={() => {
-				                                                            try {
-				                                                                window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
-				                                                            } catch { /* ignore */ }
+				                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
 	                                                        }}
 			                                                        title="Transferência"
 			                                                        aria-label="Transferência"
@@ -1310,9 +1168,7 @@ export default function AppFunctionalNeatlab() {
 					                                                <Select
 					                                                    value={escalaHeaderState?.selectedUnit || ''}
 				                                                    onValueChange={(value) => {
-				                                                        try {
-				                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-unit', value } }))
-				                                                        } catch { /* ignore */ }
+                                                                        dispatchEscalaHeaderAction({ type: 'set-unit', value })
 				                                                    }}
 				                                                >
 					                                                    <SelectTrigger className="h-8 w-48 bg-white/[0.06] border-white/20 text-white" data-escala-preserve-filter="true">
@@ -1329,9 +1185,7 @@ export default function AppFunctionalNeatlab() {
 					                                                <Select
 					                                                    value={escalaHeaderState?.selectedMonthNumber || ''}
 					                                                    onValueChange={(value) => {
-					                                                        try {
-					                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-month', value } }))
-					                                                        } catch { /* ignore */ }
+                                                                        dispatchEscalaHeaderAction({ type: 'set-month', value })
 					                                                    }}
 					                                                >
 					                                                    <SelectTrigger className="h-8 w-36 bg-white/[0.06] border-white/20 text-white" data-escala-preserve-filter="true">
@@ -1348,9 +1202,7 @@ export default function AppFunctionalNeatlab() {
 					                                                <Select
 					                                                    value={escalaHeaderState?.selectedYear || ''}
 					                                                    onValueChange={(value) => {
-					                                                        try {
-					                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-year', value } }))
-					                                                        } catch { /* ignore */ }
+                                                                        dispatchEscalaHeaderAction({ type: 'set-year', value })
 					                                                    }}
 					                                                >
 					                                                    <SelectTrigger className="h-8 w-28 bg-white/[0.06] border-white/20 text-white" data-escala-preserve-filter="true">
@@ -1364,34 +1216,6 @@ export default function AppFunctionalNeatlab() {
 					                                                        ))}
 					                                                    </SelectContent>
 					                                                </Select>
-					                                                <Select
-					                                                    value={escalaHeaderState?.selectedProfessional || '–'}
-				                                                    onValueChange={(value) => {
-				                                                        try {
-				                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'set-professional', value } }))
-				                                                        } catch { /* ignore */ }
-				                                                    }}
-				                                                >
-					                                                    <SelectTrigger
-                                                                            className="h-8 w-48 bg-white/[0.06] border-white/20 text-white"
-                                                                            data-escala-preserve-filter="true"
-                                                                            style={
-                                                                                escalaHeaderState?.selectedProfessional && escalaHeaderState.selectedProfessional !== '–'
-                                                                                    ? getEscalaProfessionalTriggerStyle(escalaHeaderState.selectedProfessional)
-                                                                                    : undefined
-                                                                            }
-                                                                        >
-					                                                        <SelectValue placeholder="Profissional" />
-					                                                    </SelectTrigger>
-					                                                    <SelectContent data-escala-preserve-filter="true">
-					                                                        <SelectItem value="–">–</SelectItem>
-				                                                        {(escalaHeaderState?.professionalOptions || []).map((name) => (
-				                                                            <SelectItem key={name} value={name}>
-				                                                                {name}
-				                                                            </SelectItem>
-				                                                        ))}
-				                                                    </SelectContent>
-				                                                </Select>
 				                                            </div>
 				                                        ) : null}
 		                                    </div>
@@ -1402,28 +1226,28 @@ export default function AppFunctionalNeatlab() {
 		                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-escala-preserve-filter="true">
                                                     {[
                                                         {
-                                                            key: 'manual',
+                                                            key: 'manual' as EscalaHighlightMode,
                                                             label: 'Manual',
                                                             icon: <Pencil className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.manualDays ?? escalaHeaderState?.totalScheduledDays ?? 0,
                                                             activeClass: 'border-sky-300/55 bg-sky-300/16 text-sky-50 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]',
                                                         },
                                                         {
-                                                            key: 'auto',
+                                                            key: 'auto' as EscalaHighlightMode,
                                                             label: 'Auto',
                                                             icon: <Sparkles className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.autoDays ?? 0,
                                                             activeClass: 'border-emerald-300/55 bg-emerald-300/16 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.16)]',
                                                         },
                                                         {
-                                                            key: 'blocked',
+                                                            key: 'blocked' as EscalaHighlightMode,
                                                             label: 'Bloqueado',
                                                             icon: <Shield className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.blockedDays ?? 0,
                                                             activeClass: 'border-rose-300/55 bg-rose-300/16 text-rose-50 shadow-[0_0_0_1px_rgba(253,164,175,0.16)]',
                                                         },
                                                         {
-                                                            key: 'empty',
+                                                            key: 'empty' as EscalaHighlightMode,
                                                             label: 'Vazio',
                                                             icon: <CalendarX2 className="size-3.5" aria-hidden="true" />,
                                                             value: escalaHeaderState?.emptyDays ?? escalaHeaderState?.unavailableDaysCount ?? 0,
@@ -1439,9 +1263,7 @@ export default function AppFunctionalNeatlab() {
                                                                     data-testid={`escala-highlight-${item.key}`}
                                                                     aria-label={`Destacar dias ${item.label.toLowerCase()}`}
                                                                     onClick={() => {
-                                                                        try {
-                                                                            window.dispatchEvent(new CustomEvent('skincos:escala:action', { detail: { action: 'toggle-highlight-mode', value: item.key } }))
-                                                                        } catch { /* ignore */ }
+                                                                        dispatchEscalaHeaderAction({ type: 'toggle-highlight', value: item.key })
                                                                     }}
                                                                 >
                                                                     {item.icon}
@@ -1594,9 +1416,7 @@ export default function AppFunctionalNeatlab() {
 		                                                variant="ghost"
 		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
 		                                                onClick={() => {
-		                                                    try {
-		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'expandAll' } }))
-		                                                    } catch { /* ignore */ }
+		                                                    dispatchInsumosHeaderAction({ type: 'layout', value: 'expandAll' })
 	                                                }}
 		                                                title="Expandir tudo"
 		                                                aria-label="Expandir tudo"
@@ -1611,9 +1431,7 @@ export default function AppFunctionalNeatlab() {
 		                                                variant="ghost"
 		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
 		                                                onClick={() => {
-		                                                    try {
-		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'collapseAll' } }))
-		                                                    } catch { /* ignore */ }
+		                                                    dispatchInsumosHeaderAction({ type: 'layout', value: 'collapseAll' })
 	                                                }}
 		                                                title="Contrair tudo"
 		                                                aria-label="Contrair tudo"
@@ -1628,9 +1446,7 @@ export default function AppFunctionalNeatlab() {
 		                                                variant="ghost"
 		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
 		                                                onClick={() => {
-		                                                    try {
-		                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:layout', { detail: { action: 'reset' } }))
-		                                                    } catch { /* ignore */ }
+		                                                    dispatchInsumosHeaderAction({ type: 'layout', value: 'reset' })
 	                                                }}
 		                                                title="Resetar layout"
 		                                                aria-label="Resetar layout"
@@ -1677,9 +1493,7 @@ export default function AppFunctionalNeatlab() {
 	                                                const next = (v as any) as InsumosOverviewPeriod
 	                                                setInsumosOverviewPeriod(next)
 	                                                try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
-	                                                try {
-	                                                    window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } }))
-	                                                } catch { /* ignore */ }
+	                                                dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } })
 	                                            }}
 	                                        >
 	                                            <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
@@ -1702,9 +1516,7 @@ export default function AppFunctionalNeatlab() {
 	                                                    const next = e.target.value
 	                                                    setInsumosOverviewFrom(next)
 	                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } }))
-	                                                    } catch { /* ignore */ }
+	                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } })
 	                                                }}
 	                                                placeholder="De (DD/MM/AAAA)"
 	                                                className="h-10 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
@@ -1715,9 +1527,7 @@ export default function AppFunctionalNeatlab() {
 	                                                    const next = e.target.value
 	                                                    setInsumosOverviewTo(next)
 	                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
-	                                                    try {
-	                                                        window.dispatchEvent(new CustomEvent('skincos:insumos:overview', { detail: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } }))
-	                                                    } catch { /* ignore */ }
+	                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } })
 	                                                }}
 	                                                placeholder="Até (DD/MM/AAAA)"
 	                                                className="h-10 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
@@ -1746,9 +1556,7 @@ export default function AppFunctionalNeatlab() {
 	                                                    variant="ghost"
                                                     className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
                                                     onClick={() => {
-                                                        try {
-                                                            window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'ENTRADA' } }))
-                                                        } catch { /* ignore */ }
+                                                        dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
                                                     }}
                                                     title="Entrada"
                                                     aria-label="Entrada"
@@ -1760,9 +1568,7 @@ export default function AppFunctionalNeatlab() {
                                                     variant="ghost"
                                                     className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
                                                     onClick={() => {
-                                                        try {
-                                                            window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'BAIXA' } }))
-                                                        } catch { /* ignore */ }
+                                                        dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
                                                     }}
                                                     title="Saída"
                                                     aria-label="Saída"
@@ -1774,9 +1580,7 @@ export default function AppFunctionalNeatlab() {
                                                     variant="ghost"
                                                     className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
                                                     onClick={() => {
-                                                        try {
-                                                            window.dispatchEvent(new CustomEvent('skincos:insumos:op', { detail: { op: 'TRANSFERENCIA' } }))
-                                                        } catch { /* ignore */ }
+                                                        dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
                                                     }}
                                                     title="Transferência"
                                                     aria-label="Transferência"

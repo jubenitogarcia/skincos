@@ -1,4 +1,4 @@
-import type { PrefillSuggestion } from '@/escalaDomain'
+import type { PrefillSuggestion } from '@/escalaTypes'
 
 const DEFAULT_ESCALA_API_BASE = '/api/escala'
 

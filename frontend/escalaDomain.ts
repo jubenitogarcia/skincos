@@ -1,35 +1,11 @@
-export type CalendarCell = {
-  date: string
-  day: number
-  monthOffset: -1 | 0 | 1
-}
-
-export type EscalaProfessional = {
-  name: string
-  status: string
-  units: string[]
-  role: string
-  shift: string
-  nickname: string
-  phone: string
-  email: string
-  instagram: string
-  color: string
-}
-
-export type EscalaScheduleEntry = { date: string; unit: string; professional: string }
-export type EscalaClosedDay = { date: string; unit: string; reason: string }
-export type EscalaHoliday = { date: string; unit: string; name: string }
-export type WeekdayDefaultMap = Partial<Record<0 | 1 | 2 | 3 | 4 | 5 | 6, string>>
-
-export type PrefillSuggestion = {
-  date: string
-  professional: string
-  confidence: number
-  sampleSize: number
-}
-
-export type DayPlanSource = 'manual' | 'auto' | 'blocked' | 'empty'
+import type {
+  CalendarCell,
+  DayPlanSource,
+  EscalaClosedDay,
+  EscalaScheduleEntry,
+  PrefillSuggestion,
+  WeekdayDefaultMap,
+} from '@/escalaTypes'
 
 export function buildCalendarCells(monthValue: string): CalendarCell[] {
   const [year, month] = monthValue.split('-').map(Number)
