@@ -4,11 +4,13 @@ import { toast } from 'sonner'
 import { fetchEscalaPrefill, replaceScheduleEntriesBatch } from '@/escalaApi'
 import {
   applyPrefillUpdatesToSchedule,
-  type CalendarCell,
-  type EscalaClosedDay,
-  type EscalaScheduleEntry,
-  type PrefillSuggestion,
 } from '@/escalaDomain'
+import type {
+  CalendarCell,
+  EscalaClosedDay,
+  EscalaScheduleEntry,
+  PrefillSuggestion,
+} from '@/escalaTypes'
 
 type PrefillUiStatus = 'idle' | 'analyzing' | 'ready' | 'applying' | 'done' | 'error' | 'ignored'
 

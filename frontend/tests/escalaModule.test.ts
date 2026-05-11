@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import { normalizeEscalaHeaderAction, normalizeEscalaHeaderState } from '../escalaHeaderBridge'
+import { buildSelectedDatesLabel, buildSelectionScopeLabel, resolveNextActiveDate, toggleDateSelection } from '../escalaSelection'
 import { __testables } from '../EscalaProfissionaisModule'
 import { buildMonthPlanMetrics, resolveDayPlanSource } from '../escalaDomain'
 
@@ -147,5 +149,79 @@ describe('Escala module helpers', () => {
       manual: 1,
       auto: 1,
     })
+  })
+
+  it('normalizes typed header actions and legacy highlight payloads', () => {
+    expect(normalizeEscalaHeaderAction({ type: 'set-unit', value: 'Novo Hamburgo' })).toEqual({
+      type: 'set-unit',
+      value: 'Novo Hamburgo',
+    })
+
+    expect(normalizeEscalaHeaderAction({ action: 'toggle-highlight-mode', value: 'scheduled' })).toEqual({
+      type: 'toggle-highlight',
+      value: 'manual',
+    })
+
+    expect(normalizeEscalaHeaderAction({ action: 'clear-selection' })).toEqual({
+      type: 'clear-selection',
+    })
+  })
+
+  it('normalizes the header state contract before syncing with App', () => {
+    expect(normalizeEscalaHeaderState({
+      units: ['Novo Hamburgo'],
+      monthOptions: ['03', '04'],
+      yearOptions: ['2026'],
+      selectedUnit: 'Novo Hamburgo',
+      selectedMonthNumber: '04',
+      selectedYear: '2026',
+      totalScheduledDays: 12,
+      manualDays: 10,
+      autoDays: 1,
+      blockedDays: 1,
+      emptyDays: 2,
+      coveredDays: 11,
+      highlightMode: 'manual',
+    })).toEqual({
+      units: ['Novo Hamburgo'],
+      monthOptions: ['03', '04'],
+      yearOptions: ['2026'],
+      selectedUnit: 'Novo Hamburgo',
+      selectedMonthNumber: '04',
+      selectedYear: '2026',
+      totalScheduledDays: 12,
+      manualDays: 10,
+      autoDays: 1,
+      blockedDays: 1,
+      emptyDays: 2,
+      coveredDays: 11,
+      unavailableDaysCount: undefined,
+      highlightMode: 'manual',
+    })
+  })
+
+  it('toggles multi-date selection and resolves the next active date predictably', () => {
+    const added = toggleDateSelection(['2026-03-05'], '2026-03-12')
+    expect(added).toEqual({
+      alreadySelected: false,
+      nextDates: ['2026-03-05', '2026-03-12'],
+    })
+    expect(resolveNextActiveDate(added.nextDates, '2026-03-12', added.alreadySelected)).toBe('2026-03-12')
+
+    const removed = toggleDateSelection(['2026-03-05', '2026-03-12'], '2026-03-12')
+    expect(removed).toEqual({
+      alreadySelected: true,
+      nextDates: ['2026-03-05'],
+    })
+    expect(resolveNextActiveDate(removed.nextDates, '2026-03-12', removed.alreadySelected)).toBe('2026-03-05')
+  })
+
+  it('builds readable labels for selected dates', () => {
+    const label = buildSelectedDatesLabel(
+      ['2026-03-05', '2026-03-12', '2026-03-19', '2026-03-26'],
+      (value) => value,
+    )
+    expect(label).toBe('2026-03-05, 2026-03-12, 2026-03-19 +1')
+    expect(buildSelectionScopeLabel(label, 4)).toBe('4 datas selecionadas: 2026-03-05, 2026-03-12, 2026-03-19 +1')
   })
 })

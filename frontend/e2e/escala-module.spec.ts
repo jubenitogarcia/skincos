@@ -49,11 +49,9 @@ async function openEscalaModule(page: Page) {
 
 async function dismissPlanningAssistantIfVisible(page: Page) {
   const modal = page.getByTestId('escala-planning-assistant-modal')
-  if (!(await modal.isVisible().catch(() => false))) {
-    await modal.waitFor({ state: 'visible', timeout: 1500 }).catch(() => {})
-  }
+  await modal.waitFor({ state: 'visible', timeout: 2000 }).catch(() => null)
   if (!(await modal.isVisible().catch(() => false))) return
-  await modal.getByRole('button', { name: 'Close' }).click()
+  await page.keyboard.press('Escape')
   await expect(modal).not.toBeVisible()
 }
 
@@ -128,11 +126,10 @@ test.describe('escala', () => {
     await expect(page.getByTestId('escala-team-member-carla')).toBeVisible()
     await expect(page.getByTestId('escala-no-attendance-icon-2026-03-01')).toBeVisible()
 
-    await page.getByRole('combobox', { name: '' }).nth(3).click()
-    await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'Dr. Agenda' })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'Bruna' })).toHaveCount(0)
-    await expect(page.getByRole('option', { name: 'Carla' })).toHaveCount(0)
+    await page.getByTestId('escala-pill-2026-03-05-dra-ana').click()
+    await expect(page.getByTestId('escala-pill-2026-03-05-dra-ana')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
+    await expect(page.getByTestId('escala-day-2026-03-06')).not.toHaveClass(/escala-day-card--tracked/)
   })
 
   test('keeps team members visible when the selected month has no schedule entries', async ({ page }) => {
@@ -181,9 +178,10 @@ test.describe('escala', () => {
     await dismissPlanningAssistantIfVisible(page)
     await expect(page.getByTestId('escala-team-member-dra-ana')).toBeVisible()
     await expect(page.getByTestId('escala-team-member-dr-bruno')).toBeVisible()
-    await page.getByRole('combobox', { name: '' }).nth(3).click()
-    await expect(page.getByRole('option', { name: 'Dra. Ana' })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'Dr. Bruno' })).toBeVisible()
+    await page.getByTestId('escala-team-member-dra-ana').click()
+    await expect(page.getByTestId('escala-day-2026-04-01')).not.toHaveClass(/escala-day-card--tracked/)
+    await page.getByTestId('escala-team-member-dra-ana').click()
+    await expect(page.getByTestId('escala-team-member-dr-bruno')).toBeVisible()
   })
 
   test('shows team load failure as an error state instead of an empty team', async ({ page }) => {
@@ -305,8 +303,10 @@ test.describe('escala', () => {
       ],
     })
 
-    await expect(page.getByTestId('escala-day-2026-04-14')).toContainText('Auto')
-    await expect(page.getByTestId('escala-day-2026-04-15')).toContainText('Auto')
+    await expect(page.getByTestId('escala-day-source-2026-04-14')).toBeVisible()
+    await page.getByTestId('escala-day-source-2026-04-14').hover()
+    await expect(page.getByRole('tooltip')).toContainText('Automático')
+    await expect(page.getByTestId('escala-day-source-2026-04-15')).toBeVisible()
     await expect(page.getByTestId('escala-highlight-auto')).toContainText('2')
   })
 
@@ -523,12 +523,12 @@ test.describe('escala', () => {
 
     await page.getByTestId('escala-pill-2026-03-05-dra-ana').click()
 
-    await expect(page.getByRole('combobox', { name: '' }).nth(3)).toContainText('Dra. Ana')
+    await expect(page.getByTestId('escala-pill-2026-03-05-dra-ana')).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
     await expect(page.getByTestId('escala-day-2026-03-12')).toHaveClass(/escala-day-card--tracked/)
     await expect(page.getByTestId('escala-day-2026-03-18')).not.toHaveClass(/escala-day-card--tracked/)
     await page.getByTestId('escala-day-2026-03-18').click()
-    await expect(page.getByRole('combobox', { name: '' }).nth(3)).toContainText('–')
+    await expect(page.getByTestId('escala-pill-2026-03-05-dra-ana')).toHaveAttribute('aria-pressed', 'false')
     await expect(page.getByText('Injetores do dia')).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Destacar dias manual' }).click({ force: true })
@@ -637,14 +637,13 @@ test.describe('escala', () => {
 
     await expect(page.getByTestId('escala-team-field-name')).toHaveCount(0)
     await page.getByTestId('escala-team-member-dra-ana').click()
-    await expect(page.getByRole('combobox', { name: '' }).nth(3)).toContainText('Dra. Ana')
+    await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
     await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
     await page.getByTestId('escala-team-member-dra-ana').click()
-    await expect(page.getByRole('combobox', { name: '' }).nth(3)).toContainText('–')
     await expect(page.getByTestId('escala-day-2026-03-05')).not.toHaveClass(/escala-day-card--tracked/)
     await expect(page.getByTestId('escala-team-edit')).toBeDisabled()
     await page.getByTestId('escala-team-member-dra-ana').click()
-    await expect(page.getByRole('combobox', { name: '' }).nth(3)).toContainText('Dra. Ana')
+    await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
     await page.getByTestId('escala-team-edit').click()
     await expect(page.getByTestId('escala-team-field-name')).toHaveValue('Dra. Ana')
     await expect(page.getByTestId('escala-team-edit')).toHaveCount(0)
@@ -797,5 +796,201 @@ test.describe('escala', () => {
     }
     await expect(page.getByTestId('escala-team-member-paula-nova')).toBeVisible()
     await expect(page.getByTestId('escala-team-field-name')).toHaveCount(0)
+  })
+
+  test('fecha a seleção múltipla ao clicar fora do calendário', async ({ page }) => {
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-03'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' }
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          schedule: [{ date: '2026-03-05', unit: 'Novo Hamburgo', professional: 'Dra. Ana' }],
+          closedDays: [],
+          holidays: []
+        })
+      })
+    })
+
+    await openEscalaModule(page)
+
+    await page.getByTestId('escala-multi-select-toggle').click()
+    await expect(page.getByTestId('escala-multi-select-close')).toBeVisible()
+    await page.getByTestId('escala-day-2026-03-05').click()
+    await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--selected/)
+    await page.getByTestId('escala-team-panel').click({ position: { x: 20, y: 20 } })
+    await expect(page.getByTestId('escala-multi-select-close')).toHaveCount(0)
+    await expect(page.getByTestId('escala-day-2026-03-05')).not.toHaveClass(/escala-day-card--selected/)
+  })
+
+  test('limpa filtro ativo com Escape quando não há modal aberta', async ({ page }) => {
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-03'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' }
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          schedule: [
+            { date: '2026-03-05', unit: 'Novo Hamburgo', professional: 'Dra. Ana' },
+            { date: '2026-03-12', unit: 'Novo Hamburgo', professional: 'Dr. Lucas' },
+          ],
+          closedDays: [],
+          holidays: []
+        })
+      })
+    })
+
+    await openEscalaModule(page)
+
+    await page.getByTestId('escala-pill-2026-03-05-dra-ana').click()
+    await expect(page.getByTestId('escala-day-2026-03-05')).toHaveClass(/escala-day-card--tracked/)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('escala-day-2026-03-05')).not.toHaveClass(/escala-day-card--tracked/)
+  })
+
+  test('abre a edição do dia pelo teclado e fecha com Escape', async ({ page }) => {
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-03'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          schedule: [{ date: '2026-03-05', unit: 'Novo Hamburgo', professional: 'Dra. Ana' }],
+          closedDays: [],
+          holidays: []
+        })
+      })
+    })
+
+    await openEscalaModule(page)
+
+    const targetDay = page.getByTestId('escala-day-2026-03-05')
+    await targetDay.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('escala-modal-confirm')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('escala-modal-confirm')).toHaveCount(0)
+  })
+
+  test('mantém os controles principais acessíveis em viewport mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await mockEscalaAuth(page)
+    await mockEscalaPrefill(page)
+
+    await page.route('**/api/escala/overview', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, units: ['Novo Hamburgo'], months: ['2026-03'] })
+      })
+    })
+
+    await page.route('**/api/escala/professionals**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: [
+            { name: 'Dra. Ana', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#22c55e' },
+            { name: 'Dr. Lucas', status: 'Ativo', units: ['Novo Hamburgo'], role: 'Injetor', shift: '', nickname: '', phone: '', email: '', instagram: '', color: '#0ea5e9' }
+          ]
+        })
+      })
+    })
+
+    await page.route('**/api/escala/schedule**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          schedule: [{ date: '2026-03-05', unit: 'Novo Hamburgo', professional: 'Dra. Ana' }],
+          closedDays: [],
+          holidays: []
+        })
+      })
+    })
+
+    await openEscalaModule(page)
+
+    await expect(page.getByTestId('escala-calendar-panel')).toBeVisible()
+    await page.getByTestId('escala-team-panel').scrollIntoViewIfNeeded()
+    await expect(page.getByTestId('escala-team-panel')).toBeVisible()
+    await expect(page.getByTestId('escala-multi-select-toggle')).toBeVisible()
   })
 })

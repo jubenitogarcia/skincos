@@ -3,955 +3,126 @@ import { toast } from 'sonner'
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
-import { BrDatePickerInput } from '@/br-date-picker'
-import { AutocompleteInput } from '@/autocomplete-input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/card'
-import { Checkbox } from '@/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
-import { Input } from '@/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { Textarea } from '@/textarea'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { getCsrfToken } from '@/csrf'
-
-type InsumosHealth = {
-  ok?: boolean
-  ready?: boolean
-  service?: string
-  runtime?: string
-  storage?: string
-  dbConfigured?: boolean
-  unidades?: string[]
-}
-
-type InsumosUser = {
-  username?: string
-  displayName?: string
-  name?: string
-  email?: string
-  role?: string
-  photoUrl?: string
-  allowedUnits?: string[]
-}
-
-type Insumo = {
-  registro?: string
-  codigoBarras?: string
-  codigosBarras?: string[]
-  categoria?: string
-  marca?: string
-  produto?: string
-  especificacao?: string
-  concentracao?: string
-  volume?: string
-  tipoUnidade?: string
-  fonte?: string
-  calibre?: string
-  policyRequiresLot?: boolean | null
-  policyRequiresExpiry?: boolean | null
-  policyFefo?: boolean | null
-  lote?: string
-  precoCusto?: number
-  estoqueAtual?: number
-  estoqueMinimo?: number
-  dataValidade?: string | null
-  statusValidade?: { status?: string; dias?: number | null }
-  estoques?: Record<string, number>
-}
-
-type Movimentacao = {
-  id?: string
-  dataHora?: string
-  tipo?: string
-  codigoBarras?: string
-  produto?: string
-  categoria?: string
-  marca?: string
-  quantidade?: number
-  estoqueAnterior?: number
-  estoqueNovo?: number
-  preco?: number
-  unidade?: string
-  unidadeOrigem?: string
-  unidadeDestino?: string
-  transferId?: string
-  usuario?: string
-  motivo?: string
-  registroInsumo?: string
-  lote?: string
-  dataValidade?: string
-  observacoes?: string
-}
-
-type NotificationsSummary = {
-  generatedAt?: string
-  unidade?: string
-  counts?: { lowStock?: number; expiringSoon?: number; expiredWithStock?: number }
-  lowStock?: Array<{ codigoBarras?: string; produto?: string; estoqueAtual?: number; estoqueMinimo?: number; categoria?: string }>
-  expiringSoon?: Array<{ codigoBarras?: string; produto?: string; estoqueAtual?: number; dataValidade?: string; dias?: number; categoria?: string }>
-  expiredWithStock?: Array<{ codigoBarras?: string; produto?: string; estoqueAtual?: number; dataValidade?: string; categoria?: string }>
-}
-
-type EstoqueResumo = {
-  totalInsumos?: number
-  valorEstoqueTotal?: number
-  criticos?: number
-}
-
-type Actionables = {
-  unidade?: string
-  reposicao?: Array<{ codigoBarras?: string; produto?: string; categoria?: string; estoqueAtual?: number; estoqueMinimo?: number; suggestedPurchaseQty?: number; estimatedValue?: number }>
-  transferencias?: Array<{ codigoBarras?: string; produto?: string; categoria?: string; from?: string; to?: string; qty?: number; estimatedValue?: number }>
-  perdasValidade?: Array<{ codigoBarras?: string; produto?: string; categoria?: string; estoqueAtual?: number; dataValidade?: string; lossValue?: number }>
-  rupturas?: Array<{ codigoBarras?: string; produto?: string; categoria?: string; estoqueMinimo?: number; estimatedImpact?: number }>
-}
-
-type EstoqueAlerta = {
-  codigoBarras?: string
-  produto?: string
-  categoria?: string
-  estoqueAtual?: number
-  estoqueMinimo?: number
-  diferenca?: number
-  percentual?: number | null
-  tipoAlerta?: string
-  statusAlerta?: 'URGENTE' | 'ATENCAO' | string
-}
-
-type RoiInsights = {
-  unidade?: string
-  perdas?: {
-    valorExpirado?: number
-    valorRiscoVencendo?: number
-    itensExpirados?: number
-    itensVencendo?: number
-  }
-  ruptura?: { itensRuptura?: number }
-  produtividade?: { entrada?: number | null; baixa?: number | null }
-}
-
-type QualityIssue = {
-  severity?: 'CRITICAL' | 'WARN' | 'INFO' | string
-  code?: string
-  message?: string
-  registro?: string
-  codigoBarras?: string
-  produto?: string
-  unidade?: string
-  suggestion?: string
-}
-
-type QualityReport = {
-  generatedAt?: string
-  unidade?: string
-  summary?: { total?: number; bySeverity?: Record<string, number> }
-  issues?: QualityIssue[]
-}
-
-type OverviewBundleData = {
-  resumo?: EstoqueResumo | null
-  itens?: Insumo[] | null
-  notifications?: NotificationsSummary | null
-  actionables?: Actionables | null
-  roi?: RoiInsights | null
-  quality?: QualityReport | null
-  movResumo?: {
-    entradaQtd?: number
-    saidaQtd?: number
-    entradaValor?: number
-    saidaValor?: number
-    saldoLiquido?: number
-  } | null
-  movSeries?: Array<{ day?: string; entrada?: number; saida?: number; entradaValor?: number; saidaValor?: number }>
-}
-
-type InsightsBundleData = {
-  alertas?: EstoqueAlerta[] | null
-  trends?: any
-  turnover?: {
-    saida?: any
-    entrada?: any
-  } | null
-}
-
-type InsumosProxyStatus = {
-  ok?: boolean
-  localDirect?: boolean
-  target?: string
-  isProductionTarget?: boolean
-  localSafeMode?: boolean
-  mutationsBlocked?: boolean
-}
-
-type ShareFile = {
-  name: string
-  size?: number
-  contentType?: string
-  url?: string
-}
-
-type SharePayload = {
-  title?: string
-  text?: string
-  url?: string
-  files?: ShareFile[]
-}
-
-type ShareHistoryItem = SharePayload & {
-  id: string
-  createdAt: string
-}
-
-type CategoryPolicy = {
-  slug: string
-  label?: string
-  requiresLot?: boolean
-  requiresExpiry?: boolean
-  fefo?: boolean
-  createdAt?: string | null
-  updatedAt?: string | null
-}
-
-type CategoryPolicySuggestion = {
-  slug: string
-  label: string
-}
-
-type ApiError = {
-  error?: string
-  message?: string
-  success?: boolean
-  code?: string
-  registros?: string[]
-  candidates?: Array<{
-    registro?: string
-    lote?: string
-    dataValidade?: string | null
-    estoque?: number
-    categoria?: string
-  }>
-}
-
-type UserPrefs = {
-  overviewPanelOrder?: string[]
-  mainPanelOrder?: string[]
-  detailsOpen?: Record<string, boolean>
-}
-
-type OfflineQueueItem = {
-  id: string
-  ts: number
-  path: string
-  method: string
-  body?: unknown
-}
-
-const CANONICAL_TIPOS_UNIDADE = ['unidade', 'frasco', 'seringa', 'caixa', 'ampola', 'pacote', 'rolo'] as const
-const CANONICAL_TIPOS_UNIDADE_SET = new Set<string>(CANONICAL_TIPOS_UNIDADE as readonly string[])
-
-function normalizeTipoUnidadeToCanonical(raw: string): string {
-  const normalized = String(raw || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s*\(s\)\s*/g, '')
-    .trim()
-  if (!normalized) return ''
-  if (normalized === 'flaconete') return 'frasco'
-  return CANONICAL_TIPOS_UNIDADE_SET.has(normalized) ? normalized : ''
-}
-
-function parseBarcodeInput(value: string): string[] {
-  return String(value || '')
-    .split(/[\n,;]+/g)
-    .map((v) => String(v || '').trim())
-    .filter(Boolean);
-}
-
-function getInsumoBarcodes(item: Insumo | null | undefined): string[] {
-  const codes = new Set<string>();
-  const add = (v?: string) => {
-    const value = String(v || '').trim();
-    if (value) codes.add(value);
-  };
-  add(item?.codigoBarras);
-  if (Array.isArray(item?.codigosBarras)) {
-    for (const v of item?.codigosBarras || []) add(String(v || ''));
-  }
-  return Array.from(codes);
-}
-
-function fmtMoneyBRL(value: number) {
-  try {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
-  } catch {
-    return `R$ ${value.toFixed(2)}`
-  }
-}
-
-function fmtMoneyBRL0(value: number) {
-  try {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(value)
-  } catch {
-    return `R$ ${Math.round(value)}`
-  }
-}
-
-function fmtMoneyBRLCompact(value: number) {
-  if (!Number.isFinite(value)) return '-'
-  const abs = Math.abs(value)
-  if (abs >= 1000) {
-    const rounded = Math.round(value / 1000)
-    return `R$ ${rounded}k`
-  }
-  return fmtMoneyBRL0(value)
-}
-
-const CATEGORIA_CORES: Record<string, string> = {
-  toxina: '#1e3a8a',
-  'toxina botulínica': '#1e3a8a',
-  'toxina botulinica': '#1e3a8a',
-  preenchedor: '#bfdbfe',
-  bioestimulador: '#ec4899',
-  fio: '#7c3aed',
-  'fio pdo': '#1f2937',
-  descartável: '#6b7280',
-  descartavel: '#6b7280',
-  peeling: '#ea580c',
-  skinbooster: '#ec4899',
-  anestésico: '#be123c',
-  anestesico: '#be123c',
-  medicamento: '#14b8a6',
-  limpeza: '#06b6d4',
-  cosmético: '#10b981',
-  cosmetico: '#10b981',
-  intradermoterapia: '#86efac',
-  perfurocortante: '#f87171',
-  higiene: '#8b5cf6',
-  recepção: '#c026d3',
-  recepcao: '#c026d3'
-}
-
-const CATEGORIA_PALETA = ['#60a5fa', '#a78bfa', '#34d399', '#f87171', '#fbbf24', '#22d3ee', '#fb7185', '#c084fc', '#4ade80', '#f472b6']
-const MARCA_PALETA = ['#0891b2', '#2563eb', '#7c3aed', '#db2777', '#16a34a', '#ea580c', '#475569', '#be123c']
-
-function hashToIndex(value: string, mod: number) {
-  let h = 0
-  for (let i = 0; i < value.length; i++) {
-    h = (h * 31 + value.charCodeAt(i)) >>> 0
-  }
-  return mod > 0 ? h % mod : 0
-}
-
-function getCategoriaBgColor(categoria?: string | null) {
-  const key = String(categoria || '').trim().toLowerCase()
-  const mapped = CATEGORIA_CORES[key]
-  if (mapped) return mapped
-  if (!key) return '#0ea5e9'
-  return CATEGORIA_PALETA[hashToIndex(key, CATEGORIA_PALETA.length)] || '#0ea5e9'
-}
-
-function getMarcaBgColor(marca?: string | null) {
-  const key = String(marca || '').trim().toLowerCase()
-  if (!key) return '#334155'
-  return MARCA_PALETA[hashToIndex(key, MARCA_PALETA.length)] || '#334155'
-}
-
-function getContrastColor(hexColor?: string | null) {
-  const raw = String(hexColor || '').trim()
-  const hex = raw.startsWith('#') ? raw.slice(1) : raw
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return '#ffffff'
-  const r = parseInt(hex.slice(0, 2), 16)
-  const g = parseInt(hex.slice(2, 4), 16)
-  const b = parseInt(hex.slice(4, 6), 16)
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-  return luminance > 140 ? '#0f172a' : '#ffffff'
-}
-
-function buildTagStyle(bgColor?: string | null): React.CSSProperties {
-  const bg = String(bgColor || '').trim() || '#334155'
-  return {
-    backgroundColor: bg,
-    color: getContrastColor(bg),
-    borderColor: 'rgba(255,255,255,0.25)'
-  }
-}
-
-function buildInsumoDescriptor(item?: Insumo | null) {
-  if (!item) return []
-  const produto = String(item.produto || '').trim()
-  const produtoKey = normalizeText(produto)
-  const rawParts = [item.especificacao, item.concentracao, item.volume, item.calibre, item.tipoUnidade]
-  const out: string[] = []
-  const seen = new Set<string>()
-  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  for (const raw of rawParts) {
-    let v = String(raw || '').trim()
-    if (!v) continue
-    if (produtoKey) {
-      const vNorm = normalizeText(v)
-      if (vNorm.includes(produtoKey)) {
-        const prodRegex = new RegExp(escapeRegExp(produto), 'ig')
-        v = v.replace(prodRegex, '').trim()
-      }
-    }
-    const key = normalizeText(v)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(v)
-    if (out.length >= 3) break
-  }
-  return out
-}
-
-function formatInsumoDescriptor(item?: Insumo | null) {
-  const parts = buildInsumoDescriptor(item)
-  if (!parts.length) return ''
-  return parts.slice(0, 3).join(' • ')
-}
-
-function useViewportSize() {
-  const [size, setSize] = React.useState({ width: 0, height: 0 })
-  React.useEffect(() => {
-    const update = () => setSize({ width: window.innerWidth, height: window.innerHeight })
-    update()
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [])
-  return size
-}
-function slugifyCategoria(value?: string | null) {
-  const s0 = String(value || '').trim().toLowerCase()
-  if (!s0) return ''
-  return s0
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-function normalizeText(value?: string | null) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-}
-
-function uniqueSortedTextOptions(values: Array<string | null | undefined>) {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const raw of values || []) {
-    const value = String(raw || '').trim()
-    if (!value) continue
-    const key = normalizeText(value)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(value)
-  }
-  return out.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }))
-}
-
-type EstoqueStatus = 'OK' | 'ATENCAO' | 'URGENTE'
-
-function calcularStatusEstoque(estoqueAtual?: number, estoqueMinimo?: number): EstoqueStatus {
-  const atual = Number(estoqueAtual) || 0
-  const minimo = Number(estoqueMinimo) || 0
-  if (atual < 0) return 'URGENTE'
-  if (minimo <= 0) return 'OK'
-  // "Critico" means strictly below the configured minimum.
-  if (atual < minimo) return 'URGENTE'
-  // "Atencao" is only at the limit (not below it).
-  if (atual === minimo) return 'ATENCAO'
-  return 'OK'
-}
-
-function estoqueStatusLabel(status: EstoqueStatus) {
-  if (status === 'URGENTE') return 'Crítico'
-  if (status === 'ATENCAO') return 'Atenção'
-  return 'Ok'
-}
-
-function estoqueStatusBadgeVariant(status: EstoqueStatus): 'default' | 'secondary' | 'destructive' {
-  if (status === 'URGENTE') return 'destructive'
-  if (status === 'ATENCAO') return 'secondary'
-  return 'default'
-}
-
-type AlertaStatusTag = 'URGENTE' | 'ATENCAO' | 'VENCENDO' | 'EXPIRADO' | 'INFO'
-
-function alertaTagLabel(tag: AlertaStatusTag) {
-  if (tag === 'URGENTE') return 'Crítico'
-  if (tag === 'ATENCAO') return 'Atenção'
-  if (tag === 'VENCENDO') return 'Vencendo'
-  if (tag === 'INFO') return 'Info'
-  return 'Expirado'
-}
-
-function alertaTagVariant(tag: AlertaStatusTag): 'default' | 'secondary' | 'destructive' {
-  if (tag === 'URGENTE') return 'destructive'
-  if (tag === 'EXPIRADO') return 'destructive'
-  if (tag === 'VENCENDO') return 'secondary'
-  if (tag === 'ATENCAO') return 'secondary'
-  return 'default'
-}
-
-function normalizeAlertTags(tags: Set<AlertaStatusTag>): AlertaStatusTag[] {
-  const out = new Set(tags)
-  if (out.has('URGENTE')) out.delete('ATENCAO')
-  if (out.has('EXPIRADO')) out.delete('VENCENDO')
-  const order: Record<AlertaStatusTag, number> = { URGENTE: 0, EXPIRADO: 1, VENCENDO: 2, ATENCAO: 3, INFO: 4 }
-  return Array.from(out).sort((a, b) => order[a] - order[b])
-}
-
-function fmtDate(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return String(value)
-  return d.toLocaleString('pt-BR')
-}
-
-function fmtMovDateShort(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return String(value)
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
-}
-
-function fmtMovTimeShort(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-}
-
-function fmtDayShort(isoDay?: string) {
-  if (!isoDay) return ''
-  const d = new Date(`${isoDay}T00:00:00.000Z`)
-  if (Number.isNaN(d.getTime())) return String(isoDay)
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-}
-
-function isoDayWeekStart(isoDay?: string) {
-  const v = String(isoDay || '').trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return ''
-  const d = new Date(`${v}T00:00:00.000Z`)
-  if (Number.isNaN(d.getTime())) return ''
-  const dow = d.getUTCDay() // 0=Sun
-  const diff = (dow + 6) % 7 // days since Monday
-  const start = new Date(d)
-  start.setUTCDate(start.getUTCDate() - diff)
-  return start.toISOString().slice(0, 10)
-}
-
-function isoToBrDate(value?: string | null) {
-  const v = String(value || '').trim()
-  if (!v) return ''
-  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!m) return v
-  return `${m[3]}/${m[2]}/${m[1]}`
-}
-
-function brToIsoDate(value?: string | null) {
-  const v = String(value || '').trim()
-  if (!v) return ''
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v
-
-  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/)
-  if (!m) return ''
-  const day = parseInt(m[1], 10)
-  const month = parseInt(m[2], 10)
-  const yearRaw = m[3]
-  const year =
-    yearRaw.length === 2
-      ? 2000 + parseInt(yearRaw, 10)
-      : parseInt(yearRaw, 10)
-  const d = new Date(Date.UTC(year, month - 1, day))
-  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return ''
-  const yyyy = String(year).padStart(4, '0')
-  const mm = String(month).padStart(2, '0')
-  const dd = String(day).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
-}
-
-function dateInputToIso(value?: string | null) {
-  const v = String(value || '').trim()
-  if (!v) return ''
-  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
-  const iso = brToIsoDate(v)
-  return iso || ''
-}
-
-function fmtDateOnlyBR(value?: string | null) {
-  const v = String(value || '').trim()
-  if (!v) return ''
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return v
-  const iso = dateInputToIso(v)
-  return iso ? isoToBrDate(iso) : v
-}
-
-function isoToLocalDateInput(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function isoToLocalTimeInput(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  const hours = String(d.getHours()).padStart(2, '0')
-  const minutes = String(d.getMinutes()).padStart(2, '0')
-  return `${hours}:${minutes}`
-}
-
-function normalizeTimeInput(value?: string | null) {
-  const raw = String(value || '').trim()
-  const match = raw.match(/^(\d{2}):(\d{2})$/)
-  if (!match) return ''
-  const hour = Number(match[1])
-  const minute = Number(match[2])
-  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return ''
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-}
-
-function combineLocalDateTimeToIso(dateValue?: string | null, timeValue?: string | null) {
-  const isoDate = dateInputToIso(dateValue)
-  const isoTime = normalizeTimeInput(timeValue)
-  if (!isoDate || !isoTime) return ''
-  const d = new Date(`${isoDate}T${isoTime}:00`)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toISOString()
-}
-
-function normalizeMovimentacaoTipo(value?: string | null) {
-  return String(value || '').toUpperCase().replace('Í', 'I')
-}
-
-function extractTransferMovementNote(value?: string | null) {
-  const raw = String(value || '').trim()
-  if (!raw) return ''
-  const sep = raw.indexOf(' | ')
-  return sep >= 0 ? raw.slice(sep + 3).trim() : ''
-}
-
-function statusBadgeVariant(status?: string): 'default' | 'secondary' | 'destructive' {
-  const s = String(status || '').toUpperCase()
-  if (s === 'EXPIRADO') return 'destructive'
-  if (s === 'VENCENDO') return 'secondary'
-  return 'default'
-}
-
-function severityBadgeVariant(severity?: string): 'default' | 'secondary' | 'destructive' {
-  const s = String(severity || '').toUpperCase()
-  if (s === 'CRITICAL') return 'destructive'
-  if (s === 'WARN' || s === 'WARNING') return 'secondary'
-  return 'default'
-}
-
-function severityLabel(severity?: string) {
-  const key = normalizeText(severity).toUpperCase()
-  if (!key) return 'Info'
-  if (key === 'CRITICAL' || key === 'CRITICO') return 'Crítico'
-  if (key === 'WARN' || key === 'WARNING' || key === 'ATENCAO') return 'Atenção'
-  if (key === 'INFO') return 'Info'
-  const raw = String(severity || '').trim()
-  if (!raw) return 'Info'
-  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
-}
-
-function BarcodeScannerInline({
-  onDetected,
-  onClose
-}: {
-  onDetected: (code: string) => void
-  onClose: () => void
-}) {
-  const videoRef = React.useRef<HTMLVideoElement | null>(null)
-  const rafRef = React.useRef<number | null>(null)
-  const streamRef = React.useRef<MediaStream | null>(null)
-  const zxingReaderRef = React.useRef<any>(null)
-  const zxingControlsRef = React.useRef<any>(null)
-  const runTokenRef = React.useRef(0)
-  const mountedRef = React.useRef(true)
-  const [error, setError] = React.useState<string | null>(null)
-  const [supported, setSupported] = React.useState(true)
-  const [starting, setStarting] = React.useState(false)
-  const [running, setRunning] = React.useState(false)
-  const [needsGesture, setNeedsGesture] = React.useState(false)
-  const [mode, setMode] = React.useState<'BARCODE_DETECTOR' | 'ZXING' | 'NONE'>('BARCODE_DETECTOR')
-  const [facingMode, setFacingMode] = React.useState<'user' | 'environment'>('environment')
-  const [activeFacingMode, setActiveFacingMode] = React.useState<'user' | 'environment' | null>(null)
-
-  const stop = React.useCallback(() => {
-    runTokenRef.current += 1
-    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-    rafRef.current = null
-    try {
-      zxingControlsRef.current?.stop?.()
-    } catch {
-      // ignore
-    }
-    zxingControlsRef.current = null
-    try {
-      zxingReaderRef.current?.reset?.()
-    } catch {
-      // ignore
-    }
-    zxingReaderRef.current = null
-    if (streamRef.current) {
-      for (const t of streamRef.current.getTracks()) t.stop()
-    }
-    streamRef.current = null
-    if (mountedRef.current) {
-      setRunning(false)
-      setStarting(false)
-      setActiveFacingMode(null)
-    }
-  }, [])
-
-  const start = React.useCallback(async (origin: 'auto' | 'gesture', preferredFacing?: 'user' | 'environment') => {
-    stop()
-    setError(null)
-    setNeedsGesture(false)
-    setStarting(true)
-    setSupported(true)
-
-    if (!navigator?.mediaDevices?.getUserMedia) {
-      setSupported(false)
-      setMode('NONE')
-      if (mountedRef.current) setStarting(false)
-      return
-    }
-
-    const token = runTokenRef.current
-    const targetFacingMode = preferredFacing || facingMode
-    const facingAttempts: Array<'user' | 'environment'> =
-      targetFacingMode === 'user' ? ['user', 'environment'] : ['environment', 'user']
-
-    const getStreamWithFallback = async () => {
-      let lastError: any = null
-      for (const currentFacingMode of facingAttempts) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: currentFacingMode } as any },
-            audio: false
-          })
-          return { stream, currentFacingMode }
-        } catch (e: any) {
-          lastError = e
-          const name = String(e?.name || '')
-          if (name === 'NotAllowedError' || name === 'SecurityError') break
-        }
-      }
-      throw lastError || new Error('Não foi possível abrir a câmera.')
-    }
-
-    const tickBarcodeDetector = async (detector: any, tickToken: number) => {
-      if (tickToken !== runTokenRef.current) return
-      const video = videoRef.current
-      if (!video) return
-      try {
-        const results = await detector.detect(video)
-        const raw = results?.[0]?.rawValue ? String(results[0].rawValue) : ''
-        if (raw) {
-          stop()
-          onDetected(raw)
-          return
-        }
-      } catch {
-        // ignore detection errors and keep trying
-      }
-      rafRef.current = requestAnimationFrame(() => { void tickBarcodeDetector(detector, tickToken) })
-    }
-
-    const Detector = (globalThis as any).BarcodeDetector
-    try {
-      if (Detector) {
-        setMode('BARCODE_DETECTOR')
-        const detector = new Detector({
-          formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e']
-        })
-        const { stream, currentFacingMode } = await getStreamWithFallback()
-        if (token !== runTokenRef.current) {
-          for (const t of stream.getTracks()) t.stop()
-          return
-        }
-        streamRef.current = stream
-        const video = videoRef.current
-        if (!video) throw new Error('Pré-visualização indisponível.')
-        video.srcObject = stream
-        await video.play()
-        if (token !== runTokenRef.current) return
-        setRunning(true)
-        setActiveFacingMode(currentFacingMode)
-        rafRef.current = requestAnimationFrame(() => { void tickBarcodeDetector(detector, token) })
-        return
-      }
-
-      setMode('ZXING')
-      const mod: any = await import('@zxing/browser')
-      const Reader = mod?.BrowserMultiFormatReader
-      if (!Reader) throw new Error('Scanner indisponível.')
-      const reader = new Reader()
-      zxingReaderRef.current = reader
-
-      const video = videoRef.current
-      if (!video) throw new Error('Pré-visualização indisponível.')
-
-      let controls: any = null
-      let usedFacingMode: 'user' | 'environment' | null = null
-      let lastDecodeError: any = null
-      for (const currentFacingMode of facingAttempts) {
-        try {
-          controls = await reader.decodeFromConstraints(
-            { video: { facingMode: { ideal: currentFacingMode } } } as any,
-            video,
-            (result: any) => {
-              if (token !== runTokenRef.current) return
-              const raw = result?.getText ? String(result.getText() || '') : ''
-              if (!raw) return
-              stop()
-              onDetected(raw)
-            }
-          )
-          usedFacingMode = currentFacingMode
-          break
-        } catch (e: any) {
-          lastDecodeError = e
-          const name = String(e?.name || '')
-          if (name === 'NotAllowedError' || name === 'SecurityError') break
-        }
-      }
-      if (!controls) {
-        throw lastDecodeError || new Error('Não foi possível iniciar o scanner de câmera.')
-      }
-      if (!usedFacingMode) {
-        usedFacingMode = targetFacingMode
-      }
-      if (token !== runTokenRef.current) {
-        try {
-          controls?.stop?.()
-        } catch {
-          // ignore
-        }
-        return
-      }
-      zxingControlsRef.current = controls
-      setRunning(true)
-      setActiveFacingMode(usedFacingMode)
-    } catch (e: any) {
-      const name = String(e?.name || '')
-      const message = String(e?.message || '')
-
-      // Safari/iOS: algumas versões exigem gesto explícito para pedir permissão de câmera.
-      if (origin === 'auto' && (name === 'NotAllowedError' || name === 'SecurityError')) {
-        setNeedsGesture(true)
-      }
-
-      if (name === 'NotFoundError') {
-        setSupported(false)
-        setMode('NONE')
-        setError('Nenhuma câmera foi encontrada neste dispositivo.')
-      } else if (!location?.protocol?.startsWith('https') && location?.hostname !== 'localhost') {
-        setSupported(false)
-        setMode('NONE')
-        setError('O scanner precisa de HTTPS para acessar a câmera.')
-      } else {
-        setError(message || 'Não foi possível iniciar o scanner. Verifique a permissão de câmera no navegador.')
-      }
-    } finally {
-      if (mountedRef.current && token === runTokenRef.current) setStarting(false)
-    }
-  }, [facingMode, onDetected, stop])
-
-  React.useEffect(() => {
-    void start('auto')
-    return () => {
-      mountedRef.current = false
-      stop()
-    }
-  }, [start, stop])
-
-  if (!supported) {
-    return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-sm text-blue-50 font-semibold">Scanner indisponível</div>
-          <Button variant="secondary" onClick={onClose}>Fechar</Button>
-        </div>
-        <div className="text-sm text-blue-100/70">
-          Este navegador não suporta leitura automática de códigos. Digite o código manualmente ou use Chrome/Edge.
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-blue-100/80">
-          {mode === 'ZXING' ? 'Scanner (compatível)' : 'Scanner (rápido)'} • {activeFacingMode === 'user' ? 'câmera frontal' : 'câmera traseira'}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            type="button"
-            onClick={() => {
-              const next = facingMode === 'user' ? 'environment' : 'user'
-              setFacingMode(next)
-              void start('gesture', next)
-            }}
-            disabled={starting}
-          >
-            Inverter câmera
-          </Button>
-          {!running ? (
-            <Button
-              variant="outline"
-              onClick={() => void start('gesture')}
-              disabled={starting}
-              title={needsGesture ? 'Clique para solicitar permissão de câmera' : 'Tentar novamente'}
-            >
-              {starting ? 'Iniciando…' : (needsGesture ? 'Ativar câmera' : 'Tentar novamente')}
-            </Button>
-          ) : null}
-          <Button variant="secondary" onClick={() => { stop(); onClose() }}>Fechar</Button>
-        </div>
-      </div>
-      {error ? <div className="text-sm text-red-200">{error}</div> : null}
-      <div className="relative w-full max-w-xl">
-        <video
-          ref={videoRef}
-          className="w-full rounded-lg border border-white/10 bg-black"
-          style={{ transform: activeFacingMode === 'user' ? 'scaleX(-1)' : 'none' }}
-          playsInline
-          muted
-        />
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="relative h-[28%] w-[78%] rounded-xl border-2 border-emerald-300/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.24)]">
-            <div className="absolute -top-2 -left-2 h-6 w-6 border-l-2 border-t-2 border-white/90 rounded-tl-md" />
-            <div className="absolute -top-2 -right-2 h-6 w-6 border-r-2 border-t-2 border-white/90 rounded-tr-md" />
-            <div className="absolute -bottom-2 -left-2 h-6 w-6 border-l-2 border-b-2 border-white/90 rounded-bl-md" />
-            <div className="absolute -bottom-2 -right-2 h-6 w-6 border-r-2 border-b-2 border-white/90 rounded-br-md" />
-          </div>
-        </div>
-      </div>
-      <div className="text-xs text-blue-200/60">
-        Posicione o código dentro da moldura verde. Se não detectar, aumente a luz e aproxime o produto.
-      </div>
-    </div>
-  )
-}
+import {
+  InsumosAutoSyncBanner,
+  InsumosAlertsPanel,
+  InsumosChartsPanel,
+  InsumosCategoryPoliciesPanel,
+  InsumosEditDialog,
+  InsumosLotDialog,
+  InsumosMovementEditDialog,
+  InsumosMovementsPanel,
+  InsumosOfflineQueueDialog,
+  InsumosInventoryDialog,
+  InsumosPurchaseDialog,
+  InsumosQualityMatchesDialog,
+  InsumosQuickOperationDialog,
+  InsumosSafeModeBanner,
+} from '@/insumosPanels'
+import {
+  CHART_PRESETS,
+  CHARTS_SLOTS_KEY,
+  DEFAULT_CHART_SLOTS,
+  MAX_CHARTS,
+  filterChartSlotsView,
+  getChartIndexFromKey,
+  getNextChartPresetPatch,
+  getNextDistributionGroupByPatch,
+  getNextMovementsGroupByPatch,
+  getNextMovementsModePatch,
+  normalizeChartTopN,
+  parseChartSlots,
+  resolveChartPreset,
+  resolveChartSlot,
+  resolveChartViewOptions,
+  type ChartFilterTipo,
+  type ChartFilterTop,
+  type ChartFilterView,
+  type ChartFilterX,
+  type ChartFilterY,
+  type ChartGroupBy,
+  type ChartMetric,
+  type ChartPresetId,
+  type ChartSlotConfig,
+  type ChartView,
+  type MovementsMode,
+  updateChartSlotAt,
+} from '@/insumosCharts'
+import {
+  buildMovementRows,
+  buildMovimentacoesView,
+  type MovementSortKey,
+} from '@/insumosDerivations'
+import { useInsumosDashboardController } from '@/insumosDashboardController'
+import { useInsumosCreateLookupController } from '@/useInsumosCreateLookupController'
+import { useInsumosInventoryMutationsController } from '@/useInsumosInventoryMutationsController'
+import { useInsumosMovementsController } from '@/useInsumosMovementsController'
+import { useInsumosQuickLookupController } from '@/useInsumosQuickLookupController'
+import { useInsumosQuickOperationsController } from '@/useInsumosQuickOperationsController'
+import {
+  CANONICAL_TIPOS_UNIDADE,
+  brToIsoDate,
+  buildTagStyle,
+  calcularStatusEstoque,
+  combineLocalDateTimeToIso,
+  dateInputToIso,
+  estoqueStatusBadgeVariant,
+  estoqueStatusLabel,
+  extractTransferMovementNote,
+  fmtDateOnlyBR,
+  fmtDayShort,
+  fmtMoneyBRL,
+  fmtMoneyBRL0,
+  fmtMoneyBRLCompact,
+  fmtMovDateShort,
+  fmtMovTimeShort,
+  formatInsumoDescriptor,
+  getCategoriaBgColor,
+  getInsumoBarcodes,
+  getMarcaBgColor,
+  isoDayWeekStart,
+  isoToBrDate,
+  isoToLocalDateInput,
+  isoToLocalTimeInput,
+  normalizeAlertTags,
+  normalizeMovimentacaoTipo,
+  normalizeText,
+  normalizeTimeInput,
+  normalizeTipoUnidadeToCanonical,
+  parseBarcodeInput,
+  slugifyCategoria,
+  statusBadgeVariant,
+  uniqueSortedTextOptions,
+  useViewportSize,
+} from '@/insumosShared'
+import type { AlertaStatusTag } from '@/insumosShared'
+import type {
+  Actionables,
+  ApiError,
+  CategoryPolicy,
+  CategoryPolicySuggestion,
+  EstoqueAlerta,
+  EstoqueResumo,
+  Insumo,
+  InsumosHealth,
+  InsumosProxyStatus,
+  InsumosQuickOperation,
+  InsumosUser,
+  Movimentacao,
+  NotificationsSummary,
+  OfflineQueueItem,
+  QuickActionFeedback,
+  QuickCandidate,
+  QualityIssue,
+  QualityReport,
+  RoiInsights,
+  ShareHistoryItem,
+  SharePayload,
+  UserPrefs,
+} from '@/insumosTypes'
+import { useInsumosHeaderBridge } from '@/useInsumosHeaderBridge'
 
 async function apiJson<T>(
   path: string,
@@ -1107,12 +278,12 @@ export function InsumosModule() {
   const [movLoaded, setMovLoaded] = React.useState(false)
   const [insightsLoaded, setInsightsLoaded] = React.useState(false)
 
-  const [quickOp, setQuickOp] = React.useState<'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' | null>(null)
+  const [quickOp, setQuickOp] = React.useState<InsumosQuickOperation | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickSearch, setQuickSearch] = React.useState('')
   const [quickRegistro, setQuickRegistro] = React.useState('')
   const [quickRegistros, setQuickRegistros] = React.useState<string[]>([])
-  const [quickCandidates, setQuickCandidates] = React.useState<Array<{ registro: string; lote: string; dataValidade: string | null; estoque: number }>>([])
+  const [quickCandidates, setQuickCandidates] = React.useState<QuickCandidate[]>([])
   const [quickAutoFefo, setQuickAutoFefo] = React.useState(true)
   const [quickScanOpen, setQuickScanOpen] = React.useState(false)
   const [quickQuantidade, setQuickQuantidade] = React.useState('1')
@@ -1120,7 +291,7 @@ export function InsumosModule() {
   const [quickObs, setQuickObs] = React.useState('')
   const [quickMotivo, setQuickMotivo] = React.useState('Ajuste manual')
   const [quickActionLoading, setQuickActionLoading] = React.useState(false)
-  const [quickActionFeedback, setQuickActionFeedback] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [quickActionFeedback, setQuickActionFeedback] = React.useState<QuickActionFeedback | null>(null)
   const [quickLookupLoading, setQuickLookupLoading] = React.useState(false)
   const [quickLookupError, setQuickLookupError] = React.useState<string | null>(null)
   const [quickLookupCtxUnidade, setQuickLookupCtxUnidade] = React.useState<string | null>(null)
@@ -1130,15 +301,8 @@ export function InsumosModule() {
   const [quickSearchRemote, setQuickSearchRemote] = React.useState<Insumo[]>([])
   const [quickSearchRemoteLoading, setQuickSearchRemoteLoading] = React.useState(false)
   const [quickSearchRemoteError, setQuickSearchRemoteError] = React.useState<string | null>(null)
-  const quickLookupTokenRef = React.useRef(0)
-  const quickSearchRemoteTokenRef = React.useRef(0)
   const overviewSectionRef = React.useRef<HTMLDivElement | null>(null)
   const movSectionRef = React.useRef<HTMLDivElement | null>(null)
-  const overviewAbortRef = React.useRef<AbortController | null>(null)
-  const insightsAbortRef = React.useRef<AbortController | null>(null)
-  const overviewFullAttemptRef = React.useRef<number>(0)
-  const apiFailureTimestampsRef = React.useRef<number[]>([])
-  const [autoSyncSuspendedUntil, setAutoSyncSuspendedUntil] = React.useState<number>(0)
   const [overviewVisible, setOverviewVisible] = React.useState(false)
   const [overviewEverVisible, setOverviewEverVisible] = React.useState(false)
   const [sharePayload, setSharePayload] = React.useState<SharePayload | null>(null)
@@ -1237,7 +401,6 @@ export function InsumosModule() {
   const [createLookupLoading, setCreateLookupLoading] = React.useState(false)
   const [createLookupError, setCreateLookupError] = React.useState<string | null>(null)
   const [createLookupItems, setCreateLookupItems] = React.useState<Insumo[]>([])
-  const createLookupTokenRef = React.useRef(0)
 
   const [editOpen, setEditOpen] = React.useState(false)
   const [editTarget, setEditTarget] = React.useState<Insumo | null>(null)
@@ -1298,9 +461,7 @@ export function InsumosModule() {
   const [movFilterCategoria, setMovFilterCategoria] = React.useState('')
   const [movFilterMarca, setMovFilterMarca] = React.useState('')
   const [movSearch, setMovSearch] = React.useState('')
-  const [movSortKey, setMovSortKey] = React.useState<
-    'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
-  >('dataHora')
+  const [movSortKey, setMovSortKey] = React.useState<MovementSortKey>('dataHora')
   const [movSortDir, setMovSortDir] = React.useState<'asc' | 'desc'>('desc')
   const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
   const [editMovOpen, setEditMovOpen] = React.useState(false)
@@ -1506,89 +667,8 @@ export function InsumosModule() {
   )
   const isAuthed = !!user?.username
   const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
-  const autoSyncSuspended = autoSyncSuspendedUntil > Date.now()
-  const autoSyncRemainingSeconds = autoSyncSuspended ? Math.max(1, Math.ceil((autoSyncSuspendedUntil - Date.now()) / 1000)) : 0
 
   const isManagerRole = ['GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
-
-  const markAutoSyncFailure = React.useCallback(
-    (error: unknown) => {
-      const status = Number((error as any)?.status || 0)
-      const rawMessage = String((error as any)?.message || '')
-      const message = rawMessage.toLowerCase()
-      const isNetworkError =
-        status <= 0 ||
-        String((error as any)?.name || '') === 'TypeError' ||
-        message.includes('network') ||
-        message.includes('failed to fetch') ||
-        message.includes('conex')
-      const isRecoverableServerFailure = status >= 500 || status === 429 || isNetworkError
-      if (!isRecoverableServerFailure) return
-
-      const now = Date.now()
-      const failureWindowMs = 30_000
-      const cooldownMs = 60_000
-
-      apiFailureTimestampsRef.current = apiFailureTimestampsRef.current.filter((ts) => now - ts <= failureWindowMs)
-      apiFailureTimestampsRef.current.push(now)
-
-      if (apiFailureTimestampsRef.current.length < 5) return
-      if (autoSyncSuspendedUntil > now) return
-
-      setAutoSyncSuspendedUntil(now + cooldownMs)
-      toast.warning('API instável: sincronização automática reduzida por 60 segundos.')
-    },
-    [autoSyncSuspendedUntil]
-  )
-
-  React.useEffect(() => {
-    if (!isAuthed || !canUseApi) {
-      setOverviewLoaded(false)
-      setInsumosLoaded(false)
-      setMovLoaded(false)
-      setInsightsLoaded(false)
-    }
-  }, [isAuthed, canUseApi])
-
-  React.useEffect(() => {
-    if (!autoSyncSuspendedUntil) return
-    const remainingMs = autoSyncSuspendedUntil - Date.now()
-    if (remainingMs <= 0) {
-      apiFailureTimestampsRef.current = []
-      setAutoSyncSuspendedUntil(0)
-      return
-    }
-    const timeoutId = window.setTimeout(() => {
-      apiFailureTimestampsRef.current = []
-      setAutoSyncSuspendedUntil(0)
-    }, remainingMs + 20)
-    return () => window.clearTimeout(timeoutId)
-  }, [autoSyncSuspendedUntil])
-
-  React.useEffect(() => {
-    if (autoSyncSuspendedUntil) return
-    overviewFullAttemptRef.current = 0
-  }, [autoSyncSuspendedUntil])
-
-  const dashboardProgress = React.useMemo(() => {
-    const steps = [
-      healthLoaded,
-      authLoaded,
-      ...(canUseApi && isAuthed ? [overviewLoaded, insumosLoaded, movLoaded, insightsLoaded] : [])
-    ]
-    const total = steps.length || 1
-    const done = steps.filter(Boolean).length
-    return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
-  }, [authLoaded, canUseApi, healthLoaded, insumosLoaded, insightsLoaded, isAuthed, movLoaded, overviewLoaded])
-
-  const loadingPercent = Math.max(0, Math.min(100, Math.round(dashboardProgress)))
-
-  const isDashboardLoading =
-    authLoading || healthLoading || (canUseApi && isAuthed && dashboardProgress < 100)
-  const shouldShowDashboardLoading =
-    isDashboardLoading || !authLoaded || !healthLoaded
-  const showOverviewLoadingProgress =
-    overviewLoading || (canUseApi && isAuthed && shouldShowDashboardLoading)
 
   const overviewCriticosCount = React.useMemo(() => {
     const criticos = Number(overviewResumo?.criticos ?? NaN)
@@ -1603,82 +683,6 @@ export function InsumosModule() {
     if (Number.isNaN(baixo) && Number.isNaN(vencendo)) return null
     return (Number.isNaN(baixo) ? 0 : baixo) + (Number.isNaN(vencendo) ? 0 : vencendo)
   }, [overviewNotifications?.counts?.expiringSoon, overviewNotifications?.counts?.lowStock])
-
-  React.useEffect(() => {
-    try {
-      const entradaValor = Number.isFinite(Number(overviewMovResumo?.entradaValor))
-        ? Number(overviewMovResumo?.entradaValor)
-        : null
-      const saidaValor = Number.isFinite(Number(overviewMovResumo?.saidaValor))
-        ? Number(overviewMovResumo?.saidaValor)
-        : null
-      window.dispatchEvent(
-        new CustomEvent('skincos:insumos:estoque', {
-          detail: {
-            value: overviewResumo?.valorEstoqueTotal ?? null,
-            loading: showOverviewLoadingProgress,
-            percent: loadingPercent,
-            entradaValor,
-            saidaValor
-          }
-        })
-      )
-    } catch {
-      // ignore
-    }
-  }, [
-    loadingPercent,
-    overviewMovResumo?.entradaValor,
-    overviewMovResumo?.saidaValor,
-    overviewResumo?.valorEstoqueTotal,
-    showOverviewLoadingProgress
-  ])
-  const renderInlinePercent = React.useCallback(
-    (active: boolean, className = '') => {
-      if (!active) return null
-      return (
-        <div className={`inline-flex items-center gap-2 text-xs text-blue-200/70 ${className}`.trim()}>
-          <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-          <span className="font-mono">{loadingPercent}%</span>
-        </div>
-      )
-    },
-    [loadingPercent]
-  )
-
-  const renderLoadingText = React.useCallback(
-    (loading: boolean, emptyLabel: string) => {
-      if (loading || shouldShowDashboardLoading) {
-        return (
-          <span className="inline-flex items-center gap-2 text-blue-100/70">
-            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-            {`Carregando ${loadingPercent}%`}
-          </span>
-        )
-      }
-      return <span>{emptyLabel}</span>
-    },
-    [loadingPercent, shouldShowDashboardLoading]
-  )
-
-  const DashboardLoadingButton = React.useCallback(
-    ({ size = 'sm', className = '' }: { size?: 'sm' | 'default' | 'lg'; className?: string } = {}) => (
-      <Button variant="secondary" size={size} disabled className={`gap-2 ${className}`.trim()}>
-        <span className="animate-pulse">⏳</span>
-        {`Carregando dados ${dashboardProgress}%`}
-      </Button>
-    ),
-    [dashboardProgress]
-  )
-
-  const renderListPlaceholder = React.useCallback(
-    (loading: boolean, emptyLabel: string) => {
-      if (loading || shouldShowDashboardLoading) return <div className="text-sm text-blue-100/70">{renderLoadingText(true, emptyLabel)}</div>
-      if (isAuthed) return emptyLabel
-      return 'Faça login para carregar.'
-    },
-    [DashboardLoadingButton, isAuthed, renderLoadingText, shouldShowDashboardLoading]
-  )
 
   const upsertInsumosCache = React.useCallback((items: Insumo[]) => {
     if (!Array.isArray(items) || !items.length) return
@@ -1753,6 +757,107 @@ export function InsumosModule() {
 
   const chartsPanelOpen = detailsOpen[OVERVIEW_PANEL_OPEN_KEYS.charts] ?? true
   const chartsPanelVisible = visibleOverviewPanels.includes('charts')
+
+  const {
+    autoSyncRemainingSeconds,
+    autoSyncSuspended,
+    dashboardProgress,
+    loadInsights,
+    loadOverview,
+    loadingPercent,
+    resumeAutoSync,
+    schedulePostMutationRefresh,
+    shouldShowDashboardLoading,
+    showOverviewLoadingProgress,
+  } = useInsumosDashboardController({
+    apiJson,
+    authLoaded,
+    authLoading,
+    canUseApi,
+    chartsPanelOpen,
+    chartsPanelVisible,
+    healthLoaded,
+    healthLoading,
+    insightsLoaded,
+    insumosLoaded,
+    isAuthed,
+    movLoaded,
+    overviewCustomFrom,
+    overviewCustomTo,
+    overviewEverVisible,
+    overviewInsumos,
+    overviewLoaded,
+    overviewLoading,
+    overviewPeriod,
+    overviewSectionRef,
+    overviewVisible,
+    setInsightsAlertas,
+    setInsightsLoaded,
+    setInsightsLoading,
+    setInsightsTrends,
+    setInsightsTurnover,
+    setInsumosLoaded,
+    setMovLoaded,
+    setOverviewActionables,
+    setOverviewEverVisible,
+    setOverviewInsumos,
+    setOverviewLoaded,
+    setOverviewLoading,
+    setOverviewMovResumo,
+    setOverviewMovSeries,
+    setOverviewNotifications,
+    setOverviewQuality,
+    setOverviewResumo,
+    setOverviewRoi,
+    unidade,
+  })
+
+  const renderInlinePercent = React.useCallback(
+    (active: boolean, className = '') => {
+      if (!active) return null
+      return (
+        <div className={`inline-flex items-center gap-2 text-xs text-blue-200/70 ${className}`.trim()}>
+          <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+          <span className="font-mono">{loadingPercent}%</span>
+        </div>
+      )
+    },
+    [loadingPercent]
+  )
+
+  const renderLoadingText = React.useCallback(
+    (loading: boolean, emptyLabel: string) => {
+      if (loading || shouldShowDashboardLoading) {
+        return (
+          <span className="inline-flex items-center gap-2 text-blue-100/70">
+            <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
+            {`Carregando ${loadingPercent}%`}
+          </span>
+        )
+      }
+      return <span>{emptyLabel}</span>
+    },
+    [loadingPercent, shouldShowDashboardLoading]
+  )
+
+  const DashboardLoadingButton = React.useCallback(
+    ({ size = 'sm', className = '' }: { size?: 'sm' | 'default' | 'lg'; className?: string } = {}) => (
+      <Button variant="secondary" size={size} disabled className={`gap-2 ${className}`.trim()}>
+        <span className="animate-pulse">⏳</span>
+        {`Carregando dados ${dashboardProgress}%`}
+      </Button>
+    ),
+    [dashboardProgress]
+  )
+
+  const renderListPlaceholder = React.useCallback(
+    (loading: boolean, emptyLabel: string) => {
+      if (loading || shouldShowDashboardLoading) return <div className="text-sm text-blue-100/70">{renderLoadingText(true, emptyLabel)}</div>
+      if (isAuthed) return emptyLabel
+      return 'Faça login para carregar.'
+    },
+    [DashboardLoadingButton, isAuthed, renderLoadingText, shouldShowDashboardLoading]
+  )
 
   const persistMainPanels = React.useCallback((next: MainPanelId[]) => {
     setMainPanelOrder(next)
@@ -2166,302 +1271,6 @@ export function InsumosModule() {
     return list.sort(sortByValidade)
   }, [insumos, quickCodigo, quickOp, quickLookupCode, quickLookupCtxUnidade, quickLookupItems, transferFrom, unidade])
 
-  const quickSearchMatches = React.useMemo(() => {
-    const query = quickSearch.trim().toLowerCase()
-    if (!query) return []
-    const looksLikeCode = /^[0-9]{4,}$/.test(query)
-    const remoteActive = canUseApi && isAuthed && !looksLikeCode && query.length >= 2
-    const baseList = remoteActive
-      ? (quickSearchRemoteError ? (Array.isArray(insumos) ? insumos : []) : quickSearchRemote)
-      : (Array.isArray(insumos) ? insumos : [])
-    const selected: Insumo[] = []
-    if (Array.isArray(quickLookupItems) && quickLookupItems.length) selected.push(...quickLookupItems)
-    else if (quickSelectedSnapshot) selected.push(quickSelectedSnapshot)
-    const primarySelected = quickSelectedSnapshot || (quickLookupItems.length ? quickLookupItems[0] : null)
-    const allowSelectedWhileLoading = !!(quickLookupLoading && primarySelected)
-    const selectedSignatures = selected.map((s) => ({
-      registro: normalizeText(s?.registro || ''),
-      codes: getInsumoBarcodes(s).map((c) => normalizeText(c)),
-      produto: normalizeText(s?.produto || ''),
-      categoria: normalizeText(s?.categoria || ''),
-      marca: normalizeText(s?.marca || '')
-    }))
-    const isSelected = (item: Insumo) => {
-      const registro = normalizeText(item?.registro || '')
-      if (registro && selectedSignatures.some((s) => s.registro && s.registro === registro)) return true
-      const codes = getInsumoBarcodes(item).map((c) => normalizeText(c))
-      const produto = normalizeText(item?.produto || '')
-      const categoria = normalizeText(item?.categoria || '')
-      const marca = normalizeText(item?.marca || '')
-      return selectedSignatures.some((s) => {
-        const sameCore =
-          (!!produto || !!categoria || !!marca) &&
-          produto === s.produto &&
-          categoria === s.categoria &&
-          marca === s.marca
-        if (!sameCore) return false
-        if (!codes.length || !s.codes.length) return true
-        return s.codes.some((c) => codes.includes(c))
-      })
-    }
-    const scored: Array<{ item: Insumo; matchedCode: string; score: number }> = []
-    const normQuery = normalizeText(query)
-    const scoreMatch = (item: Insumo, matchedCode: string) => {
-      let score = 0
-      const produto = normalizeText(item?.produto || '')
-      const categoria = normalizeText(item?.categoria || '')
-      const marca = normalizeText(item?.marca || '')
-      const extras = [
-        normalizeText((item as any)?.especificacao || ''),
-        normalizeText((item as any)?.concentracao || ''),
-        normalizeText((item as any)?.volume || ''),
-        normalizeText((item as any)?.calibre || ''),
-        normalizeText((item as any)?.tipoUnidade || '')
-      ]
-      const codes = getInsumoBarcodes(item).map((c) => normalizeText(c))
-      if (matchedCode) score += 20
-      if (codes.includes(normQuery)) score += 80
-      if (produto === normQuery) score += 70
-      else if (produto.startsWith(normQuery)) score += 40
-      else if (produto.includes(normQuery)) score += 25
-      if (marca === normQuery) score += 30
-      else if (marca.includes(normQuery)) score += 12
-      if (categoria === normQuery) score += 25
-      else if (categoria.includes(normQuery)) score += 10
-      if (extras.some((e) => e && e === normQuery)) score += 15
-      else if (extras.some((e) => e && e.includes(normQuery))) score += 8
-      return score
-    }
-    for (const item of baseList) {
-      if (isSelected(item) && !(allowSelectedWhileLoading && isSameInsumo(item, primarySelected))) continue
-      const codes = getInsumoBarcodes(item)
-      const produto = String(item?.produto || '').toLowerCase()
-      const categoria = String(item?.categoria || '').toLowerCase()
-      const marca = String(item?.marca || '').toLowerCase()
-      const extras = [
-        String((item as any)?.especificacao || '').toLowerCase(),
-        String((item as any)?.concentracao || '').toLowerCase(),
-        String((item as any)?.volume || '').toLowerCase(),
-        String((item as any)?.calibre || '').toLowerCase(),
-        String((item as any)?.tipoUnidade || '').toLowerCase()
-      ]
-      const hay = [produto, categoria, marca, ...extras, ...codes].filter(Boolean).join(' ')
-      if (!hay.includes(query)) continue
-      const matchedCode = codes.find((c) => String(c || '').toLowerCase().includes(query)) || codes[0] || ''
-      scored.push({ item, matchedCode, score: scoreMatch(item, matchedCode) })
-    }
-    return scored
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score
-        return String(a.item?.produto || '').localeCompare(String(b.item?.produto || ''), 'pt-BR', { sensitivity: 'base' })
-      })
-      .slice(0, 8)
-  }, [canUseApi, insumos, isAuthed, isSameInsumo, quickLookupItems, quickLookupLoading, quickSearch, quickSearchRemote, quickSearchRemoteError, quickSelectedSnapshot])
-
-  const hasQuickSelection = !!quickSelectedSnapshot || quickLookupItems.length > 0
-
-  const selectQuickCodigo = React.useCallback(
-    (code: string, opts?: { setSearch?: boolean; snapshot?: Insumo | null }) => {
-      const value = String(code || '').trim()
-      if (!value) return false
-      setQuickCodigo(value)
-      if (opts?.setSearch) setQuickSearch(value)
-      if (opts && Object.prototype.hasOwnProperty.call(opts, 'snapshot')) {
-        setQuickSelectedSnapshot(opts?.snapshot ?? null)
-      }
-      setQuickLookupError(null)
-      return true
-    },
-    []
-  )
-
-  const clearQuickSelection = React.useCallback(() => {
-    setQuickCodigo('')
-    setQuickSelectedSnapshot(null)
-    setQuickRegistro('')
-    setQuickRegistros([])
-    setQuickCandidates([])
-    setQuickLookupError(null)
-    setQuickLookupCtxUnidade(null)
-    setQuickLookupCode(null)
-    setQuickLookupItems([])
-  }, [])
-
-  const applyQuickSelection = React.useCallback((item: Insumo, preferredCode?: string) => {
-    const codes = getInsumoBarcodes(item)
-    if (!codes.length) {
-      const message = 'Este item não possui código de barras cadastrado.'
-      setQuickLookupError(message)
-      toast.error(message)
-      return
-    }
-    const code = preferredCode && codes.includes(preferredCode) ? preferredCode : codes[0] || ''
-    if (!code) return
-    selectQuickCodigo(code, { setSearch: false, snapshot: item })
-  }, [selectQuickCodigo])
-
-  React.useEffect(() => {
-    if (!quickLookupItems.length) return
-    setQuickSelectedSnapshot(quickLookupItems[0])
-  }, [quickLookupItems])
-
-  React.useEffect(() => {
-    if (!quickOp) return
-    if (!canUseApi || !isAuthed) {
-      setQuickSearchRemote([])
-      setQuickSearchRemoteLoading(false)
-      setQuickSearchRemoteError(null)
-      return
-    }
-    const query = quickSearch.trim()
-    const looksLikeCode = /^[0-9]{4,}$/.test(query)
-    if (!query || looksLikeCode || query.length < 2) {
-      setQuickSearchRemote([])
-      setQuickSearchRemoteLoading(false)
-      setQuickSearchRemoteError(null)
-      return
-    }
-    const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
-    const token = ++quickSearchRemoteTokenRef.current
-    setQuickSearchRemoteLoading(true)
-    setQuickSearchRemoteError(null)
-    const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const params = new URLSearchParams({
-            unidade: ctxUnidade,
-            q: query,
-            pagina: '1',
-            limite: '30'
-          })
-          const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos?${params.toString()}`)
-          if (token !== quickSearchRemoteTokenRef.current) return
-          const items = Array.isArray(out?.data) ? out.data : []
-          if (items.length) upsertInsumosCache(items)
-          setQuickSearchRemote(items)
-        } catch (e: any) {
-          if (token !== quickSearchRemoteTokenRef.current) return
-          const message = e?.message || 'Falha ao buscar insumos.'
-          setQuickSearchRemoteError(message)
-          setQuickSearchRemote([])
-          console.warn('[insumos][quick-search]', {
-            unit: ctxUnidade,
-            query,
-            status: e?.status || 0,
-            code: e?.code || null
-          })
-        } finally {
-          if (token === quickSearchRemoteTokenRef.current) setQuickSearchRemoteLoading(false)
-        }
-      })()
-    }, 250)
-    return () => window.clearTimeout(t)
-  }, [apiJson, canUseApi, isAuthed, quickOp, quickSearch, transferFrom, unidade, upsertInsumosCache])
-
-  React.useEffect(() => {
-    const query = quickSearch.trim()
-    const hasSelection = !!quickSelectedSnapshot || quickLookupItems.length > 0
-    if (!query) {
-      if (!hasSelection && quickCodigo) setQuickCodigo('')
-      return
-    }
-    if (query === quickCodigo) return
-    const looksLikeCode = /^[0-9]{4,}$/.test(query)
-    if (looksLikeCode) {
-      if (query !== quickCodigo) {
-        setQuickSelectedSnapshot(null)
-        setQuickCodigo(query)
-      }
-      return
-    }
-    if (!hasSelection && quickCodigo) setQuickCodigo('')
-  }, [quickSearch, quickCodigo, quickLookupItems.length, quickSelectedSnapshot])
-
-  React.useEffect(() => {
-    if (quickCodigo) return
-    const selected = quickLookupItems[0] || quickSelectedSnapshot
-    if (!selected) return
-    const codes = getInsumoBarcodes(selected)
-    if (!codes.length) return
-    setQuickCodigo(codes[0])
-  }, [quickCodigo, quickLookupItems, quickSelectedSnapshot])
-
-  const quickLoteNeedsPick = (quickCandidates.length > 1) || (quickRegistros.length > 1) || (quickLotes.length > 1)
-  const quickLotesForPicker = React.useMemo(() => {
-    if (quickCandidates.length) return quickCandidates
-    if (quickRegistros.length) {
-      const set = new Set(quickRegistros)
-      const filtered = quickLotes.filter((l) => set.has(l.registro))
-      if (filtered.length) return filtered
-      return quickRegistros.map((registro) => ({ registro, lote: '', dataValidade: null as any, estoque: 0 }))
-    }
-    return quickLotes
-  }, [quickCandidates, quickLotes, quickRegistros.join('|')])
-
-  const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
-    setQuickSearch('')
-    setQuickCodigo('')
-    setQuickSelectedSnapshot(null)
-    setQuickRegistro('')
-    setQuickRegistros([])
-    setQuickCandidates([])
-    setQuickAutoFefo(true)
-    setQuickQuantidade('1')
-    setQuickNovoEstoque('')
-    setQuickObs('')
-    setQuickMotivo('Ajuste manual')
-    setQuickScanOpen(false)
-    setQuickLookupLoading(false)
-    setQuickLookupError(null)
-    setQuickLookupCtxUnidade(null)
-    setQuickLookupCode(null)
-    setQuickLookupItems([])
-    setQuickSearchRemote([])
-    setQuickSearchRemoteLoading(false)
-    setQuickSearchRemoteError(null)
-    setQuickActionLoading(false)
-    if (!opts?.keepFeedback) setQuickActionFeedback(null)
-  }, [])
-
-  const openQuickOperation = React.useCallback(
-    (
-      op: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA',
-      prefill?: {
-        codigoBarras?: string | null
-        quantidade?: number | string | null
-        obs?: string | null
-        fromUnidade?: string | null
-        toUnidade?: string | null
-      }
-    ) => {
-      resetQuickOperationState()
-      if (prefill?.codigoBarras) {
-        const code = String(prefill.codigoBarras).trim()
-        selectQuickCodigo(code, { setSearch: true, snapshot: null })
-      }
-      if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
-      if (prefill?.obs) setQuickObs(String(prefill.obs))
-      if (prefill?.fromUnidade) setTransferFrom(String(prefill.fromUnidade))
-      if (prefill?.toUnidade) setTransferTo(String(prefill.toUnidade))
-      setQuickOp(op)
-    },
-    [resetQuickOperationState, selectQuickCodigo]
-  )
-
-  React.useEffect(() => {
-    if (!quickOp) return
-    setQuickRegistros([])
-    setQuickCandidates([])
-    setQuickRegistro('')
-  }, [quickOp])
-
-  React.useEffect(() => {
-    if (!quickOp) return
-    setQuickRegistros([])
-    setQuickCandidates([])
-    setQuickRegistro('')
-  }, [quickCodigo])
-
   const lookupInsumosByCodigo = React.useCallback(
     async ({ codigoBarras, ctxUnidade }: { codigoBarras: string; ctxUnidade: string }) => {
       const codigo = String(codigoBarras || '').trim()
@@ -2510,136 +1319,156 @@ export function InsumosModule() {
     [apiJson, readCachedInsumosByCodigo, upsertInsumosCache]
   )
 
+  const {
+    applyQuickSelection,
+    clearQuickSelection,
+    hasQuickSelection,
+    quickLoteNeedsPick,
+    quickLotesForPicker,
+    quickSearchMatches,
+    selectQuickCodigo,
+  } = useInsumosQuickLookupController({
+    apiJson,
+    canUseApi,
+    insumos,
+    isAuthed,
+    isSameInsumo,
+    lookupInsumosByCodigo,
+    normalizeText,
+    quickCandidates,
+    quickCodigo,
+    quickLookupCode,
+    quickLookupCtxUnidade,
+    quickLookupItems,
+    quickLotes,
+    quickOp,
+    quickRegistros,
+    quickSearch,
+    quickSearchRemote,
+    quickSearchRemoteError,
+    quickSearchRemoteLoading,
+    quickSelectedSnapshot,
+    readCachedInsumosByCodigo,
+    transferFrom,
+    unidade,
+    upsertInsumosCache,
+    setQuickCandidates,
+    setQuickCodigo,
+    setQuickLookupCode,
+    setQuickLookupCtxUnidade,
+    setQuickLookupError,
+    setQuickLookupItems,
+    setQuickLookupLoading,
+    setQuickRegistros,
+    setQuickRegistro,
+    setQuickSearch,
+    setQuickSearchRemote,
+    setQuickSearchRemoteError,
+    setQuickSearchRemoteLoading,
+    setQuickSelectedSnapshot,
+  })
+
+  const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
+    setQuickSearch('')
+    setQuickCodigo('')
+    setQuickSelectedSnapshot(null)
+    setQuickRegistro('')
+    setQuickRegistros([])
+    setQuickCandidates([])
+    setQuickAutoFefo(true)
+    setQuickQuantidade('1')
+    setQuickNovoEstoque('')
+    setQuickObs('')
+    setQuickMotivo('Ajuste manual')
+    setQuickScanOpen(false)
+    setQuickLookupLoading(false)
+    setQuickLookupError(null)
+    setQuickLookupCtxUnidade(null)
+    setQuickLookupCode(null)
+    setQuickLookupItems([])
+    setQuickSearchRemote([])
+    setQuickSearchRemoteLoading(false)
+    setQuickSearchRemoteError(null)
+    setQuickActionLoading(false)
+    if (!opts?.keepFeedback) setQuickActionFeedback(null)
+  }, [])
+
+  const openQuickOperation = React.useCallback(
+    (
+      op: InsumosQuickOperation,
+      prefill?: {
+        codigoBarras?: string | null
+        quantidade?: number | string | null
+        obs?: string | null
+        fromUnidade?: string | null
+        toUnidade?: string | null
+      }
+    ) => {
+      resetQuickOperationState()
+      if (prefill?.codigoBarras) {
+        const code = String(prefill.codigoBarras).trim()
+        selectQuickCodigo(code, { setSearch: true, snapshot: null })
+      }
+      if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
+      if (prefill?.obs) setQuickObs(String(prefill.obs))
+      if (prefill?.fromUnidade) setTransferFrom(String(prefill.fromUnidade))
+      if (prefill?.toUnidade) setTransferTo(String(prefill.toUnidade))
+      setQuickOp(op)
+    },
+    [resetQuickOperationState, selectQuickCodigo]
+  )
+
   React.useEffect(() => {
     if (!quickOp) return
-    if (!canUseApi || !isAuthed) return
-    const codigo = quickCodigo.trim()
-    if (!codigo) {
-      setQuickLookupLoading(false)
-      setQuickLookupError(null)
-      setQuickLookupItems([])
-      setQuickLookupCode(null)
-      setQuickLookupCtxUnidade(null)
-      return
-    }
-    const ctxUnidade = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
-    const cached = readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade })
-    if (cached.length) {
-      setQuickLookupLoading(false)
-      setQuickLookupError(null)
-      setQuickLookupItems(cached)
-      setQuickLookupCode(codigo)
-      setQuickLookupCtxUnidade(ctxUnidade)
-      return
-    }
-    const token = ++quickLookupTokenRef.current
-    setQuickLookupLoading(true)
-    setQuickLookupError(null)
-    const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade })
-          if (token !== quickLookupTokenRef.current) return
-          setQuickLookupItems(items)
-          setQuickLookupCode(codigo)
-          setQuickLookupCtxUnidade(ctxUnidade)
-          if (!items.length) setQuickLookupError('Nenhum insumo encontrado para este código.')
-        } catch (e: any) {
-          if (token !== quickLookupTokenRef.current) return
-          setQuickLookupError(e?.message || 'Falha ao buscar o insumo.')
-          setQuickLookupItems([])
-          setQuickLookupCode(codigo)
-          setQuickLookupCtxUnidade(ctxUnidade)
-          console.warn('[insumos][quick-lookup]', {
-            unit: ctxUnidade,
-            codigo,
-            status: e?.status || 0,
-            code: e?.code || null
-          })
-        } finally {
-	          if (token === quickLookupTokenRef.current) setQuickLookupLoading(false)
-	        }
-	      })()
-	    }, 250)
+    setQuickRegistros([])
+    setQuickCandidates([])
+    setQuickRegistro('')
+  }, [quickOp])
 
-    return () => window.clearTimeout(t)
-  }, [canUseApi, isAuthed, lookupInsumosByCodigo, quickCodigo, quickOp, readCachedInsumosByCodigo, transferFrom, unidade])
+  React.useEffect(() => {
+    if (!quickOp) return
+    setQuickRegistros([])
+    setQuickCandidates([])
+    setQuickRegistro('')
+  }, [quickCodigo])
 
-  const createLookupApplyPrefill = React.useCallback((items: Insumo[]) => {
-    const it = Array.isArray(items) && items.length ? items[0] : null
-    if (!it) return
-    if (!createProduto.trim() && it.produto) setCreateProduto(String(it.produto))
-    if (!createCategoria.trim() && it.categoria) setCreateCategoria(String(it.categoria))
-    if (!createMarca.trim() && it.marca) setCreateMarca(String(it.marca))
-    if (!createTipoUnidade.trim() && it.tipoUnidade) setCreateTipoUnidade(normalizeTipoUnidadeToCanonical(String(it.tipoUnidade)) || '')
-    if (!createEspecificacao.trim() && (it as any).especificacao) setCreateEspecificacao(String((it as any).especificacao))
-    if (!createConcentracao.trim() && (it as any).concentracao) setCreateConcentracao(String((it as any).concentracao))
-    if (!createVolume.trim() && (it as any).volume) setCreateVolume(String((it as any).volume))
-    if (!createHomologado && /homologad/i.test(String((it as any).fonte || '').trim())) setCreateHomologado(true)
-    if (!createCalibre.trim() && (it as any).calibre) setCreateCalibre(String((it as any).calibre))
-    if (!createPrecoCusto.trim() && (it as any).precoCusto) setCreatePrecoCusto(String((it as any).precoCusto))
-    if (!createPolicyTouched) {
-      const policy = getPolicyForItem(it)
-      setCreateCategoriaRequiresLot(!!policy.requiresLot)
-      setCreateCategoriaRequiresExpiry(!!policy.requiresExpiry)
-      setCreateCategoriaFefo(!!policy.fefo)
-    }
-  }, [
+  useInsumosCreateLookupController({
+    canUseApi,
     createCalibre,
     createCategoria,
+    createCodigo,
     createConcentracao,
     createEspecificacao,
     createHomologado,
     createMarca,
+    createOpen,
     createPolicyTouched,
     createPrecoCusto,
     createProduto,
     createTipoUnidade,
     createVolume,
     getPolicyForItem,
-    normalizeTipoUnidadeToCanonical
-  ])
-
-  React.useEffect(() => {
-    if (!createOpen) return
-    if (!canUseApi || !isAuthed) return
-    const codigo = createCodigo.trim()
-    if (!codigo) {
-      setCreateLookupLoading(false)
-      setCreateLookupError(null)
-      setCreateLookupItems([])
-      return
-    }
-    const cached = readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: unidade })
-    if (cached.length) {
-      setCreateLookupLoading(false)
-      setCreateLookupError(null)
-      setCreateLookupItems(cached)
-      createLookupApplyPrefill(cached)
-      return
-    }
-    const token = ++createLookupTokenRef.current
-    setCreateLookupLoading(true)
-    setCreateLookupError(null)
-    const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const items = await lookupInsumosByCodigo({ codigoBarras: codigo, ctxUnidade: unidade })
-          if (token !== createLookupTokenRef.current) return
-          setCreateLookupItems(items)
-          if (!items.length) setCreateLookupError('Nenhum insumo encontrado para este código.')
-          createLookupApplyPrefill(items)
-	        } catch (e: any) {
-	          if (token !== createLookupTokenRef.current) return
-	          setCreateLookupError(e?.message || 'Falha ao buscar o insumo.')
-	          setCreateLookupItems([])
-	        } finally {
-	          if (token === createLookupTokenRef.current) setCreateLookupLoading(false)
-	        }
-	      })()
-	    }, 250)
-    return () => window.clearTimeout(t)
-  }, [canUseApi, createCodigo, createLookupApplyPrefill, createOpen, isAuthed, lookupInsumosByCodigo, readCachedInsumosByCodigo, unidade])
+    isAuthed,
+    lookupInsumosByCodigo,
+    readCachedInsumosByCodigo,
+    unidade,
+    setCreateCalibre,
+    setCreateCategoria,
+    setCreateCategoriaFefo,
+    setCreateCategoriaRequiresExpiry,
+    setCreateCategoriaRequiresLot,
+    setCreateConcentracao,
+    setCreateEspecificacao,
+    setCreateHomologado,
+    setCreateLookupError,
+    setCreateLookupItems,
+    setCreateLookupLoading,
+    setCreateMarca,
+    setCreatePrecoCusto,
+    setCreateProduto,
+    setCreateTipoUnidade,
+    setCreateVolume,
+  })
 
   React.useEffect(() => {
     if (!quickOp) return
@@ -2875,6 +1704,7 @@ export function InsumosModule() {
       if (wantsQuickAction) {
         if (actionLabel === 'Entrada') openQuickOperation('ENTRADA')
         else if (actionLabel === 'Saída') openQuickOperation('BAIXA')
+        else if (actionLabel === 'Ajuste') openQuickOperation('AJUSTE')
         else if (actionLabel === 'Transferência') openQuickOperation('TRANSFERENCIA')
         setTimeout(() => {
           window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -2984,60 +1814,6 @@ export function InsumosModule() {
 	      setCreateEspecificacao((prev) => (prev ? prev : filesSummary))
 	    }
 	  }, [])
-
-  React.useEffect(() => {
-    try {
-      window.localStorage.setItem(INSUMOS_UNIT_KEY, unidade)
-    } catch {
-      // ignore
-    }
-  }, [INSUMOS_UNIT_KEY, unidade])
-
-  React.useEffect(() => {
-    const onUnit = (evt: Event) => {
-      const next = String((evt as any)?.detail?.unidade || '').trim()
-      if (!next) return
-      setUnidade(next)
-    }
-    window.addEventListener('skincos:insumos:unidade', onUnit as any)
-    return () => window.removeEventListener('skincos:insumos:unidade', onUnit as any)
-  }, [])
-
-  React.useEffect(() => {
-    if (!allowedUnits.length) return
-    if (allowedUnits.includes(unidade)) return
-    const next = allowedUnits[0]
-    setUnidade(next)
-    try {
-      window.localStorage.setItem(INSUMOS_UNIT_KEY, next)
-    } catch {
-      // ignore
-    }
-    try {
-      window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: next } }))
-    } catch {
-      // ignore
-    }
-  }, [allowedUnits.join('|'), unidade])
-
-  React.useEffect(() => {
-    const allowed = allUnidades || []
-    if (!allowed.length) return
-    if (allowed.includes(unidade)) return
-    const next = allowed[0]
-    if (!next) return
-    setUnidade(next)
-    try {
-      window.localStorage.setItem(INSUMOS_UNIT_KEY, next)
-    } catch {
-      // ignore
-    }
-    try {
-      window.dispatchEvent(new CustomEvent('skincos:insumos:unidade', { detail: { unidade: next } }))
-    } catch {
-      // ignore
-    }
-  }, [INSUMOS_UNIT_KEY, allUnidades.join('|'), unidade])
 
   React.useEffect(() => {
     setTransferFrom(unidade)
@@ -3725,598 +2501,12 @@ export function InsumosModule() {
     if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
   }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos, insumosListModalOpen])
 
-  const loadMovimentacoes = React.useCallback(async () => {
-    if (!canUseApi || !isAuthed) return
-    setMovLoading(true)
-    try {
-      const limite = 200
-      let pagina = 1
-      let merged: Movimentacao[] = []
-      let totalOut: number | null = null
-      while (true) {
-        const params = new URLSearchParams()
-        params.set('unidade', unidade)
-        params.set('limite', String(limite))
-        params.set('pagina', String(pagina))
-        if (movTipo !== 'TODOS') params.set('tipo', movTipo)
-        const codigo = selectedCodigoBarras.trim()
-        if (codigo) params.set('codigoBarras', codigo)
-        const deIso = dateInputToIso(movDe)
-        const ateIso = dateInputToIso(movAte)
-        if (deIso) params.set('de', deIso)
-        if (ateIso) params.set('ate', ateIso)
-        const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
-          `/movimentacoes?${params.toString()}`
-        )
-        const list = (out as any)?.movimentos ?? out?.data
-        const items = Array.isArray(list) ? list : []
-        merged = [...merged, ...items]
-        const total = Number((out as any)?.resumo?.totalMovimentacoes)
-        if (Number.isFinite(total)) totalOut = total
-        if (items.length < limite) break
-        if (totalOut != null && merged.length >= totalOut) break
-        pagina += 1
-      }
-      setMovimentacoes(merged)
-      setMovLoadError(null)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-      setMovLoadError({
-        message: e instanceof Error ? e.message : String(e),
-        status: Number((e as any)?.status || 0) || 0,
-        code: (e as any)?.code ? String((e as any).code) : undefined
-      })
-      setMovimentacoes([])
-    } finally {
-      setMovLoaded(true)
-      setMovLoading(false)
-    }
-  }, [canUseApi, isAuthed, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
-
-  React.useEffect(() => {
-    try {
-      movListContainerRef.current?.scrollTo?.({ top: 0 })
-    } catch {
-      // ignore
-    }
-  }, [unidade, movAte, movDe, movTipo, selectedCodigoBarras, movFilterCategoria, movFilterMarca])
-
-  React.useEffect(() => {
-    if (!canUseApi || !isAuthed) return
-    const deIso = movDe.trim() ? dateInputToIso(movDe) : ''
-    const ateIso = movAte.trim() ? dateInputToIso(movAte) : ''
-    if (movDe.trim() && !deIso) return
-    if (movAte.trim() && !ateIso) return
-    const t = window.setTimeout(() => {
-      void loadMovimentacoes()
-    }, 250)
-    return () => window.clearTimeout(t)
-  }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
-
-  const loadOverview = React.useCallback(async (opts?: { force?: boolean; lite?: boolean }) => {
-    if (!canUseApi || !isAuthed) return
-    // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
-    setOverviewEverVisible(true)
-    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
-    try {
-      overviewAbortRef.current?.abort()
-    } catch {
-      // ignore
-    }
-    const ac = new AbortController()
-    overviewAbortRef.current = ac
-    setOverviewLoading(true)
-    try {
-      const now = new Date()
-      const yyyyMmDd = (d: Date) => d.toISOString().slice(0, 10)
-      let de = ''
-      let ate = yyyyMmDd(now)
-      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
-      const isLite = opts?.lite !== false
-
-      if (overviewPeriod === 'custom') {
-        const deIso = dateInputToIso(overviewCustomFrom)
-        const ateIso = dateInputToIso(overviewCustomTo)
-        if (deIso && ateIso) {
-          de = deIso
-          ate = ateIso
-          const fromMs = new Date(deIso).getTime()
-          const toMs = new Date(ateIso).getTime()
-          const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
-          days = Math.max(1, Math.min(365, diffDays))
-        }
-      }
-
-      if (!de) {
-        const start = new Date(now)
-        if (overviewPeriod === '7d') start.setDate(start.getDate() - 7)
-        else if (overviewPeriod === '30d') start.setDate(start.getDate() - 30)
-        else start.setFullYear(start.getFullYear() - 1)
-        de = yyyyMmDd(start)
-      }
-
-      const params = new URLSearchParams({
-        unidade,
-        de,
-        ate,
-        days: String(days),
-        limitIssues: '120'
-      })
-      if (isLite) params.set('lite', '1')
-      const out = await apiJson<{ success?: boolean; data?: OverviewBundleData }>(`/analytics/overview?${params.toString()}`, { signal: ac.signal })
-
-      if (overviewAbortRef.current !== ac) return
-      const data = out?.data || null
-      setOverviewResumo(data?.resumo || null)
-      if (Array.isArray(data?.itens)) {
-        setOverviewInsumos(data?.itens as any)
-      } else if (!isLite) {
-        setOverviewInsumos(null)
-      }
-      setOverviewNotifications(data?.notifications || null)
-      setOverviewActionables(data?.actionables || null)
-      setOverviewRoi(data?.roi || null)
-      setOverviewQuality(data?.quality || null)
-      setOverviewMovResumo((data?.movResumo as any) || null)
-      setOverviewMovSeries(
-        Array.isArray(data?.movSeries)
-          ? data.movSeries
-              .map((item) => ({
-                day: String(item?.day || ''),
-                entrada: Number(item?.entrada ?? 0) || 0,
-                saida: Number(item?.saida ?? 0) || 0,
-                entradaValor: Number.isFinite(Number(item?.entradaValor)) ? Number(item?.entradaValor) : undefined,
-                saidaValor: Number.isFinite(Number(item?.saidaValor)) ? Number(item?.saidaValor) : undefined
-              }))
-              .filter((item) => item.day)
-          : []
-      )
-    } catch (e) {
-      if ((e as any)?.name === 'AbortError') return
-      if (overviewAbortRef.current !== ac) return
-      markAutoSyncFailure(e)
-      toast.error(e instanceof Error ? e.message : String(e))
-      setOverviewResumo(null)
-      setOverviewNotifications(null)
-      setOverviewActionables(null)
-      setOverviewRoi(null)
-      setOverviewQuality(null)
-      setOverviewMovResumo(null)
-      setOverviewMovSeries([])
-    } finally {
-      if (overviewAbortRef.current === ac) {
-        setOverviewLoaded(true)
-        setOverviewLoading(false)
-        overviewAbortRef.current = null
-      }
-    }
-  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
-
-  React.useEffect(() => {
-    if (!canUseApi || !isAuthed) return
-    if (!chartsPanelVisible || !chartsPanelOpen) return
-    if (overviewInsumos && overviewInsumos.length) return
-    if (overviewLoading) return
-    if (autoSyncSuspendedUntil > Date.now()) return
-    const now = Date.now()
-    if (now - overviewFullAttemptRef.current < 15_000) return
-    overviewFullAttemptRef.current = now
-    void loadOverview({ force: true, lite: false })
-  }, [
-    autoSyncSuspendedUntil,
-    canUseApi,
-    chartsPanelOpen,
-    chartsPanelVisible,
-    isAuthed,
-    loadOverview,
-    overviewInsumos,
-    overviewLoading
-  ])
-
-  const saveLot = React.useCallback(async () => {
-    if (!lotSelecionado?.registro) {
-      toast.error('Registro do insumo ausente.')
-      return
-    }
-    if (!canUseApi || !isAuthed) return
-    setLotSaving(true)
-    try {
-      const dataValidade = dateInputToIso(lotEditValidade)
-      await mutateJson<{ success?: boolean }>(`/insumos/${encodeURIComponent(lotSelecionado.registro)}?unidade=${encodeURIComponent(unidade)}`, {
-        method: 'PUT',
-        body: { lote: lotEditLote.trim(), dataValidade },
-        queueLabel: 'Atualização de lote/validade'
-      })
-      toast.success('Lote/validade atualizados.')
-      setLotDialogOpen(false)
-      await Promise.allSettled([refreshInsumos(), loadOverview({ force: true })])
-    } catch (e) {
-      if (policyErrorToast(e)) return
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLotSaving(false)
-    }
-  }, [canUseApi, isAuthed, loadOverview, lotEditLote, lotEditValidade, lotSelecionado?.registro, mutateJson, refreshInsumos, unidade])
-
-  const saveEdit = React.useCallback(async () => {
-    const registro = String(editTarget?.registro || '').trim()
-    if (!registro) {
-      setEditSaveError('Registro do insumo ausente.')
-      toast.error('Registro do insumo ausente.')
-      return
-    }
-    if (!isAuthed) {
-      setEditSaveError('Nao autenticado.')
-      toast.error('Nao autenticado.')
-      return
-    }
-    if (!canUseApi) {
-      setEditSaveError('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
-      toast.error('API indisponivel ou nao pronta. Aguarde carregar e tente novamente.')
-      return
-    }
-    const codigoBarras = editCodigo.trim()
-    const extraCodes = parseBarcodeInput(editCodigosExtras)
-    const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
-    const produto = editProduto.trim()
-    if (!codigoBarras) {
-      setEditValidationErrors({ codigoBarras: 'Obrigatorio.' })
-      setEditSaveError('Informe o código de barras para salvar.')
-      return toast.error('Informe o código de barras')
-    }
-    if (!produto) {
-      setEditValidationErrors({ produto: 'Obrigatorio.' })
-      setEditSaveError('Informe o produto para salvar.')
-      return toast.error('Informe o produto')
-    }
-
-    setEditSaving(true)
-    try {
-      setEditSaveError(null)
-      setEditValidationErrors({})
-      const categoria = editCategoria.trim()
-      const policy = {
-        requiresLot: !!editCategoriaRequiresLot,
-        requiresExpiry: !!editCategoriaRequiresExpiry,
-        fefo: !!editCategoriaFefo
-      }
-      const lote = editLote.trim()
-      const dataValidade = dateInputToIso(editDataValidade)
-      const tipoUnidade = normalizeTipoUnidadeToCanonical(editTipoUnidade)
-
-      if (!tipoUnidade) {
-        setEditValidationErrors({ tipoUnidade: 'Selecione a unidade (medida).' })
-        setEditSaveError('Informe a unidade (medida) para salvar.')
-        toast.error('Informe a unidade (medida) para salvar.')
-        return
-      }
-
-      if (policy.fefo && !policy.requiresExpiry) {
-        setEditValidationErrors({ policy: 'FEFO exige validade obrigatoria.' })
-        setEditSaveError('FEFO exige validade obrigatoria.')
-        toast.error('FEFO exige validade obrigatória')
-        return
-      }
-      if (policy.requiresLot && !lote) {
-        setEditValidationErrors({
-          policy: 'Lote obrigatorio pela politica.',
-          lote: 'Obrigatorio (pela politica do item).'
-        })
-        setEditSaveError('Este item exige Lote. Preencha o campo lote para salvar.')
-        toast.error('Este item exige Lote. Preencha o campo lote para salvar.')
-        return
-      }
-      if (policy.requiresExpiry && !dataValidade) {
-        setEditValidationErrors({
-          policy: 'Validade obrigatoria pela politica.',
-          dataValidade: 'Obrigatorio (pela politica do item).'
-        })
-        setEditSaveError('Este item exige Data de validade. Preencha o campo validade para salvar.')
-        toast.error('Este item exige Data de validade. Preencha o campo validade para salvar.')
-        return
-      }
-
-      await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
-        method: 'PUT',
-        queueLabel: 'Edição de insumo',
-        body: {
-          codigoBarras,
-          codigosBarras,
-          produto,
-          categoria,
-          marca: editMarca.trim(),
-          tipoUnidade,
-          especificacao: editEspecificacao.trim(),
-          concentracao: editConcentracao.trim(),
-          volume: editVolume.trim(),
-          fonte: editHomologado ? 'Homologado' : '',
-          calibre: editCalibre.trim(),
-          precoCusto: editPrecoCusto.trim(),
-          estoqueMinimo: Number(editEstoqueMinimo) || 0,
-          lote,
-          dataValidade,
-          policyRequiresLot: policy.requiresLot,
-          policyRequiresExpiry: policy.requiresExpiry,
-          policyFefo: policy.fefo
-        }
-      })
-      toast.success('Insumo atualizado')
-      setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
-    } catch (e) {
-      const policyCode = getPolicyErrorCode(e)
-      if (policyCode) {
-        setEditSaveError(e instanceof Error ? e.message : String(e))
-        policyErrorToast(e)
-        if (policyCode === 'POLICY_REQUIRES_LOT') {
-          setEditValidationErrors({
-            policy: 'Lote obrigatorio pela politica.',
-            lote: 'Obrigatorio (pela politica do item).'
-          })
-        } else {
-          setEditValidationErrors({
-            policy: 'Validade obrigatoria pela politica.',
-            dataValidade: 'Obrigatorio (pela politica do item).'
-          })
-        }
-        return
-      }
-      setEditSaveError(e instanceof Error ? e.message : String(e))
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setEditSaving(false)
-    }
-  }, [
-    canUseApi,
-    clearEditValidationError,
-    editCalibre,
-    editCategoria,
-    editCategoriaFefo,
-    editCategoriaRequiresExpiry,
-    editCategoriaRequiresLot,
-    editCodigo,
-    editConcentracao,
-    editDataValidade,
-    editEspecificacao,
-    editEstoqueMinimo,
-    editHomologado,
-    editLote,
-    editMarca,
-    editPrecoCusto,
-    editProduto,
-    editTarget?.registro,
-    editTipoUnidade,
-    editVolume,
-    isAuthed,
-    loadInsumosOptions,
-    loadOverview,
-    mutateJson,
-    refreshInsumos,
-    getPolicyErrorCode,
-    unidade
-  ])
-
-  const deleteEdit = React.useCallback(async () => {
-    const registro = String(editTarget?.registro || '').trim()
-    if (!registro) return
-    if (!canUseApi || !isAuthed) return
-    if (!window.confirm('Excluir este insumo? Esta ação não pode ser desfeita.')) return
-    setEditSaving(true)
-    try {
-      await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
-        method: 'DELETE',
-        queueLabel: 'Exclusão de insumo'
-      })
-      toast.success('Insumo excluído')
-      setEditOpen(false)
-      await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setEditSaving(false)
-    }
-  }, [canUseApi, editTarget?.registro, isAuthed, loadInsumosOptions, loadOverview, mutateJson, refreshInsumos, unidade])
-
-  const deleteInsumoByRegistro = React.useCallback(
-    async (registroRaw: string) => {
-      const registro = String(registroRaw || '').trim()
-      if (!registro || !canUseApi || !isAuthed) return
-      if (!window.confirm('Excluir este insumo? Esta ação não pode ser desfeita.')) return
-      setQualityMatchesSavingRegistro(registro)
-      try {
-        await mutateJson(`/insumos/${encodeURIComponent(registro)}?unidade=${encodeURIComponent(unidade)}`, {
-          method: 'DELETE',
-          queueLabel: 'Exclusão de insumo'
-        })
-        toast.success('Insumo excluído')
-        setQualityMatchesItems((prev) => prev.filter((it) => String(it?.registro || '').trim() !== registro))
-        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : String(e))
-      } finally {
-        setQualityMatchesSavingRegistro('')
-      }
-    },
-    [canUseApi, isAuthed, loadInsumosOptions, loadOverview, mutateJson, refreshInsumos, unidade]
-  )
-
-  const loadInsights = React.useCallback(async (opts?: { force?: boolean }) => {
-    if (!canUseApi || !isAuthed) return
-    // If the user triggered analytics loads (or they are visible), unlock subsequent auto-refreshes.
-    setOverviewEverVisible(true)
-    if (!opts?.force && autoSyncSuspendedUntil > Date.now()) return
-    try {
-      insightsAbortRef.current?.abort()
-    } catch {
-      // ignore
-    }
-    const ac = new AbortController()
-    insightsAbortRef.current = ac
-    setInsightsLoading(true)
-    try {
-      const params = new URLSearchParams()
-      params.set('unidade', unidade)
-      params.set('groupBy', 'day')
-
-      let days = overviewPeriod === '7d' ? 7 : overviewPeriod === '30d' ? 30 : 365
-      const customFromIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomFrom) : ''
-      const customToIso = overviewPeriod === 'custom' ? dateInputToIso(overviewCustomTo) : ''
-      if (overviewPeriod === 'custom' && customFromIso && customToIso) {
-        const fromMs = new Date(customFromIso).getTime()
-        const toMs = new Date(customToIso).getTime()
-        const diffDays = Math.max(1, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24)))
-        days = Math.max(1, Math.min(365, diffDays))
-        params.set('from', customFromIso)
-        params.set('to', customToIso)
-      }
-      params.set('days', String(days))
-
-      const out = await apiJson<{ success?: boolean; data?: InsightsBundleData }>(`/analytics/insights?${params.toString()}`, { signal: ac.signal })
-      if (insightsAbortRef.current !== ac) return
-      const data = out?.data || null
-      setInsightsAlertas(Array.isArray(data?.alertas) ? data.alertas : [])
-      setInsightsTrends(data?.trends || null)
-      setInsightsTurnover(data?.turnover || null)
-    } catch (e) {
-      if ((e as any)?.name === 'AbortError') return
-      if (insightsAbortRef.current !== ac) return
-      markAutoSyncFailure(e)
-      toast.error(e instanceof Error ? e.message : String(e))
-      setInsightsAlertas([])
-      setInsightsTrends(null)
-      setInsightsTurnover(null)
-    } finally {
-      if (insightsAbortRef.current === ac) {
-        setInsightsLoaded(true)
-        setInsightsLoading(false)
-        insightsAbortRef.current = null
-      }
-    }
-  }, [autoSyncSuspendedUntil, canUseApi, isAuthed, markAutoSyncFailure, overviewCustomFrom, overviewCustomTo, overviewPeriod, unidade])
-
-  const postMutationRefreshTimerRef = React.useRef<number | null>(null)
-	  const schedulePostMutationRefresh = React.useCallback(
-	    (opts?: { overview?: boolean; insights?: boolean }) => {
-	      const wantsOverview = opts?.overview !== false
-	      const wantsInsights = opts?.insights !== false
-	      if (!wantsOverview && !wantsInsights) return
-	      if (autoSyncSuspendedUntil > Date.now()) return
-
-	      if (postMutationRefreshTimerRef.current) {
-	        window.clearTimeout(postMutationRefreshTimerRef.current)
-	        postMutationRefreshTimerRef.current = null
-	      }
-
-      postMutationRefreshTimerRef.current = window.setTimeout(() => {
-        const isOverviewVisible = (() => {
-          try {
-            const el = overviewSectionRef.current
-            if (!el) return true
-            const rect = el.getBoundingClientRect()
-            const vh = window.innerHeight || 0
-            if (!vh) return true
-            const topOk = rect.top < vh * 0.85
-            const bottomOk = rect.bottom > vh * 0.15
-            return topOk && bottomOk
-          } catch {
-            return true
-          }
-        })()
-
-        const tasks: Promise<any>[] = []
-        if (wantsOverview && overviewLoaded && isOverviewVisible) tasks.push(Promise.resolve(loadOverview()))
-        if (wantsInsights && insightsLoaded && isOverviewVisible) tasks.push(Promise.resolve(loadInsights()))
-	        if (tasks.length) void Promise.allSettled(tasks)
-	      }, 2500)
-	    },
-	    [autoSyncSuspendedUntil, insightsLoaded, loadInsights, loadOverview, overviewLoaded]
-	  )
-
-  const saveMovementEdit = React.useCallback(async () => {
-    const target = editMovTarget
-    const movementId = String(target?.id || '').trim()
-    if (!movementId) {
-      toast.error('Movimentação inválida.')
-      return
-    }
-    if (!canUseApi || !isAuthed) return
-
-    const tipo = normalizeMovimentacaoTipo(target?.tipo)
-    const produto = editMovProduto.trim()
-    if (!produto) {
-      toast.error('Informe o produto.')
-      return
-    }
-    const dataHora = combineLocalDateTimeToIso(editMovData, editMovHora)
-    if (!dataHora) {
-      toast.error('Informe uma data e hora válidas.')
-      return
-    }
-    const body: Record<string, unknown> = {
-      produto,
-      dataHora,
-      observacoes: editMovObservacoes.trim()
-    }
-
-    if (!String(target?.transferId || '').trim()) {
-      const nextUnidade = String(editMovUnidade || '').trim()
-      if (!nextUnidade) {
-        toast.error('Informe a unidade.')
-        return
-      }
-      body.unidade = nextUnidade
-    }
-
-    if (String(target?.transferId || '').trim()) {
-      const quantidade = parseInt(editMovQuantidade, 10)
-      if (!Number.isFinite(quantidade) || quantidade < 1) {
-        toast.error('Informe uma quantidade válida.')
-        return
-      }
-      body.quantidade = quantidade
-    } else if (tipo === 'AJUSTE') {
-      const estoqueNovo = parseInt(editMovNovoEstoque, 10)
-      if (!Number.isFinite(estoqueNovo) || estoqueNovo < 0) {
-        toast.error('Informe o novo estoque.')
-        return
-      }
-      const motivo = editMovMotivo.trim()
-      if (!motivo) {
-        toast.error('Informe o motivo do ajuste.')
-        return
-      }
-      body.estoqueNovo = estoqueNovo
-      body.motivo = motivo
-    } else {
-      const quantidade = parseInt(editMovQuantidade, 10)
-      if (!Number.isFinite(quantidade) || quantidade < 1) {
-        toast.error('Informe uma quantidade válida.')
-        return
-      }
-      body.quantidade = quantidade
-    }
-
-    setEditMovSaving(true)
-    try {
-      await mutateJson<{ success?: boolean }>(
-        `/movimentacoes/${encodeURIComponent(movementId)}?unidade=${encodeURIComponent(String(target?.unidade || unidade || '').trim() || unidade)}`,
-        {
-          method: 'PUT',
-          body,
-          queueLabel: 'Edição de movimentação'
-        }
-      )
-      toast.success('Lançamento atualizado.')
-      setEditMovOpen(false)
-      setEditMovTarget(null)
-      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
-      schedulePostMutationRefresh({ overview: true, insights: true })
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setEditMovSaving(false)
-    }
-  }, [
+  const {
+    deleteMovementEdit,
+    loadMovimentacoes,
+    saveMovementEdit,
+  } = useInsumosMovementsController({
+    apiJson,
     canUseApi,
     editMovData,
     editMovHora,
@@ -4328,370 +2518,184 @@ export function InsumosModule() {
     editMovTarget,
     editMovUnidade,
     isAuthed,
-    loadMovimentacoes,
+    movAte,
+    movDe,
+    movFilterCategoria,
+    movFilterMarca,
+    movListContainerRef,
+    movTipo,
     mutateJson,
     refreshInsumos,
     schedulePostMutationRefresh,
-    unidade
-  ])
-
-  const deleteMovementEdit = React.useCallback(async () => {
-    const target = editMovTarget
-    const movementId = String(target?.id || '').trim()
-    if (!movementId) {
-      toast.error('Movimentação inválida.')
-      return
-    }
-    if (!canUseApi || !isAuthed) return
-
-    const confirmed = window.confirm('Excluir este lançamento? Essa ação recalcula o estoque do insumo.')
-    if (!confirmed) return
-
-    setEditMovDeleting(true)
-    try {
-      await mutateJson<{ success?: boolean }>(
-        `/movimentacoes/${encodeURIComponent(movementId)}?unidade=${encodeURIComponent(String(target?.unidade || unidade || '').trim() || unidade)}`,
-        {
-          method: 'DELETE',
-          queueLabel: 'Exclusão de movimentação'
-        }
-      )
-      toast.success('Lançamento excluído.')
-      setEditMovOpen(false)
-      setEditMovTarget(null)
-      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
-      schedulePostMutationRefresh({ overview: true, insights: true })
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setEditMovDeleting(false)
-    }
-  }, [
+    selectedCodigoBarras,
+    setEditMovDeleting,
+    setEditMovOpen,
+    setEditMovSaving,
+    setEditMovTarget,
+    setMovLoaded,
+    setMovLoading,
+    setMovLoadError,
+    setMovimentacoes,
+    unidade,
+  })
+  const {
+    deleteEdit,
+    deleteInsumoByRegistro,
+    saveCreateFromModal,
+    saveCreateInline,
+    saveEdit,
+    saveLot,
+  } = useInsumosInventoryMutationsController({
     canUseApi,
-    editMovTarget,
+    createCalibre,
+    createCategoria,
+    createCategoriaFefo,
+    createCategoriaRequiresExpiry,
+    createCategoriaRequiresLot,
+    createCodigo,
+    createCodigosExtras,
+    createConcentracao,
+    createDataValidade,
+    createEspecificacao,
+    createEstoqueInicial,
+    createEstoqueMinimo,
+    createHomologado,
+    createLote,
+    createMarca,
+    createNovoLote,
+    createPrecoCusto,
+    createProduto,
+    createTipoUnidade,
+    createVolume,
+    editCalibre,
+    editCategoria,
+    editCategoriaFefo,
+    editCategoriaRequiresExpiry,
+    editCategoriaRequiresLot,
+    editCodigo,
+    editCodigosExtras,
+    editConcentracao,
+    editDataValidade,
+    editEspecificacao,
+    editEstoqueMinimo,
+    editHomologado,
+    editLote,
+    editMarca,
+    editPrecoCusto,
+    editProduto,
+    editTarget,
+    editTipoUnidade,
+    editVolume,
+    getPolicyErrorCode,
+    insumos,
     isAuthed,
-    loadMovimentacoes,
+    loadInsumosOptions,
+    loadOverview,
+    lotEditLote,
+    lotEditValidade,
+    lotSelecionado,
     mutateJson,
+    policyErrorToast,
     refreshInsumos,
-    schedulePostMutationRefresh,
-    unidade
-  ])
+    setCreateCalibre,
+    setCreateCategoria,
+    setCreateCodigosExtras,
+    setCreateCodigo,
+    setCreateConcentracao,
+    setCreateDataValidade,
+    setCreateEspecificacao,
+    setCreateEstoqueInicial,
+    setCreateEstoqueMinimo,
+    setCreateHomologado,
+    setCreateLoading,
+    setCreateLote,
+    setCreateMarca,
+    setCreateNovoLote,
+    setCreateOpen,
+    setCreatePrecoCusto,
+    setCreateProduto,
+    setCreateTipoUnidade,
+    setCreateVolume,
+    setEditOpen,
+    setEditSaveError,
+    setEditSaving,
+    setEditValidationErrors,
+    setLotDialogOpen,
+    setLotSaving,
+    setQualityMatchesItems,
+    setQualityMatchesSavingRegistro,
+    unidade,
+  })
 
-  const runQuickAction = React.useCallback(
-    async (kind: 'ENTRADA' | 'BAIXA' | 'AJUSTE'): Promise<boolean> => {
-      if (!canUseApi || !isAuthed) return false
-      setQuickActionFeedback(null)
-      const codigoBarras = quickCodigo.trim()
-      if (!codigoBarras) {
-        const message = 'Informe o código de barras'
-        setQuickActionFeedback({ type: 'error', message })
-        return false
-      }
-
-      setQuickActionLoading(true)
-      try {
-        if (kind === 'AJUSTE') {
-          const novoEstoque = Number.isFinite(Number(quickNovoEstoque)) ? Number(quickNovoEstoque) : null
-          if (novoEstoque === null) {
-            const message = 'Informe o novo estoque'
-            setQuickActionFeedback({ type: 'error', message })
-            return false
-          }
-          const registro = quickRegistro.trim()
-          await mutateJson(`/insumos/ajuste?unidade=${encodeURIComponent(unidade)}`, {
-            method: 'POST',
-            body: { codigoBarras, registro: registro || undefined, novoEstoque, motivo: quickMotivo, observacoes: quickObs },
-            queueLabel: 'Ajuste'
-          })
-          const message = 'Ajuste registrado'
-          setQuickActionFeedback({ type: 'success', message })
-        } else {
-          const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
-          const path = kind === 'ENTRADA' ? '/insumos/entrada' : '/insumos/baixa'
-          const registro = quickRegistro.trim()
-          if (quickLoteNeedsPick && !registro) {
-            const message = 'Selecione o lote/registro'
-            setQuickActionFeedback({ type: 'error', message })
-            return false
-          }
-          const out = await mutateJson<{ success?: boolean; novoEstoque?: number; quebraEstoque?: boolean; deficit?: number }>(
-            `${path}?unidade=${encodeURIComponent(unidade)}`,
-            {
-              method: 'POST',
-              body: { codigoBarras, registro: registro || undefined, quantidade, observacoes: quickObs },
-              queueLabel: kind === 'ENTRADA' ? 'Entrada' : 'Baixa'
-            }
-          )
-
-          const novoEstoque = Number((out as any)?.novoEstoque)
-          const quebraEstoque = kind === 'BAIXA' && (
-            (out as any)?.quebraEstoque === true ||
-            (Number.isFinite(novoEstoque) && novoEstoque < 0)
-          )
-          const message =
-            quebraEstoque
-              ? `Baixa registrada com quebra de estoque (saldo: ${Number.isFinite(novoEstoque) ? novoEstoque : '-'})`
-              : (kind === 'ENTRADA' ? 'Entrada registrada' : 'Baixa registrada')
-          setQuickActionFeedback({ type: 'success', message })
-          if (quebraEstoque) {
-            const deficit = Number((out as any)?.deficit)
-            toast.warning(
-              `Quebra de estoque detectada${Number.isFinite(deficit) ? `: déficit de ${deficit}` : ''}. Confira os alertas.`
-            )
-          }
-        }
-
-        await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
-        schedulePostMutationRefresh({ overview: true, insights: true })
-        return true
-      } catch (e) {
-        const code = (e as any)?.code
-        const registros = Array.isArray((e as any)?.registros) ? (e as any).registros : []
-        const candidatesRaw = Array.isArray((e as any)?.candidates) ? (e as any).candidates : []
-        if (String(code || '').toUpperCase() === 'AMBIGUOUS') {
-          if (candidatesRaw.length) {
-            const candidates = candidatesRaw
-              .map((c: any) => ({
-                registro: String(c?.registro || '').trim(),
-                lote: String(c?.lote || '').trim(),
-                dataValidade: c?.dataValidade ? String(c.dataValidade) : null,
-                estoque: Number.isFinite(Number(c?.estoque)) ? Number(c.estoque) : 0
-              }))
-              .filter((c: any) => c.registro)
-              .sort((a: any, b: any) => {
-                const sa = (Number(a.estoque) || 0) > 0 ? 0 : 1
-                const sb = (Number(b.estoque) || 0) > 0 ? 0 : 1
-                if (sa !== sb) return sa - sb
-                const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY
-                const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY
-                if (da !== db) return da - db
-                return String(a.registro).localeCompare(String(b.registro))
-              })
-            setQuickCandidates(candidates)
-            setQuickRegistros(candidates.map((c: any) => c.registro))
-          } else {
-            setQuickCandidates([])
-            setQuickRegistros(registros)
-          }
-          const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
-          setQuickActionFeedback({ type: 'error', message })
-          return false
-        }
-        if (policyErrorToast(e)) {
-          setQuickActionFeedback({ type: 'error', message: e instanceof Error ? e.message : String(e) })
-          return false
-        }
-        const message = e instanceof Error ? e.message : String(e)
-        setQuickActionFeedback({ type: 'error', message })
-        return false
-      } finally {
-        setQuickActionLoading(false)
-      }
-    },
-    [
-      canUseApi,
-      isAuthed,
-      quickLoteNeedsPick,
-      loadMovimentacoes,
-      mutateJson,
-      quickCodigo,
-      quickMotivo,
-      quickNovoEstoque,
-      quickObs,
-      quickQuantidade,
-      quickRegistro,
-      refreshInsumos,
-      schedulePostMutationRefresh,
-      setQuickActionFeedback,
-      unidade
-    ]
+  const headerStatus = React.useMemo(
+    () => ({
+      online: healthLoaded ? Boolean(health) : null,
+      authed: authLoaded ? isAuthed : null,
+      integrated: healthLoaded
+        ? (typeof health?.ready === 'boolean'
+            ? health.ready
+            : (typeof health?.dbConfigured === 'boolean' ? health.dbConfigured : (health?.ok == null ? null : Boolean(health.ok))))
+        : null,
+      unidades: unidadeOptions,
+      allowedUnits,
+    }),
+    [allowedUnits, authLoaded, health, healthLoaded, isAuthed, unidadeOptions],
   )
 
-  const runTransfer = React.useCallback(async (): Promise<boolean> => {
-    if (!canUseApi || !isAuthed) return false
-    setQuickActionFeedback(null)
-    const codigoBarras = quickCodigo.trim()
-    if (!codigoBarras) {
-      const message = 'Informe o código de barras'
-      setQuickActionFeedback({ type: 'error', message })
-      return false
-    }
+  useInsumosHeaderBridge({
+    allUnidades,
+    allowedUnits,
+    loadInsights,
+    loadOverview,
+    loadingPercent,
+    openQuickOperation,
+    overviewCustomFrom,
+    overviewCustomTo,
+    overviewMovResumo,
+    overviewPeriod,
+    overviewResumo,
+    refreshInsumos,
+    resetUserLayoutPrefs,
+    selectedUnit: unidade,
+    setAllDetailsOpen,
+    setOverviewCustomFrom,
+    setOverviewCustomTo,
+    setOverviewPeriod,
+    setSelectedUnit: setUnidade,
+    showOverviewLoadingProgress,
+    status: headerStatus,
+    storageKey: INSUMOS_UNIT_KEY,
+  })
 
-    if (transferFrom === transferTo) {
-      const message = 'Origem e destino devem ser diferentes'
-      setQuickActionFeedback({ type: 'error', message })
-      return false
-    }
-    const registro = quickRegistro.trim()
-    if (quickLoteNeedsPick && !registro) {
-      const message = 'Selecione o lote/registro'
-      setQuickActionFeedback({ type: 'error', message })
-      return false
-    }
-
-    setQuickActionLoading(true)
-    try {
-      const quantidade = Math.max(1, parseInt(quickQuantidade, 10) || 0)
-      const out = await mutateJson<{
-        success?: boolean
-        estoqueNovoOrigem?: number
-        quebraEstoqueOrigem?: boolean
-        deficitOrigem?: number
-      }>(`/insumos/transferir?unidade=${encodeURIComponent(transferFrom)}`, {
-        method: 'POST',
-        body: {
-          codigoBarras,
-          registro: registro || undefined,
-          quantidade,
-          fromUnidade: transferFrom,
-          toUnidade: transferTo,
-          observacoes: quickObs
-        },
-        queueLabel: 'Transferência'
-      })
-      const novoOrigem = Number((out as any)?.estoqueNovoOrigem)
-      const quebraEstoque = (out as any)?.quebraEstoqueOrigem === true || (Number.isFinite(novoOrigem) && novoOrigem < 0)
-      const message = quebraEstoque
-        ? `Transferência registrada com quebra de estoque (origem: ${Number.isFinite(novoOrigem) ? novoOrigem : '-'})`
-        : 'Transferência registrada'
-      setQuickActionFeedback({ type: 'success', message })
-      if (quebraEstoque) {
-        const deficit = Number((out as any)?.deficitOrigem)
-        toast.warning(
-          `Quebra de estoque detectada na origem${Number.isFinite(deficit) ? `: déficit de ${deficit}` : ''}. Confira os alertas.`
-        )
-      }
-
-      // Refresh what the user is seeing (estoque + movimentações)
-      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
-      schedulePostMutationRefresh({ overview: true, insights: true })
-      return true
-    } catch (e) {
-      const code = (e as any)?.code
-      const registros = Array.isArray((e as any)?.registros) ? (e as any).registros : []
-      const candidatesRaw = Array.isArray((e as any)?.candidates) ? (e as any).candidates : []
-      if (String(code || '').toUpperCase() === 'AMBIGUOUS') {
-        if (candidatesRaw.length) {
-          const candidates = candidatesRaw
-            .map((c: any) => ({
-              registro: String(c?.registro || '').trim(),
-              lote: String(c?.lote || '').trim(),
-              dataValidade: c?.dataValidade ? String(c.dataValidade) : null,
-              estoque: Number.isFinite(Number(c?.estoque)) ? Number(c.estoque) : 0
-            }))
-            .filter((c: any) => c.registro)
-            .sort((a: any, b: any) => {
-              const sa = (Number(a.estoque) || 0) > 0 ? 0 : 1
-              const sb = (Number(b.estoque) || 0) > 0 ? 0 : 1
-              if (sa !== sb) return sa - sb
-              const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY
-              const db = b?.dataValidade ? new Date(b.dataValidade).getTime() : Number.POSITIVE_INFINITY
-              if (da !== db) return da - db
-              return String(a.registro).localeCompare(String(b.registro))
-            })
-          setQuickCandidates(candidates)
-          setQuickRegistros(candidates.map((c: any) => c.registro))
-        } else {
-          setQuickCandidates([])
-          setQuickRegistros(registros)
-        }
-        const message = 'Este código possui múltiplos lotes. Selecione o lote/registro.'
-        setQuickActionFeedback({ type: 'error', message })
-        return false
-      }
-      if (policyErrorToast(e)) {
-        setQuickActionFeedback({ type: 'error', message: e instanceof Error ? e.message : String(e) })
-        return false
-      }
-      const message = e instanceof Error ? e.message : String(e)
-      setQuickActionFeedback({ type: 'error', message })
-      return false
-    } finally {
-      setQuickActionLoading(false)
-    }
-  }, [
+  const { runQuickOperation, runTransfer } = useInsumosQuickOperationsController({
     canUseApi,
     isAuthed,
-    quickLoteNeedsPick,
     loadMovimentacoes,
     mutateJson,
+    policyErrorToast,
     quickCodigo,
+    quickLoteNeedsPick,
+    quickMotivo,
+    quickNovoEstoque,
     quickObs,
     quickQuantidade,
     quickRegistro,
     refreshInsumos,
     schedulePostMutationRefresh,
     setQuickActionFeedback,
+    setQuickActionLoading,
+    setQuickCandidates,
+    setQuickRegistros,
     transferFrom,
-    transferTo
-  ])
+    transferTo,
+    unidade,
+  })
 
   React.useEffect(() => {
     void loadHealth()
     void loadMe()
     void loadProxyStatus()
   }, [loadHealth, loadMe, loadProxyStatus])
-
-  React.useEffect(() => {
-    if (!canUseApi || !isAuthed) return
-    if (!overviewVisible && !overviewEverVisible) return
-    const t = window.setTimeout(() => {
-      void loadOverview()
-    }, 250)
-    return () => window.clearTimeout(t)
-  }, [canUseApi, isAuthed, loadOverview, overviewEverVisible, overviewVisible])
-
-  React.useEffect(() => {
-    if (!canUseApi || !isAuthed) return
-    if (!overviewVisible && !overviewEverVisible) return
-    const t = window.setTimeout(() => {
-      void loadInsights()
-    }, 450)
-    return () => window.clearTimeout(t)
-  }, [canUseApi, isAuthed, loadInsights, overviewEverVisible, overviewVisible])
-
-  React.useEffect(() => {
-      const onOp = (event: Event) => {
-        const e = event as CustomEvent<{ op?: 'ENTRADA' | 'BAIXA' | 'TRANSFERENCIA' }>
-        const op = e.detail?.op
-        if (!op) return
-      openQuickOperation(op)
-      try {
-        window.scrollTo({ top: 0, behavior: 'smooth' })
-      } catch {
-        // ignore
-      }
-    }
-    window.addEventListener('skincos:insumos:op', onOp as EventListener)
-    return () => window.removeEventListener('skincos:insumos:op', onOp as EventListener)
-  }, [openQuickOperation])
-
-  React.useEffect(() => {
-    const onLayout = (event: Event) => {
-      const e = event as CustomEvent<{ action?: 'expandAll' | 'collapseAll' | 'reset' }>
-      const action = e.detail?.action
-      if (action === 'expandAll') setAllDetailsOpen(true)
-      if (action === 'collapseAll') setAllDetailsOpen(false)
-      if (action === 'reset') void resetUserLayoutPrefs()
-    }
-    window.addEventListener('skincos:insumos:layout', onLayout as EventListener)
-    return () => window.removeEventListener('skincos:insumos:layout', onLayout as EventListener)
-  }, [resetUserLayoutPrefs, setAllDetailsOpen])
-
-  React.useEffect(() => {
-    const onOverview = (event: Event) => {
-      const e = event as CustomEvent<{ action?: 'reload'; period?: '7d' | '30d' | '1y' | 'custom'; from?: string; to?: string }>
-      const nextPeriod = e.detail?.period
-      if (nextPeriod) setOverviewPeriod(nextPeriod)
-	      if (typeof e.detail?.from === 'string') setOverviewCustomFrom(e.detail.from)
-	      if (typeof e.detail?.to === 'string') setOverviewCustomTo(e.detail.to)
-	      if (e.detail?.action === 'reload') {
-	        void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
-	      }
-	    }
-    window.addEventListener('skincos:insumos:overview', onOverview as EventListener)
-    return () => window.removeEventListener('skincos:insumos:overview', onOverview as EventListener)
-  }, [loadInsights, loadOverview, refreshInsumos])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -4843,123 +2847,20 @@ export function InsumosModule() {
 
   const insumosTiposUnidade = React.useMemo(() => Array.from(CANONICAL_TIPOS_UNIDADE as readonly string[]), [])
 
-	  type ChartPresetId = 'distribution' | 'movements' | 'roi_risk'
-
-	  type ChartMetric = 'qtd' | 'valor'
-	  type ChartView = 'bar' | 'line' | 'pie'
-	  type ChartLayout = 'square' | 'wide' | 'tall'
-	  type ChartGroupBy = 'categoria' | 'marca' | 'item' | 'tempo'
-	  type MovementsMode = 'inout' | 'saldo' | 'entrada' | 'saida'
-	  type ChartSlotConfig = {
-	    presetId: ChartPresetId
-	    metric?: ChartMetric
-	    view?: ChartView
-	    topN?: number
-	    groupBy?: ChartGroupBy
-	    mode?: MovementsMode
-	  }
-
-	  const CHARTS_SLOTS_KEY = 'skincos.insumos.charts.slots.v1'
-	  const DEFAULT_CHART_SLOTS: ChartSlotConfig[] = [
-	    { presetId: 'distribution', groupBy: 'categoria', metric: 'qtd', view: 'pie', topN: 8 }
-	  ]
-	  const MAX_CHARTS = 9
-
-	  const CHART_PRESETS: Array<{
-	    id: ChartPresetId
-	    label: string
-	    supportsMetric?: boolean
-	    supportsView?: boolean
-	    supportsTopN?: boolean
-	    defaultMetric?: ChartMetric
-	    defaultView?: ChartView
-	    layout?: ChartLayout
-	  }> = [
-	      { id: 'distribution', label: 'Distribuição', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'pie', layout: 'square' },
-	      { id: 'movements', label: 'Movimentações', supportsMetric: true, supportsView: true, supportsTopN: true, defaultView: 'bar', layout: 'wide' },
-	      { id: 'roi_risk', label: 'ROI (perdas & risco)', supportsMetric: true, supportsView: true, defaultView: 'bar', layout: 'square' }
-	    ]
-
   const [chartSlots, setChartSlots] = React.useState<ChartSlotConfig[]>(() => {
-	    try {
-	      const raw = window.localStorage.getItem(CHARTS_SLOTS_KEY)
-	      if (!raw) return DEFAULT_CHART_SLOTS
-	      const parsed = JSON.parse(raw)
-	      const slots = Array.isArray(parsed) ? parsed : []
-	      const validIds = new Set<ChartPresetId>(CHART_PRESETS.map((p) => p.id))
-	      const cleaned: ChartSlotConfig[] = slots
-	        .slice(0, MAX_CHARTS)
-	        .map((s: any, idx: number) => {
-	          const fallback = DEFAULT_CHART_SLOTS[0]
-	          const presetIdRaw = String(s?.presetId || '')
-	          let presetId: ChartPresetId = fallback.presetId
-	          let groupBy: ChartGroupBy | undefined = undefined
-	          let mode: MovementsMode | undefined = undefined
-
-	          if (presetIdRaw === 'stock_category') {
-	            presetId = 'distribution'
-	            groupBy = 'categoria'
-	          } else if (presetIdRaw === 'stock_brand') {
-	            presetId = 'distribution'
-	            groupBy = 'marca'
-	          } else if (presetIdRaw === 'stock_top') {
-	            presetId = 'distribution'
-	            groupBy = 'item'
-	          } else if (presetIdRaw === 'mov_inout') {
-	            presetId = 'movements'
-	            groupBy = 'tempo'
-	            mode = 'inout'
-	          } else if (presetIdRaw === 'mov_saldo') {
-	            presetId = 'movements'
-	            groupBy = 'tempo'
-	            mode = 'saldo'
-	          } else if (presetIdRaw === 'trends_inout') {
-	            presetId = 'movements'
-	            groupBy = 'tempo'
-	            mode = 'inout'
-	          } else if (presetIdRaw === 'turnover_category') {
-	            presetId = 'movements'
-	            groupBy = 'categoria'
-	            mode = 'saida'
-	          } else if (validIds.has(presetIdRaw as any)) {
-	            presetId = presetIdRaw as ChartPresetId
-	            groupBy = (s?.groupBy as any) || undefined
-	            mode = (s?.mode as any) || undefined
-	          }
-
-	          if (!validIds.has(presetId)) presetId = fallback.presetId
-	          const preset = CHART_PRESETS.find((p) => p.id === presetId)
-	          const metric: ChartMetric | undefined = s?.metric === 'valor' || s?.metric === 'qtd' ? s.metric : preset?.defaultMetric
-	          const view: ChartView | undefined = s?.view === 'bar' || s?.view === 'line' || s?.view === 'pie' ? s.view : preset?.defaultView
-	          const topN = Math.max(5, Math.min(15, parseInt(String(s?.topN ?? ''), 10) || 0)) || fallback.topN
-	          const groupByFixed: ChartGroupBy | undefined = (() => {
-	            const v = String(groupBy || s?.groupBy || '').trim()
-	            if (v === 'categoria' || v === 'marca' || v === 'item' || v === 'tempo') return v
-	            if (presetId === 'distribution') return 'categoria'
-	            if (presetId === 'movements') return 'tempo'
-	            return undefined
-	          })()
-	          const modeFixed: MovementsMode | undefined = (() => {
-	            const v = String(mode || s?.mode || '').trim()
-	            if (v === 'inout' || v === 'saldo' || v === 'entrada' || v === 'saida') return v
-	            if (presetId === 'movements') return groupByFixed === 'categoria' ? 'saida' : 'inout'
-	            return undefined
-	          })()
-	          return { presetId, groupBy: groupByFixed, mode: modeFixed, metric, view, topN }
-	        })
-	      if (!cleaned.length) return DEFAULT_CHART_SLOTS
-	      return cleaned
-	    } catch {
-	      return DEFAULT_CHART_SLOTS
+    try {
+      return parseChartSlots(window.localStorage.getItem(CHARTS_SLOTS_KEY))
+    } catch {
+      return DEFAULT_CHART_SLOTS
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   })
 
-  const [chartsFilterTipo, setChartsFilterTipo] = React.useState<ChartPresetId | '__ALL__'>('__ALL__')
-  const [chartsFilterY, setChartsFilterY] = React.useState<ChartGroupBy | '__ALL__'>('__ALL__')
-  const [chartsFilterX, setChartsFilterX] = React.useState<ChartMetric | '__ALL__'>('__ALL__')
-  const [chartsFilterView, setChartsFilterView] = React.useState<ChartView | '__ALL__'>('__ALL__')
-  const [chartsFilterTop, setChartsFilterTop] = React.useState<'5' | '8' | '10' | '15' | '__ALL__'>('__ALL__')
+  const [chartsFilterTipo, setChartsFilterTipo] = React.useState<ChartFilterTipo>('__ALL__')
+  const [chartsFilterY, setChartsFilterY] = React.useState<ChartFilterY>('__ALL__')
+  const [chartsFilterX, setChartsFilterX] = React.useState<ChartFilterX>('__ALL__')
+  const [chartsFilterView, setChartsFilterView] = React.useState<ChartFilterView>('__ALL__')
+  const [chartsFilterTop, setChartsFilterTop] = React.useState<ChartFilterTop>('__ALL__')
   const [chartsSearch, setChartsSearch] = React.useState('')
 
   React.useEffect(() => {
@@ -4970,32 +2871,9 @@ export function InsumosModule() {
     }
   }, [chartSlots])
 
-	  const setChartSlot = React.useCallback((idx: number, next: Partial<ChartSlotConfig>) => {
-	    setChartSlots((prev) => {
-	      const copy = [...prev]
-	      const cur = copy[idx] || DEFAULT_CHART_SLOTS[0]
-	      const presetId = (next.presetId ?? cur.presetId) as ChartPresetId
-	      const preset = CHART_PRESETS.find((p) => p.id === presetId)
-	      const metric = next.metric ?? cur.metric ?? preset?.defaultMetric
-	      const groupBy: ChartGroupBy | undefined = (() => {
-	        const v = String(next.groupBy ?? cur.groupBy ?? '').trim()
-	        if (v === 'categoria' || v === 'marca' || v === 'item' || v === 'tempo') return v
-	        if (presetId === 'distribution') return 'categoria'
-	        if (presetId === 'movements') return 'tempo'
-	        return undefined
-	      })()
-	      const mode: MovementsMode | undefined = (() => {
-	        const v = String(next.mode ?? cur.mode ?? '').trim()
-	        if (v === 'inout' || v === 'saldo' || v === 'entrada' || v === 'saida') return v
-	        if (presetId === 'movements') return groupBy === 'categoria' ? 'saida' : 'inout'
-	        return undefined
-	      })()
-	      const view = next.view ?? cur.view ?? preset?.defaultView
-	      const topN = next.topN ?? cur.topN
-	      copy[idx] = { ...cur, ...next, presetId, groupBy, mode, metric, view, topN }
-	      return copy
-	    })
-	  }, [])
+  const setChartSlot = React.useCallback((idx: number, next: Partial<ChartSlotConfig>) => {
+    setChartSlots((prev) => updateChartSlotAt(prev, idx, next))
+  }, [])
 
   const fmtChartValue = React.useCallback(
     (metric: ChartMetric, v: any) => {
@@ -5096,90 +2974,16 @@ export function InsumosModule() {
     return Array.from(byWeek.values()).sort((a, b) => String(a.bucket).localeCompare(String(b.bucket))).slice(-60)
   }, [overviewPeriod, trendsSeriesRaw])
 
-	  const presetSupports = React.useCallback(
-	    (id: ChartPresetId) =>
-	      CHART_PRESETS.find((p) => p.id === id) || {
-	        id,
-        label: String(id),
-        supportsMetric: false,
-        supportsView: false,
-        supportsTopN: false,
-        defaultView: 'bar' as any,
-        layout: 'square' as any
-      },
-    []
-  )
-
-  const presetViewOptions = React.useCallback((slot: ChartSlotConfig): ChartView[] => {
-    if (slot.presetId === 'distribution') {
-      const gb = slot.groupBy === 'item' ? 'item' : slot.groupBy === 'marca' ? 'marca' : 'categoria'
-      return gb === 'item' ? ['bar'] : ['pie', 'bar']
-    }
-	    if (slot.presetId === 'movements') {
-	      const gb = slot.groupBy === 'categoria' ? 'categoria' : 'tempo'
-	      return gb === 'tempo' ? ['bar', 'line'] : ['bar', 'pie']
-	    }
-    if (slot.presetId === 'roi_risk') return ['bar', 'pie']
-    return ['bar', 'line']
-  }, [])
-
-  const resolveChartSlot = React.useCallback(
-    (slot: ChartSlotConfig) => {
-      const preset = presetSupports(slot.presetId)
-      const groupBy: ChartGroupBy | undefined =
-        slot.presetId === 'distribution'
-          ? slot.groupBy === 'marca' || slot.groupBy === 'item'
-            ? slot.groupBy
-            : 'categoria'
-          : slot.presetId === 'movements'
-            ? slot.groupBy === 'categoria'
-              ? 'categoria'
-              : 'tempo'
-            : undefined
-      const mode: MovementsMode | undefined =
-        slot.presetId === 'movements'
-          ? slot.mode === 'saldo' || slot.mode === 'entrada' || slot.mode === 'saida' || slot.mode === 'inout'
-            ? slot.mode
-            : groupBy === 'categoria'
-              ? 'saida'
-              : 'inout'
-          : undefined
-      const viewOptions = presetViewOptions({ ...slot, groupBy, mode })
-      const rawView = (slot.view || preset.defaultView || viewOptions[0] || 'bar') as ChartView
-      const view = viewOptions.includes(rawView) ? rawView : viewOptions[0]
-      const metric = (slot.metric === 'valor' ? 'valor' : 'qtd') as ChartMetric
-      const topN = Math.max(5, Math.min(15, Number(slot.topN) || 8))
-      const showTopN = !!preset.supportsTopN && (slot.presetId === 'distribution' || (slot.presetId === 'movements' && groupBy === 'categoria'))
-      const layout = (preset as any).layout as ChartLayout | undefined
-      return { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout }
-    },
-    [presetSupports, presetViewOptions]
-  )
-
   const chartSlotsView = React.useMemo(() => {
-    const search = chartsSearch.trim().toLowerCase()
-    return chartSlots
-      .map((slot, idx) => ({ slot, idx, meta: resolveChartSlot(slot) }))
-      .filter(({ slot, meta }) => {
-        if (chartsFilterTipo !== '__ALL__' && slot.presetId !== chartsFilterTipo) return false
-        if (chartsFilterY !== '__ALL__' && meta.groupBy !== chartsFilterY) return false
-        if (chartsFilterX !== '__ALL__' && meta.metric !== chartsFilterX) return false
-        if (chartsFilterView !== '__ALL__' && meta.view !== chartsFilterView) return false
-        if (chartsFilterTop !== '__ALL__' && String(meta.topN) !== String(chartsFilterTop)) return false
-        if (!search) return true
-        const hay = [
-          meta.preset.label,
-          slot.presetId,
-          meta.groupBy || '',
-          meta.metric,
-          meta.view,
-          meta.mode || '',
-          String(meta.topN)
-        ]
-          .join(' ')
-          .toLowerCase()
-        return hay.includes(search)
-      })
+    return filterChartSlotsView({
+      chartSlots,
+      chartsFilterTipo,
+      chartsFilterY,
+      chartsFilterX,
+      chartsFilterView,
+      chartsFilterTop,
+      chartsSearch,
+    })
   }, [
     chartSlots,
     chartsFilterTipo,
@@ -5188,7 +2992,6 @@ export function InsumosModule() {
     chartsFilterView,
     chartsFilterTop,
     chartsSearch,
-    resolveChartSlot
   ])
 
   const renderChart = React.useCallback(
@@ -5520,6 +3323,119 @@ export function InsumosModule() {
 	    },
 	    [fmtBucketLabel, fmtChartValue, insightsLoading, insightsTurnover, overviewLoading, overviewRoi, stockAgg, trendsSeries]
 	  )
+
+  const chartPresetOptions = React.useMemo(
+    () => CHART_PRESETS.map((preset) => ({ id: preset.id, label: preset.label })),
+    []
+  )
+
+  const chartCards = React.useMemo(
+    () =>
+      chartSlotsView.map(({ slot, idx, meta }) => {
+        const { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout } = meta
+        const baseHeight = chartSlotsView.length === 1 ? 360 : chartSlotsView.length === 2 ? 300 : 260
+        const height = layout === 'tall' ? baseHeight + (chartSlotsView.length === 1 ? 180 : 120) : baseHeight
+        return {
+          key: String(idx),
+          presetId: slot.presetId,
+          presetLabel: preset.label,
+          groupBy,
+          mode,
+          metric,
+          topN,
+          view,
+          viewOptions,
+          supportsMetric: !!preset.supportsMetric,
+          supportsView: !!preset.supportsView,
+          showTopN,
+          controlsKind: slot.presetId === 'distribution' ? 'distribution' : slot.presetId === 'movements' ? 'movements' : 'none',
+          canRemove: chartSlots.length > 1,
+          cardSpanClass: chartSlotsView.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : '',
+          renderNode: renderChart({ ...slot, view, metric, topN }, { height }),
+        } as const
+      }),
+    [chartSlots.length, chartSlotsView, renderChart]
+  )
+
+  const getChartIndexFromKey = React.useCallback((cardKey: string) => {
+    const idx = Number.parseInt(String(cardKey), 10)
+    return Number.isInteger(idx) && idx >= 0 ? idx : -1
+  }, [])
+
+  const handleChartPresetChange = React.useCallback(
+    (cardKey: string, value: string) => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      const slot = chartSlots[idx] || DEFAULT_CHART_SLOTS[0]
+      setChartSlot(idx, getNextChartPresetPatch(slot, value))
+    },
+    [chartSlots, getChartIndexFromKey, setChartSlot]
+  )
+
+  const handleRemoveChart = React.useCallback(
+    (cardKey: string) => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      setChartSlots((prev) => prev.filter((_, currentIdx) => currentIdx !== idx))
+    },
+    [getChartIndexFromKey]
+  )
+
+  const handleDistributionGroupByChange = React.useCallback(
+    (cardKey: string, value: 'categoria' | 'marca' | 'item') => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      const slot = chartSlots[idx] || DEFAULT_CHART_SLOTS[0]
+      setChartSlot(idx, getNextDistributionGroupByPatch(slot, value))
+    },
+    [chartSlots, getChartIndexFromKey, setChartSlot]
+  )
+
+  const handleMovementsGroupByChange = React.useCallback(
+    (cardKey: string, value: 'tempo' | 'categoria') => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      const slot = chartSlots[idx] || DEFAULT_CHART_SLOTS[0]
+      setChartSlot(idx, getNextMovementsGroupByPatch(slot, value))
+    },
+    [chartSlots, getChartIndexFromKey, setChartSlot]
+  )
+
+  const handleMovementsModeChange = React.useCallback(
+    (cardKey: string, value: 'inout' | 'saldo' | 'entrada' | 'saida') => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      setChartSlot(idx, getNextMovementsModePatch(value))
+    },
+    [getChartIndexFromKey, setChartSlot]
+  )
+
+  const handleChartMetricChange = React.useCallback(
+    (cardKey: string, value: 'qtd' | 'valor') => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      setChartSlot(idx, { metric: value })
+    },
+    [getChartIndexFromKey, setChartSlot]
+  )
+
+  const handleChartViewChange = React.useCallback(
+    (cardKey: string, value: 'pie' | 'bar' | 'line') => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      setChartSlot(idx, { view: value })
+    },
+    [getChartIndexFromKey, setChartSlot]
+  )
+
+  const handleChartTopNChange = React.useCallback(
+    (cardKey: string, value: number) => {
+      const idx = getChartIndexFromKey(cardKey)
+      if (idx < 0) return
+      setChartSlot(idx, { topN: normalizeChartTopN(value) })
+    },
+    [getChartIndexFromKey, setChartSlot]
+  )
 
   type AlertasLinha = {
     key: string
@@ -5870,1047 +3786,269 @@ export function InsumosModule() {
     return `${h}h`
   }, [])
 
-  const movimentacoesView = React.useMemo(() => {
-    const list = Array.isArray(movimentacoes) ? movimentacoes : []
-    const selectedCode = selectedCodigoBarras.trim()
-    const filterCategoria = normalizeText(movFilterCategoria)
-    const filterMarca = normalizeText(movFilterMarca)
-    const filterSearch = normalizeText(movSearch)
+  const movimentacoesView = React.useMemo(
+    () =>
+      buildMovimentacoesView({
+        movGroupTransfers,
+        movSortDir,
+        movSortKey,
+        movTipo,
+        movFilterCategoria,
+        movFilterMarca,
+        movSearch,
+        movimentacoes,
+        pickInsumoForMov,
+        selectedCodigoBarras,
+        normalizeText,
+      }),
+    [movGroupTransfers, movSortDir, movSortKey, movTipo, movFilterCategoria, movFilterMarca, movSearch, movimentacoes, pickInsumoForMov, selectedCodigoBarras]
+  )
 
-    const applyFiltersAndSort = (base: Movimentacao[]) => {
-      const filtered = base.filter((m) => {
-        if (selectedCode) {
-          if (String(m?.codigoBarras || '').trim() !== selectedCode) return false
-        } else if (filterSearch) {
-          const insumo = pickInsumoForMov(m)
-          const produtoNome = normalizeText(String(insumo?.produto || m?.produto || '').trim())
-          const categoriaNome = normalizeText(insumo?.categoria || '')
-          const marcaNome = normalizeText(insumo?.marca || m?.marca || '')
-          const codigoBarras = normalizeText(String(m?.codigoBarras || insumo?.codigoBarras || '').trim())
-          if (
-            !(
-              (produtoNome && produtoNome.includes(filterSearch)) ||
-              (categoriaNome && categoriaNome.includes(filterSearch)) ||
-              (marcaNome && marcaNome.includes(filterSearch)) ||
-              (codigoBarras && codigoBarras.includes(filterSearch))
-            )
-          ) {
-            return false
-          }
-        }
-
-        if (filterCategoria) {
-          const insumo = pickInsumoForMov(m)
-          const categoriaNome = normalizeText(insumo?.categoria || '')
-          if (!categoriaNome || categoriaNome !== filterCategoria) return false
-        }
-
-        if (filterMarca) {
-          const insumo = pickInsumoForMov(m)
-          const marcaNome = normalizeText(insumo?.marca || '')
-          if (!marcaNome || marcaNome !== filterMarca) return false
-        }
-        return true
-      })
-
-      const dir = movSortDir === 'asc' ? 1 : -1
-      const getSortValue = (m: Movimentacao) => {
-        if (movSortKey === 'dataHora') return new Date(m?.dataHora || 0).getTime() || 0
-        if (movSortKey === 'usuario') return String(m?.usuario || '').trim().toLowerCase()
-        if (movSortKey === 'observacao') {
-          const v = m?.transferId
-            ? `transferencia ${String(m?.unidadeOrigem || '')}->${String(m?.unidadeDestino || '')}`
-            : String(m?.motivo || m?.observacoes || '').trim()
-          return v.toLowerCase()
-        }
-
-        const insumo = pickInsumoForMov(m)
-        if (movSortKey === 'produto') return String(insumo?.produto || m?.produto || '').trim().toLowerCase()
-        if (movSortKey === 'categoria') return String(insumo?.categoria || '').trim().toLowerCase()
-        if (movSortKey === 'marca') return String(insumo?.marca || '').trim().toLowerCase()
-        if (movSortKey === 'estoque') return Number(m?.estoqueNovo ?? m?.estoqueAnterior ?? 0) || 0
-        if (movSortKey === 'valor') {
-          const preco = Number(m?.preco) || Number(insumo?.precoCusto) || 0
-          const qtd = Number(m?.quantidade) || 0
-          return preco * qtd
-        }
-        return 0
-      }
-
-      filtered.sort((a, b) => {
-        const av = getSortValue(a) as any
-        const bv = getSortValue(b) as any
-        if (typeof av === 'number' && typeof bv === 'number') {
-          if (av !== bv) return (av - bv) * dir
-          return (new Date(a?.dataHora || 0).getTime() - new Date(b?.dataHora || 0).getTime()) * dir
-        }
-        const cmp = String(av).localeCompare(String(bv), 'pt-BR', { sensitivity: 'base' })
-        if (cmp !== 0) return cmp * dir
-        return (new Date(a?.dataHora || 0).getTime() - new Date(b?.dataHora || 0).getTime()) * dir
-      })
-
-      return filtered
-    }
-
-    if (!movGroupTransfers || movTipo !== 'TODOS') return applyFiltersAndSort(list)
-
-    const byTransfer = new Map<string, Movimentacao[]>()
-    for (const m of list) {
-      const id = String((m as any)?.transferId || '').trim()
-      if (!id) continue
-      const arr = byTransfer.get(id) || []
-      arr.push(m)
-      byTransfer.set(id, arr)
-    }
-
-    const seen = new Set<string>()
-    const out: Movimentacao[] = []
-    for (const m of list) {
-      const id = String((m as any)?.transferId || '').trim()
-      if (!id) {
-        out.push(m)
-        continue
-      }
-      if (seen.has(id)) continue
-      seen.add(id)
-
-      const group = byTransfer.get(id) || [m]
-      if (group.length < 2) {
-        out.push(m)
-        continue
-      }
-
-      const pick = group.reduce((best, cur) => {
-        const bt = new Date(best?.dataHora || 0).getTime()
-        const ct = new Date(cur?.dataHora || 0).getTime()
-        return ct > bt ? cur : best
-      }, group[0])
-
-      const quantidade = group.reduce((acc, cur) => Math.max(acc, Number(cur?.quantidade) || 0), 0)
-      const unidadeOrigem = String((pick as any)?.unidadeOrigem || '').trim()
-      const unidadeDestino = String((pick as any)?.unidadeDestino || '').trim()
-
-      out.push({
-        ...pick,
-        tipo: 'TRANSFERÊNCIA',
-        quantidade,
-        unidadeOrigem,
-        unidadeDestino,
-        transferId: id
-      } as any)
-    }
-    return applyFiltersAndSort(out)
-  }, [
-    movGroupTransfers,
-    movSortDir,
-    movSortKey,
-    movTipo,
-    movFilterCategoria,
-    movFilterMarca,
-    movSearch,
-    movimentacoes,
-    pickInsumoForMov,
-    selectedCodigoBarras
-  ])
+  const movementRows = React.useMemo(
+    () =>
+      buildMovementRows({
+        movimentacoesView,
+        pickInsumoForMov,
+        selectedCodigoBarras,
+        movFilterCategoria,
+        movFilterMarca,
+        movSearch,
+        unidade,
+        isAuthed,
+        unidadeLabel,
+        normalizeText,
+        fmtMovDateShort,
+        fmtMovTimeShort,
+        fmtDateOnlyBR,
+        fmtMoneyBRL,
+        fmtMoneyBRL0,
+      }),
+    [isAuthed, movFilterCategoria, movFilterMarca, movSearch, movimentacoesView, pickInsumoForMov, selectedCodigoBarras, unidade, unidadeLabel]
+  )
 
   return (
     <div ref={rootRef} className="px-3 py-4 sm:p-6 space-y-4 sm:space-y-6">
       {autoSyncSuspended ? (
-        <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-amber-100 flex flex-wrap items-center gap-3">
-          <div className="text-sm">
-            API instável detectada. Sincronização automática de Overview/Insights pausada por {autoSyncRemainingSeconds}s.
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="border-amber-300/50 text-amber-100 hover:bg-amber-500/20"
-              onClick={() => {
-                apiFailureTimestampsRef.current = []
-                setAutoSyncSuspendedUntil(0)
-              }}
-            >
-              Retomar auto-sync
-            </Button>
-            <Button
-              className="!bg-amber-600 hover:!bg-amber-700 !text-white"
-              onClick={() => {
-                apiFailureTimestampsRef.current = []
-                setAutoSyncSuspendedUntil(0)
-                void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
-              }}
-            >
-              Atualizar agora
-            </Button>
-          </div>
-        </div>
+        <InsumosAutoSyncBanner
+          autoSyncRemainingSeconds={autoSyncRemainingSeconds}
+          onResume={resumeAutoSync}
+          onRefreshNow={() => {
+            resumeAutoSync()
+            void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
+          }}
+        />
       ) : null}
       <DragDropContext onDragStart={onDragStartLayout} onDragEnd={onDragEndLayout}>
-      <Dialog open={insumosListModalOpen} onOpenChange={setInsumosListModalOpen}>
-        <DialogContent size="wideTable" className={dialogWideClass}>
-          <DialogHeader className="space-y-2">
-            <div className="flex flex-nowrap items-center gap-2 min-w-0 w-full overflow-x-auto">
-              <DialogTitle className="text-white">Insumos</DialogTitle>
-              <Input
-                value={insumosQuery}
-                onChange={(e) => setInsumosQuery(e.target.value)}
-                placeholder="Buscar por código, produto, categoria…"
-                className="h-8 flex-1 min-w-[160px] md:min-w-0 ml-auto"
-              />
-              <Button
-                variant="outline"
-                className="h-8 px-3"
-                onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
-                disabled={!isAuthed}
-                title="Exportar CSV"
-              >
-                Exportar
-              </Button>
-              <Button variant="outline" className="h-8 px-3" onClick={() => setCreateOpen((v) => !v)} disabled={!isAuthed}>
-                {createOpen ? 'Fechar' : 'Adicionar'}
-              </Button>
-            </div>
-            <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
-          </DialogHeader>
+      <InsumosInventoryDialog
+        open={insumosListModalOpen}
+        dialogClassName={dialogWideClass}
+        isAuthed={isAuthed}
+        unit={unidade}
+        unitLabel={unidadeLabel}
+        query={insumosQuery}
+        onQueryChange={setInsumosQuery}
+        onOpenChange={setInsumosListModalOpen}
+        onExport={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
+        createOpen={createOpen}
+        onToggleCreate={() => setCreateOpen((value) => !value)}
+        onCancelCreate={() => setCreateOpen(false)}
+        createLookupLoading={createLookupLoading}
+        createLookupError={createLookupError}
+        createLookupCount={createLookupItems?.length || 0}
+        createScanOpen={createScanOpen}
+        onToggleCreateScan={() => setCreateScanOpen((value) => !value)}
+        onCloseCreateScan={() => setCreateScanOpen(false)}
+        onCreateBarcodeDetected={(code) => {
+          setCreateCodigo(code)
+          setCreateScanOpen(false)
+          toast.success('Código detectado')
+        }}
+        createCodigo={createCodigo}
+        onCreateCodigoChange={setCreateCodigo}
+        createCodigosExtras={createCodigosExtras}
+        onCreateCodigosExtrasChange={setCreateCodigosExtras}
+        createProduto={createProduto}
+        onCreateProdutoChange={setCreateProduto}
+        createCategoria={createCategoria}
+        onCreateCategoriaChange={setCreateCategoria}
+        createMarca={createMarca}
+        onCreateMarcaChange={setCreateMarca}
+        createTipoUnidade={normalizeTipoUnidadeToCanonical(createTipoUnidade) || ''}
+        onCreateTipoUnidadeChange={setCreateTipoUnidade}
+        createPrecoCusto={createPrecoCusto}
+        onCreatePrecoCustoChange={setCreatePrecoCusto}
+        createEstoqueMinimo={createEstoqueMinimo}
+        onCreateEstoqueMinimoChange={setCreateEstoqueMinimo}
+        createEstoqueInicial={createEstoqueInicial}
+        onCreateEstoqueInicialChange={setCreateEstoqueInicial}
+        createLote={createLote}
+        onCreateLoteChange={setCreateLote}
+        createDataValidade={createDataValidade}
+        onCreateDataValidadeChange={setCreateDataValidade}
+        createNovoLote={createNovoLote}
+        onToggleCreateNovoLote={() => setCreateNovoLote((value) => !value)}
+        createCategoriaRequiresLot={createCategoriaRequiresLot}
+        onCreateCategoriaRequiresLotChange={(value) => {
+          setCreatePolicyTouched(true)
+          setCreateCategoriaRequiresLot(value)
+        }}
+        createCategoriaRequiresExpiry={createCategoriaRequiresExpiry}
+        onCreateCategoriaRequiresExpiryChange={(value) => {
+          setCreatePolicyTouched(true)
+          setCreateCategoriaRequiresExpiry(value)
+          if (!value) setCreateCategoriaFefo(false)
+        }}
+        createCategoriaFefo={createCategoriaFefo}
+        onCreateCategoriaFefoChange={(value) => {
+          setCreatePolicyTouched(true)
+          setCreateCategoriaFefo(value)
+          if (value) setCreateCategoriaRequiresExpiry(true)
+        }}
+        isManagerRole={isManagerRole}
+        lotCategorias={lotCategorias}
+        insumosMarcas={insumosMarcas}
+        insumosTiposUnidade={insumosTiposUnidade}
+        createLoading={createLoading}
+        onSaveCreate={() => void saveCreateFromModal()}
+        filteredInsumos={filteredInsumos}
+        listContainerRef={insumosModalListContainerRef}
+        onListScroll={onInsumosModalScroll}
+        insumosLoading={insumosLoading}
+        insumosLoadError={insumosLoadError}
+        emptyContent={renderListPlaceholder(insumosLoading, 'Sem itens.')}
+        onEditItem={openEditDialog}
+      />
+      <InsumosOfflineQueueDialog
+        open={offlineDialogOpen}
+        dialogClassName={dialogSmallClass}
+        items={offlineItems}
+        debugUi={debugUi}
+        isAuthed={isAuthed}
+        fmtAge={fmtAge}
+        onOpenChange={setOfflineDialogOpen}
+        onSync={() => void syncOfflineQueue()}
+        onClear={() => {
+          if (!offlineItems.length) return
+          if (!window.confirm('Limpar a fila offline? Você perderá as operações pendentes.')) return
+          try {
+            window.localStorage.removeItem(OFFLINE_QUEUE_KEY)
+          } catch {
+            // ignore
+          }
+          setOfflineItems([])
+          setOfflineQueueCount(0)
+          toast.success('Fila limpa.')
+        }}
+        onToggleDebug={toggleDebugUi}
+        onCopyItem={async (item) => {
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(item, null, 2))
+            toast.success('Copiado.')
+          } catch (error: any) {
+            toast.error(error?.message || 'Não foi possível copiar.')
+          }
+        }}
+      />
 
-          <div className="space-y-3">
-            {createOpen ? (
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
-                <div className="text-sm text-blue-100/70">
-                  Cadastro rápido (campos mínimos) + detalhes opcionais.
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
-                      <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
-                        {createScanOpen ? 'Fechar' : 'Escanear'}
-                      </Button>
-                    </div>
-                    <div className="mt-2">
-                      {createLookupLoading ? (
-                        <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
-                      ) : createLookupError ? (
-                        <div className="text-xs text-red-200">{createLookupError}</div>
-                      ) : createLookupItems?.length ? (
-                        <div className="text-xs text-blue-200/70">
-                          Encontrado no histórico: <span className="font-mono">{createLookupItems.length}</span> variação(ões)
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="mt-2">
-                      <div className="text-xs text-blue-200/70 mb-1">Códigos adicionais</div>
-                      <Textarea
-                        value={createCodigosExtras}
-                        onChange={(e) => setCreateCodigosExtras(e.target.value)}
-                        placeholder="um por linha"
-                        rows={3}
-                        className="bg-white/[0.06] border-white/20 text-white"
-                      />
-                      <div className="mt-1 text-[10px] text-blue-200/50">
-                        Opcional. Use para variações de código do mesmo produto.
-                      </div>
-                    </div>
-                  </div>
-                  <div className="md:col-span-2">
-                    <div className="text-xs text-blue-200/70 mb-1">Produto</div>
-                    <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="ex: Toxina botulínica" />
-                  </div>
-	                  <div>
-	                    <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-	                    <Input
-	                      value={createCategoria}
-	                      onChange={(e) => setCreateCategoria(e.target.value)}
-	                      placeholder="ex: toxina"
-	                      list="insumos-categorias"
-	                    />
-	                    <datalist id="insumos-categorias">
-	                      {lotCategorias.map((c) => (
-	                        <option key={c} value={c} />
-	                      ))}
-	                    </datalist>
-	                  </div>
-                  <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-blue-200/70">Política do item</div>
-                      <div className="text-xs text-blue-200/60">Defina as regras para este insumo.</div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
-                      <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                        <Checkbox
-                          checked={createCategoriaRequiresLot}
-                          onCheckedChange={(v) => {
-                            setCreatePolicyTouched(true)
-                            setCreateCategoriaRequiresLot(!!v)
-                          }}
-                          disabled={!isManagerRole}
-                        />
-                        Lote obrigatório
-                      </label>
-                      <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                        <Checkbox
-                          checked={createCategoriaRequiresExpiry}
-                          onCheckedChange={(v) => {
-                            setCreatePolicyTouched(true)
-                            const next = !!v
-                            setCreateCategoriaRequiresExpiry(next)
-                            if (!next) setCreateCategoriaFefo(false)
-                          }}
-                          disabled={!isManagerRole}
-                        />
-                        Validade obrigatória
-                      </label>
-                      <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                        <Checkbox
-                          checked={createCategoriaFefo}
-                          onCheckedChange={(v) => {
-                            setCreatePolicyTouched(true)
-                            const next = !!v
-                            setCreateCategoriaFefo(next)
-                            if (next) setCreateCategoriaRequiresExpiry(true)
-                          }}
-                          disabled={!isManagerRole}
-                        />
-                        FEFO
-                      </label>
-                      {!isManagerRole ? <span className="text-xs text-blue-200/60">Somente gestores alteram.</span> : null}
-                    </div>
-                  </div>
-	                  <div>
-	                    <div className="text-xs text-blue-200/70 mb-1">Marca</div>
-	                    <Input
-	                      value={createMarca}
-	                      onChange={(e) => setCreateMarca(e.target.value)}
-	                      placeholder="ex: Allergan"
-	                      list="insumos-marcas"
-	                    />
-	                    <datalist id="insumos-marcas">
-	                      {insumosMarcas.map((m) => (
-	                        <option key={m} value={m} />
-	                      ))}
-	                    </datalist>
-	                  </div>
-	                  <div>
-	                    <div className="text-xs text-blue-200/70 mb-1">Tipo (unidade)</div>
-	                    <Select
-	                      value={normalizeTipoUnidadeToCanonical(createTipoUnidade) || undefined}
-	                      onValueChange={setCreateTipoUnidade}
-	                    >
-	                      <SelectTrigger>
-	                        <SelectValue placeholder="Selecione a unidade" />
-	                      </SelectTrigger>
-	                      <SelectContent>
-	                        {insumosTiposUnidade.map((u) => (
-	                          <SelectItem key={u} value={u}>
-	                            {u}
-	                          </SelectItem>
-	                        ))}
-	                      </SelectContent>
-	                    </Select>
-	                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Preço (custo)</div>
-                    <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="ex: 1200" />
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
-                    <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
-                  </div>
-	                  <div>
-	                    <div className="text-xs text-blue-200/70 mb-1">Estoque inicial</div>
-	                    <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} placeholder="ex: 0" />
-	                  </div>
-	                  <div>
-	                    <div className="flex items-center justify-between gap-2 mb-1">
-	                      <div className="text-xs text-blue-200/70">Lote</div>
-	                      <Button
-	                        variant={createNovoLote ? 'secondary' : 'outline'}
-	                        size="sm"
-	                        type="button"
-	                        onClick={() => setCreateNovoLote((v) => !v)}
-	                        title="Ative quando estiver cadastrando um lote adicional para um código já existente."
-	                      >
-	                        {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
-	                      </Button>
-	                    </div>
-	                    <Input
-	                      value={createLote}
-	                      onChange={(e) => setCreateLote(e.target.value)}
-	                      placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'}
-	                    />
-	                  </div>
-	                  <div>
-	                    <div className="text-xs text-blue-200/70 mb-1">Validade</div>
-                      <BrDatePickerInput value={createDataValidade} onChange={setCreateDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
-	                  </div>
-	                </div>
-
-                {createScanOpen ? (
-                  <BarcodeScannerInline
-                    onDetected={(code) => {
-                      setCreateCodigo(code)
-                      setCreateScanOpen(false)
-                      toast.success('Código detectado')
-                    }}
-                    onClose={() => setCreateScanOpen(false)}
-                  />
-                ) : null}
-
-                <div className="flex items-center justify-end gap-2">
-                  <Button variant="secondary" onClick={() => setCreateOpen(false)}>
-                    Cancelar
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      const codigoBarras = createCodigo.trim()
-                      if (!codigoBarras) return toast.error('Informe o código de barras')
-                      const extraCodes = parseBarcodeInput(createCodigosExtras)
-                      const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
-                      const existing = (insumos || []).find((i) => getInsumoBarcodes(i).includes(codigoBarras))
-                      const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                      const policy = {
-                        requiresLot: !!createCategoriaRequiresLot,
-                        requiresExpiry: !!createCategoriaRequiresExpiry,
-                        fefo: !!createCategoriaFefo
-                      }
-                      const validadeIso = dateInputToIso(createDataValidade)
-
-                      const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
-                      if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
-
-                      if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
-                        return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pelo item)' : 'Informe o lote (Novo lote: on)')
-                      }
-                      if (policy.requiresExpiry && !validadeIso) {
-                        return toast.error('Informe a data de validade (obrigatória pelo item)')
-                      }
-                      if (policy.fefo && !policy.requiresExpiry) {
-                        return toast.error('FEFO exige validade obrigatória')
-                      }
-
-                      const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
-                      if (!produto) return toast.error('Informe o produto')
-                      const tipoUnidade = normalizeTipoUnidadeToCanonical(createTipoUnidade)
-                      if (!tipoUnidade) return toast.error('Informe a unidade (medida)')
-
-                      setCreateLoading(true)
-                      try {
-                        await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
-                          method: 'POST',
-                          queueLabel: 'Cadastro de insumo',
-                          body: {
-                            codigoBarras,
-                            codigosBarras,
-                            produto,
-                            allowDuplicateLot,
-                            categoria,
-                            marca: createMarca.trim(),
-                            tipoUnidade,
-                            especificacao: createEspecificacao.trim(),
-                            concentracao: createConcentracao.trim(),
-                            volume: createVolume.trim(),
-                            fonte: createHomologado ? 'Homologado' : '',
-                            calibre: createCalibre.trim(),
-                            precoCusto: createPrecoCusto ? Number(createPrecoCusto) : undefined,
-                            estoqueInicial: createEstoqueInicial ? Number(createEstoqueInicial) : undefined,
-                            estoqueMinimo: createEstoqueMinimo ? Number(createEstoqueMinimo) : undefined,
-                            lote: createLote.trim(),
-                            dataValidade: validadeIso || undefined,
-                            policyRequiresLot: policy.requiresLot,
-                            policyRequiresExpiry: policy.requiresExpiry,
-                            policyFefo: policy.fefo
-                          }
-                        })
-                        toast.success('Insumo cadastrado.')
-                        setCreateCodigosExtras('')
-                        setCreateOpen(false)
-                        await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadOverview({ force: true }), loadInsumosOptions()])
-                      } catch (e) {
-                        if (policyErrorToast(e)) return
-                        toast.error(e instanceof Error ? e.message : String(e))
-                      } finally {
-                        setCreateLoading(false)
-                      }
-                    }}
-                    disabled={!isAuthed || createLoading}
-                  >
-                    {createLoading ? 'Salvando…' : 'Salvar'}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            <div
-              ref={insumosModalListContainerRef}
-              onScroll={onInsumosModalScroll}
-              className="overflow-auto max-h-[60vh] rounded-xl border border-white/10"
-            >
-              <table className="w-full min-w-[880px] table-auto text-sm">
-                <thead className="bg-black/30 text-blue-100/80">
-                  <tr>
-                    <th className="text-left p-3 w-[30%]">Produto</th>
-                    <th className="text-left p-3 hidden md:table-cell w-[20%]">Categoria</th>
-                    <th className="text-left p-3 hidden lg:table-cell w-[18%]">Código</th>
-                    <th className="text-right p-3 w-[6rem] whitespace-nowrap">Estoque</th>
-                    <th className="text-right p-3 hidden sm:table-cell w-[5rem] whitespace-nowrap">Mín</th>
-                    <th className="text-left p-3 hidden xl:table-cell w-[7rem] whitespace-nowrap">Validade</th>
-                    <th className="text-right p-3 hidden xl:table-cell w-[7.5rem] whitespace-nowrap">Valor</th>
-                    <th className="text-right p-3 w-[6.5rem] whitespace-nowrap">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredInsumos.map((i, idx) => {
-                    const codigoBarras = String(i.codigoBarras || '').trim()
-                    const estoque = unidade && i?.estoques ? Number(i.estoques?.[unidade] ?? 0) : Number(i.estoqueAtual ?? 0)
-                    const min = Number(i.estoqueMinimo) || 0
-                    const valor = (Number(i.precoCusto) || 0) * (Number.isFinite(estoque) ? estoque : 0)
-                    return (
-                      <tr key={`${i.registro || ''}-${idx}`} className="hover:bg-white/5">
-                        <td className="p-3 text-blue-50 align-top">
-                          <div className="min-w-0">
-                            <div className="font-medium break-words">{i.produto || '-'}</div>
-                            <div className="mt-1 space-y-0.5">
-                              <div className="text-xs text-blue-200/60 md:hidden break-words">{i.categoria || '-'}</div>
-                              <div className="text-xs text-blue-200/60 lg:hidden font-mono break-all">{i.codigoBarras || '-'}</div>
-                              <div className="text-xs text-blue-200/60 xl:hidden">{fmtDateOnlyBR(i.dataValidade || '') || '-'}</div>
-                              <div className="text-xs text-blue-200/60 xl:hidden">{fmtMoneyBRL(valor)}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-3 text-blue-100/80 hidden md:table-cell align-middle">
-                          <div className="break-words">{i.categoria || '-'}</div>
-                        </td>
-                        <td className="p-3 font-mono text-blue-100/70 hidden lg:table-cell align-middle break-all">{i.codigoBarras || '-'}</td>
-                        <td className="p-3 text-right text-blue-100/80 font-mono align-middle whitespace-nowrap">{Number.isFinite(estoque) ? estoque : '-'}</td>
-                        <td className="p-3 text-right text-blue-100/70 font-mono hidden sm:table-cell align-middle whitespace-nowrap">{min || '-'}</td>
-                        <td className="p-3 text-blue-100/70 hidden xl:table-cell align-middle whitespace-nowrap">{fmtDateOnlyBR(i.dataValidade || '')}</td>
-                        <td className="p-3 text-right text-blue-100/80 hidden xl:table-cell align-middle whitespace-nowrap">{fmtMoneyBRL(valor)}</td>
-                        <td className="p-3 text-right align-middle whitespace-nowrap">
-                          <div className="flex items-center justify-end">
-                            <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => openEditDialog(i)} disabled={!isAuthed}>
-                              Editar
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                  {!filteredInsumos.length ? (
-                    <tr>
-                      <td className="p-3 text-blue-100/70" colSpan={8}>
-                        {insumosLoadError && !insumosLoading && isAuthed ? (
-                          <span className="text-red-200">
-                            Erro ao carregar insumos ({insumosLoadError.status || 'erro'}
-                            {insumosLoadError.code ? `/${insumosLoadError.code}` : ''}): {insumosLoadError.message}
-                          </span>
-                        ) : (
-                          renderListPlaceholder(insumosLoading, 'Sem itens.')
-                        )}
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={offlineDialogOpen} onOpenChange={setOfflineDialogOpen}>
-        <DialogContent className={dialogSmallClass}>
-          <DialogHeader>
-            <DialogTitle>Pendências de sincronização</DialogTitle>
-            <DialogDescription>
-              Operações salvas localmente quando a rede cai. Ao reconectar, clique em “Sincronizar”.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm text-muted-foreground">
-              Itens: <span className="font-mono">{offlineItems.length}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" onClick={() => void syncOfflineQueue()} disabled={!isAuthed || !offlineItems.length}>
-                Sincronizar
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  if (!offlineItems.length) return
-                  if (!window.confirm('Limpar a fila offline? Você perderá as operações pendentes.')) return
-                  try {
-                    window.localStorage.removeItem(OFFLINE_QUEUE_KEY)
-                  } catch {
-                    // ignore
-                  }
-                  setOfflineItems([])
-                  setOfflineQueueCount(0)
-                  toast.success('Fila limpa.')
-                }}
-                disabled={!offlineItems.length}
-              >
-                Limpar
-              </Button>
-            </div>
-          </div>
-
-          {debugUi ? (
-            <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-              <table className="min-w-full text-sm">
-                <thead className="bg-black/30 text-blue-100/80">
-                  <tr>
-                    <th className="text-left p-3">Quando</th>
-                    <th className="text-left p-3">Método</th>
-                    <th className="text-left p-3">Endpoint</th>
-                    <th className="text-right p-3">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {offlineItems.map((it) => (
-                    <tr key={it.id} className="hover:bg-white/5">
-                      <td className="p-3 text-blue-100/70">{fmtAge(it.ts)}</td>
-                      <td className="p-3 text-blue-100/80 font-mono">{it.method}</td>
-                      <td className="p-3 text-blue-50 font-mono">{it.path}</td>
-                      <td className="p-3 text-right">
-                        <Button
-                          variant="outline"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(JSON.stringify(it, null, 2))
-                              toast.success('Copiado.')
-                            } catch (e: any) {
-                              toast.error(e?.message || 'Não foi possível copiar.')
-                            }
-                          }}
-                        >
-                          Copiar
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {!offlineItems.length ? (
-                    <tr>
-                      <td className="p-3 text-blue-100/70" colSpan={4}>
-                        Sem itens pendentes.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
-              {offlineItems.length ? (
-                <div>
-                  Existem <span className="font-semibold text-blue-100">{offlineItems.length}</span> operações pendentes. Clique em
-                  “Sincronizar” quando estiver online.
-                </div>
-              ) : (
-                <div>Sem pendências.</div>
-              )}
-              <div className="mt-2">
-                <Button variant="outline" size="sm" onClick={toggleDebugUi}>
-                  Ver detalhes técnicos
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
+      <InsumosQuickOperationDialog
         open={quickOp != null}
+        operation={quickOp}
+        dialogClassName={dialogLargeClass}
+        isAuthed={isAuthed}
+        shouldShowDashboardLoading={shouldShowDashboardLoading}
+        renderDashboardLoadingButton={() => <DashboardLoadingButton size="sm" />}
+        unit={unidade}
+        transferFrom={transferFrom}
+        transferTo={transferTo}
+        unitOptions={unidadeOptions}
+        unitLabel={unidadeLabel}
+        search={quickSearch}
+        onSearchChange={setQuickSearch}
+        scanOpen={quickScanOpen}
+        onScanToggle={() => setQuickScanOpen((value) => !value)}
+        onScanClose={() => setQuickScanOpen(false)}
+        onBarcodeDetected={(code) => {
+          selectQuickCodigo(code, { setSearch: true, snapshot: null })
+          setQuickScanOpen(false)
+          toast.success('Código detectado')
+        }}
+        searchRemoteLoading={quickSearchRemoteLoading}
+        searchRemoteError={quickSearchRemoteError}
+        searchMatches={quickSearchMatches}
+        hasSelection={hasQuickSelection}
+        lookupLoading={quickLookupLoading}
+        lookupError={quickLookupError}
+        lookupItems={quickLookupItems}
+        selectedSnapshot={quickSelectedSnapshot}
+        quickCode={quickCodigo}
+        onClearSelection={clearQuickSelection}
+        onApplySelection={applyQuickSelection}
+        isSameInsumo={isSameInsumo}
+        onSelectCode={(value, item) => selectQuickCodigo(value, { snapshot: item ?? null })}
+        loteNeedsPick={quickLoteNeedsPick}
+        lotesForPicker={quickLotesForPicker}
+        selectedRegistro={quickRegistro}
+        onRegistroChange={(value) => {
+          setQuickRegistro(value)
+          setQuickAutoFefo(false)
+        }}
+        showFefoToggle={
+          (quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
+          quickLotesForPicker.length > 1 &&
+          getPolicyForItem(quickLookupItems?.[0] || null).fefo
+        }
+        autoFefo={quickAutoFefo}
+        onToggleAutoFefo={() => setQuickAutoFefo((value) => !value)}
+        quantity={quickQuantidade}
+        onQuantityChange={setQuickQuantidade}
+        adjustmentStock={quickNovoEstoque}
+        onAdjustmentStockChange={setQuickNovoEstoque}
+        adjustmentReason={quickMotivo}
+        onAdjustmentReasonChange={setQuickMotivo}
+        obs={quickObs}
+        onObsChange={setQuickObs}
+        onTransferFromChange={setTransferFrom}
+        onTransferToChange={setTransferTo}
+        feedback={quickActionFeedback}
+        loading={quickActionLoading}
         onOpenChange={(open) => {
           if (open) return
           resetQuickOperationState()
           setQuickOp(null)
         }}
-      >
-      <DialogContent className={`${dialogLargeClass} dark bg-corporate-900 border-white/10 text-white`}>
-          <DialogHeader>
-            <DialogTitle className="text-white">
-              {quickOp === 'ENTRADA'
-                ? 'Entrada'
-                : quickOp === 'BAIXA'
-                  ? 'Saída'
-                  : quickOp === 'TRANSFERENCIA'
-                    ? 'Transferência'
-                    : 'Operação'}
-            </DialogTitle>
-            <DialogDescription className="text-blue-100/70">
-              Preencha os dados para registrar a operação na unidade selecionada.
-            </DialogDescription>
-          </DialogHeader>
+        onCancel={() => {
+          resetQuickOperationState()
+          setQuickOp(null)
+        }}
+        onConfirmTransfer={async () => {
+          const ok = await runTransfer()
+          if (ok) resetQuickOperationState({ keepFeedback: true })
+        }}
+        onConfirmOperation={async () => {
+          const operation = quickOp === 'AJUSTE' ? 'AJUSTE' : quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA'
+          const ok = await runQuickOperation(operation)
+          if (ok) resetQuickOperationState({ keepFeedback: true })
+        }}
+        onEditItem={openEditDialog}
+      />
 
-          {!isAuthed ? (
-            shouldShowDashboardLoading ? (
-              <DashboardLoadingButton size="sm" />
-            ) : (
-              <div className="text-sm text-blue-100/80">Faça login no CRM para usar as operações de Insumos.</div>
-            )
-          ) : null}
-
-          <div className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
-            {quickOp === 'TRANSFERENCIA'
-              ? `Unidade da operação: ${unidadeLabel(transferFrom)} → ${unidadeLabel(transferTo)}`
-              : `Unidade da operação: ${unidadeLabel(unidade)}`}
-          </div>
-
-          <div className="space-y-3">
-            <div>
-              <div className="text-xs text-blue-200/70 mb-1">Buscar por produto, marca, categoria ou código</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  value={quickSearch}
-                  onChange={(e) => setQuickSearch(e.target.value)}
-                  placeholder="ex: Rennova, preenchedor, 789..."
-                  className="w-full sm:flex-1 sm:min-w-[240px]"
-                />
-                <Button variant="secondary" type="button" onClick={() => setQuickScanOpen((v) => !v)}>
-                  {quickScanOpen ? 'Fechar' : 'Escanear'}
-                </Button>
-              </div>
-              <div className="mt-2">
-                {quickSearchRemoteLoading ? (
-                  <div className="text-xs text-blue-200/70">Buscando no servidor…</div>
-                ) : quickSearchRemoteError ? (
-                  <div className="text-xs text-amber-200">{quickSearchRemoteError} (mostrando cache local).</div>
-                ) : null}
-                {quickSearchMatches.length && (!hasQuickSelection || quickLookupLoading) ? (
-                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                    <div className="text-[11px] text-blue-200/60 mb-2">Selecione o produto para lançar a operação:</div>
-                    <div className="space-y-2">
-                      {quickSearchMatches.map(({ item, matchedCode }) => {
-                        const codes = getInsumoBarcodes(item)
-                        const code = matchedCode && codes.includes(matchedCode) ? matchedCode : codes[0] || ''
-                        const hasCode = !!code
-                        const descriptor = formatInsumoDescriptor(item)
-                        const primarySelected = quickSelectedSnapshot || (quickLookupItems.length ? quickLookupItems[0] : null)
-                        const isLoadingSelection = !!(quickLookupLoading && primarySelected && isSameInsumo(item, primarySelected))
-                        return (
-                          <div
-                            key={`${item.registro || ''}-${code || 'nocode'}`}
-                            className="w-full min-w-0 rounded-md border border-white/5 bg-white/5 px-2 py-2"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => applyQuickSelection(item, code)}
-                              disabled={!hasCode || isLoadingSelection}
-                              className={`w-full text-left ${(!hasCode || isLoadingSelection) ? 'cursor-not-allowed' : 'hover:bg-white/10'} rounded-md px-1 py-1`}
-                              aria-busy={isLoadingSelection}
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-sm text-blue-50 font-semibold break-words">{String(item.produto || 'Insumo')}</div>
-                                <div className="flex items-center gap-2 text-xs text-blue-200/60 font-mono break-all">
-                                  {code || '—'}
-                                  {isLoadingSelection ? (
-                                    <span className="inline-flex items-center gap-1 text-blue-200/70 font-sans">
-                                      <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                                      Carregando…
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-                              {descriptor ? (
-                                <div className="text-xs text-blue-200/70 mt-0.5 break-words">{descriptor}</div>
-                              ) : null}
-                              {!hasCode ? (
-                                <div className="text-xs text-amber-200 mt-1">Sem código de barras cadastrado</div>
-                              ) : null}
-                              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
-                                {item.categoria ? (
-                                  <Badge style={buildTagStyle(getCategoriaBgColor(String(item.categoria)))} className="border">
-                                    {String(item.categoria)}
-                                  </Badge>
-                                ) : null}
-                                {item.marca ? (
-                                  <Badge style={buildTagStyle(getMarcaBgColor(String(item.marca)))} className="border">
-                                    {String(item.marca)}
-                                  </Badge>
-                                ) : null}
-                              </div>
-                            </button>
-                            {!hasCode ? (
-                              <div className="mt-2 flex justify-end">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openEditDialog(item)}
-                                  disabled={!isAuthed}
-                                >
-                                  Editar cadastro
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-                {quickLookupLoading ? (
-                  <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
-                ) : quickLookupError ? (
-                  <div className="text-xs text-red-200">{quickLookupError}</div>
-                ) : (quickLookupItems.length || quickSelectedSnapshot) ? (
-                  (() => {
-                    const selected = quickLookupItems[0] || quickSelectedSnapshot
-                    if (!selected) return null
-                    const selectedCodes = getInsumoBarcodes(selected)
-                    const activeCode = quickCodigo.trim() || selectedCodes[0] || ''
-                    const resumoBase = quickLookupItems.length ? quickLookupItems : [selected]
-                    return (
-                      <div className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-2">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <div className="text-xs uppercase tracking-wide text-blue-200/70">Selecionado</div>
-                            <div className="text-sm text-blue-50 font-semibold">
-                              {String(selected?.produto || '').trim() || 'Insumo'}
-                            </div>
-                            {formatInsumoDescriptor(selected) ? (
-                              <div className="text-xs text-blue-200/70 mt-0.5">
-                                {formatInsumoDescriptor(selected)}
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="flex flex-col items-end gap-2 text-xs text-blue-200/70">
-                            <Button variant="outline" size="sm" onClick={clearQuickSelection}>
-                              Trocar seleção
-                            </Button>
-                            <div className="text-right">
-                              {(() => {
-                                const ctx = quickOp === 'TRANSFERENCIA' ? transferFrom : unidade
-                                const total = resumoBase.reduce((acc, it) => {
-                                  const v = ctx && (it as any)?.estoques ? Number((it as any).estoques?.[ctx] ?? 0) : Number((it as any).estoqueAtual ?? 0)
-                                  return acc + (Number.isFinite(v) ? v : 0)
-                                }, 0)
-                                return `Estoque: ${total}`
-                              })()}
-                              {' • '}
-                              {Array.from(new Set(resumoBase.map((it) => String((it as any)?.registro || '').trim()).filter(Boolean))).length} registros
-                            </div>
-                          </div>
-                        </div>
-                        {selectedCodes.length > 1 ? (
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
-                            <span className="uppercase tracking-wide">Código</span>
-                            <Select value={activeCode} onValueChange={(v) => selectQuickCodigo(v, { snapshot: selected })}>
-                              <SelectTrigger className="h-8">
-                                <SelectValue placeholder="Selecione o código" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {selectedCodes.map((c) => (
-                                  <SelectItem key={c} value={c}>
-                                    <span className="font-mono">{c}</span>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ) : null}
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-blue-200/70">
-                          {selected?.categoria ? (
-                            <Badge style={buildTagStyle(getCategoriaBgColor(String(selected.categoria)))} className="border">
-                              {String(selected.categoria)}
-                            </Badge>
-                          ) : null}
-                          {selected?.marca ? (
-                            <Badge style={buildTagStyle(getMarcaBgColor(String(selected.marca)))} className="border">
-                              {String(selected.marca)}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </div>
-                    )
-                  })()
-                ) : null}
-              </div>
-            </div>
-
-            {quickLoteNeedsPick ? (
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-blue-200/70">Lote/registro</div>
-                    {(quickOp === 'BAIXA' || quickOp === 'TRANSFERENCIA') &&
-                      quickLotesForPicker.length > 1 &&
-                      getPolicyForItem(quickLookupItems?.[0] || null).fefo ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      onClick={() => setQuickAutoFefo((v) => !v)}
-                      title="FEFO (First-Expire, First-Out): prioriza o lote com validade mais próxima"
-                    >
-                      FEFO {quickAutoFefo ? 'auto' : 'manual'}
-                    </Button>
-                  ) : null}
-                </div>
-                <Select
-                  value={quickRegistro}
-                  onValueChange={(v) => {
-                    setQuickRegistro(v)
-                    setQuickAutoFefo(false)
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Selecione o lote/registro" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {quickLotesForPicker.map((l) => (
-                      <SelectItem key={l.registro} value={l.registro}>
-                        <span className="flex w-full items-center justify-between gap-3">
-                          <span className="font-mono">{l.registro}</span>
-                          <span className="flex items-center gap-2 text-xs text-blue-100/70">
-                            {l.lote ? <span>Lote {l.lote}</span> : null}
-                            {l.dataValidade ? <span>Vence {fmtDateOnlyBR(l.dataValidade)}</span> : null}
-                            {Number.isFinite(Number(l.estoque)) ? <span>Estoque {Number(l.estoque)}</span> : null}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="text-xs text-blue-200/60">
-                  Se o produto tiver múltiplos lotes, selecione qual registro deve ser movimentado.
-                </div>
-              </div>
-            ) : null}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
-                <Input value={quickQuantidade} onChange={(e) => setQuickQuantidade(e.target.value)} type="number" min={1} />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Observações</div>
-                <Input value={quickObs} onChange={(e) => setQuickObs(e.target.value)} placeholder="opcional" />
-              </div>
-            </div>
-
-            {quickOp === 'TRANSFERENCIA' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Origem</div>
-                  <Select value={transferFrom} onValueChange={setTransferFrom}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unidadeOptions.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {unidadeLabel(u)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Destino</div>
-                  <Select value={transferTo} onValueChange={setTransferTo}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unidadeOptions.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {unidadeLabel(u)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            ) : null}
-
-            {quickScanOpen ? (
-              <BarcodeScannerInline
-                onDetected={(code) => {
-                  selectQuickCodigo(code, { setSearch: true, snapshot: null })
-                  setQuickScanOpen(false)
-                  toast.success('Código detectado')
-                }}
-                onClose={() => setQuickScanOpen(false)}
-              />
-            ) : null}
-
-            {quickActionFeedback ? (
-              <div
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  quickActionFeedback.type === 'success'
-                    ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
-                    : 'border-red-400/40 bg-red-500/10 text-red-100'
-                }`}
-              >
-                {quickActionFeedback.message}
-              </div>
-            ) : null}
-          </div>
-
-          <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  resetQuickOperationState()
-                  setQuickOp(null)
-                }}
-              >
-                Cancelar
-              </Button>
-            {quickOp === 'TRANSFERENCIA' ? (
-              <Button
-                className="!bg-blue-600 hover:!bg-blue-700 !text-white"
-                onClick={async () => {
-                  const ok = await runTransfer()
-                  if (ok) {
-                    resetQuickOperationState({ keepFeedback: true })
-                  }
-                }}
-                disabled={quickActionLoading || !isAuthed}
-              >
-                <span className="flex items-center gap-2">
-                  {quickActionLoading ? (
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
-                      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                    </svg>
-                  ) : null}
-                  {quickActionLoading ? 'Processando...' : 'Confirmar transferência'}
-                </span>
-              </Button>
-            ) : (
-              <Button
-                className={
-                  quickOp === 'ENTRADA'
-                    ? '!bg-green-600 hover:!bg-green-700 !text-white'
-                    : quickOp === 'BAIXA'
-                      ? ''
-                      : ''
-                }
-                variant={quickOp === 'BAIXA' ? 'destructive' : 'default'}
-                onClick={async () => {
-                  const ok = await runQuickAction(quickOp === 'ENTRADA' ? 'ENTRADA' : 'BAIXA')
-                  if (ok) {
-                    resetQuickOperationState({ keepFeedback: true })
-                  }
-                }}
-                disabled={quickActionLoading || !isAuthed}
-              >
-                <span className="flex items-center gap-2">
-                  {quickActionLoading ? (
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
-                      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                    </svg>
-                  ) : null}
-                  {quickActionLoading ? 'Processando...' : (quickOp === 'ENTRADA' ? 'Confirmar entrada' : 'Confirmar saída')}
-                </span>
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
+      <InsumosMovementEditDialog
         open={editMovOpen}
+        dialogClassName={dialogSmallClass}
+        target={editMovTarget}
+        isAuthed={isAuthed}
+        saving={editMovSaving}
+        deleting={editMovDeleting}
+        produto={editMovProduto}
+        data={editMovData}
+        hora={editMovHora}
+        unidade={editMovUnidade}
+        quantidade={editMovQuantidade}
+        novoEstoque={editMovNovoEstoque}
+        motivo={editMovMotivo}
+        unitOptions={unidadeOptions}
+        insumosProdutos={insumosProdutos}
+        unitLabel={unidadeLabel}
         onOpenChange={(open) => {
           setEditMovOpen(open)
           if (!open) {
@@ -6919,307 +4057,39 @@ export function InsumosModule() {
             setEditMovDeleting(false)
           }
         }}
-      >
-        <DialogContent className={`${dialogSmallClass} dark bg-corporate-900 border-white/10 text-white`}>
-          <DialogHeader>
-            <DialogTitle className="text-white">
-              {(() => {
-                const tipo = normalizeMovimentacaoTipo(editMovTarget?.tipo)
-                if (String(editMovTarget?.transferId || '').trim()) return 'Editar transferência'
-                if (tipo === 'AJUSTE') return 'Editar ajuste'
-                if (tipo.includes('ENTRADA')) return 'Editar entrada'
-                if (tipo.includes('SAIDA')) return 'Editar saída'
-                return 'Editar lançamento'
-              })()}
-            </DialogTitle>
-            <DialogDescription className="text-blue-100/70">
-              Edite os dados do lançamento sem abrir o cadastro do insumo.
-            </DialogDescription>
-          </DialogHeader>
+        onProdutoChange={setEditMovProduto}
+        onDataChange={(value) => {
+          const iso = dateInputToIso(value)
+          setEditMovData(iso || value)
+        }}
+        onHoraChange={setEditMovHora}
+        onUnidadeChange={setEditMovUnidade}
+        onQuantidadeChange={setEditMovQuantidade}
+        onNovoEstoqueChange={setEditMovNovoEstoque}
+        onMotivoChange={setEditMovMotivo}
+        onCancel={() => {
+          setEditMovOpen(false)
+          setEditMovTarget(null)
+        }}
+        onSave={() => void saveMovementEdit()}
+        onDelete={() => void deleteMovementEdit()}
+      />
 
-          <div className="space-y-3">
-            <div>
-              <div className="text-xs text-blue-200/70 mb-1">Produto</div>
-              <AutocompleteInput
-                value={editMovProduto}
-                onValueChange={setEditMovProduto}
-                placeholder="Nome do produto"
-                options={insumosProdutos}
-              />
-            </div>
+      <InsumosPurchaseDialog
+        actionables={overviewActionables}
+        dialogClassName={dialogMediumClass}
+        isAuthed={isAuthed}
+        loading={overviewLoading}
+        open={purchaseDialogOpen}
+        onOpenChange={setPurchaseDialogOpen}
+        onOpenQuickOperation={openQuickOperation}
+        onClose={() => setPurchaseDialogOpen(false)}
+        renderLoadingText={renderLoadingText}
+        unit={unidade}
+        unitLabel={unidadeLabel}
+      />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Data</div>
-                <BrDatePickerInput
-                  value={fmtDateOnlyBR(editMovData)}
-                  onChange={(value) => {
-                    const iso = dateInputToIso(value)
-                    setEditMovData(iso || value)
-                  }}
-                  placeholder="DD/MM/AA"
-                  ariaLabel="Data da movimentação"
-                />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Hora</div>
-                <Input
-                  type="time"
-                  value={editMovHora}
-                  onChange={(e) => setEditMovHora(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Unidade</div>
-                {String(editMovTarget?.transferId || '').trim() ? (
-                  <Input
-                    value={`${unidadeLabel(String(editMovTarget?.unidadeOrigem || ''))} → ${unidadeLabel(String(editMovTarget?.unidadeDestino || ''))}`}
-                    disabled
-                  />
-                ) : (
-                  <Select value={editMovUnidade || undefined} onValueChange={setEditMovUnidade}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a unidade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unidadeOptions.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {unidadeLabel(u)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-
-              {normalizeMovimentacaoTipo(editMovTarget?.tipo) === 'AJUSTE' ? (
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Novo estoque</div>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={editMovNovoEstoque}
-                    onChange={(e) => setEditMovNovoEstoque(e.target.value)}
-                  />
-                </div>
-              ) : (
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Quantidade</div>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={editMovQuantidade}
-                    onChange={(e) => setEditMovQuantidade(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
-
-            {normalizeMovimentacaoTipo(editMovTarget?.tipo) === 'AJUSTE' ? (
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Motivo</div>
-                <Input value={editMovMotivo} onChange={(e) => setEditMovMotivo(e.target.value)} />
-              </div>
-            ) : null}
-
-            {editMovTarget?.registroInsumo ? (
-              <div className="text-xs text-blue-200/60">
-                Registro: <span className="font-mono">{String(editMovTarget.registroInsumo)}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between">
-            <Button
-              variant="destructive"
-              onClick={() => void deleteMovementEdit()}
-              disabled={editMovSaving || editMovDeleting || !isAuthed}
-            >
-              {editMovDeleting ? 'Excluindo...' : 'Excluir'}
-            </Button>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setEditMovOpen(false)
-                setEditMovTarget(null)
-              }}
-              disabled={editMovSaving || editMovDeleting}
-            >
-              Cancelar
-            </Button>
-            <Button onClick={() => void saveMovementEdit()} disabled={editMovSaving || editMovDeleting || !isAuthed}>
-              {editMovSaving ? 'Salvando...' : 'Salvar lançamento'}
-            </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
-        <DialogContent size="wideTable" className={`${dialogMediumClass} dark bg-corporate-900 border-white/10 text-white`}>
-          <DialogHeader>
-            <DialogTitle className="text-white">Lista de compra</DialogTitle>
-            <DialogDescription className="text-blue-100/70">
-              Sugestões de reposição para {unidadeLabel(unidade)} (baseado em estoque mínimo).
-            </DialogDescription>
-          </DialogHeader>
-
-          {(() => {
-            const items = (overviewActionables?.reposicao || []).slice()
-            const totalValue = items.reduce((acc, it) => acc + (Number(it.estimatedValue) || 0), 0)
-            const totalQty = items.reduce((acc, it) => acc + (Number(it.suggestedPurchaseQty) || 0), 0)
-
-            const byCat = new Map<string, any[]>()
-            for (const it of items) {
-              const cat = String(it.categoria || 'Outros').trim() || 'Outros'
-              const prev = byCat.get(cat) || []
-              prev.push(it)
-              byCat.set(cat, prev)
-            }
-            const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-
-	            const escapeCsv = (v: any) => {
-	              const s = String(v ?? '')
-	              if (/[";\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
-	              return s
-	            }
-            const toCsv = () => {
-              const header = ['Categoria', 'Produto', 'Código', 'Qtd sugerida', 'Valor estimado (R$)']
-              const rows = items.map((it) => [
-                it.categoria || '',
-                it.produto || '',
-                it.codigoBarras || '',
-                Number(it.suggestedPurchaseQty) || 0,
-                Number(it.estimatedValue) || 0
-              ])
-              return [header, ...rows].map((r) => r.map(escapeCsv).join(';')).join('\n')
-            }
-
-            return (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm text-blue-100/80">
-                    <span className="font-mono">{items.length}</span> itens •{' '}
-                    <span className="font-mono">{totalQty}</span> unidades sugeridas •{' '}
-                    <span className="font-mono">{fmtMoneyBRL(totalValue)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(toCsv())
-                          toast.success('Lista copiada (CSV)')
-                        } catch {
-                          toast.error('Não foi possível copiar')
-                        }
-                      }}
-                      disabled={!items.length}
-                    >
-                      Copiar CSV
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        const csv = toCsv()
-                        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url
-                        a.download = `lista-compra-${unidade}-${new Date().toISOString().slice(0, 10)}.csv`
-                        document.body.appendChild(a)
-                        a.click()
-                        a.remove()
-                        setTimeout(() => URL.revokeObjectURL(url), 2000)
-                      }}
-                      disabled={!items.length}
-                    >
-                      Baixar CSV
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-black/30 text-blue-100/80">
-                      <tr>
-                        <th className="text-left p-3">Produto</th>
-                        <th className="text-left p-3 hidden md:table-cell">Categoria</th>
-                        <th className="text-left p-3 hidden sm:table-cell">Código</th>
-                        <th className="text-right p-3">Qtd sugerida</th>
-                        <th className="text-right p-3">Valor</th>
-                        <th className="text-right p-3">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {cats.flatMap(([cat, list]) => {
-                        const rows = list.map((it, idx) => (
-                          <tr key={`${String(it.codigoBarras || '')}-${idx}`} className="hover:bg-white/5">
-                            <td className="p-3 text-blue-50">
-                              <div className="font-medium">{it.produto || '-'}</div>
-                            </td>
-                            <td className="p-3 text-blue-100/80 hidden md:table-cell">{it.categoria || cat}</td>
-                            <td className="p-3 font-mono text-blue-100/80 hidden sm:table-cell break-all">{it.codigoBarras || ''}</td>
-                            <td className="p-3 text-right font-mono text-blue-100/80">{it.suggestedPurchaseQty ?? 0}</td>
-                            <td className="p-3 text-right font-mono text-blue-100/80">
-                              {fmtMoneyBRL(Number(it.estimatedValue) || 0)}
-                            </td>
-                            <td className="p-3 text-right">
-                              <Button
-                                variant="outline"
-                                className="h-8 px-2 text-xs"
-                                onClick={() => {
-                                  openQuickOperation('ENTRADA', {
-                                    codigoBarras: String(it.codigoBarras || ''),
-                                    quantidade: it.suggestedPurchaseQty ?? 1,
-                                    obs: 'Reposição sugerida'
-                                  })
-                                  setPurchaseDialogOpen(false)
-                                }}
-                                disabled={!isAuthed}
-                              >
-                                Registrar entrada
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                        return rows
-                      })}
-                      {!items.length ? (
-                        <tr>
-                          <td className="p-3 text-blue-100/70" colSpan={6}>
-                            {renderLoadingText(overviewLoading, 'Sem recomendações de compra.')}
-                          </td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )
-          })()}
-
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setPurchaseDialogOpen(false)}>
-              Fechar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {proxyStatus?.mutationsBlocked ? (
-        <div className="max-w-6xl mx-auto mb-3 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          <div className="font-semibold">Modo local seguro ativo</div>
-          <div className="text-amber-100/80">
-            Mutações para o backend de produção estão bloqueadas. Para liberar, rode com
-            <span className="font-mono"> LOCAL_ALLOW_UPSTREAM_MUTATIONS=1</span>.
-          </div>
-        </div>
-      ) : null}
+      <InsumosSafeModeBanner visible={!!proxyStatus?.mutationsBlocked} />
 
       <div ref={overviewSectionRef} className="max-w-6xl mx-auto space-y-3 pt-1">
         <div className="flex flex-col gap-3">
@@ -7236,238 +4106,51 @@ export function InsumosModule() {
                         if (!isManagerRole) return <div key={panelId} />
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-	                            <Card className="bg-black/20 border border-white/10">
-	                              <CardHeader className="relative pr-24">
-	                                <CardTitle className="text-white text-base">Políticas por categoria</CardTitle>
-	                                <div className="absolute top-2 right-2 flex items-center gap-1">
-                                  <div
-                                    {...handleProps}
-                                    className="h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                                    title="Arraste para mover"
-                                    aria-label="Mover"
-                                    role="button"
-                                    tabIndex={0}
-                                  >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path
-                                        d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
-                                        stroke="currentColor"
-                                        strokeWidth="3"
-                                        strokeLinecap="round"
-                                      />
-                                    </svg>
-                                  </div>
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.policies, !panelOpen)}
-                                    title={panelOpen ? 'Contrair' : 'Expandir'}
-                                    aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                                  >
-                                    {panelOpen ? (
-                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                      </svg>
-                                    ) : (
-                                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                      </svg>
-                                    )}
-                                  </Button>
-	                                </div>
-	                              </CardHeader>
-                              {panelOpen ? (
-                                <CardContent className="space-y-3">
-              <div className="text-xs text-blue-200/60">
-                Configure quais categorias exigem <span className="font-medium text-blue-100/80">lote</span> e/ou <span className="font-medium text-blue-100/80">validade</span>, e habilite <span className="font-medium text-blue-100/80">FEFO</span> quando aplicável.
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-black/10 p-3 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-                  <div className="md:col-span-2">
-                    <div className="text-xs text-blue-200/70 mb-1">Categoria (nome)</div>
-                    <Input
-                      value={policyFormLabel}
-                      onChange={(e) => {
-                        const next = e.target.value
-                        setPolicyFormLabel(next)
-                      }}
-                      placeholder="Ex: Toxina botulínica"
-                      disabled={!isAuthed}
-                    />
-                  </div>
-                  <div>
-                    <div className="text-xs text-blue-200/70 mb-1">Slug (opcional)</div>
-                    <Input
-                      value={policyFormSlug}
-                      onChange={(e) => {
-                        setPolicyFormSlugTouched(true)
-                        setPolicyFormSlug(e.target.value)
-                      }}
-                      placeholder={slugifyCategoria(policyFormLabel) || 'ex: toxina-botulinica'}
-                      disabled={!isAuthed}
-                    />
-                  </div>
-                </div>
-
-                {adminCategorySuggestions.length ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-                    <div className="md:col-span-2">
-                      <div className="text-xs text-blue-200/70 mb-1">Sugestões (já usadas em itens)</div>
-                      <Select
-                        value={policyFormSuggestion}
-                        onValueChange={(v) => {
-                          const next = String(v)
-                          setPolicyFormSuggestion(next)
-                          if (next === '__NONE__') return
-                          const hit = adminCategorySuggestions.find((s) => s.slug === next)
-                          if (!hit) return
-                          setPolicyFormLabel(hit.label)
-                          setPolicyFormSlugTouched(true)
-                          setPolicyFormSlug(hit.slug)
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Escolher…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__NONE__">(nenhuma)</SelectItem>
-                          {adminCategorySuggestions.map((s) => (
-                            <SelectItem key={s.slug} value={s.slug}>
-                              {s.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="text-xs text-blue-200/60">
-                      {policyFormEditingSlug ? (
-                        <Badge variant="secondary">Editando: {policyFormEditingSlug}</Badge>
-                      ) : (
-                        <Badge variant="secondary">Nova política</Badge>
-                      )}
-                    </div>
-                  </div>
-                ) : policyFormEditingSlug ? (
-                  <div className="text-xs text-blue-200/60">
-                    <Badge variant="secondary">Editando: {policyFormEditingSlug}</Badge>
-                  </div>
-                ) : null}
-
-                <div className="flex flex-wrap gap-4">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="policy-requires-lot"
-                      checked={policyFormRequiresLot}
-                      onCheckedChange={(checked) => setPolicyFormRequiresLot(!!checked)}
-                    />
-                    <label htmlFor="policy-requires-lot" className="text-sm text-blue-100/80 cursor-pointer">
-                      Lote obrigatório
-                    </label>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="policy-requires-expiry"
-                      checked={policyFormRequiresExpiry}
-                      onCheckedChange={(checked) => {
-                        const next = !!checked
-                        setPolicyFormRequiresExpiry(next)
-                        if (!next) setPolicyFormFefo(false)
-                      }}
-                    />
-                    <label htmlFor="policy-requires-expiry" className="text-sm text-blue-100/80 cursor-pointer">
-                      Validade obrigatória
-                    </label>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="policy-fefo"
-                      checked={policyFormFefo}
-                      onCheckedChange={(checked) => {
-                        const next = !!checked
-                        setPolicyFormFefo(next)
-                        if (next) setPolicyFormRequiresExpiry(true)
-                      }}
-                    />
-                    <label htmlFor="policy-fefo" className="text-sm text-blue-100/80 cursor-pointer">
-                      FEFO (sugere lote por validade)
-                    </label>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => resetPolicyForm()}
-                    disabled={!isAuthed}
-                  >
-                    Limpar
-                  </Button>
-                  <Button
-                    className="!bg-blue-600 hover:!bg-blue-700 !text-white"
-                    onClick={() => void saveCategoryPolicy()}
-                    disabled={!isAuthed}
-                  >
-                    {policyFormEditingSlug ? 'Salvar alterações' : 'Criar política'}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="overflow-auto rounded-xl border border-white/10">
-                <table className="min-w-full text-sm">
-                      <thead className="bg-black/30 text-blue-100/80">
-                        <tr>
-                          <th className="text-left p-3 w-[34%]">Categoria</th>
-                          <th className="text-left p-3 w-[46%]">Regras</th>
-                          <th className="text-right p-3 w-[20%]">Ações</th>
-                        </tr>
-                      </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {(adminCategoryPolicies || []).map((p) => (
-                      <tr key={p.slug} className="hover:bg-white/5">
-                        <td className="p-3 text-blue-50">
-                          <div className="text-blue-50">{p.label || p.slug}</div>
-                          <div className="text-xs text-blue-200/60 font-mono">{p.slug}</div>
-                        </td>
-                        <td className="p-3">
-                          <div className="flex flex-wrap gap-2">
-                            {p.requiresLot ? <Badge variant="secondary">lote</Badge> : <Badge variant="secondary">lote opcional</Badge>}
-                            {p.requiresExpiry ? <Badge variant="secondary">validade</Badge> : <Badge variant="secondary">validade opcional</Badge>}
-                            {p.fefo ? <Badge>FEFO</Badge> : <Badge variant="secondary">sem FEFO</Badge>}
-                          </div>
-                        </td>
-                        <td className="p-3 text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" className="h-8 px-2" onClick={() => startEditPolicyForm(p)}>
-                              Editar
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              className="h-8 px-2"
-                              onClick={() => void deleteCategoryPolicy(p.slug)}
-                            >
-                              Remover
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {!adminCategoryPoliciesLoading && !(adminCategoryPolicies || []).length ? (
-                      <tr>
-                        <td className="p-3 text-blue-100/70" colSpan={3}>
-                          Sem políticas cadastradas.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-                                </CardContent>
-                              ) : null}
-                            </Card>
+                            <InsumosCategoryPoliciesPanel
+                              panelOpen={panelOpen}
+                              isAuthed={isAuthed}
+                              policyFormLabel={policyFormLabel}
+                              policyFormSlug={policyFormSlug}
+                              policyFormSlugPlaceholder={slugifyCategoria(policyFormLabel) || 'ex: toxina-botulinica'}
+                              policyFormSuggestion={policyFormSuggestion}
+                              policyFormEditingSlug={policyFormEditingSlug}
+                              policyFormRequiresLot={policyFormRequiresLot}
+                              policyFormRequiresExpiry={policyFormRequiresExpiry}
+                              policyFormFefo={policyFormFefo}
+                              adminCategorySuggestions={adminCategorySuggestions}
+                              adminCategoryPolicies={adminCategoryPolicies}
+                              adminCategoryPoliciesLoading={adminCategoryPoliciesLoading}
+                              dragHandleProps={handleProps || undefined}
+                              onToggleOpen={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.policies, !panelOpen)}
+                              onPolicyFormLabelChange={setPolicyFormLabel}
+                              onPolicyFormSlugChange={(value) => {
+                                setPolicyFormSlugTouched(true)
+                                setPolicyFormSlug(value)
+                              }}
+                              onPolicyFormSuggestionChange={(value) => {
+                                const next = String(value)
+                                setPolicyFormSuggestion(next)
+                                if (next === '__NONE__') return
+                                const hit = adminCategorySuggestions.find((suggestion) => suggestion.slug === next)
+                                if (!hit) return
+                                setPolicyFormLabel(hit.label)
+                                setPolicyFormSlugTouched(true)
+                                setPolicyFormSlug(hit.slug)
+                              }}
+                              onPolicyFormRequiresLotChange={setPolicyFormRequiresLot}
+                              onPolicyFormRequiresExpiryChange={(value) => {
+                                setPolicyFormRequiresExpiry(value)
+                                if (!value) setPolicyFormFefo(false)
+                              }}
+                              onPolicyFormFefoChange={(value) => {
+                                setPolicyFormFefo(value)
+                                if (value) setPolicyFormRequiresExpiry(true)
+                              }}
+                              onResetPolicyForm={resetPolicyForm}
+                              onSaveCategoryPolicy={() => void saveCategoryPolicy()}
+                              onStartEditPolicyForm={startEditPolicyForm}
+                              onDeleteCategoryPolicy={(slug) => void deleteCategoryPolicy(slug)}
+                            />
                           </div>
                         )
                       }
@@ -7475,820 +4158,98 @@ export function InsumosModule() {
                       if (panelId === 'alerts') {
                         return (
                           <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-		                            <Card className="bg-black/20 border border-white/10">
-                              <CardHeader className="flex flex-col gap-2">
-                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <button
-                                      type="button"
-                                      {...handleProps}
-                                      className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                                      title="Arraste para mover"
-                                      aria-label="Mover"
-                                    >
-                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path
-                                          d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"
-                                          stroke="currentColor"
-                                          strokeWidth="3"
-                                          strokeLinecap="round"
-                                        />
-                                      </svg>
-                                    </button>
-                                    <CardTitle className="text-white text-base">Avisos</CardTitle>
-                                    <div className="hidden sm:flex items-center gap-3 text-xs text-blue-200/70">
-                                      <span className="inline-flex items-center gap-1">
-                                        <span
-                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/40 text-red-50"
-                                          title="Crítico"
-                                          aria-label="Crítico"
-                                        >
-                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                            <path d="M12 7v7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                                            <circle cx="12" cy="17" r="1.5" fill="currentColor" />
-                                          </svg>
-                                        </span>
-                                        <span className="font-mono text-blue-50">
-                                          {showOverviewLoadingProgress ? (
-                                            <span className="inline-flex items-center gap-2">
-                                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                                              {loadingPercent}%
-                                            </span>
-                                          ) : (
-                                            overviewCriticosCount ?? '-'
-                                          )}
-                                        </span>
-                                      </span>
-                                      <span className="inline-flex items-center gap-1">
-                                        <span
-                                          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/35 text-amber-100"
-                                          title="Atenção"
-                                          aria-label="Atenção"
-                                        >
-                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                            <path
-                                              d="M12 3l9 16H3l9-16z"
-                                              fill="currentColor"
-                                              fillOpacity="0.45"
-                                              stroke="currentColor"
-                                              strokeWidth="1.4"
-                                              strokeLinejoin="round"
-                                            />
-                                            <path d="M12 9v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                            <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
-                                          </svg>
-                                        </span>
-                                        <span className="font-mono text-blue-50">
-                                          {showOverviewLoadingProgress ? (
-                                            <span className="inline-flex items-center gap-2">
-                                              <span className="inline-flex h-3 w-3 rounded-full border border-blue-200/70 border-t-transparent animate-spin" />
-                                              {loadingPercent}%
-                                            </span>
-                                          ) : (
-                                            overviewAtencaoCount ?? '-'
-                                          )}
-                                        </span>
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
-                                    <Select value={alertasStatus} onValueChange={(v) => setAlertasStatus(v as any)}>
-                                      <SelectTrigger className="h-8 w-24 shrink-0">
-                                        <SelectValue placeholder="Status" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="TODOS">–</SelectItem>
-                                        <SelectItem value="ATENCAO">Atenção</SelectItem>
-                                        <SelectItem value="URGENTE">Crítico</SelectItem>
-                                        <SelectItem value="INFO">Info</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Select
-                                      value={alertasCategoria || '__ALL__'}
-                                      onValueChange={(v) => setAlertasCategoria(v === '__ALL__' ? '' : String(v))}
-                                    >
-                                      <SelectTrigger className="h-8 w-36 shrink-0">
-                                        <SelectValue placeholder="Categoria" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__ALL__">–</SelectItem>
-                                        {alertasCategorias.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                    <Select value={alertasFluxo} onValueChange={(v) => setAlertasFluxo(v as any)}>
-                                      <SelectTrigger className="h-8 w-28 shrink-0">
-                                        <SelectValue placeholder="Fluxo" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="TODOS">–</SelectItem>
-                                        <SelectItem value="ENTRADA">Entrada</SelectItem>
-                                        <SelectItem value="SAIDA">Saída</SelectItem>
-                                        <SelectItem value="DESCARTE">Descarte</SelectItem>
-                                        <SelectItem value="TRANSFERENCIA">Transferência</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Input
-                                      value={alertasBusca}
-                                      onChange={(e) => setAlertasBusca(e.target.value)}
-                                      placeholder="Buscar"
-                                      className="h-8 flex-1 min-w-[120px] md:min-w-0 ml-auto"
-                                    />
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      <Button
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                        onClick={() => setPurchaseDialogOpen(true)}
-                                        disabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                                        title="Lista de compra"
-                                        aria-label="Lista de compra"
-                                      >
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                          <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                          <circle cx="9" cy="20" r="1.6" fill="currentColor" />
-                                          <circle cx="17" cy="20" r="1.6" fill="currentColor" />
-                                        </svg>
-                                      </Button>
-                                      <Button
-	                                    size="icon"
-	                                    variant="ghost"
-	                                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                                    onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
-                                        title={panelOpen ? 'Contrair' : 'Expandir'}
-                                        aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                                      >
-                                        {panelOpen ? (
-                                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                            <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                          </svg>
-                                        ) : (
-                                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                          </svg>
-                                        )}
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </div>
-                              </CardHeader>
-                              {panelOpen ? (
-                                <CardContent className="space-y-2">
-                                  <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-                                    <table className="w-full table-fixed text-sm">
-                                      <thead className="bg-black/30 text-blue-100/80">
-                                        <tr>
-                                          {(
-                                            [
-                                              { key: 'produto', label: 'Produto', align: 'text-left', widthClass: 'w-[24%]' },
-                                              { key: 'categoria', label: 'Categoria', align: 'text-left', widthClass: 'w-[14%]' },
-                                              { key: 'status', label: 'Status', align: 'text-left', widthClass: 'w-[14%]' },
-                                              { key: 'acao', label: 'Ação recomendada', align: 'text-left', widthClass: 'w-[20%]' },
-                                              { key: 'atual', label: 'Atual', align: 'text-right', widthClass: 'w-[8%]' },
-                                              { key: 'min', label: 'Mín', align: 'text-right hidden sm:table-cell', widthClass: 'w-[6%]' },
-                                              { key: 'dif', label: 'Dif', align: 'text-right hidden lg:table-cell', widthClass: 'w-[7%]' },
-                                              { key: 'percentual', label: '%', align: 'text-right hidden lg:table-cell', widthClass: 'w-[7%]' }
-                                            ] as Array<{ key: AlertasSortKey; label: string; align: string; widthClass?: string }>
-                                          ).map((col) => {
-                                            const isActive = alertasSortKey === col.key
-                                            return (
-                                              <th
-                                                key={col.label}
-                                                className={`p-3 ${col.align} ${col.widthClass || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
-                                              >
-                                                <button
-                                                  type="button"
-                                                  className={`w-full inline-flex items-center ${col.align.includes('right') ? 'justify-end' : 'justify-start'} gap-2 cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
-                                                  onClick={() => {
-                                                    if (alertasSortKey === col.key) {
-                                                      setAlertasSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                                      return
-                                                    }
-                                                    setAlertasSortKey(col.key)
-                                                    setAlertasSortDir(col.key === 'status' ? 'asc' : 'desc')
-                                                  }}
-                                                  aria-label={`Ordenar ${col.label}`}
-                                                  title={`Ordenar ${col.label}`}
-                                                >
-                                                  <span>{col.label}</span>
-                                                  <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
-                                                    {isActive && alertasSortDir === 'asc' ? (
-                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                                      </svg>
-                                                    ) : (
-                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                                      </svg>
-                                                    )}
-                                                  </span>
-                                                </button>
-                                              </th>
-                                            )
-                                          })}
-                                        </tr>
-                                      </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {alertasLinhasOrdenadas.slice(0, 120).map((a, idx) => {
-                        const code = String(a.codigoBarras || '').trim()
-                        const rec = code ? alertasRecommendationByCode.get(code) || null : null
-                        const canQuick = !!code && isAuthed
-                        const qualityIssue = a.qualityIssue
-                        const qualityMessage = String(a.qualityMessage || '').trim()
-                        const qualitySeverity = a.qualitySeverity || (qualityIssue as any)?.severity
-                        const canQualityEdit = !!qualityIssue && isAuthed && (!!qualityIssue.registro || !!qualityIssue.codigoBarras || !!qualityIssue.produto)
-                        const hasQualityAction = !!qualityIssue
-                        const isVencendo = a.tags.includes('VENCENDO')
-                        const isExpirado = a.tags.includes('EXPIRADO')
-                        const hasExpiringAction = !rec && (isExpirado || isVencendo)
-                        const hasAnyAction = !!rec || hasExpiringAction || hasQualityAction
-                        const displayTagsSet = new Set<AlertaStatusTag>()
-                        if (a.tags.includes('URGENTE') || isExpirado) displayTagsSet.add('URGENTE')
-                        if (a.tags.includes('ATENCAO') || isVencendo) displayTagsSet.add('ATENCAO')
-                        if (a.tags.includes('INFO')) displayTagsSet.add('INFO')
-                        const displayTags = Array.from(displayTagsSet)
-                        return (
-                          <tr
-                            key={`${a.key}-${idx}`}
-                            className={`hover:bg-white/5 ${a.codigoBarras ? 'cursor-pointer' : ''}`}
-                            onClick={() => {
-                              if (code) {
-                                selectQuickCodigo(code, { setSearch: true, snapshot: null })
-                              }
-                            }}
-                            title={a.codigoBarras ? 'Clique para usar este código de barras' : undefined}
-                          >
-                            <td className="p-3 text-blue-50 align-top">
-                              <div className="flex flex-wrap items-center gap-2 text-blue-50 break-words">
-                                <span>{a.produto || '-'}</span>
-                                {isVencendo ? (
-                                  <Badge variant="secondary" className="border text-[10px] px-1 py-0 h-4 leading-4">
-                                    Venc.
-                                  </Badge>
-                                ) : null}
-                                {isExpirado ? (
-                                  <Badge variant="destructive" className="border text-[10px] px-1 py-0 h-4 leading-4">
-                                    Exp.
-                                  </Badge>
-                                ) : null}
-                              </div>
-                              <div className="hidden md:block text-xs text-blue-200/60 font-mono break-all">{a.codigoBarras || '-'}</div>
-                              {a.marca ? (
-                                <div className="mt-1">
-                                  <Badge
-                                    style={buildTagStyle(getMarcaBgColor(a.marca))}
-                                    className="border cursor-pointer hover:opacity-80"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      const value = String(a.marca || '')
-                                      if (!value) return
-                                      setAlertasMarca((prev) => (prev === value ? '' : value))
-                                    }}
-                                    title="Filtrar por marca"
-                                  >
-                                    {a.marca}
-                                  </Badge>
-                                </div>
-                              ) : null}
-                              {a.dataValidade ? (
-                                <div className="mt-1 text-xs text-blue-200/60">
-                                  validade: <span className="font-mono">{fmtDateOnlyBR(String(a.dataValidade))}</span>
-                                  {a.dias != null ? (
-                                    <>
-                                      {' '}
-                                      <span className="font-mono">({Number(a.dias)}d)</span>
-                                    </>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </td>
-                            <td className="p-3 text-blue-100/80 hidden sm:table-cell">
-                              <Badge
-                                style={buildTagStyle(getCategoriaBgColor(a.categoria || 'Outros'))}
-                                className="border cursor-pointer hover:opacity-80"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  const value = String(a.categoria || 'Outros')
-                                  setAlertasCategoria((prev) => (prev === value ? '' : value))
-                                }}
-                                title="Filtrar por categoria"
-                              >
-                                {a.categoria || 'Outros'}
-                              </Badge>
-                            </td>
-                            <td className="p-3">
-                              <div className="flex flex-wrap gap-1">
-                                {displayTags.map((t) => (
-                                  <Badge
-                                    key={t}
-                                    variant={alertaTagVariant(t)}
-                                    className="cursor-pointer hover:opacity-80"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setAlertasStatus((prev) => (prev === t ? 'TODOS' : (t as AlertasStatusFilter)))
-                                    }}
-                                    title="Filtrar por status"
-                                  >
-                                    {alertaTagLabel(t)}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <div className="flex flex-wrap gap-2">
-                                {rec?.kind === 'TRANSFERENCIA' ? (
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 bg-sky-500/30 text-sky-100 hover:bg-sky-500/45"
-                                    disabled={!canQuick}
-                                    title="Transferir"
-                                    aria-label="Transferir"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      openQuickOperation('TRANSFERENCIA', {
-                                        codigoBarras: code,
-                                        quantidade: rec.qty ?? 1,
-                                        fromUnidade: rec.fromUnidade ?? null,
-                                        toUnidade: rec.toUnidade ?? null,
-                                        obs: 'Transferência sugerida'
-                                      })
-                                    }}
-                                  >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path
-                                        d="M7 7h10m0 0-3-3m3 3-3 3M17 17H7m0 0 3-3m-3 3 3 3"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                    </svg>
-                                  </Button>
-                                ) : null}
-                                {rec?.kind === 'ENTRADA' ? (
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 bg-emerald-500/30 text-emerald-100 hover:bg-emerald-500/45"
-                                    disabled={!canQuick}
-                                    title="Entrada"
-                                    aria-label="Entrada"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      openQuickOperation('ENTRADA', {
-                                        codigoBarras: code,
-                                        quantidade: rec.qty ?? 1,
-                                        obs: 'Reposição sugerida'
-                                      })
-                                    }}
-                                  >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path
-                                        d="M12 5v10m0 0-4-4m4 4 4-4M5 19h14"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                    </svg>
-                                  </Button>
-                                ) : null}
-                                {hasExpiringAction ? (
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 bg-rose-500/35 text-rose-100 hover:bg-rose-500/50"
-                                    disabled={!canQuick}
-                                    title={a.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
-                                    aria-label={a.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      openQuickOperation('BAIXA', {
-                                        codigoBarras: code,
-                                        quantidade: 1,
-                                        obs: a.tags.includes('EXPIRADO') ? 'Descarte (expirado)' : 'Saída (vencendo)'
-                                      })
-                                    }}
-                                  >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                      <path
-                                        d="M12 19V9m0 0-4 4m4-4 4 4M5 5h14"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                    </svg>
-                                  </Button>
-                                ) : null}
-                                {hasQualityAction ? (
-                                  <Button
-                                    variant="outline"
-                                    className="h-8 px-2 text-xs"
-                                    disabled={!canQualityEdit}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      if (qualityIssue) openQualityFix(qualityIssue)
-                                    }}
-                                  >
-                                    Editar
-                                  </Button>
-                                ) : null}
-                                {!hasAnyAction ? (
-                                  <span className="text-xs text-blue-200/60">-</span>
-                                ) : null}
-                              </div>
-                              {qualityMessage ? (
-                                <div className="mt-2 text-xs text-blue-200/70">
-                                  <div className="inline-flex items-center gap-2">
-                                    <Badge variant={severityBadgeVariant(qualitySeverity) as any} className="border">
-                                      {severityLabel(qualitySeverity)}
-                                    </Badge>
-                                  </div>
-                                  <div className="mt-1 break-words">{qualityMessage}</div>
-                                </div>
-                              ) : null}
-                            </td>
-                            <td className="p-3 text-right text-blue-100/80">{a.estoqueAtual ?? '-'}</td>
-                            <td className="p-3 text-right text-blue-100/70 hidden sm:table-cell">{a.estoqueMinimo ?? '-'}</td>
-                            <td className="hidden lg:table-cell p-3 text-right text-blue-100/70">{a.diferenca ?? '-'}</td>
-                            <td className="hidden lg:table-cell p-3 text-right text-blue-100/70">{a.percentual != null ? `${a.percentual}%` : '-'}</td>
-                          </tr>
-                        )
-                      })}
-                      {!alertasLinhasOrdenadas.length ? (
-                        <tr>
-                          <td className="p-3 text-blue-100/70" colSpan={8}>
-                            {renderListPlaceholder(insightsLoading, 'Sem alertas.')}
-                          </td>
-                        </tr>
-                      ) : null}
-                                </tbody>
-                              </table>
-                            </div>
-                          </CardContent>
-                              ) : null}
-                            </Card>
+                            <InsumosAlertsPanel
+                              panelOpen={panelOpen}
+                              dragHandleProps={handleProps || undefined}
+                              showOverviewLoadingProgress={showOverviewLoadingProgress}
+                              loadingPercent={loadingPercent}
+                              overviewCriticosCount={overviewCriticosCount}
+                              overviewAtencaoCount={overviewAtencaoCount}
+                              alertasStatus={alertasStatus}
+                              alertasCategoria={alertasCategoria}
+                              alertasFluxo={alertasFluxo}
+                              alertasBusca={alertasBusca}
+                              alertasCategorias={alertasCategorias}
+                              alertasSortKey={alertasSortKey}
+                              alertasSortDir={alertasSortDir}
+                              rows={alertasLinhasOrdenadas}
+                              recommendationByCode={alertasRecommendationByCode}
+                              purchaseDisabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
+                              isAuthed={isAuthed}
+                              emptyContent={renderListPlaceholder(insightsLoading, 'Sem alertas.')}
+                              onToggleOpen={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
+                              onOpenPurchaseDialog={() => setPurchaseDialogOpen(true)}
+                              onAlertasStatusChange={setAlertasStatus}
+                              onAlertasCategoriaChange={setAlertasCategoria}
+                              onAlertasFluxoChange={setAlertasFluxo}
+                              onAlertasBuscaChange={setAlertasBusca}
+                              onSortChange={(key) => {
+                                if (alertasSortKey === key) {
+                                  setAlertasSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))
+                                  return
+                                }
+                                setAlertasSortKey(key)
+                                setAlertasSortDir(key === 'status' ? 'asc' : 'desc')
+                              }}
+                              onSelectBarcode={(code) => selectQuickCodigo(code, { setSearch: true, snapshot: null })}
+                              onToggleMarcaFilter={(value) => {
+                                if (!value) return
+                                setAlertasMarca((prev) => (prev === value ? '' : value))
+                              }}
+                              onToggleCategoriaFilter={(value) => setAlertasCategoria((prev) => (prev === value ? '' : value))}
+                              onToggleStatusFilter={(value) => setAlertasStatus((prev) => (prev === value ? 'TODOS' : (value as AlertasStatusFilter)))}
+                              onOpenQuickOperation={openQuickOperation}
+                              onOpenQualityFix={openQualityFix}
+                            />
                           </div>
                         )
                       }
 
-	                      return (
-	                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
-		                          <Card className="bg-black/20 border border-white/10">
-                              <CardHeader className="flex flex-col gap-2">
-                                <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <button
-                                      type="button"
-                                      {...handleProps}
-                                      className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-                                      title="Arraste para mover"
-                                      aria-label="Mover"
-                                    >
-                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                                      </svg>
-                                    </button>
-                                    <CardTitle className="text-white text-base">Gráficos</CardTitle>
-                                  </div>
-                                  <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
-                                    <Select value={chartsFilterTipo} onValueChange={(v) => setChartsFilterTipo(v as any)}>
-                                      <SelectTrigger className="h-8 w-32 shrink-0">
-                                        <SelectValue placeholder="Tipo" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__ALL__">–</SelectItem>
-                                        <SelectItem value="distribution">Distribuição</SelectItem>
-                                        <SelectItem value="movements">Movimentações</SelectItem>
-                                        <SelectItem value="roi_risk">ROI</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Select value={chartsFilterY} onValueChange={(v) => setChartsFilterY(v as any)}>
-                                      <SelectTrigger className="h-8 w-28 shrink-0">
-                                        <SelectValue placeholder="Eixo Y" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__ALL__">–</SelectItem>
-                                        <SelectItem value="categoria">Categoria</SelectItem>
-                                        <SelectItem value="marca">Marca</SelectItem>
-                                        <SelectItem value="item">Item</SelectItem>
-                                        <SelectItem value="tempo">Tempo</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Select value={chartsFilterX} onValueChange={(v) => setChartsFilterX(v as any)}>
-                                      <SelectTrigger className="h-8 w-24 shrink-0">
-                                        <SelectValue placeholder="Eixo X" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__ALL__">–</SelectItem>
-                                        <SelectItem value="qtd">Qtd</SelectItem>
-                                        <SelectItem value="valor">R$</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Select value={chartsFilterView} onValueChange={(v) => setChartsFilterView(v as any)}>
-                                      <SelectTrigger className="h-8 w-32 shrink-0">
-                                        <SelectValue placeholder="Representação" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__ALL__">–</SelectItem>
-                                        <SelectItem value="pie">Pizza</SelectItem>
-                                        <SelectItem value="bar">Barras</SelectItem>
-                                        <SelectItem value="line">Linhas</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Select value={chartsFilterTop} onValueChange={(v) => setChartsFilterTop(v as any)}>
-                                      <SelectTrigger className="h-8 w-24 shrink-0">
-                                        <SelectValue placeholder="Top" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__ALL__">–</SelectItem>
-                                        <SelectItem value="5">Top 5</SelectItem>
-                                        <SelectItem value="8">Top 8</SelectItem>
-                                        <SelectItem value="10">Top 10</SelectItem>
-                                        <SelectItem value="15">Top 15</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                    <Input
-                                      value={chartsSearch}
-                                      onChange={(e) => setChartsSearch(e.target.value)}
-                                      placeholder="Buscar"
-                                      className="h-8 flex-1 min-w-[120px] md:min-w-0 ml-auto"
-                                    />
-                                    <div className="flex items-center gap-2 shrink-0">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                      onClick={() => {
-                                        if (chartSlots.length >= MAX_CHARTS) return
-                                        setChartSlots((prev) => [
-                                          ...prev,
-                                          { presetId: 'movements', groupBy: 'tempo', mode: 'inout', metric: 'qtd', view: 'bar', topN: 8 }
-                                        ])
-                                      }}
-                                      disabled={overviewLoading || insightsLoading || chartSlots.length >= MAX_CHARTS}
-                                      title="Adicionar gráfico"
-                                      aria-label="Adicionar gráfico"
-                                    >
-                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                                      </svg>
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                      onClick={() => setChartSlots(DEFAULT_CHART_SLOTS)}
-                                      disabled={overviewLoading || insightsLoading}
-                                      title="Resetar gráficos"
-                                      aria-label="Resetar gráficos"
-                                    >
-                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path
-                                          d="M20 12a8 8 0 1 1-2.34-5.66"
-                                          stroke="currentColor"
-                                          strokeWidth="2.2"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
-                                        <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                      </svg>
-                                    </Button>
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                                      onClick={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
-                                      title={panelOpen ? 'Contrair' : 'Expandir'}
-                                      aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                                    >
-                                      {panelOpen ? (
-                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                          <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                      ) : (
-                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                      )}
-                                    </Button>
-                                    </div>
-                                  </div>
-                                </div>
-                              </CardHeader>
-                            {panelOpen ? (
-                              <CardContent className="space-y-3">
-              <div
-                className={`grid gap-3 ${chartSlotsView.length <= 1
-                  ? 'grid-cols-1'
-                  : chartSlotsView.length === 2
-                    ? 'grid-cols-1 lg:grid-cols-2'
-                    : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 xl:grid-flow-dense'
-                  }`}
-              >
-	                {chartSlotsView.length ? (
-                    chartSlotsView.map(({ slot, idx, meta }) => {
-                      const { preset, groupBy, mode, viewOptions, view, metric, topN, showTopN, layout } = meta
-                      const baseH = chartSlotsView.length === 1 ? 360 : chartSlotsView.length === 2 ? 300 : 260
-                      const height = layout === 'tall' ? baseH + (chartSlotsView.length === 1 ? 180 : 120) : baseH
-                      const cardSpan = chartSlotsView.length >= 3 && layout === 'wide' ? 'xl:col-span-2' : ''
-
                       return (
-                        <Card key={`${slot.presetId}-${idx}`} className={`bg-black/20 border border-white/10 ${cardSpan}`}>
-	                      <CardHeader className="space-y-2">
-	                        <div className="flex items-center gap-2">
-	                          <Select
-	                            value={slot.presetId}
-	                            onValueChange={(v) => {
-	                              const nextId = v as any
-	                              const nextPreset = presetSupports(nextId)
-	                              const baseNext: ChartSlotConfig = {
-	                                ...slot,
-	                                presetId: nextId,
-	                                groupBy: nextId === 'distribution' ? 'categoria' : nextId === 'movements' ? 'tempo' : undefined,
-	                                mode: nextId === 'movements' ? 'inout' : undefined
-	                              }
-	                              const nextViewOptions = presetViewOptions(baseNext)
-	                              const presetDefault = (nextPreset as any)?.defaultView as any
-	                              const nextView = nextViewOptions.includes(presetDefault) ? presetDefault : nextViewOptions[0]
-	                              setChartSlot(idx, { presetId: nextId, groupBy: baseNext.groupBy, mode: baseNext.mode, view: nextView as any })
-	                            }}
-	                          >
-                            <SelectTrigger className="h-8 w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CHART_PRESETS.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {chartSlots.length > 1 ? (
-                            <Button
-                              variant="outline"
-                              className="h-8 w-8 p-0"
-                              title="Remover gráfico"
-                              aria-label="Remover gráfico"
-                              onClick={() => {
-                                setChartSlots((prev) => prev.filter((_, i) => i !== idx))
-                              }}
-                            >
-                              ×
-                            </Button>
-                          ) : null}
+                        <div ref={dragProvided.innerRef} {...dragProvided.draggableProps}>
+                          <InsumosChartsPanel
+                            panelOpen={panelOpen}
+                            dragHandleProps={handleProps || undefined}
+                            chartsFilterTipo={chartsFilterTipo}
+                            chartsFilterY={chartsFilterY}
+                            chartsFilterX={chartsFilterX}
+                            chartsFilterView={chartsFilterView}
+                            chartsFilterTop={chartsFilterTop}
+                            chartsSearch={chartsSearch}
+                            canAddChart={!overviewLoading && !insightsLoading && chartSlots.length < MAX_CHARTS}
+                            canResetCharts={!overviewLoading && !insightsLoading}
+                            chartCards={chartCards}
+                            presetOptions={chartPresetOptions}
+                            emptyContent={
+                              <div className="rounded-xl border border-white/10 bg-black/10 p-6 text-sm text-blue-100/70">
+                                Nenhum gráfico encontrado para esses filtros.
+                              </div>
+                            }
+                            onToggleOpen={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.charts, !panelOpen)}
+                            onChartsFilterTipoChange={setChartsFilterTipo}
+                            onChartsFilterYChange={setChartsFilterY}
+                            onChartsFilterXChange={setChartsFilterX}
+                            onChartsFilterViewChange={setChartsFilterView}
+                            onChartsFilterTopChange={setChartsFilterTop}
+                            onChartsSearchChange={setChartsSearch}
+                            onAddChart={() => {
+                              if (chartSlots.length >= MAX_CHARTS) return
+                              setChartSlots((prev) => [
+                                ...prev,
+                                { presetId: 'movements', groupBy: 'tempo', mode: 'inout', metric: 'qtd', view: 'bar', topN: 8 },
+                              ])
+                            }}
+                            onResetCharts={() => setChartSlots(DEFAULT_CHART_SLOTS)}
+                            onPresetChange={handleChartPresetChange}
+                            onRemoveChart={handleRemoveChart}
+                            onDistributionGroupByChange={handleDistributionGroupByChange}
+                            onMovementsGroupByChange={handleMovementsGroupByChange}
+                            onMovementsModeChange={handleMovementsModeChange}
+                            onMetricChange={handleChartMetricChange}
+                            onViewChange={handleChartViewChange}
+                            onTopNChange={handleChartTopNChange}
+                          />
                         </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {slot.presetId === 'distribution' ? (
-                            <Select
-                              value={groupBy || 'categoria'}
-                              onValueChange={(v) => {
-                                const nextGroupBy = (v === 'marca' || v === 'item' || v === 'categoria' ? v : 'categoria') as ChartGroupBy
-                                const baseNext: ChartSlotConfig = { ...slot, groupBy: nextGroupBy }
-                                const nextViewOptions = presetViewOptions(baseNext)
-                                const nextView = nextViewOptions.includes(view) ? view : nextViewOptions[0]
-                                setChartSlot(idx, { groupBy: nextGroupBy, view: nextView as any })
-                              }}
-                            >
-                              <SelectTrigger className="h-8 w-32">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="categoria">Categoria</SelectItem>
-                                <SelectItem value="marca">Marca</SelectItem>
-                                <SelectItem value="item">Item</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : null}
-
-                          {slot.presetId === 'movements' ? (
-                            <>
-                              <Select
-                                value={groupBy === 'categoria' ? 'categoria' : 'tempo'}
-                                onValueChange={(v) => {
-                                  const nextGroupBy = v === 'categoria' ? ('categoria' as ChartGroupBy) : ('tempo' as ChartGroupBy)
-                                  const nextMode: MovementsMode = nextGroupBy === 'categoria' ? 'saida' : 'inout'
-                                  const baseNext: ChartSlotConfig = { ...slot, groupBy: nextGroupBy, mode: nextMode }
-                                  const nextViewOptions = presetViewOptions(baseNext)
-                                  const nextView = nextViewOptions.includes(view) ? view : nextViewOptions[0]
-                                  setChartSlot(idx, { groupBy: nextGroupBy, mode: nextMode, view: nextView as any })
-                                }}
-                              >
-                                <SelectTrigger className="h-8 w-28">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="tempo">Tempo</SelectItem>
-                                  <SelectItem value="categoria">Categoria</SelectItem>
-                                </SelectContent>
-                              </Select>
-
-                              {groupBy === 'categoria' ? (
-                                <Select
-                                  value={mode === 'entrada' ? 'entrada' : 'saida'}
-                                  onValueChange={(v) => {
-                                    const nextMode = v === 'entrada' ? ('entrada' as MovementsMode) : ('saida' as MovementsMode)
-                                    setChartSlot(idx, { mode: nextMode })
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8 w-28">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="saida">Saídas</SelectItem>
-                                    <SelectItem value="entrada">Entradas</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              ) : (
-                                <Select
-                                  value={mode || 'inout'}
-                                  onValueChange={(v) => {
-                                    const nextMode =
-                                      v === 'saldo' || v === 'entrada' || v === 'saida' || v === 'inout' ? (v as MovementsMode) : ('inout' as MovementsMode)
-                                    setChartSlot(idx, { mode: nextMode })
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8 w-36">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="inout">Entradas vs Saídas</SelectItem>
-                                    <SelectItem value="saldo">Saldo</SelectItem>
-                                    <SelectItem value="entrada">Entradas</SelectItem>
-                                    <SelectItem value="saida">Saídas</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              )}
-                            </>
-                          ) : null}
-
-                          {preset.supportsMetric ? (
-                            <Select value={metric} onValueChange={(v) => setChartSlot(idx, { metric: v as any })}>
-                              <SelectTrigger className="h-8 w-24">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="qtd">Qtd</SelectItem>
-                                <SelectItem value="valor">R$</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : null}
-
-                          {preset.supportsView && viewOptions.length > 1 ? (
-                            <Select value={view} onValueChange={(v) => setChartSlot(idx, { view: v as any })}>
-                              <SelectTrigger className="h-8 w-28">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {viewOptions.map((vv) => (
-                                  <SelectItem key={vv} value={vv}>
-                                    {vv === 'bar' ? 'Barras' : vv === 'line' ? 'Linhas' : 'Pizza'}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : null}
-
-                          {showTopN ? (
-                            <Select value={String(topN)} onValueChange={(v) => setChartSlot(idx, { topN: parseInt(String(v), 10) || 8 })}>
-                              <SelectTrigger className="h-8 w-20">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="5">Top 5</SelectItem>
-                                <SelectItem value="8">Top 8</SelectItem>
-                                <SelectItem value="10">Top 10</SelectItem>
-                                <SelectItem value="15">Top 15</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : null}
-                        </div>
-                        <div className="flex justify-end" />
-                      </CardHeader>
-                      <CardContent>
-                        {renderChart({ ...slot, view, metric, topN }, { height })}
-                      </CardContent>
-                    </Card>
-                      )
-                    })
-                  ) : (
-                    <div className="rounded-xl border border-white/10 bg-black/10 p-6 text-sm text-blue-100/70">
-                      Nenhum gráfico encontrado para esses filtros.
-                    </div>
-                  )}
-              </div>
-
-	                              </CardContent>
-	                            ) : null}
-	                          </Card>
-	                        </div>
                       )
                     }}
                   </Draggable>
@@ -8300,8 +4261,15 @@ export function InsumosModule() {
         </div>
       </div>
 
-      <Dialog
+      <InsumosQualityMatchesDialog
         open={qualityMatchesOpen}
+        dialogClassName={dialogMediumClass}
+        issue={qualityMatchesIssue}
+        items={qualityMatchesItems}
+        savingRegistro={qualityMatchesSavingRegistro}
+        isAuthed={isAuthed}
+        unit={unidade}
+        unitLabel={unidadeLabel}
         onOpenChange={(next) => {
           setQualityMatchesOpen(next)
           if (!next) {
@@ -8310,444 +4278,93 @@ export function InsumosModule() {
             setQualityMatchesSavingRegistro('')
           }
         }}
-      >
-        <DialogContent size="wideTable" className={dialogMediumClass}>
-          <DialogHeader>
-            <DialogTitle>Duplicidade de código de barras</DialogTitle>
-            <DialogDescription>
-              {qualityMatchesIssue?.codigoBarras ? (
-                <>
-                  Selecione qual registro editar ou excluir para o código <span className="font-mono">#{qualityMatchesIssue.codigoBarras}</span>.
-                  {' '}
-                  ({qualityMatchesItems.length} correspondências)
-                </>
-              ) : (
-                <>Selecione qual registro editar ou excluir para resolver a duplicidade.</>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-            <table className="min-w-full text-sm">
-                      <thead className="bg-black/30 text-blue-100/80">
-                        <tr>
-                          <th className="text-left p-3 w-[20%]">Registro</th>
-                          <th className="text-left p-3 w-[32%]">Produto</th>
-                          <th className="text-left p-3 hidden md:table-cell w-[18%]">Lote</th>
-                          <th className="text-left p-3 hidden sm:table-cell w-[14%]">Estoque ({unidadeLabel(unidade)})</th>
-                          <th className="text-left p-3 w-[16%]">Ações</th>
-                        </tr>
-                      </thead>
-              <tbody className="divide-y divide-white/5">
-                {qualityMatchesItems.map((item) => {
-                  const registro = String(item?.registro || '').trim()
-                  const isDeleting = qualityMatchesSavingRegistro === registro
-                  return (
-                    <tr key={registro || String(item?.codigoBarras || '')} className="hover:bg-white/5">
-                      <td className="p-3 font-mono text-blue-100/80">{registro || '-'}</td>
-                      <td className="p-3 text-blue-50">{String(item?.produto || '-')}</td>
-                      <td className="p-3 text-blue-100/70 hidden md:table-cell">{String(item?.lote || '-')}</td>
-                      <td className="p-3 text-blue-100/70 hidden sm:table-cell">{Number(item?.estoqueAtual || 0)}</td>
-                      <td className="p-3">
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setQualityMatchesOpen(false)
-                              openEditDialog(item)
-                            }}
-                            disabled={!isAuthed || isDeleting}
-                          >
-                            Editar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => void deleteInsumoByRegistro(registro)}
-                            disabled={!isAuthed || !registro || isDeleting}
-                          >
-                            {isDeleting ? 'Excluindo…' : 'Excluir'}
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {!qualityMatchesItems.length ? (
-                  <tr>
-                    <td className="p-3 text-blue-100/70" colSpan={5}>Nenhuma correspondência encontrada.</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={editOpen}
-        onOpenChange={(v) => {
-          setEditOpen(v)
-          if (!v) setEditTarget(null)
+        onEditItem={(item) => {
+          setQualityMatchesOpen(false)
+          openEditDialog(item)
         }}
-      >
-        <DialogContent className={dialogLargeClass}>
-          <DialogHeader>
-            <DialogTitle>Editar insumo</DialogTitle>
-            <DialogDescription className="break-words">
-              {editTarget?.produto || '-'} • <span className="font-mono break-all">{editTarget?.codigoBarras || '-'}</span>
-              {editTarget?.registro ? <span className="break-all"> • Reg {editTarget.registro}</span> : null}
-            </DialogDescription>
-          </DialogHeader>
+        onDeleteRegistro={(registro) => void deleteInsumoByRegistro(registro)}
+      />
 
-          {editSaveError ? (
-            <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-100">
-              {editSaveError}
-            </div>
-          ) : null}
+      <InsumosEditDialog
+        open={editOpen}
+        dialogClassName={dialogLargeClass}
+        target={editTarget}
+        isAuthed={isAuthed}
+        canUseApi={canUseApi}
+        isManagerRole={isManagerRole}
+        saving={editSaving}
+        saveError={editSaveError}
+        validationErrors={editValidationErrors}
+        codigo={editCodigo}
+        codigosExtras={editCodigosExtras}
+        produto={editProduto}
+        categoria={editCategoria}
+        categoriaRequiresLot={editCategoriaRequiresLot}
+        categoriaRequiresExpiry={editCategoriaRequiresExpiry}
+        categoriaFefo={editCategoriaFefo}
+        marca={editMarca}
+        tipoUnidade={editTipoUnidade}
+        especificacao={editEspecificacao}
+        concentracao={editConcentracao}
+        volume={editVolume}
+        homologado={editHomologado}
+        calibre={editCalibre}
+        precoCusto={editPrecoCusto}
+        estoqueMinimo={editEstoqueMinimo}
+        lote={editLote}
+        dataValidade={editDataValidade}
+        optionalDetailsOpen={detailsOpen['insumos.details.edit.optional'] ?? true}
+        lotCategorias={lotCategorias}
+        insumosMarcas={insumosMarcas}
+        insumosTiposUnidade={insumosTiposUnidade}
+        onOpenChange={(open) => {
+          setEditOpen(open)
+          if (!open) setEditTarget(null)
+        }}
+        onClearValidationError={clearEditValidationError}
+        onCodigoChange={setEditCodigo}
+        onCodigosExtrasChange={setEditCodigosExtras}
+        onProdutoChange={setEditProduto}
+        onCategoriaChange={setEditCategoria}
+        onCategoriaRequiresLotChange={setEditCategoriaRequiresLot}
+        onCategoriaRequiresExpiryChange={(value) => {
+          setEditCategoriaRequiresExpiry(value)
+          if (!value) setEditCategoriaFefo(false)
+        }}
+        onCategoriaFefoChange={(value) => {
+          setEditCategoriaFefo(value)
+          if (value) setEditCategoriaRequiresExpiry(true)
+        }}
+        onMarcaChange={setEditMarca}
+        onTipoUnidadeChange={setEditTipoUnidade}
+        onEspecificacaoChange={setEditEspecificacao}
+        onConcentracaoChange={setEditConcentracao}
+        onVolumeChange={setEditVolume}
+        onHomologadoChange={setEditHomologado}
+        onCalibreChange={setEditCalibre}
+        onPrecoCustoChange={setEditPrecoCusto}
+        onEstoqueMinimoChange={setEditEstoqueMinimo}
+        onLoteChange={setEditLote}
+        onDataValidadeChange={setEditDataValidade}
+        onOptionalDetailsToggle={(open) => setDetailsKeyOpen('insumos.details.edit.optional', open)}
+        onCancel={() => setEditOpen(false)}
+        onDelete={deleteEdit}
+        onSave={saveEdit}
+      />
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Código de barras</div>
-              <Input
-                value={editCodigo}
-                onChange={(e) => {
-                  setEditCodigo(e.target.value)
-                  clearEditValidationError('codigoBarras')
-                }}
-                placeholder="789..."
-                aria-invalid={editValidationErrors.codigoBarras ? true : undefined}
-                className={
-                  editValidationErrors.codigoBarras
-                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
-                    : undefined
-                }
-              />
-              {editValidationErrors.codigoBarras ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.codigoBarras}</div>
-              ) : null}
-            </div>
-            <div className="md:col-span-2">
-              <div className="text-xs text-muted-foreground mb-1">Códigos adicionais</div>
-              <Textarea
-                value={editCodigosExtras}
-                onChange={(e) => setEditCodigosExtras(e.target.value)}
-                placeholder="um por linha"
-                rows={3}
-                className="bg-white/[0.06] border-white/20 text-white"
-              />
-              <div className="mt-1 text-[10px] text-muted-foreground">
-                Opcional. Use para variações de código do mesmo produto.
-              </div>
-            </div>
-            <div className="md:col-span-2">
-              <div className="text-xs text-muted-foreground mb-1">Produto</div>
-              <Input
-                value={editProduto}
-                onChange={(e) => {
-                  setEditProduto(e.target.value)
-                  clearEditValidationError('produto')
-                }}
-                placeholder="Nome do produto"
-                aria-invalid={editValidationErrors.produto ? true : undefined}
-                className={
-                  editValidationErrors.produto
-                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
-                    : undefined
-                }
-              />
-              {editValidationErrors.produto ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.produto}</div>
-              ) : null}
-            </div>
-	            <div>
-	              <div className="text-xs text-muted-foreground mb-1">Categoria</div>
-	              <AutocompleteInput
-	                value={editCategoria}
-	                onValueChange={(next) => {
-	                  setEditCategoria(next)
-	                  clearEditValidationError('categoria')
-	                }}
-	                placeholder="ex: toxina"
-	                options={lotCategorias}
-	                inputTestId="insumos-edit-categoria"
-	                ariaInvalid={editValidationErrors.categoria ? true : undefined}
-	                inputClassName={
-	                  editValidationErrors.categoria
-	                    ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25'
-	                    : undefined
-	                }
-	              />
-	              {editValidationErrors.categoria ? (
-	                <div className="mt-1 text-xs text-red-300">{editValidationErrors.categoria}</div>
-	              ) : null}
-            </div>
-            <div
-              className={`md:col-span-2 rounded-xl border p-3 ${
-                editValidationErrors.policy ? 'border-red-500/50 bg-red-500/5' : 'border-white/10 bg-black/10'
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">Política do item</div>
-                <div className="text-xs text-muted-foreground">Defina as regras para este insumo.</div>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
-                <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                  <Checkbox
-                    checked={editCategoriaRequiresLot}
-                    onCheckedChange={(v) => {
-                      setEditCategoriaRequiresLot(!!v)
-                      clearEditValidationError('policy')
-                      clearEditValidationError('lote')
-                    }}
-                    disabled={!isManagerRole}
-                  />
-                  Lote obrigatório
-                </label>
-                <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                  <Checkbox
-                    checked={editCategoriaRequiresExpiry}
-                    onCheckedChange={(v) => {
-                      const next = !!v
-                      setEditCategoriaRequiresExpiry(next)
-                      if (!next) setEditCategoriaFefo(false)
-                      clearEditValidationError('policy')
-                      clearEditValidationError('dataValidade')
-                    }}
-                    disabled={!isManagerRole}
-                  />
-                  Validade obrigatória
-                </label>
-                <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                  <Checkbox
-                    checked={editCategoriaFefo}
-                    onCheckedChange={(v) => {
-                      const next = !!v
-                      setEditCategoriaFefo(next)
-                      if (next) setEditCategoriaRequiresExpiry(true)
-                      clearEditValidationError('policy')
-                    }}
-                    disabled={!isManagerRole}
-                  />
-                  FEFO
-                </label>
-                {!isManagerRole ? <span className="text-xs text-muted-foreground">Somente gestores alteram.</span> : null}
-              </div>
-              {editValidationErrors.policy ? (
-                <div className="mt-2 text-xs text-red-300">{editValidationErrors.policy}</div>
-              ) : null}
-            </div>
-	            <div>
-	              <div className="text-xs text-muted-foreground mb-1">Marca</div>
-	              <AutocompleteInput
-	                value={editMarca}
-	                onValueChange={(next) => {
-	                  setEditMarca(next)
-	                  clearEditValidationError('marca')
-	                }}
-	                placeholder="ex: Allergan"
-	                options={insumosMarcas}
-	                inputTestId="insumos-edit-marca"
-	                ariaInvalid={editValidationErrors.marca ? true : undefined}
-	                inputClassName={
-	                  editValidationErrors.marca ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined
-	                }
-	              />
-	              {editValidationErrors.marca ? (
-	                <div className="mt-1 text-xs text-red-300">{editValidationErrors.marca}</div>
-	              ) : null}
-	            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Unidade (medida)</div>
-              <Select
-                value={normalizeTipoUnidadeToCanonical(editTipoUnidade) || undefined}
-                onValueChange={(v) => {
-                  setEditTipoUnidade(v)
-                  clearEditValidationError('tipoUnidade')
-                }}
-              >
-                <SelectTrigger
-                  aria-invalid={editValidationErrors.tipoUnidade ? true : undefined}
-                  className={
-                    editValidationErrors.tipoUnidade ? 'border-red-500/60 ring-2 ring-red-500/15' : undefined
-                  }
-                >
-                  <SelectValue placeholder="Selecione a unidade" />
-                </SelectTrigger>
-                <SelectContent>
-                  {insumosTiposUnidade.map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {t}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {editValidationErrors.tipoUnidade ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.tipoUnidade}</div>
-              ) : null}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Preço custo (R$)</div>
-              <Input value={editPrecoCusto} onChange={(e) => setEditPrecoCusto(e.target.value)} placeholder="ex: 120,00" />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Estoque mínimo</div>
-              <Input value={editEstoqueMinimo} onChange={(e) => setEditEstoqueMinimo(e.target.value)} placeholder="ex: 5" />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Lote</div>
-              <Input
-                value={editLote}
-                onChange={(e) => {
-                  setEditLote(e.target.value)
-                  clearEditValidationError('lote')
-                }}
-                placeholder="ex: L2026-01"
-                aria-invalid={editValidationErrors.lote ? true : undefined}
-                className={editValidationErrors.lote ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined}
-              />
-              {editValidationErrors.lote ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.lote}</div>
-              ) : null}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Validade</div>
-              <BrDatePickerInput
-                value={editDataValidade}
-                onChange={(v) => {
-                  setEditDataValidade(v)
-                  clearEditValidationError('dataValidade')
-                }}
-                placeholder="DD/MM/AA"
-                ariaLabel="Validade"
-                className={editValidationErrors.dataValidade ? 'border-red-500/60 focus:border-red-500/60 focus:ring-red-500/25' : undefined}
-              />
-              {editValidationErrors.dataValidade ? (
-                <div className="mt-1 text-xs text-red-300">{editValidationErrors.dataValidade}</div>
-              ) : null}
-            </div>
-          </div>
-
-          <details
-            data-pref-key="insumos.details.edit.optional"
-            open={detailsOpen['insumos.details.edit.optional'] ?? true}
-            onToggle={(e) => setDetailsKeyOpen('insumos.details.edit.optional', (e.currentTarget as HTMLDetailsElement).open)}
-            className="mt-2 rounded-lg border border-white/10 bg-black/10 p-3"
-          >
-            <summary className="cursor-pointer select-none text-sm text-blue-100/80">Detalhes (opcional)</summary>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-              <div className="md:col-span-2">
-                <div className="text-xs text-muted-foreground mb-1">Especificação / Modelo</div>
-                <Input value={editEspecificacao} onChange={(e) => setEditEspecificacao(e.target.value)} placeholder="ex: Base, Lidocaine" />
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Concentração</div>
-                <Input value={editConcentracao} onChange={(e) => setEditConcentracao(e.target.value)} placeholder="ex: 300U" />
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Volume</div>
-                <Input value={editVolume} onChange={(e) => setEditVolume(e.target.value)} placeholder="ex: 1ml" />
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Calibre / Bitola</div>
-                <Input value={editCalibre} onChange={(e) => setEditCalibre(e.target.value)} placeholder="ex: 30G" />
-              </div>
-              <div className="md:col-span-2">
-                <div className="text-xs text-muted-foreground mb-1">Homologado</div>
-                <label className="flex items-center gap-2 text-sm text-blue-100/80 select-none">
-                  <Checkbox checked={editHomologado} onCheckedChange={(v) => setEditHomologado(!!v)} />
-                  Produto homologado
-                </label>
-              </div>
-            </div>
-          </details>
-
-          <DialogFooter>
-            {!canUseApi ? (
-              <span className="mr-auto text-xs text-muted-foreground">API indisponivel. Aguarde o carregamento.</span>
-            ) : null}
-            <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editSaving}>
-              Cancelar
-            </Button>
-            <Button variant="destructive" onClick={deleteEdit} disabled={editSaving || !isAuthed}>
-              Excluir
-            </Button>
-            <Button onClick={saveEdit} disabled={editSaving || !isAuthed || !canUseApi}>
-              {editSaving ? 'Salvando…' : 'Salvar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
-        <DialogContent className={dialogSmallClass}>
-          <DialogHeader>
-            <DialogTitle>Editar lote/validade</DialogTitle>
-            <DialogDescription>
-              {lotSelecionado?.produto || '-'} • <span className="font-mono">{lotSelecionado?.codigoBarras || '-'}</span>
-            </DialogDescription>
-          </DialogHeader>
-
-          {lotSelecionado ? (
-            <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-blue-100/70">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">Categoria</div>
-                  <div className="text-blue-100/80">{lotSelecionado.categoria || '-'}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Marca</div>
-                  <div className="text-blue-100/80">{lotSelecionado.marca || '-'}</div>
-                </div>
-                {lotSelecionado.concentracao ? (
-                  <div>
-                    <div className="text-xs text-muted-foreground">Concentração</div>
-                    <div className="text-blue-100/80">{lotSelecionado.concentracao}</div>
-                  </div>
-                ) : null}
-                {lotSelecionado.volume ? (
-                  <div>
-                    <div className="text-xs text-muted-foreground">Volume</div>
-                    <div className="text-blue-100/80">{lotSelecionado.volume}</div>
-                  </div>
-                ) : null}
-                {lotSelecionado.calibre ? (
-                  <div>
-                    <div className="text-xs text-muted-foreground">Calibre</div>
-                    <div className="text-blue-100/80">{lotSelecionado.calibre}</div>
-                  </div>
-                ) : null}
-                <div>
-                  <div className="text-xs text-muted-foreground">Homologado</div>
-                  <div className="text-blue-100/80">
-                    {/homologad/i.test(String(lotSelecionado.fonte || '').trim()) ? 'Sim' : 'Não'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Lote</div>
-              <Input value={lotEditLote} onChange={(e) => setLotEditLote(e.target.value)} placeholder="ex: 2026-01A" />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Validade</div>
-              <BrDatePickerInput value={lotEditValidade} onChange={setLotEditValidade} placeholder="DD/MM/AA" ariaLabel="Validade do lote" />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setLotDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={saveLot} disabled={lotSaving || !isAuthed}>
-              {lotSaving ? 'Salvando…' : 'Salvar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <InsumosLotDialog
+        open={lotDialogOpen}
+        dialogClassName={dialogSmallClass}
+        item={lotSelecionado}
+        lotValue={lotEditLote}
+        expiryValue={lotEditValidade}
+        onOpenChange={setLotDialogOpen}
+        onLotChange={setLotEditLote}
+        onExpiryChange={setLotEditValidade}
+        onSave={saveLot}
+        saving={lotSaving}
+        isAuthed={isAuthed}
+      />
 
         <Droppable droppableId="main-panels" direction={mainPanelsDirection}>
           {(dropProvided) => (
@@ -8756,686 +4373,6 @@ export function InsumosModule() {
               {...dropProvided.droppableProps}
               className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-3"
             >
-              {/*
-              <Draggable draggableId="main-insumos" index={mainOrderIndex.get('insumos') ?? 0}>
-                {(dragProvided) => (
-                  <div
-                    ref={(el) => {
-                      dragProvided.innerRef(el)
-                      insumosSectionRef.current = el
-                    }}
-                    {...dragProvided.draggableProps}
-                    style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('insumos') ?? 0 }}
-                    className="space-y-3 flex-1 min-w-0"
-                  >
-	          <Card className="bg-black/20 border border-white/10">
-	            <CardHeader className="flex flex-col gap-2">
-	              <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
-	                <div className="flex items-center gap-3 min-w-0">
-	                  <button
-	                    type="button"
-	                    {...dragProvided.dragHandleProps}
-	                    className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-	                    title="Arraste para mover"
-	                    aria-label="Mover"
-	                  >
-	                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                      <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-	                    </svg>
-	                  </button>
-	                  <div className="min-w-0">
-	                    <div className="text-white text-lg font-semibold">Insumos</div>
-	                    <div className="text-sm text-blue-100/70">Cadastro, estoque e ações rápidas.</div>
-	                  </div>
-	                </div>
-	                <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
-	                  <Input
-	                    value={insumosQuery}
-	                    onChange={(e) => setInsumosQuery(e.target.value)}
-	                    placeholder="Buscar por código, produto, categoria…"
-	                    className="h-8 flex-1 min-w-[160px] md:min-w-0 ml-auto"
-	                  />
-	                  <Button
-	                    variant="outline"
-	                    className="h-8 px-3"
-	                    onClick={() => window.open(`/api/insumos/export/insumos.csv?unidade=${encodeURIComponent(unidade)}`, '_blank', 'noopener,noreferrer')}
-	                    disabled={!isAuthed}
-	                    title="Exportar CSV"
-	                  >
-	                    Exportar
-	                  </Button>
-	                  <Button variant="outline" className="h-8 px-3" onClick={() => setCreateOpen((v) => !v)} disabled={!isAuthed}>
-	                    {createOpen ? 'Fechar' : 'Adicionar'}
-	                  </Button>
-	                  <Button
-	                    size="icon"
-	                    variant="ghost"
-	                    className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-	                    onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.insumos, !insumosPanelOpen)}
-	                    title={insumosPanelOpen ? 'Contrair' : 'Expandir'}
-	                    aria-label={insumosPanelOpen ? 'Contrair' : 'Expandir'}
-	                  >
-	                    {insumosPanelOpen ? (
-	                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                      </svg>
-	                    ) : (
-	                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-	                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-	                      </svg>
-	                    )}
-	                  </Button>
-	                </div>
-	              </div>
-	              {offlineQueueCount > 0 ? (
-	                <div>
-	                  <Button variant="outline" size="sm" onClick={() => setOfflineDialogOpen(true)} disabled={!isAuthed}>
-	                    Pendências <span className="ml-2 font-mono">{offlineQueueCount}</span>
-	                  </Button>
-	                </div>
-	              ) : null}
-	            </CardHeader>
-            {insumosPanelOpen ? (
-              <CardContent className="space-y-3">
-
-        {sharePayload && !shareHidden ? (
-          <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-blue-100/80">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-blue-50 font-semibold">Compartilhamento recebido</div>
-              <Button variant="secondary" size="sm" onClick={() => setShareHidden(true)}>
-                Fechar
-              </Button>
-            </div>
-            {shareLoading ? <div className="mt-2 text-xs text-blue-200/60">Carregando anexos…</div> : null}
-            <div className="mt-2 space-y-1">
-              {sharePayload.title ? (
-                <div>
-                  <span className="text-blue-200/70">Título:</span> {sharePayload.title}
-                </div>
-              ) : null}
-              {sharePayload.text ? (
-                <div>
-                  <span className="text-blue-200/70">Texto:</span> {sharePayload.text}
-                </div>
-              ) : null}
-              {sharePayload.url ? (
-                <div className="break-words">
-                  <span className="text-blue-200/70">Link:</span>{' '}
-                  <a className="underline" href={sharePayload.url} target="_blank" rel="noreferrer">
-                    {sharePayload.url}
-                  </a>
-                </div>
-              ) : null}
-              {sharePayload.files && sharePayload.files.length ? (
-                <div className="space-y-1">
-                  <div className="text-blue-200/70">Arquivos:</div>
-                  <div className="flex flex-wrap gap-2">
-                    {sharePayload.files.map((f, idx) => (
-                      <span key={`${f.name}-${idx}`} className="text-xs">
-                        {f.url ? (
-                          <a className="underline" href={f.url} target="_blank" rel="noreferrer">
-                            {f.name}
-                          </a>
-                        ) : (
-                          f.name
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="mt-2 text-xs text-blue-200/60">
-              Preenchi o cadastro com os dados compartilhados. Revise antes de salvar.
-            </div>
-          </div>
-        ) : null}
-        {shareHistory.length ? (
-          <Card className="bg-black/20 border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-white text-sm">Importações recentes</CardTitle>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-blue-200/60">{shareHistory.length} itens</span>
-                <Button variant="secondary" size="sm" onClick={clearShareHistory}>
-                  Limpar
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {shareHistoryLoading ? <div className="text-xs text-blue-200/60">Sincronizando…</div> : null}
-              {shareHistory.slice(0, 6).map((item) => (
-                <div key={item.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm text-blue-50">
-                      {item.title || item.url || 'Conteúdo compartilhado'}
-                    </div>
-                    <div className="text-xs text-blue-200/60">{fmtDate(item.createdAt)}</div>
-                  </div>
-                  {item.text ? <div className="text-xs text-blue-200/70 mt-1">{item.text}</div> : null}
-                  {item.files && item.files.length ? (
-                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-blue-200/70">
-                      {item.files.map((f, idx) => (
-                      <span key={`${item.id}-${idx}`} className="break-words">
-                        {f.url ? (
-                          <a className="underline" href={f.url} target="_blank" rel="noreferrer">
-                            {f.name}
-                          </a>
-                          ) : (
-                            f.name
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Button variant="secondary" size="sm" onClick={() => applyShareToForm(item)}>
-                      Usar no cadastro
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => removeShareHistory(item.id)}>
-                      Remover
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {createOpen ? (
-          <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
-            <div className="text-sm text-blue-100/70">
-              Cadastro rápido (campos mínimos) + detalhes opcionais (como no app antigo de Insumos).
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Código de barras</div>
-                <div className="flex items-center gap-2">
-                  <Input value={createCodigo} onChange={(e) => setCreateCodigo(e.target.value)} placeholder="789..." />
-                  <Button variant="secondary" type="button" onClick={() => setCreateScanOpen((v) => !v)}>
-                    {createScanOpen ? 'Fechar' : 'Escanear'}
-                  </Button>
-                </div>
-                <div className="mt-2">
-                  {createLookupLoading ? (
-                    <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
-                  ) : createLookupError ? (
-                    <div className="text-xs text-red-200">{createLookupError}</div>
-                  ) : createLookupItems.length ? (
-                    <div className="text-xs text-blue-200/70">
-                      Encontramos um cadastro para este código e pré-preenchemos alguns campos (produto/categoria/marca). Se quiser, você pode cadastrar um novo lote.
-                    </div>
-                  ) : null}
-                </div>
-                <div className="mt-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Códigos adicionais</div>
-                  <Textarea
-                    value={createCodigosExtras}
-                    onChange={(e) => setCreateCodigosExtras(e.target.value)}
-                    placeholder="um por linha"
-                    rows={3}
-                    className="bg-white/[0.06] border-white/20 text-white"
-                  />
-                  <div className="mt-1 text-[10px] text-blue-200/50">
-                    Opcional. Use para variações de código do mesmo produto.
-                  </div>
-                </div>
-              </div>
-              <div className="md:col-span-2">
-                <div className="text-xs text-blue-200/70 mb-1">Produto</div>
-                <Input value={createProduto} onChange={(e) => setCreateProduto(e.target.value)} placeholder="Nome do produto" />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Categoria</div>
-                <Input
-                  value={createCategoria}
-                  onChange={(e) => setCreateCategoria(e.target.value)}
-                  placeholder="ex: Anestésicos"
-                  list="insumos-categorias"
-                />
-                <datalist id="insumos-categorias">
-                  {lotCategorias.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
-              </div>
-              <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/10 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs text-blue-200/70">Política do item</div>
-                  <div className="text-xs text-blue-200/60">Defina as regras para este insumo.</div>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-blue-100/80">
-                  <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                    <Checkbox
-                      checked={createCategoriaRequiresLot}
-                      onCheckedChange={(v) => {
-                        setCreatePolicyTouched(true)
-                        setCreateCategoriaRequiresLot(!!v)
-                      }}
-                      disabled={!isManagerRole}
-                    />
-                    Lote obrigatório
-                  </label>
-                  <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                    <Checkbox
-                      checked={createCategoriaRequiresExpiry}
-                      onCheckedChange={(v) => {
-                        setCreatePolicyTouched(true)
-                        const next = !!v
-                        setCreateCategoriaRequiresExpiry(next)
-                        if (!next) setCreateCategoriaFefo(false)
-                      }}
-                      disabled={!isManagerRole}
-                    />
-                    Validade obrigatória
-                  </label>
-                  <label className={`flex items-center gap-2 ${isManagerRole ? 'cursor-pointer' : 'cursor-default'} select-none`}>
-                    <Checkbox
-                      checked={createCategoriaFefo}
-                      onCheckedChange={(v) => {
-                        setCreatePolicyTouched(true)
-                        const next = !!v
-                        setCreateCategoriaFefo(next)
-                        if (next) setCreateCategoriaRequiresExpiry(true)
-                      }}
-                      disabled={!isManagerRole}
-                    />
-                    FEFO
-                  </label>
-                  {!isManagerRole ? <span className="text-xs text-blue-200/60">Somente gestores alteram.</span> : null}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Marca</div>
-                <Input
-                  value={createMarca}
-                  onChange={(e) => setCreateMarca(e.target.value)}
-                  placeholder="ex: Galderma"
-                  list="insumos-marcas"
-                />
-                <datalist id="insumos-marcas">
-                  {insumosMarcas.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Unidade (medida)</div>
-                <Select
-                  value={normalizeTipoUnidadeToCanonical(createTipoUnidade) || undefined}
-                  onValueChange={setCreateTipoUnidade}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione a unidade" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {insumosTiposUnidade.map((u) => (
-                      <SelectItem key={u} value={u}>
-                        {u}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Preço custo</div>
-                <Input value={createPrecoCusto} onChange={(e) => setCreatePrecoCusto(e.target.value)} placeholder="R$ 0,00" />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Estoque inicial ({unidadeLabel(unidade)})</div>
-                <Input value={createEstoqueInicial} onChange={(e) => setCreateEstoqueInicial(e.target.value)} type="number" min={0} />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Estoque mínimo</div>
-                <Input value={createEstoqueMinimo} onChange={(e) => setCreateEstoqueMinimo(e.target.value)} type="number" min={0} />
-              </div>
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <div className="text-xs text-blue-200/70">Lote</div>
-                  <Button
-                    variant={createNovoLote ? 'secondary' : 'outline'}
-                    size="sm"
-                    type="button"
-                    onClick={() => setCreateNovoLote((v) => !v)}
-                    title="Ative quando estiver cadastrando um lote adicional para um código já existente."
-                  >
-                    {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
-                  </Button>
-                </div>
-                <Input
-                  value={createLote}
-                  onChange={(e) => setCreateLote(e.target.value)}
-                  placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'}
-                />
-              </div>
-              <div>
-                <div className="text-xs text-blue-200/70 mb-1">Validade</div>
-                <BrDatePickerInput value={createDataValidade} onChange={setCreateDataValidade} placeholder="DD/MM/AA" ariaLabel="Validade" />
-              </div>
-            </div>
-
-            <details
-              data-pref-key="insumos.details.create.optional"
-              open={detailsOpen['insumos.details.create.optional'] ?? true}
-              onToggle={(e) => setDetailsKeyOpen('insumos.details.create.optional', (e.currentTarget as HTMLDetailsElement).open)}
-              className="rounded-lg border border-white/10 bg-black/10 p-3"
-            >
-              <summary className="cursor-pointer select-none text-sm text-blue-100/80">
-                Detalhes (opcional)
-              </summary>
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-                <div className="md:col-span-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Especificação / Modelo</div>
-                  <Input
-                    value={createEspecificacao}
-                    onChange={(e) => setCreateEspecificacao(e.target.value)}
-                    placeholder="ex: Base, Lidocaine"
-                  />
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Concentração</div>
-                  <Input
-                    value={createConcentracao}
-                    onChange={(e) => setCreateConcentracao(e.target.value)}
-                    placeholder="ex: 300U"
-                  />
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Volume</div>
-                  <Input
-                    value={createVolume}
-                    onChange={(e) => setCreateVolume(e.target.value)}
-                    placeholder="ex: 1ml"
-                  />
-                </div>
-                <div>
-                  <div className="text-xs text-blue-200/70 mb-1">Calibre / Bitola</div>
-                  <Input
-                    value={createCalibre}
-                    onChange={(e) => setCreateCalibre(e.target.value)}
-                    placeholder="ex: 30G"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <div className="text-xs text-blue-200/70 mb-1">Homologado</div>
-                  <label className="flex items-center gap-2 text-sm text-blue-100/80 select-none">
-                    <Checkbox checked={createHomologado} onCheckedChange={(v) => setCreateHomologado(!!v)} />
-                    Produto homologado
-                  </label>
-                </div>
-              </div>
-            </details>
-
-            {createScanOpen ? (
-              <BarcodeScannerInline
-                onDetected={(code) => {
-                  setCreateCodigo(code)
-                  setCreateScanOpen(false)
-                  toast.success('Código detectado')
-                }}
-                onClose={() => setCreateScanOpen(false)}
-              />
-            ) : null}
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs text-blue-200/60">
-                Dica: preencha só o essencial agora e complete os detalhes depois (categoria, lote, validade, etc.).
-              </div>
-              <Button
-                onClick={async () => {
-                  const codigoBarras = createCodigo.trim()
-                  if (!codigoBarras) return toast.error('Informe o código de barras')
-                  const extraCodes = parseBarcodeInput(createCodigosExtras)
-                  const codigosBarras = Array.from(new Set([codigoBarras, ...extraCodes].map((v) => String(v || '').trim()).filter(Boolean)))
-                  const existing = (insumos || []).find((i) => getInsumoBarcodes(i).includes(codigoBarras))
-                  const categoria = createCategoria.trim() || String(existing?.categoria || '').trim()
-                  const policy = {
-                    requiresLot: !!createCategoriaRequiresLot,
-                    requiresExpiry: !!createCategoriaRequiresExpiry,
-                    fefo: !!createCategoriaFefo
-                  }
-                  const validadeIso = dateInputToIso(createDataValidade)
-
-                  const allowDuplicateLot = createNovoLote || (!!existing && policy.requiresLot)
-                  if (!createNovoLote && allowDuplicateLot) setCreateNovoLote(true)
-
-                  if ((policy.requiresLot || allowDuplicateLot) && !createLote.trim()) {
-                    return toast.error(policy.requiresLot ? 'Informe o lote (obrigatório pelo item)' : 'Informe o lote (Novo lote: on)')
-                  }
-                  if (policy.requiresExpiry && !validadeIso) {
-                    return toast.error('Informe a data de validade (obrigatória pelo item)')
-                  }
-                  if (policy.fefo && !policy.requiresExpiry) {
-                    return toast.error('FEFO exige validade obrigatória')
-                  }
-
-                  const produto = createProduto.trim() || (allowDuplicateLot ? String(existing?.produto || '').trim() : '')
-                  if (!produto) return toast.error('Informe o produto')
-                  const tipoUnidade = normalizeTipoUnidadeToCanonical(createTipoUnidade)
-                  if (!tipoUnidade) return toast.error('Informe a unidade (medida)')
-
-                  setCreateLoading(true)
-                  try {
-                    await mutateJson(`/insumos?unidade=${encodeURIComponent(unidade)}`, {
-                      method: 'POST',
-                      queueLabel: 'Cadastro de insumo',
-                      body: {
-                        codigoBarras,
-                        codigosBarras,
-                        produto,
-                        allowDuplicateLot,
-                        categoria,
-                        marca: createMarca.trim(),
-                        tipoUnidade,
-                        especificacao: createEspecificacao.trim(),
-                        concentracao: createConcentracao.trim(),
-                        volume: createVolume.trim(),
-                        fonte: createHomologado ? 'Homologado' : '',
-                        calibre: createCalibre.trim(),
-                        precoCusto: createPrecoCusto.trim(),
-                        estoqueInicial: Number(createEstoqueInicial) || 0,
-                        estoqueMinimo: Number(createEstoqueMinimo) || 0,
-                        lote: createLote.trim(),
-                        dataValidade: validadeIso,
-                        policyRequiresLot: policy.requiresLot,
-                        policyRequiresExpiry: policy.requiresExpiry,
-                        policyFefo: policy.fefo
-                      }
-                    })
-                    toast.success('Insumo cadastrado')
-                    setCreateCodigo('')
-                    setCreateCodigosExtras('')
-                    setCreateProduto('')
-                    setCreateCategoria('')
-                    setCreateMarca('')
-                    setCreateTipoUnidade('')
-                    setCreateEspecificacao('')
-                    setCreateConcentracao('')
-                    setCreateVolume('')
-                    setCreateHomologado(false)
-                    setCreateCalibre('')
-                    setCreatePrecoCusto('')
-                    setCreateEstoqueInicial('0')
-                    setCreateEstoqueMinimo('5')
-                    setCreateLote('')
-                    setCreateDataValidade('')
-                    setCreateNovoLote(false)
-                    setCreateOpen(false)
-                    await Promise.allSettled([refreshInsumos({ pagina: 1 }), loadInsumosOptions()])
-                  } catch (e) {
-                    const status = (e as any)?.status
-                    const msg = e instanceof Error ? e.message : String(e)
-                    if (status === 409 && /código de barras já cadastrado/i.test(msg)) {
-                      setCreateNovoLote(true)
-                      toast.error('Código já existe. Ative “Novo lote” e informe Lote/Validade para cadastrar um lote adicional.')
-                      return
-                    }
-                    if (policyErrorToast(e)) return
-                    toast.error(msg)
-                  } finally {
-                    setCreateLoading(false)
-                  }
-                }}
-                disabled={createLoading || !isAuthed}
-              >
-                {createLoading ? 'Salvando…' : 'Salvar'}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        <div ref={insumosListContainerRef} onScroll={onInsumosScroll} className="overflow-auto max-h-[70vh] rounded-xl border border-white/10">
-          <table className="w-full table-fixed text-sm">
-            <thead className="bg-black/30 text-blue-100/80">
-              <tr>
-                <th className="text-left p-3 w-[28%]">Produto</th>
-                <th className="text-left p-3 w-[16%]">Categoria</th>
-                <th className="hidden lg:table-cell text-left p-3 w-[16%]">Código</th>
-                <th className="text-right p-3 w-[7%]">Estoque</th>
-                <th className="text-right p-3 w-[7%]">Mín</th>
-                <th className="hidden md:table-cell text-left p-3 w-[10%]">Validade</th>
-                <th className="hidden xl:table-cell text-right p-3 w-[8%]">Valor</th>
-                <th className="text-right p-3 w-[8%]">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredInsumos.map((i) => {
-                const codigoBarras = String(i.codigoBarras || '').trim()
-                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
-                const estoque = Number(i.estoqueAtual) || 0
-                const min = Number(i.estoqueMinimo) || 0
-                const stockStatus = calcularStatusEstoque(estoque, min)
-                const isCritico = stockStatus === 'URGENTE'
-                const isLowStock = stockStatus === 'ATENCAO'
-                const validadeStatus = String(i.statusValidade?.status || '').toUpperCase()
-                const isVencendo = validadeStatus === 'VENCENDO'
-                const isExpirado = validadeStatus === 'EXPIRADO'
-                const valor = (Number(i.precoCusto) || 0) * estoque
-                const otherStocks = i.estoques
-                  ? Object.entries(i.estoques)
-                    .filter(([u, v]) => u !== unidade && (Number(v) || 0) > 0)
-                    .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
-                  : []
-                const otherSummary = otherStocks.length
-                  ? `${otherStocks
-                    .slice(0, 2)
-                    .map(([u, v]) => `${unidadeLabel(u)}: ${Number(v) || 0}`)
-                    .join(' • ')}${otherStocks.length > 2 ? ` • +${otherStocks.length - 2}` : ''}`
-                  : ''
-
-                return (
-                  <tr
-                    key={`${i.registro || ''}-${i.codigoBarras || ''}`}
-                    className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}
-                  >
-                    <td className="p-3 min-w-0 align-top">
-                      <button
-                        type="button"
-                        className="w-full text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 cursor-pointer group"
-                        onClick={() => {
-                          if (!codigoBarras) return
-                          setSelectedCodigoBarras((prev) => (prev.trim() === codigoBarras ? '' : codigoBarras))
-                          try {
-                            movSectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-                          } catch {
-                            // ignore
-                          }
-                        }}
-                        title={codigoBarras ? 'Ver movimentações deste insumo' : undefined}
-                        aria-pressed={isSelected}
-                      >
-                        <div className="flex items-center justify-between gap-2 min-w-0">
-                          <div className="text-blue-50 group-hover:underline break-words line-clamp-2">{i.produto || '-'}</div>
-                          {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
-                        </div>
-                        {i.marca ? (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            <Badge style={buildTagStyle(getMarcaBgColor(String(i.marca)))} className="border">
-                              {String(i.marca)}
-                            </Badge>
-                          </div>
-                        ) : null}
-                        {isCritico || isLowStock || isVencendo || isExpirado ? (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {isCritico ? <Badge variant="destructive">Crítico</Badge> : null}
-                            {isLowStock ? <Badge variant="secondary">Atenção</Badge> : null}
-                            {isVencendo ? <Badge variant="secondary">Vencendo</Badge> : null}
-                            {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
-                          </div>
-                        ) : null}
-                      </button>
-                    </td>
-                    <td className="p-3 text-blue-100/80 align-top">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Badge style={buildTagStyle(getCategoriaBgColor(i.categoria || 'Outros'))} className="border">
-                          {i.categoria || '-'}
-                        </Badge>
-                      </div>
-                    </td>
-                    <td className="hidden lg:table-cell p-3 align-top">
-                      <div className="font-mono text-blue-100/80 break-all">{i.codigoBarras || '-'}</div>
-                    </td>
-                    <td className={`p-3 text-right align-top ${isCritico ? 'text-red-200' : 'text-blue-100/80'}`}>
-                      <div className="flex items-center justify-end gap-2">
-                        <span className="font-mono">{estoque}</span>
-                      </div>
-                      {otherSummary ? <div className="mt-1 text-[11px] text-blue-200/50">{otherSummary}</div> : null}
-                    </td>
-                    <td className="p-3 text-right text-blue-100/70 align-top">{min || '-'}</td>
-                    <td className="hidden md:table-cell p-3 align-top">
-                      <span className="text-blue-100/70">{fmtDateOnlyBR(i.dataValidade || '')}</span>
-                    </td>
-                    <td className="hidden xl:table-cell p-3 text-right text-blue-100/80 align-top">{fmtMoneyBRL(valor)}</td>
-                    <td className="p-3 text-right align-top">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="secondary"
-                          className="h-8 px-2 text-xs"
-                          onClick={() => {
-                            if (i.codigoBarras) {
-                              selectQuickCodigo(i.codigoBarras, { setSearch: true, snapshot: i })
-                            }
-                          }}
-                        >
-                          Usar
-                        </Button>
-                        <Button
-                          variant="outline"
-                          className="h-8 px-2 text-xs"
-                          onClick={() => openEditDialog(i)}
-                          disabled={!isAuthed}
-                        >
-                          Editar
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!filteredInsumos.length ? (
-                <tr>
-                  <td className="p-3 text-blue-100/70" colSpan={8}>
-                    {insumosLoadError && !insumosLoading && isAuthed ? (
-                      <span className="text-red-200">
-                        Erro ao carregar insumos ({insumosLoadError.status || 'erro'}
-                        {insumosLoadError.code ? `/${insumosLoadError.code}` : ''}): {insumosLoadError.message}
-                      </span>
-                    ) : (
-                      renderListPlaceholder(insumosLoading, 'Sem itens.')
-                    )}
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-              </CardContent>
-            ) : null}
-	        </Card>
-	      </div>
-
-	    )}
-	  </Draggable>
-              */}
-
 		  <Draggable draggableId="main-mov" index={mainOrderIndex.get('mov') ?? 0}>
 		    {(dragProvided) => (
 		      <div
@@ -9447,387 +4384,80 @@ export function InsumosModule() {
 	        style={{ ...(dragProvided.draggableProps.style || {}), order: mainOrderIndex.get('mov') ?? 0 }}
 	        className="space-y-3 flex-1 min-w-0"
 		      >
-		        <Card className="bg-black/20 border border-white/10">
-                <CardHeader className="flex flex-col gap-2">
-                  <div className="flex flex-col gap-2 min-w-0 w-full md:flex-row md:items-center md:gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <button
-                        type="button"
-                        {...dragProvided.dragHandleProps}
-			                className="mt-0.5 h-9 w-9 flex items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] cursor-grab active:cursor-grabbing"
-			                title="Arraste para mover"
-			                aria-label="Mover"
-		              >
-		                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-		                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-		                </svg>
-                      </button>
-                      <CardTitle className="text-white text-lg">Movimentações</CardTitle>
-                    </div>
-                    <div className="flex flex-1 flex-nowrap items-center gap-2 min-w-0 justify-end overflow-x-auto">
-                      <Select value={movTipo} onValueChange={(v) => setMovTipo(v as any)}>
-                        <SelectTrigger className="h-8 w-28 shrink-0">
-                          <SelectValue placeholder="Fluxo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="TODOS">–</SelectItem>
-                          <SelectItem value="ENTRADA">Entrada</SelectItem>
-                          <SelectItem value="SAÍDA">Saída</SelectItem>
-                          <SelectItem value="AJUSTE">Ajuste</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Select
-                        value={movFilterCategoria || '__ALL__'}
-                        onValueChange={(v) => setMovFilterCategoria(v === '__ALL__' ? '' : String(v))}
-                      >
-                        <SelectTrigger className="h-8 w-36 shrink-0">
-                          <SelectValue placeholder="Categoria" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__ALL__">–</SelectItem>
-                          {lotCategorias.map((c) => (
-                            <SelectItem key={c} value={c}>
-                              {c}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Select value={movFilterMarca || '__ALL__'} onValueChange={(v) => setMovFilterMarca(v === '__ALL__' ? '' : String(v))}>
-                        <SelectTrigger className="h-8 w-32 shrink-0">
-                          <SelectValue placeholder="Marca" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__ALL__">–</SelectItem>
-                          {insumosMarcas.map((m) => (
-                            <SelectItem key={m} value={m}>
-                              {m}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        value={movSearch}
-                        onChange={(e) => setMovSearch(e.target.value)}
-                        placeholder="Buscar"
-                        className="h-8 flex-1 min-w-[120px] md:min-w-0 ml-auto"
-                      />
-                      <div className="flex items-center gap-2 shrink-0">
-		                <Button
-		                  size="icon"
-		                  variant="ghost"
-		                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-		                  onClick={() => openInsumosListModal()}
-                      title="Abrir lista de insumos"
-                      aria-label="Abrir lista de insumos"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path d="M8 6h12M8 12h12M8 18h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                        <circle cx="5" cy="6" r="1.5" fill="currentColor" />
-                        <circle cx="5" cy="12" r="1.5" fill="currentColor" />
-                        <circle cx="5" cy="18" r="1.5" fill="currentColor" />
-                      </svg>
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                      onClick={() => {
-                        const deIso = dateInputToIso(movDe)
-                        const ateIso = dateInputToIso(movAte)
-                        const params = new URLSearchParams({
-                          unidade,
-                          ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
-                          ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
-                          ...(deIso ? { de: deIso } : {}),
-                          ...(ateIso ? { ate: ateIso } : {})
-                        })
-                        window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
-                      }}
-                      disabled={!isAuthed}
-                      title="Exportar CSV"
-                      aria-label="Exportar CSV"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path
-                          d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16"
-                          stroke="currentColor"
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                      onClick={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
-                    title={movPanelOpen ? 'Contrair' : 'Expandir'}
-                    aria-label={movPanelOpen ? 'Contrair' : 'Expandir'}
-                  >
-                    {movPanelOpen ? (
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    ) : (
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-		                )}
-		              </Button>
-                      </div>
-                    </div>
-                  </div>
-		          </CardHeader>
-          {movPanelOpen ? (
-            <CardContent className="space-y-3">
-
-        <div ref={movListContainerRef} className="overflow-auto max-h-[60vh] rounded-xl border border-white/10">
-          <table className="w-full table-fixed text-sm">
-            <thead className="bg-black/30 text-blue-100/80">
-              <tr>
-                  {(
-                    [
-                      { key: 'dataHora', label: 'Data', compact: true, className: '', widthClass: 'w-[8%]' },
-                      { key: 'produto', label: 'Produto', widthClass: 'w-[22%]' },
-                      { key: 'categoria', label: 'Categoria', compact: true, className: 'hidden md:table-cell', widthClass: 'w-[12%]' },
-                      { key: 'marca', label: 'Marca', compact: true, className: 'hidden lg:table-cell', widthClass: 'w-[10%]' },
-                      { key: 'estoque', label: 'Estoque', compact: true, widthClass: 'w-[10%]' },
-                      { key: 'valor', label: 'Valor', compact: true, widthClass: 'w-[10%]' },
-                      { key: 'usuario', label: 'Usuário', compact: true, className: 'hidden xl:table-cell', widthClass: 'w-[10%]' },
-                      { key: 'observacao', label: 'Observação', className: 'hidden md:table-cell', widthClass: 'w-[16%]' },
-                      { key: null, label: 'Ações', compact: true, widthClass: 'w-[6%]' }
-                    ] as Array<{ key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'; label: string; compact?: boolean; className?: string; widthClass?: string }>
-                  ).map((col) => {
-                    const isActive = !!col.key && movSortKey === col.key
-                    return (
-                      <th
-                        key={col.label}
-                        className={`p-3 text-center align-middle ${col.compact ? 'whitespace-nowrap' : ''} ${col.widthClass || ''} ${col.className || ''} sticky top-0 z-10 bg-black/40 backdrop-blur`}
-                      >
-	                        <div className="flex items-center justify-center gap-2">
-                            {col.key ? (
-                              <button
-                                type="button"
-                                className={`cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm px-0.5`}
-                                onClick={() => {
-                                  if (movSortKey === col.key) {
-                                    setMovSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-                                    return
-                                  }
-                                  setMovSortKey(col.key!)
-                                  setMovSortDir(col.key === 'dataHora' ? 'desc' : 'asc')
-                                }}
-                                aria-label={`Ordenar ${col.label}`}
-                                title={`Ordenar ${col.label}`}
-                              >
-                                {col.label}
-                              </button>
-                            ) : (
-                              <span>{col.label}</span>
-                            )}
-                            {col.key ? (
-                              <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
-                                {isActive && movSortDir === 'asc' ? (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                ) : (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                )}
-                              </span>
-                            ) : null}
-	                        </div>
-	                      </th>
-                    )
-                  })}
-	              </tr>
-	            </thead>
-	            <tbody className="divide-y divide-white/5">
-	              {movimentacoesView.map((m, idx) => {
-	                const codigoBarras = String(m.codigoBarras || '').trim()
-                  const insumo = pickInsumoForMov(m)
-                  const ctxUnit = String(m.unidade || unidade || '').trim()
-                  const estoqueAtual = insumo
-                    ? (ctxUnit && insumo?.estoques ? Number(insumo.estoques?.[ctxUnit] ?? 0) : Number(insumo.estoqueAtual ?? 0))
-                    : null
-                  const tipoNorm = String(m.tipo || '').toUpperCase().replace('Í', 'I')
-                  const isEntrada = tipoNorm.includes('ENTRADA')
-                  const isSaida = tipoNorm.includes('SAIDA')
-                  const preco = Number(m.preco) || Number(insumo?.precoCusto) || 0
-                  const qtd = Number(m.quantidade) || 0
-                  const valorMov = preco * qtd
-                  const estoqueDepois = Number.isFinite(Number(m.estoqueNovo)) ? Number(m.estoqueNovo) : (estoqueAtual != null ? estoqueAtual : null)
-                  const estoqueAntes = Number.isFinite(Number(m.estoqueAnterior))
-                    ? Number(m.estoqueAnterior)
-                    : (Number.isFinite(Number(estoqueDepois)) && Number.isFinite(qtd) && (isEntrada || isSaida)
-                      ? (isEntrada ? Number(estoqueDepois) - qtd : Number(estoqueDepois) + qtd)
-                      : null)
-                  const valorEstoqueTotal = preco && estoqueDepois != null && Number.isFinite(Number(estoqueDepois)) ? preco * Number(estoqueDepois) : null
-                  const produtoNome = String(insumo?.produto || m.produto || '').trim() || '-'
-                  const categoriaNome = String(insumo?.categoria || '').trim() || '-'
-                  const marcaNome = String(insumo?.marca || m.marca || '').trim() || '-'
-		                const isSelected = !!codigoBarras && selectedCodigoBarras.trim() === codigoBarras
-
-                  const rowTone = isEntrada
-                    ? 'bg-emerald-400/10 hover:bg-emerald-400/15'
-                    : isSaida
-                      ? 'bg-rose-400/10 hover:bg-rose-400/15'
-                      : 'hover:bg-white/5'
-                  const rowClass = `${rowTone} ${isSelected ? 'ring-1 ring-white/10' : ''}`
-
-		                return (
-		                  <tr key={`${m.dataHora || ''}-${idx}`} className={rowClass}>
-                    <td className="p-3 text-center align-top text-blue-100/70 whitespace-nowrap">
-                          <div className="text-blue-50">{fmtMovDateShort(m.dataHora) || '-'}</div>
-                          <div className="text-xs text-blue-200/60">{fmtMovTimeShort(m.dataHora) || ''}</div>
-                        </td>
-                    <td className="p-3 text-center align-top">
-                      <button
-                        type="button"
-                        className="w-full text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 rounded-sm cursor-pointer break-words"
-                        onClick={() => {
-                          const p = String(produtoNome || '').trim()
-                          if (!p || p === '-') return
-                          setSelectedCodigoBarras('')
-                          setMovFilterCategoria('')
-                          setMovFilterMarca('')
-                          setMovSearch((prev) => (normalizeText(prev) === normalizeText(p) ? '' : p))
-                        }}
-                        title="Filtrar por produto"
-                        aria-pressed={normalizeText(movSearch) === normalizeText(produtoNome)}
-                      >
-                        <span className="line-clamp-2">{produtoNome}</span>
-                      </button>
-                      {marcaNome && marcaNome !== '-' ? (
-                        <div className="mt-1 flex flex-wrap justify-center gap-1 lg:hidden">
-                          <Badge style={buildTagStyle(getMarcaBgColor(marcaNome))} className="border">
-                            {marcaNome}
-                          </Badge>
-                        </div>
-                      ) : null}
-                    </td>
-                      <td className="p-3 text-center align-top whitespace-nowrap hidden md:table-cell">
-                        {categoriaNome && categoriaNome !== '-' ? (
-                          <button
-                            type="button"
-                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
-                            onClick={() => {
-                              const c = String(categoriaNome || '').trim()
-                              if (!c || c === '-') return
-                              setSelectedCodigoBarras('')
-                              setMovSearch('')
-                              setMovFilterCategoria((prev) => (normalizeText(prev) === normalizeText(c) ? '' : c))
-                            }}
-                            title="Filtrar por categoria"
-                            aria-pressed={normalizeText(movFilterCategoria) === normalizeText(categoriaNome)}
-                          >
-                            <Badge style={buildTagStyle(getCategoriaBgColor(categoriaNome))} className="border">
-                              {categoriaNome}
-                            </Badge>
-                          </button>
-                        ) : (
-                          <span className="text-blue-100/70">-</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center align-top whitespace-nowrap hidden lg:table-cell">
-                        {marcaNome && marcaNome !== '-' ? (
-                          <button
-                            type="button"
-                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
-                            onClick={() => {
-                              const b = String(marcaNome || '').trim()
-                              if (!b || b === '-') return
-                              setSelectedCodigoBarras('')
-                              setMovSearch('')
-                              setMovFilterMarca((prev) => (normalizeText(prev) === normalizeText(b) ? '' : b))
-                            }}
-                            title="Filtrar por marca"
-                            aria-pressed={normalizeText(movFilterMarca) === normalizeText(marcaNome)}
-                          >
-                            <Badge style={buildTagStyle(getMarcaBgColor(marcaNome))} className="border">
-                              {marcaNome}
-                            </Badge>
-                          </button>
-                        ) : (
-                          <span className="text-blue-100/70">-</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center align-top whitespace-nowrap">
-                        {estoqueAntes != null && estoqueDepois != null && Number.isFinite(estoqueAntes) && Number.isFinite(estoqueDepois) ? (
-                          <span className="font-mono text-blue-50">{estoqueAntes} → {estoqueDepois}</span>
-                        ) : (
-                          <span className="font-mono text-blue-100/70">-</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center align-top whitespace-nowrap w-[1%]">
-                        <div className="text-blue-50">{preco ? fmtMoneyBRL(valorMov) : '-'}</div>
-                        <div className="text-xs text-blue-200/60">
-                          {valorEstoqueTotal != null ? fmtMoneyBRL0(valorEstoqueTotal) : ''}
-                        </div>
-                      </td>
-                    <td className="p-3 text-center align-top text-blue-100/70 whitespace-nowrap hidden xl:table-cell">{m.usuario || '-'}</td>
-                    <td className="p-3 text-left align-top text-blue-100/60 hidden md:table-cell">
-                      <div className="space-y-1 break-words">
-                        {m.transferId ? (
-                          <div>
-                            <div>
-                              Transferência {m.unidadeOrigem ? unidadeLabel(m.unidadeOrigem) : '-'} →{' '}
-                              {m.unidadeDestino ? unidadeLabel(m.unidadeDestino) : '-'}
-                            </div>
-                            <div className="font-mono text-xs">{m.transferId}</div>
-                          </div>
-                        ) : m.motivo ? (
-                          <span>Motivo: {m.motivo}</span>
-                        ) : (
-                          <span>{m.observacoes || '-'}</span>
-                        )}
-                          {m.registroInsumo || m.lote || m.dataValidade ? (
-                            <div className="text-xs text-blue-200/60">
-                              {m.registroInsumo ? <span className="font-mono">Reg {m.registroInsumo}</span> : null}
-                              {m.lote ? <span>{m.registroInsumo ? ' • ' : ''}Lote {m.lote}</span> : null}
-                              {m.dataValidade ? <span>{(m.registroInsumo || m.lote) ? ' • ' : ''}Val {fmtDateOnlyBR(m.dataValidade)}</span> : null}
-                            </div>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="p-3 text-center align-top whitespace-nowrap">
-                        <div className="flex justify-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openMovementEditDialog(m)}
-                            disabled={!isAuthed || !String(m.id || '').trim()}
-                          >
-                            Editar
-                          </Button>
-                        </div>
-                      </td>
-		                  </tr>
-		                )
-	              })}
-	              {!movimentacoesView.length ? (
-	                <tr>
-	                  <td className="p-3 text-blue-100/70 text-center" colSpan={9}>
-	                    {movLoadError && !movLoading && isAuthed ? (
-                        <span className="text-red-200">
-                          Erro ao carregar movimentações ({movLoadError.status || 'erro'}
-                          {movLoadError.code ? `/${movLoadError.code}` : ''}): {movLoadError.message}
-                        </span>
-                      ) : (
-                        renderListPlaceholder(movLoading, 'Sem movimentações.')
-                      )}
-	                  </td>
-	                </tr>
-	              ) : null}
-            </tbody>
-          </table>
-        </div>
-            </CardContent>
-          ) : null}
-	        </Card>
+            <InsumosMovementsPanel
+              panelOpen={movPanelOpen}
+              dragHandleProps={dragProvided.dragHandleProps || undefined}
+              movTipo={movTipo}
+              movFilterCategoria={movFilterCategoria}
+              movFilterMarca={movFilterMarca}
+              movSearch={movSearch}
+              movSortKey={movSortKey}
+              movSortDir={movSortDir}
+              lotCategorias={lotCategorias}
+              insumosMarcas={insumosMarcas}
+              isAuthed={isAuthed}
+              rows={movementRows}
+              emptyContent={
+                movLoadError && !movLoading && isAuthed ? (
+                  <span className="text-red-200">
+                    Erro ao carregar movimentações ({movLoadError.status || 'erro'}
+                    {movLoadError.code ? `/${movLoadError.code}` : ''}): {movLoadError.message}
+                  </span>
+                ) : (
+                  renderListPlaceholder(movLoading, 'Sem movimentações.')
+                )
+              }
+              listContainerRef={movListContainerRef}
+              onToggleOpen={() => setDetailsKeyOpen(MAIN_PANEL_OPEN_KEYS.mov, !movPanelOpen)}
+              onTipoChange={setMovTipo}
+              onCategoriaChange={setMovFilterCategoria}
+              onMarcaChange={setMovFilterMarca}
+              onSearchChange={setMovSearch}
+              onOpenInventoryList={() => openInsumosListModal()}
+              onExportCsv={() => {
+                const deIso = dateInputToIso(movDe)
+                const ateIso = dateInputToIso(movAte)
+                const params = new URLSearchParams({
+                  unidade,
+                  ...(selectedCodigoBarras.trim() ? { codigoBarras: selectedCodigoBarras.trim() } : {}),
+                  ...(movTipo !== 'TODOS' ? { tipo: movTipo } : {}),
+                  ...(deIso ? { de: deIso } : {}),
+                  ...(ateIso ? { ate: ateIso } : {}),
+                })
+                window.open(`/api/insumos/export/movimentacoes.csv?${params.toString()}`, '_blank', 'noopener,noreferrer')
+              }}
+              onSortChange={(key) => {
+                if (movSortKey === key) {
+                  setMovSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))
+                  return
+                }
+                setMovSortKey(key)
+                setMovSortDir(key === 'dataHora' ? 'desc' : 'asc')
+              }}
+              onProductClick={(productName) => {
+                const product = String(productName || '').trim()
+                if (!product || product === '-') return
+                setSelectedCodigoBarras('')
+                setMovFilterCategoria('')
+                setMovFilterMarca('')
+                setMovSearch((prev) => (normalizeText(prev) === normalizeText(product) ? '' : product))
+              }}
+              onCategoryClick={(categoryName) => {
+                const category = String(categoryName || '').trim()
+                if (!category || category === '-') return
+                setSelectedCodigoBarras('')
+                setMovSearch('')
+                setMovFilterCategoria((prev) => (normalizeText(prev) === normalizeText(category) ? '' : category))
+              }}
+              onBrandClick={(brandName) => {
+                const brand = String(brandName || '').trim()
+                if (!brand || brand === '-') return
+                setSelectedCodigoBarras('')
+                setMovSearch('')
+                setMovFilterMarca((prev) => (normalizeText(prev) === normalizeText(brand) ? '' : brand))
+              }}
+              onEditMovement={openMovementEditDialog}
+            />
 	      </div>
 	    )}
 	  </Draggable>
