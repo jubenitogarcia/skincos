@@ -11,7 +11,7 @@ type MutateJsonFn = <T>(
     body?: unknown
     queueLabel?: string
   }
-) => Promise<T>
+) => Promise<T | { queued: true }>
 
 type PolicyErrorCode = 'POLICY_REQUIRES_LOT' | 'POLICY_REQUIRES_EXPIRY' | null
 type EditValidationErrors = Partial<Record<'codigoBarras' | 'produto' | 'categoria' | 'marca' | 'tipoUnidade' | 'lote' | 'dataValidade' | 'policy', string>>

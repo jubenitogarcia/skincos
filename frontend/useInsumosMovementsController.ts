@@ -12,7 +12,7 @@ type MutateJsonFn = <T>(
     body?: unknown
     queueLabel?: string
   }
-) => Promise<T>
+) => Promise<T | { queued: true }>
 
 type MovementLoadError = { message: string; status: number; code?: string } | null
 

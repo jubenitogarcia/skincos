@@ -57,6 +57,7 @@ import type {
   EscalaActionResult,
   EscalaHeaderAction,
   EscalaHighlightMode,
+  EscalaScheduleEntry,
   EscalaProfessional,
   EscalaTeamFormMode,
 } from '@/escalaTypes'
@@ -1378,7 +1379,9 @@ export function EscalaProfissionaisModule() {
       <EscalaPlanningAssistantModal
         autoPrefillProgress={autoPrefillProgress}
         autoPrefillState={autoPrefillState}
-        onApplySuggestions={applySuggestions}
+        onApplySuggestions={async () => {
+          await applySuggestions()
+        }}
         onIgnoreSuggestions={ignoreSuggestions}
         onOpenChange={handlePlanningAssistantOpenChange}
         onRetryAnalysis={retryAnalysis}

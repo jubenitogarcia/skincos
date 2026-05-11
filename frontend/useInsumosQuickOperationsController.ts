@@ -10,7 +10,7 @@ type MutateJsonFn = <T>(
     body?: unknown
     queueLabel?: string
   }
-) => Promise<T>
+) => Promise<T | { queued: true }>
 
 type SchedulePostMutationRefreshFn = (opts?: { overview?: boolean; insights?: boolean }) => void
 

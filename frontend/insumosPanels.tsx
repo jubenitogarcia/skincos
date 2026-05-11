@@ -3764,7 +3764,7 @@ export function InsumosMovementsPanel({
       </CardHeader>
       {panelOpen ? (
         <CardContent className="space-y-3">
-          <div ref={listContainerRef} className="max-h-[60vh] overflow-auto rounded-xl border border-white/10">
+          <div ref={listContainerRef as React.RefObject<HTMLDivElement>} className="max-h-[60vh] overflow-auto rounded-xl border border-white/10">
             <table className="w-full table-fixed text-sm">
               <thead className="bg-black/30 text-blue-100/80">
                 <tr>
@@ -3780,7 +3780,7 @@ export function InsumosMovementsPanel({
                             <button
                               type="button"
                               className={`cursor-pointer select-none rounded-sm px-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline`}
-                              onClick={() => onSortChange(column.key)}
+                              onClick={() => onSortChange(column.key!)}
                               aria-label={`Ordenar ${column.label}`}
                               title={`Ordenar ${column.label}`}
                             >

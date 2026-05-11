@@ -112,7 +112,7 @@ type EscalaPlanningAssistantModalProps = {
     completed: number
     total: number
   }
-  onApplySuggestions: () => Promise<void>
+  onApplySuggestions: () => Promise<unknown>
   onIgnoreSuggestions: () => void
   onOpenChange: (open: boolean) => void
   onRetryAnalysis: () => void
