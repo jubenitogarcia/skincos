@@ -86,6 +86,7 @@ function emptyState(message: string) {
 
 export function MetaCampaignControlCenter() {
   const [status, setStatus] = useState<MetaAdsStatusResponse | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<MetaAdAccount[]>([])
   const [summary, setSummary] = useState<any | null>(null)
   const [trend, setTrend] = useState<any[]>([])
@@ -103,6 +104,7 @@ export function MetaCampaignControlCenter() {
   const loadStatus = async () => {
     const next = await metaAdsApi.status()
     setStatus(next)
+    setStatusError(null)
     return next
   }
 
@@ -153,7 +155,11 @@ export function MetaCampaignControlCenter() {
       try {
         if (!cancelled) await refreshConnectedState()
       } catch (error: any) {
-        if (!cancelled) toast.error(error?.message || 'Falha ao carregar Meta Ads')
+        if (!cancelled) {
+          const message = error?.message || 'Falha ao carregar Meta Ads'
+          setStatusError(message)
+          toast.error(message)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -182,24 +188,34 @@ export function MetaCampaignControlCenter() {
     setRefreshing(true)
     try {
       await refreshConnectedState()
+      setStatusError(null)
       toast.success('Meta Ads atualizado')
     } catch (error: any) {
-      toast.error(error?.message || 'Falha ao atualizar')
+      const message = error?.message || 'Falha ao atualizar'
+      setStatusError(message)
+      toast.error(message)
     } finally {
       setRefreshing(false)
     }
   }
 
   const handleOpenOAuth = () => {
+    const oauthUrl = metaAdsApi.oauthStartUrl()
     const width = 620
     const height = 760
     const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2))
     const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2))
-    window.open(
-      metaAdsApi.oauthStartUrl(),
+    const popup = window.open(
+      oauthUrl,
       'meta-ads-oauth',
       `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
     )
+    if (popup) {
+      popup.focus?.()
+      return
+    }
+    toast.info('O navegador bloqueou a janela pop-up. A autenticação será aberta nesta mesma aba.')
+    window.location.assign(oauthUrl)
   }
 
   const handleManualConnect = async () => {
@@ -251,6 +267,7 @@ export function MetaCampaignControlCenter() {
   const adSetCount = inventory?.adSets?.length || 0
   const campaignCount = inventory?.campaigns?.length || 0
   const missingConfig = status?.missingConfig || []
+  const connectActionsDisabled = loading || refreshing || !!missingConfig.length || !!statusError
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -297,6 +314,14 @@ export function MetaCampaignControlCenter() {
         <Card className="glass-card border-amber-500/30 bg-amber-500/10">
           <CardContent className="pt-6 text-sm text-amber-100">
             Faltam configurações de runtime para OAuth/armazenamento: <span className="font-mono">{missingConfig.join(', ')}</span>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {statusError ? (
+        <Card className="glass-card border-rose-500/30 bg-rose-500/10">
+          <CardContent className="pt-6 text-sm text-rose-100">
+            Não foi possível preparar a integração Meta Ads. <span className="font-medium">{statusError}</span>
           </CardContent>
         </Card>
       ) : null}
@@ -407,7 +432,7 @@ export function MetaCampaignControlCenter() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap gap-2">
-                <Button onClick={handleOpenOAuth} disabled={refreshing || !!missingConfig.length}>
+                <Button onClick={handleOpenOAuth} disabled={connectActionsDisabled}>
                   Conectar via Facebook
                 </Button>
                 <Badge className="bg-white/10 text-blue-100 border border-white/10">
