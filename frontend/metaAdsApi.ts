@@ -27,7 +27,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     json = null
   }
   if (!res.ok) {
-    throw new Error(json?.message || json?.error || text || 'Request failed')
+    const error = new Error(json?.message || json?.hint || json?.error || text || 'Request failed')
+    ;(error as any).status = res.status
+    ;(error as any).payload = json
+    throw error
   }
   return json as T
 }
