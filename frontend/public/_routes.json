@@ -5,6 +5,7 @@
         "/api/auth/*",
         "/api/crm/*",
         "/api/tracking/*",
+        "/api/meta-ads/*",
         "/api/insumos/*",
         "/api/placeholder/*",
         "/api/share/*",
