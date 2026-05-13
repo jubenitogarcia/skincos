@@ -27,7 +27,9 @@ export async function requireSocialAdmin(context: any) {
     ok: false,
     error: 'FORBIDDEN',
     code: 'ADMIN_REQUIRED',
+    message: 'Acesso restrito ao módulo Meta Ads.',
     role,
+    retryable: false,
     hint: `Seu role atual é ${role || '(vazio)'}. Este módulo exige GESTOR/GERENTE.`,
   })
 }

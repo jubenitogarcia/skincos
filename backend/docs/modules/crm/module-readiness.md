@@ -12,7 +12,7 @@ Legenda de Status:
 | notifications | Notificações | ⚠️ | WebSocket mock + geração aleatória | Normalizar payload WS, persistência read/unread no backend |
 | helpdesk | Help Desk | ⚠️ | Tickets e métricas mocks | Endpoints /tickets, /tickets/:id/activities; SLA calc server-side |
 | omnichannel | Omnichannel | ⚠️ | Activities mock, canais não integrados | Unificar ingest (WhatsApp, IG, FB) via backend aggregator |
-| meta-ads | Meta Ads | ⚠️ | Campanhas e contas mock | OAuth real + fetch /meta/ads/accounts, campaigns sincronização incremental |
+| meta-ads | Meta Ads | ✅ | Separar melhor conexão da conta Meta versus tracking do site; consolidar mensagens de saúde/erro | Manter `MetaCampaignControlCenter` como entrypoint único; padronizar estados `Conexão/Visão geral/Inventário/Tracking`; remover legado mock residual |
 | meta-command | Meta Command | ⚠️ | Operações simuladas | Mapear comandos reais (mensagens, posts) + fila assíncrona |
 | meta-sync | Meta Sync | ⚠️ | Timeline mock | Implementar job status polling /sync/jobs |
 | meta-sentiment | Sentimento | ⚠️ | Análises randomizadas | Serviço NLP externo + cache resultados |

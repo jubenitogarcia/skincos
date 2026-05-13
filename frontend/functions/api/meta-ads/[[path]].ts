@@ -20,6 +20,12 @@ import {
 } from '../../_lib/metaAdsGraph'
 
 type OAuthState = { userId: string; nonce: string; iat: number }
+type MetaAdsApiErrorInit = {
+  message?: string
+  hint?: string
+  retryable?: boolean
+  extra?: Record<string, unknown>
+}
 
 const json = (status: number, body: any) =>
   new Response(JSON.stringify(body), {
@@ -49,6 +55,21 @@ const html = (body: string) =>
 
 const esc = (value: any) =>
   String(value || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] as string))
+
+const apiError = (
+  status: number,
+  code: string,
+  { message, hint, retryable = status >= 500, extra }: MetaAdsApiErrorInit = {},
+) =>
+  json(status, {
+    ok: false,
+    error: code,
+    code,
+    message: message || code,
+    hint: hint || null,
+    retryable,
+    ...(extra || {}),
+  })
 
 function runtimeConfig(context: any) {
   const env = context?.env || {}
@@ -208,7 +229,14 @@ async function handleOauthStart(context: any) {
   if (userOrRes instanceof Response) return userOrRes
   const cfg = runtimeConfig(context)
   const missing = resolveMissingConfig(context)
-  if (missing.length) return new Response(`Meta Ads OAuth not configured: ${missing.join(', ')}`, { status: 503, headers: { 'cache-control': 'no-store' } })
+  if (missing.length) {
+    return apiError(503, 'META_ADS_OAUTH_NOT_CONFIGURED', {
+      message: 'A integração Meta Ads ainda não está configurada neste runtime.',
+      hint: `Faltam bindings/segredos obrigatórios: ${missing.join(', ')}`,
+      retryable: false,
+      extra: { missingConfig: missing },
+    })
+  }
 
   const origin = new URL(context.request.url).origin
   const redirectUri = `${origin}/api/meta-ads/oauth/callback`
@@ -311,7 +339,13 @@ async function handleManualConnect(context: any) {
 
   const body = await context.request.json().catch(() => null)
   const accessToken = String(body?.accessToken || body?.token || '').trim()
-  if (!accessToken) return json(400, { ok: false, error: 'INVALID_INPUT', hint: 'Informe accessToken.' })
+  if (!accessToken) {
+    return apiError(400, 'INVALID_INPUT', {
+      message: 'Informe um access token válido da Meta.',
+      hint: 'Cole o access token completo antes de enviar.',
+      retryable: false,
+    })
+  }
 
   try {
     const profile = await getMetaProfile(accessToken, runtimeConfig(context).graphVersion)
@@ -331,7 +365,11 @@ async function handleManualConnect(context: any) {
       connection: connectionSummary(await readConnection(context, userOrRes.id)),
     })
   } catch (error: any) {
-    return json(400, { ok: false, error: 'TOKEN_INVALID', message: error?.message || 'Token inválido' })
+    return apiError(400, 'TOKEN_INVALID', {
+      message: error?.message || 'Token inválido',
+      hint: 'Revise se o token ainda está ativo e se possui os escopos esperados pela integração.',
+      retryable: false,
+    })
   }
 }
 
@@ -342,7 +380,13 @@ async function handleDisconnect(context: any) {
   if (csrfRes) return csrfRes
 
   const bucket = getShareBucket(context)
-  if (!bucket) return json(503, { ok: false, error: 'SHARE_BUCKET_NOT_CONFIGURED' })
+  if (!bucket) {
+    return apiError(503, 'SHARE_BUCKET_NOT_CONFIGURED', {
+      message: 'O armazenamento seguro da integração não está configurado.',
+      hint: 'Verifique o binding SHARE_BUCKET do Pages runtime.',
+      retryable: false,
+    })
+  }
   await deleteMetaAdsConnection(bucket, userOrRes.id)
   return json(200, { ok: true, disconnected: true })
 }
@@ -373,13 +417,31 @@ async function handleSelectAccount(context: any) {
 
   const body = await context.request.json().catch(() => null)
   const adAccountId = String(body?.adAccountId || '').trim()
-  if (!adAccountId) return json(400, { ok: false, error: 'INVALID_INPUT' })
+  if (!adAccountId) {
+    return apiError(400, 'INVALID_INPUT', {
+      message: 'Informe a conta de anúncios que deve ser selecionada.',
+      hint: 'Escolha uma conta válida na lista antes de salvar.',
+      retryable: false,
+    })
+  }
 
   const connection = await readConnection(context, userOrRes.id)
-  if (!connection?.accessToken) return json(404, { ok: false, error: 'NOT_CONNECTED' })
+  if (!connection?.accessToken) {
+    return apiError(404, 'NOT_CONNECTED', {
+      message: 'Nenhuma conexão Meta ativa foi encontrada para este usuário.',
+      hint: 'Conecte a conta Meta primeiro e depois selecione a conta de anúncios.',
+      retryable: false,
+    })
+  }
   const accounts = await listMetaAdAccounts(connection.accessToken, runtimeConfig(context).graphVersion)
   const selected = accounts.find((account) => account.id === adAccountId)
-  if (!selected) return json(404, { ok: false, error: 'ACCOUNT_NOT_FOUND' })
+  if (!selected) {
+    return apiError(404, 'ACCOUNT_NOT_FOUND', {
+      message: 'A conta de anúncios informada não foi encontrada para este usuário/token.',
+      hint: 'Atualize a lista de contas antes de tentar selecionar novamente.',
+      retryable: true,
+    })
+  }
 
   await writeConnection(context, userOrRes.id, {
     ...connection,
@@ -398,11 +460,23 @@ async function withSelectedAccount(
 > {
   const connection = await readConnection(context, userId)
   if (!connection?.accessToken) {
-    return { error: json(404, { ok: false, error: 'NOT_CONNECTED', hint: 'Conecte a conta Meta primeiro.' }) }
+    return {
+      error: apiError(404, 'NOT_CONNECTED', {
+        message: 'A conta Meta ainda não está conectada.',
+        hint: 'Use a aba Conexão para autenticar o Facebook ou validar um token manual.',
+        retryable: false,
+      }),
+    }
   }
   const adAccountId = String(connection.selectedAdAccountId || '').trim()
   if (!adAccountId) {
-    return { error: json(400, { ok: false, error: 'AD_ACCOUNT_NOT_SELECTED', hint: 'Selecione uma conta de anúncios.' }) }
+    return {
+      error: apiError(400, 'AD_ACCOUNT_NOT_SELECTED', {
+        message: 'Nenhuma conta de anúncios foi selecionada.',
+        hint: 'Escolha uma conta na aba Conexão para liberar visão geral e inventário.',
+        retryable: false,
+      }),
+    }
   }
   return { connection, adAccountId }
 }
@@ -461,22 +535,34 @@ async function handleInventory(context: any) {
 }
 
 export async function onRequest(context: any): Promise<Response> {
-  const request: Request = context.request
-  const method = String(request.method || 'GET').toUpperCase()
-  const url = new URL(request.url)
-  const prefix = '/api/meta-ads'
-  const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
+  try {
+    const request: Request = context.request
+    const method = String(request.method || 'GET').toUpperCase()
+    const url = new URL(request.url)
+    const prefix = '/api/meta-ads'
+    const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
-  if (method === 'GET' && (rest === '/status' || rest === '/status/')) return handleStatus(context)
-  if (method === 'GET' && (rest === '/oauth/start' || rest === '/oauth/start/')) return handleOauthStart(context)
-  if (method === 'GET' && (rest === '/oauth/callback' || rest === '/oauth/callback/')) return handleOauthCallback(context)
-  if (method === 'POST' && (rest === '/connect/manual' || rest === '/connect/manual/')) return handleManualConnect(context)
-  if (method === 'POST' && (rest === '/disconnect' || rest === '/disconnect/')) return handleDisconnect(context)
-  if (method === 'GET' && (rest === '/ad-accounts' || rest === '/ad-accounts/')) return handleListAccounts(context)
-  if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return handleSelectAccount(context)
-  if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return handleSummary(context)
-  if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return handleTrend(context)
-  if (method === 'GET' && (rest === '/inventory' || rest === '/inventory/')) return handleInventory(context)
+    if (method === 'GET' && (rest === '/status' || rest === '/status/')) return handleStatus(context)
+    if (method === 'GET' && (rest === '/oauth/start' || rest === '/oauth/start/')) return handleOauthStart(context)
+    if (method === 'GET' && (rest === '/oauth/callback' || rest === '/oauth/callback/')) return handleOauthCallback(context)
+    if (method === 'POST' && (rest === '/connect/manual' || rest === '/connect/manual/')) return handleManualConnect(context)
+    if (method === 'POST' && (rest === '/disconnect' || rest === '/disconnect/')) return handleDisconnect(context)
+    if (method === 'GET' && (rest === '/ad-accounts' || rest === '/ad-accounts/')) return handleListAccounts(context)
+    if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return handleSelectAccount(context)
+    if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return handleSummary(context)
+    if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return handleTrend(context)
+    if (method === 'GET' && (rest === '/inventory' || rest === '/inventory/')) return handleInventory(context)
 
-  return json(404, { ok: false, error: 'NOT_FOUND' })
+    return apiError(404, 'NOT_FOUND', {
+      message: 'Endpoint Meta Ads não encontrado.',
+      hint: 'Revise a rota solicitada em /api/meta-ads/*.',
+      retryable: false,
+    })
+  } catch (error: any) {
+    return apiError(500, 'META_ADS_INTERNAL_ERROR', {
+      message: 'A API Meta Ads encontrou um erro inesperado.',
+      hint: error?.message || 'Erro interno.',
+      retryable: true,
+    })
+  }
 }
