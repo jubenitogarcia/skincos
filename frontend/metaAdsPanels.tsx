@@ -13,7 +13,6 @@ import type {
   MetaAdsHealthState,
   MetaAdsInventory,
   MetaAdsSummaryResponse,
-  MetaAdsStatusResponse,
   MetaAdsTab,
   MetaAdsTrendPoint,
 } from '@/metaAdsTypes'
@@ -30,14 +29,8 @@ import {
   WarningCircle,
 } from '@phosphor-icons/react'
 
-function formatDateTimeLabel(value?: string | null) {
-  if (!value) return '—'
-  try {
-    return format(new Date(value), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
-  } catch {
-    return '—'
-  }
-}
+const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl'
+const subtlePanelClass = 'border-slate-800/70 bg-slate-950/45 backdrop-blur-xl'
 
 function formatCurrency(value: number, currency = 'USD') {
   try {
@@ -60,13 +53,13 @@ function statusTone(status?: string) {
   if (normalized === 'ACTIVE') return 'bg-emerald-500/15 text-emerald-200 border-emerald-500/30'
   if (normalized === 'PAUSED') return 'bg-amber-500/15 text-amber-200 border-amber-500/30'
   if (normalized === 'ARCHIVED') return 'bg-slate-500/15 text-slate-200 border-slate-500/30'
-  return 'bg-white/10 text-blue-100 border-white/10'
+  return 'border-slate-700 bg-slate-900/70 text-slate-200'
 }
 
 export function MetaAdsEmptyState({ message, actionLabel, onAction }: { message: string; actionLabel?: string; onAction?: () => void }) {
   return (
-    <Card className="glass-card border-white/10">
-      <CardContent className="flex flex-col items-center gap-3 py-10 text-center text-sm text-blue-100/70">
+    <Card className={panelClass}>
+      <CardContent className="flex flex-col items-center gap-3 py-10 text-center text-sm text-slate-300">
         <div>{message}</div>
         {actionLabel && onAction ? <Button variant="outline" onClick={onAction}>{actionLabel}</Button> : null}
       </CardContent>
@@ -86,38 +79,39 @@ export function MetaAdsStatusHero({
   onDisconnect: () => void
 }) {
   return (
-    <Card className="glass-card border-white/10">
+    <Card className={`overflow-hidden ${panelClass}`}>
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_36%),radial-gradient(circle_at_top_right,rgba(236,72,153,0.14),transparent_28%)]" />
       <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
+        <div className="relative">
           <CardTitle className="flex items-center gap-3 text-white">
             <div className="flex items-center gap-2">
-              <FacebookLogo className="h-6 w-6 text-blue-400" />
+              <FacebookLogo className="h-6 w-6 text-sky-400" />
               <Target className="h-6 w-6 text-pink-400" />
             </div>
             Meta Ads
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="max-w-3xl text-slate-300">
             Conecte o Gerenciador de Anúncios da Meta ao CRM, escolha a conta certa e acompanhe inventário e tracking sem sair do módulo.
           </CardDescription>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           {connected ? (
-            <Badge className="bg-emerald-500/15 text-emerald-200 border border-emerald-500/30">
+            <Badge className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-100">
               <CheckCircle className="mr-1 h-4 w-4" />
               Conectado
             </Badge>
           ) : (
-            <Badge className="bg-amber-500/15 text-amber-200 border border-amber-500/30">
+            <Badge className="border border-amber-500/30 bg-amber-500/15 text-amber-100">
               <Link className="mr-1 h-4 w-4" />
               Não conectado
             </Badge>
           )}
-          <Button variant="outline" onClick={onRefresh} disabled={refreshing}>
+          <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onRefresh} disabled={refreshing}>
             {refreshing ? <Spinner className="mr-2 h-4 w-4 animate-spin" /> : <ArrowClockwise className="mr-2 h-4 w-4" />}
             Atualizar
           </Button>
           {connected ? (
-            <Button variant="outline" onClick={onDisconnect} disabled={refreshing}>
+            <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onDisconnect} disabled={refreshing}>
               Desconectar
             </Button>
           ) : null}
@@ -142,16 +136,16 @@ export function MetaAdsHealthBanner({
     health.tone === 'success'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
       : health.tone === 'danger'
-        ? 'border-rose-500/30 bg-rose-500/10 text-rose-100'
-        : health.tone === 'warning'
-          ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-          : 'border-white/10 bg-white/[0.03] text-blue-100'
+      ? 'border-rose-500/30 bg-rose-500/10 text-rose-100'
+      : health.tone === 'warning'
+        ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+          : 'border-slate-700/80 bg-slate-900/60 text-slate-100'
   const updatedLabel = statusUpdatedAt
     ? format(new Date(statusUpdatedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
     : null
 
   return (
-    <Card className={`glass-card ${toneClass}`}>
+    <Card className={`${panelClass} ${toneClass}`}>
       <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -189,7 +183,7 @@ export function MetaAdsPersistentError({
 }) {
   if (!error) return null
   return (
-    <Card className="glass-card border-rose-500/30 bg-rose-500/10">
+    <Card className="border-rose-500/30 bg-rose-500/12 shadow-[0_20px_60px_rgba(136,19,55,0.18)] backdrop-blur-xl">
       <CardContent className="flex flex-col gap-3 pt-6 text-sm text-rose-100 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-1">
           <div className="font-medium">
@@ -216,8 +210,7 @@ export function MetaAdsWorkspaceTabs({
   trackingDisabled?: boolean
 }) {
   return (
-    <TabsList className="grid w-full max-w-5xl grid-cols-4 glass-morphism p-2 border-white/20">
-      <TabsTrigger value="connect">Conexão</TabsTrigger>
+    <TabsList className="grid w-full max-w-4xl grid-cols-3 rounded-3xl border border-slate-800/80 bg-slate-950/65 p-2 backdrop-blur-xl">
       <TabsTrigger value="overview">Visão geral</TabsTrigger>
       <TabsTrigger value="inventory">Inventário</TabsTrigger>
       <TabsTrigger value="tracking" disabled={trackingDisabled}>
@@ -227,125 +220,105 @@ export function MetaAdsWorkspaceTabs({
   )
 }
 
-export function MetaAdsSessionFacts({
-  status,
-  selectedAccount,
-}: {
-  status: MetaAdsStatusResponse | null
-  selectedAccount: MetaAdAccount | null
-}) {
-  const connection = status?.connection
-  const facts = [
-    {
-      label: 'Modo de conexão',
-      value: connection?.connected ? (connection.tokenType === 'oauth' ? 'Facebook OAuth' : 'Token manual') : 'Desconectado',
-    },
-    {
-      label: 'Conta selecionada',
-      value: selectedAccount?.name || selectedAccount?.id || 'Ainda não selecionada',
-    },
-    {
-      label: 'Escopos ativos',
-      value: connection?.scopes?.length ? `${connection.scopes.length} escopos` : 'Nenhum escopo reportado',
-    },
-    {
-      label: 'Expiração do token',
-      value: formatDateTimeLabel(connection?.expiresAt),
-    },
-    {
-      label: 'Última atualização',
-      value: formatDateTimeLabel(connection?.updatedAt),
-    },
-  ]
-
-  return (
-    <Card className="glass-card border-white/10">
-      <CardHeader>
-        <CardTitle>Saúde da integração</CardTitle>
-        <CardDescription>
-          Este resumo mostra se o problema atual é login, permissão, configuração do runtime ou ausência de conta selecionada.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        {facts.map((fact) => (
-          <div key={fact.label} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <div className="text-xs uppercase tracking-[0.22em] text-blue-100/55">{fact.label}</div>
-            <div className="mt-2 text-sm font-medium text-white">{fact.value}</div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
 export function MetaAdsConnectionPanel({
   scopesLabel,
   connectedUser,
   connectDisabled,
   onOAuth,
+  manualToken,
+  setManualToken,
+  onManualConnect,
+  manualDisabled,
 }: {
   scopesLabel: string
   connectedUser?: string | null
   connectDisabled: boolean
   onOAuth: () => void
+  manualToken: string
+  setManualToken: (value: string) => void
+  onManualConnect: () => void
+  manualDisabled: boolean
 }) {
   return (
-    <Card className="glass-card border-white/10">
+    <Card className={panelClass}>
       <CardHeader>
-        <CardTitle>1. Autorize o Facebook</CardTitle>
-        <CardDescription>
-          Use OAuth quando quiser uma conexão guiada dentro do CRM. Se o popup for bloqueado, o fluxo cai para a mesma aba.
+        <CardTitle>Conectar a conta Meta</CardTitle>
+        <CardDescription className="text-slate-300">
+          Comece pelo Facebook OAuth. Se preferir, use um token manual como rota secundária no mesmo painel.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-6">
+        <div className="rounded-3xl border border-slate-800/80 bg-slate-900/65 p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-white">Fluxo recomendado</div>
+              <div className="text-sm leading-6 text-slate-300">
+                Autorize a Meta dentro do CRM e, se o navegador bloquear pop-up, o processo continua automaticamente nesta mesma aba.
+              </div>
+            </div>
+            <Button className="bg-sky-500 text-slate-950 hover:bg-sky-400" onClick={onOAuth} disabled={connectDisabled}>
+              Conectar com Facebook
+            </Button>
+          </div>
+        </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={onOAuth} disabled={connectDisabled}>
-            Conectar via Facebook
-          </Button>
-          <Badge className="bg-white/10 text-blue-100 border border-white/10">
+          <Badge className="border border-slate-700 bg-slate-900/60 text-slate-200">
             Escopos: {scopesLabel}
           </Badge>
+          {connectedUser ? (
+            <Badge className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-100">
+              Usuário Meta: {connectedUser}
+            </Badge>
+          ) : null}
         </div>
-        {connectedUser ? (
-          <div className="text-sm text-blue-100/70">
-            Usuário Meta conectado: <span className="font-medium text-white">{connectedUser}</span>
+        <div className="rounded-3xl border border-slate-800/80 bg-slate-900/45 p-5">
+          <div className="mb-3 text-sm font-medium text-white">Ou conecte por token manual</div>
+          <div className="mb-4 text-sm text-slate-300">
+            Use esta rota apenas para tokens de longa duração ou integrações administrativas.
           </div>
-        ) : null}
+          <Textarea
+            value={manualToken}
+            onChange={(e) => setManualToken(e.target.value)}
+            placeholder="Cole aqui o access token da Meta"
+            className="min-h-28 border-slate-700 bg-slate-950/70 text-slate-100 placeholder:text-slate-500"
+          />
+          <div className="mt-4 flex justify-end">
+            <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onManualConnect} disabled={manualDisabled}>
+              Validar e conectar token
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )
 }
 
-export function MetaAdsManualTokenPanel({
-  manualToken,
-  setManualToken,
-  onConnect,
-  disabled,
+export function MetaAdsConnectionProgress({
+  connected,
+  hasSelectedAccount,
 }: {
-  manualToken: string
-  setManualToken: (value: string) => void
-  onConnect: () => void
-  disabled: boolean
+  connected: boolean
+  hasSelectedAccount: boolean
 }) {
   return (
-    <Card className="glass-card border-white/10">
-      <CardHeader>
-        <CardTitle>2. Ou conecte por token manual</CardTitle>
-        <CardDescription>
-          Use esta rota para tokens de longa duração ou acessos administrativos em ambientes mais controlados.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <Textarea
-          value={manualToken}
-          onChange={(e) => setManualToken(e.target.value)}
-          placeholder="Cole aqui o access token da Meta"
-          className="min-h-28"
-        />
-        <div className="flex justify-end">
-          <Button onClick={onConnect} disabled={disabled}>
-            Validar e conectar token
-          </Button>
+    <Card className={subtlePanelClass}>
+      <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-1">
+          <div className="text-sm font-medium text-white">
+            {connected ? 'Conta Meta conectada.' : 'Comece conectando a Meta ao CRM.'}
+          </div>
+          <div className="text-sm text-slate-300">
+            {connected
+              ? hasSelectedAccount
+                ? 'Conexão concluída. Agora o módulo libera visão geral, inventário e tracking.'
+                : 'Próximo passo: selecione qual conta de anúncios deve alimentar o CRM.'
+              : 'Depois da autorização, escolha a conta de anúncios correta para liberar as demais áreas.'}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+          <span className={connected ? 'text-emerald-300' : ''}>1. Conectar</span>
+          <span className={hasSelectedAccount ? 'text-emerald-300' : ''}>2. Escolher conta</span>
+          <span className={hasSelectedAccount ? 'text-emerald-300' : ''}>3. Operar</span>
         </div>
       </CardContent>
     </Card>
@@ -368,23 +341,23 @@ export function MetaAdsAccountsPanel({
   onSelectAccount: (adAccountId: string) => void
 }) {
   return (
-    <Card className="glass-card border-white/10">
+    <Card className={panelClass}>
       <CardHeader>
-        <CardTitle>3. Escolha a conta de anúncios</CardTitle>
-        <CardDescription>
+        <CardTitle>Escolher a conta de anúncios</CardTitle>
+        <CardDescription className="text-slate-300">
           A conta selecionada define qual inventário e qual visão geral alimentarão o CRM daqui em diante.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <MetaAdsPersistentError error={accountsError} onRetry={onRetry} />
         {!connected ? (
-          <div className="text-sm text-blue-100/70">Conecte a Meta primeiro para listar as contas disponíveis.</div>
+          <div className="text-sm text-slate-300">Conecte a Meta primeiro para listar as contas disponíveis.</div>
         ) : accounts.length === 0 ? (
-          <div className="text-sm text-blue-100/70">Nenhuma conta encontrada para este usuário/token.</div>
+          <div className="text-sm text-slate-300">Nenhuma conta encontrada para este usuário/token.</div>
         ) : (
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="border-slate-800">
                 <TableHead>Conta</TableHead>
                 <TableHead>Nome</TableHead>
                 <TableHead>Moeda</TableHead>
@@ -394,16 +367,16 @@ export function MetaAdsAccountsPanel({
             </TableHeader>
             <TableBody>
               {accounts.map((account) => (
-                <TableRow key={account.id}>
-                  <TableCell className="font-mono">{account.id}</TableCell>
-                  <TableCell>{account.name || '—'}</TableCell>
-                  <TableCell>{account.currency || '—'}</TableCell>
-                  <TableCell>{account.timezone_name || '—'}</TableCell>
+                <TableRow key={account.id} className="border-slate-800/80">
+                  <TableCell className="font-mono text-slate-200">{account.id}</TableCell>
+                  <TableCell className="text-slate-100">{account.name || '—'}</TableCell>
+                  <TableCell className="text-slate-300">{account.currency || '—'}</TableCell>
+                  <TableCell className="text-slate-300">{account.timezone_name || '—'}</TableCell>
                   <TableCell className="text-right">
                     {account.isSelected ? (
-                      <Badge className="bg-emerald-500/15 text-emerald-200 border border-emerald-500/30">Selecionada</Badge>
+                      <Badge className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-100">Selecionada</Badge>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => onSelectAccount(account.id)} disabled={refreshing}>
+                      <Button size="sm" variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={() => onSelectAccount(account.id)} disabled={refreshing}>
                         Selecionar
                       </Button>
                     )}
@@ -442,66 +415,66 @@ export function MetaAdsOverviewPanel({
     <>
       <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Spend (7 dias)</CardDescription>
+            <CardDescription className="text-slate-400">Spend (7 dias)</CardDescription>
             <CardTitle>{formatCurrency(summary?.spend ?? 0, selectedAccount.currency || 'USD')}</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Impressões</CardDescription>
+            <CardDescription className="text-slate-400">Impressões</CardDescription>
             <CardTitle>{formatNumber(summary?.impressions ?? 0)}</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Clicks</CardDescription>
+            <CardDescription className="text-slate-400">Clicks</CardDescription>
             <CardTitle>{formatNumber(summary?.clicks ?? 0)}</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Campanhas ativas</CardDescription>
+            <CardDescription className="text-slate-400">Campanhas ativas</CardDescription>
             <CardTitle>{formatNumber(summary?.activeCampaigns ?? 0)}</CardTitle>
           </CardHeader>
         </Card>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Campanhas</CardDescription>
+            <CardDescription className="text-slate-400">Campanhas</CardDescription>
             <CardTitle>{campaignCount}</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Conjuntos</CardDescription>
+            <CardDescription className="text-slate-400">Conjuntos</CardDescription>
             <CardTitle>{adSetCount}</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Anúncios</CardDescription>
+            <CardDescription className="text-slate-400">Anúncios</CardDescription>
             <CardTitle>{adCount}</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="glass-card border-white/10">
+        <Card className={panelClass}>
           <CardHeader>
-            <CardDescription>Criativos</CardDescription>
+            <CardDescription className="text-slate-400">Criativos</CardDescription>
             <CardTitle>{creativeCount}</CardTitle>
           </CardHeader>
         </Card>
       </div>
 
-      <Card className="glass-card border-white/10">
+      <Card className={panelClass}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <PresentationChart className="h-5 w-5 text-blue-300" />
+            <PresentationChart className="h-5 w-5 text-sky-300" />
             Tendência de gasto
           </CardTitle>
-          <CardDescription>Últimos 7 dias da conta selecionada.</CardDescription>
+          <CardDescription className="text-slate-300">Últimos 7 dias da conta selecionada.</CardDescription>
         </CardHeader>
         <CardContent className="h-72">
           <ResponsiveContainer width="100%" height="100%">
@@ -530,20 +503,20 @@ export function MetaAdsInventoryPanel({
   return (
     <>
       <MetaAdsPersistentError error={inventoryError} onRetry={onRetry} />
-      <Card className="glass-card border-white/10">
+      <Card className={panelClass}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <FadersHorizontal className="h-5 w-5 text-blue-300" />
+            <FadersHorizontal className="h-5 w-5 text-sky-300" />
             Campanhas
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="text-slate-300">
             Relação da conta selecionada com total de conjuntos e anúncios por campanha.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="border-slate-800">
                 <TableHead>Campanha</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Objetivo</TableHead>
@@ -553,7 +526,7 @@ export function MetaAdsInventoryPanel({
             </TableHeader>
             <TableBody>
               {inventory.campaigns.map((campaign) => (
-                <TableRow key={campaign.id}>
+                <TableRow key={campaign.id} className="border-slate-800/80">
                   <TableCell>
                     <div className="space-y-1">
                       <div className="font-medium text-white">{campaign.name || campaign.id}</div>
@@ -575,17 +548,17 @@ export function MetaAdsInventoryPanel({
         </CardContent>
       </Card>
 
-      <Card className="glass-card border-white/10">
+      <Card className={panelClass}>
         <CardHeader>
           <CardTitle>Anúncios</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-slate-300">
             Mapa direto de anúncios com campanha, conjunto e criativo associados.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="border-slate-800">
                 <TableHead>Anúncio</TableHead>
                 <TableHead>Campanha</TableHead>
                 <TableHead>Conjunto</TableHead>
@@ -595,7 +568,7 @@ export function MetaAdsInventoryPanel({
             </TableHeader>
             <TableBody>
               {inventory.ads.map((ad: any) => (
-                <TableRow key={ad.id}>
+                <TableRow key={ad.id} className="border-slate-800/80">
                   <TableCell>
                     <div className="space-y-1">
                       <div className="font-medium text-white">{ad.name || ad.id}</div>
@@ -617,19 +590,19 @@ export function MetaAdsInventoryPanel({
         </CardContent>
       </Card>
 
-      <Card className="glass-card border-white/10">
+      <Card className={panelClass}>
         <CardHeader>
           <CardTitle>Criativos</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-slate-300">
             Criativos deduplicados a partir dos anúncios retornados pela Meta para a conta selecionada.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {inventory.creatives.length === 0 ? (
-            <div className="text-sm text-blue-100/70">Nenhum criativo encontrado.</div>
+            <div className="text-sm text-slate-300">Nenhum criativo encontrado.</div>
           ) : (
             inventory.creatives.map((creative: any) => (
-              <div key={creative.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div key={creative.id} className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
                 {creative.thumbnailUrl ? (
                   <img
                     src={creative.thumbnailUrl}
@@ -639,9 +612,9 @@ export function MetaAdsInventoryPanel({
                 ) : null}
                 <div className="space-y-1">
                   <div className="font-medium text-white">{creative.name || creative.id}</div>
-                  <div className="font-mono text-xs text-blue-100/60">{creative.id}</div>
-                  <div className="text-xs text-blue-100/70">Campanha: {creative.campaignId || '—'}</div>
-                  <div className="text-xs text-blue-100/70">Anúncio: {creative.adName || creative.adId || '—'}</div>
+                  <div className="font-mono text-xs text-slate-400">{creative.id}</div>
+                  <div className="text-xs text-slate-300">Campanha: {creative.campaignId || '—'}</div>
+                  <div className="text-xs text-slate-300">Anúncio: {creative.adName || creative.adId || '—'}</div>
                 </div>
               </div>
             ))

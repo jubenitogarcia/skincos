@@ -2,200 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
+import { getMetaTrackingLocalOverview, isMetaTrackingLocalMockEnabled } from '@/metaTrackingLocalMock'
 import { Progress } from '@/progress'
 import { ChartBar, CheckCircle, CirclesThreePlus, Funnel, LinkBreak, Spinner, WarningCircle, WhatsappLogo } from '@phosphor-icons/react'
-
-type TrackingOverviewResponse = {
-  ok: boolean
-  partial?: boolean
-  warnings?: string[]
-  generatedAt?: number
-  window?: { days: number; sinceIso: string }
-  funnel?: {
-    siteConfirmedBookings: number
-    siteWhatsappClicks: number
-    crmAttributedConversations: number
-    crmAttributedAppointments: number
-  }
-  coverage?: {
-    confirmedBookings: number
-    whatsappClicks: number
-    trackingContext: number
-    metaEventId: number
-    facebookIds: number
-    marketingConsent: number
-    analyticsConsent: number
-    whatsappTracking: number
-    scheduleDelivery: number
-    contactDelivery: number
-  }
-  previousCoverage?: {
-    trackingContext: number
-    facebookIds: number
-    marketingConsent: number
-  }
-  alerts?: Array<{
-    severity: 'critical' | 'warning'
-    code: string
-    title: string
-    message: string
-  }>
-  health?: {
-    status: 'healthy' | 'degraded' | 'critical'
-    label: string
-    summary: string
-  }
-  reconciliation?: {
-    buckets?: Array<{
-      bucket: 'sem_origem' | 'origem_first_party' | 'origem_meta_completa'
-      label: string
-      count: number
-      percent: number
-    }>
-    incompleteBookings?: Array<{
-      id: string
-      createdAtMs: number
-      unitSlug: string
-      patient: string | null
-      utmSource: string | null
-      utmCampaign: string | null
-      landingPage: string | null
-      metaEventId: string | null
-      hasFacebookIds: boolean
-      coverageBucket: string
-      incompleteCauses: string[]
-      primaryCause: string
-      scheduleStatus: string | null
-    }>
-    retryCandidates?: Array<{
-      id: string
-      createdAtMs: number
-      eventName: string
-      eventId: string
-      bookingId: string | null
-      waClickId: string | null
-      httpStatus: number | null
-      errorMessage: string | null
-      normalizedReason: string
-    }>
-  }
-  governance?: {
-    campaignRule: string
-    validExamples: string[]
-    invalidExamples: string[]
-    crossDomainAllowlist: Array<{
-      host: string
-      purpose: string
-      allowedFromPublicSite: boolean
-    }>
-  }
-  validationCadence?: {
-    smoke: string
-    functional: string
-    coverageAudit: string
-    recurringChecks: string[]
-  }
-  whatsappContract?: {
-    status: string
-    lifecycle: string[]
-    description: string
-  }
-  website?: {
-    available: boolean
-    error?: string
-    sourceUrl?: string
-    data?: {
-      summary?: Record<string, number>
-      topSources?: Array<{ utmSource: string; count: number }>
-      topCampaigns?: Array<{ utmCampaign: string; count: number }>
-      byUnit?: Array<{ unitSlug: string; count: number }>
-      recentBookings?: Array<{
-        id: string
-        createdAtMs: number
-        unitSlug: string
-        doctorSlug: string
-        serviceId: string
-        patient: string | null
-        whatsapp: string | null
-        metaEventId: string | null
-        marketingConsent: boolean
-        analyticsConsent: boolean
-        utmSource: string | null
-        utmCampaign: string | null
-        utmMedium: string | null
-        landingPage: string | null
-        hasFacebookIds: boolean
-      }>
-      recentWhatsappClicks?: Array<{
-        id: string
-        createdAtMs: number
-        eventId: string
-        waClickId: string
-        placement: string | null
-        source: string | null
-        unitSlug: string | null
-        doctorName: string | null
-        bookingId: string | null
-        pagePath: string | null
-        utmSource: string | null
-        utmCampaign: string | null
-      }>
-      recentCapiIssues?: Array<{
-        id: string
-        createdAtMs: number
-        eventName: string
-        eventId: string
-        bookingId: string | null
-        waClickId: string | null
-        httpStatus: number | null
-        errorMessage: string | null
-        normalizedReason?: string
-        retryable?: boolean
-      }>
-    }
-  }
-  previousWebsite?: {
-    available: boolean
-    error?: string
-  }
-  whatsapp?: {
-    available: boolean
-    error?: string
-    data?: {
-      summary?: Record<string, number>
-      stages?: Array<{ funnelStatus: string; count: number }>
-      topSources?: Array<{ utmSource: string; count: number }>
-      topCampaigns?: Array<{ utmCampaign: string; count: number }>
-      recentConversations?: Array<{
-        id: string
-        unitSlug: string
-        waClickId: string
-        funnelStatus: string
-        needsHuman: boolean
-        updatedAt: string
-        lastMessageAt: string | null
-        phone: string | null
-        externalId: string | null
-        utmSource: string | null
-        utmCampaign: string | null
-      }>
-      recentAppointments?: Array<{
-        id: string
-        unitSlug: string | null
-        waClickId: string
-        status: string
-        startAt: string | null
-        createdAt: string
-        phone: string | null
-        externalId: string | null
-        utmSource: string | null
-        utmCampaign: string | null
-      }>
-    }
-  }
-}
+import type { TrackingOverviewResponse } from '@/metaTrackingLocalMock'
 
 const WINDOW_OPTIONS = [7, 30, 60]
+const trackingPanelClass = 'glass-card border-slate-800/80 bg-slate-950/65 shadow-[0_20px_80px_rgba(2,6,23,0.35)]'
+const trackingInsetClass = 'rounded-2xl border border-slate-800/80 bg-slate-900/70'
 
 function formatNumber(value: number | string | null | undefined): string {
   const parsed = typeof value === 'number' ? value : Number(value || 0)
@@ -246,12 +60,12 @@ function MetricCard({
           : 'text-white'
 
   return (
-    <Card className="glass-card border-white/10">
+    <Card className={trackingPanelClass}>
       <CardContent className="pt-6">
         <div className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.2em] text-blue-100/60">{title}</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400/80">{title}</p>
           <div className={`text-3xl font-semibold ${toneClass}`}>{value}</div>
-          <p className="text-sm text-blue-100/70">{hint}</p>
+          <p className="text-sm text-slate-300">{hint}</p>
         </div>
       </CardContent>
     </Card>
@@ -268,17 +82,17 @@ function SmallList({
   emptyLabel: string
 }) {
   return (
-    <Card className="glass-card border-white/10">
+    <Card className={trackingPanelClass}>
       <CardHeader>
         <CardTitle className="text-base text-white">{title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {items.length === 0 ? (
-          <div className="text-sm text-blue-100/60">{emptyLabel}</div>
+          <div className="text-sm text-slate-400">{emptyLabel}</div>
         ) : (
           items.map((item) => (
             <div key={`${item.label}-${item.value}`} className="flex items-center justify-between gap-3 text-sm">
-              <span className="truncate text-blue-100/80">{item.label}</span>
+              <span className="truncate text-slate-300">{item.label}</span>
               <span className="font-medium text-white">{item.value}</span>
             </div>
           ))
@@ -294,10 +108,10 @@ function AlertPanel({
   alerts: Array<{ severity: 'critical' | 'warning'; code: string; title: string; message: string }>
 }) {
   return (
-    <Card className="glass-card border-white/10">
+    <Card className={trackingPanelClass}>
       <CardHeader>
         <CardTitle className="text-white">Alertas operacionais</CardTitle>
-        <CardDescription className="text-blue-100/70">
+        <CardDescription className="text-slate-300">
           Regras automáticas para cobertura, consentimento e falhas de entrega.
         </CardDescription>
       </CardHeader>
@@ -345,6 +159,11 @@ export function MetaTrackingDashboard() {
       setLoading(true)
       setError(null)
       try {
+        if (isMetaTrackingLocalMockEnabled()) {
+          const mockData = getMetaTrackingLocalOverview(days)
+          if (!cancelled) setData(mockData)
+          return
+        }
         const res = await fetch(`/api/tracking/overview?days=${days}&limit=10`, {
           credentials: 'include',
           headers: { accept: 'application/json' },
@@ -479,29 +298,29 @@ export function MetaTrackingDashboard() {
 
   return (
     <div className="space-y-6">
-      <Card className="glass-card border-white/10 overflow-hidden">
-        <CardHeader className="border-b border-white/10 bg-white/[0.03]">
+      <Card className={`${trackingPanelClass} overflow-hidden`}>
+        <CardHeader className="border-b border-slate-800/80 bg-slate-950/70">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-2">
               <CardTitle className="text-2xl text-white flex items-center gap-3">
-                <ChartBar className="h-6 w-6 text-blue-300" />
+                <ChartBar className="h-6 w-6 text-sky-400" />
                 Acompanhamento de Tracking e Conversao
               </CardTitle>
-              <CardDescription className="text-blue-100/70 max-w-3xl">
+              <CardDescription className="max-w-3xl text-slate-300">
                 Painel operacional dos sinais reais do site `espacofacial.com`, com foco em atribuicao, CAPI, booking
                 confirmado e cliques para WhatsApp. A correlacao CRM/n8n fica secundaria enquanto essa camada nao for a
                 prioridade.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] p-1">
+              <div className="flex items-center gap-2 rounded-full border border-slate-800/80 bg-slate-900/70 p-1">
                 {WINDOW_OPTIONS.map((option) => (
                   <button
                     key={option}
                     type="button"
                     onClick={() => setDays(option)}
                     className={`rounded-full px-3 py-1.5 text-sm transition ${
-                      option === days ? 'bg-white/[0.16] text-white' : 'text-blue-100/70 hover:text-white'
+                      option === days ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                     }`}
                   >
                     {option}d
@@ -510,7 +329,7 @@ export function MetaTrackingDashboard() {
               </div>
               <Button
                 variant="outline"
-                className="border-white/15 bg-white/[0.04] text-blue-100 hover:bg-white/[0.08] hover:text-white"
+                className="border-slate-700 bg-slate-900/70 text-slate-100 hover:bg-slate-800"
                 onClick={() => setRefreshTick((value) => value + 1)}
               >
                 {loading ? <Spinner className="mr-2 h-4 w-4 animate-spin" /> : <CirclesThreePlus className="mr-2 h-4 w-4" />}
@@ -531,14 +350,14 @@ export function MetaTrackingDashboard() {
           ) : null}
 
           {data?.warnings && data.warnings.length > 0 ? (
-            <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-5 text-amber-100">
+            <div className="rounded-2xl border border-amber-400/30 bg-amber-500/12 p-5 text-amber-100">
               <div className="flex items-center gap-2 font-medium">
                 <WarningCircle className="h-5 w-5" />
                 Painel parcial
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {data.warnings.map((warning) => (
-                  <Badge key={warning} variant="outline" className="border-amber-300/30 text-amber-100">
+                  <Badge key={warning} variant="outline" className="border-amber-300/30 bg-amber-500/10 text-amber-50">
                     {warning}
                   </Badge>
                 ))}
@@ -579,12 +398,12 @@ export function MetaTrackingDashboard() {
           ) : null}
 
           {!whatsappAttributionReady ? (
-            <div className="rounded-2xl border border-blue-400/30 bg-blue-500/10 p-5 text-blue-100">
+            <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-5 text-sky-100">
               <div className="flex items-center gap-2 font-medium">
                 <CheckCircle className="h-5 w-5" />
                 Modo foco site ativo
               </div>
-              <p className="mt-2 text-sm text-blue-100/80">
+              <p className="mt-2 text-sm text-sky-100/85">
                 O dashboard está priorizando leitura do `espacofacial.com`. A parte de conversa/agendamento atribuídos
                 no CRM via WhatsApp permanece disponível, mas ainda sem volume integrado.
               </p>
@@ -592,20 +411,20 @@ export function MetaTrackingDashboard() {
           ) : null}
 
           <div className="grid gap-4 xl:grid-cols-4">
-            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Agendamentos confirmados no site</div>
+            <div className={`${trackingInsetClass} p-4`}>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400/80">Agendamentos confirmados no site</div>
               <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(confirmedBookings)}</div>
             </div>
-            <div className="rounded-2xl border border-blue-400/20 bg-blue-500/10 p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Clique WhatsApp no site</div>
+            <div className={`${trackingInsetClass} p-4`}>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400/80">Clique WhatsApp no site</div>
               <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(siteWhatsappClicks)}</div>
             </div>
-            <div className="rounded-2xl border border-fuchsia-400/20 bg-fuchsia-500/10 p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Schedule via CAPI OK</div>
+            <div className={`${trackingInsetClass} p-4`}>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400/80">Schedule via CAPI OK</div>
               <div className="mt-2 text-2xl font-semibold text-white">{formatNumber(websiteSummary.capiScheduleOk || 0)}</div>
             </div>
-            <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-100/60">Cobertura tracking_context</div>
+            <div className={`${trackingInsetClass} p-4`}>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400/80">Cobertura tracking_context</div>
               <div className="mt-2 text-2xl font-semibold text-white">{siteCoverage.tracking}%</div>
             </div>
           </div>

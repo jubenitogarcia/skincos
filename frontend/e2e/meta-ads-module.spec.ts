@@ -42,8 +42,10 @@ test.describe('meta ads', () => {
     await openMetaAds(page)
 
     await expect(page.locator('body')).toContainText('Faça login no CRM para continuar', { timeout: 30000 })
-    await expect(page.getByRole('button', { name: 'Conectar via Facebook' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Conectar com Facebook' })).toBeDisabled()
     await expect(page.getByText('UNAUTHORIZED · HTTP 401')).toBeVisible()
+    await expect(page.getByText('Saúde da integração')).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: 'Visão geral' })).toHaveCount(0)
   })
 
   test('surfaces connection health, selected account and inventory in a connected flow', async ({ page }) => {
@@ -167,9 +169,11 @@ test.describe('meta ads', () => {
     await expect(page.getByText('Conta ativa: Conta Principal')).toBeVisible()
     await expect(page.getByText('Tendência de gasto')).toBeVisible()
 
-    await page.getByRole('tab', { name: 'Conexão' }).click()
-    await expect(page.getByText('Saúde da integração')).toBeVisible()
-    await expect(page.getByText('Usuário Meta conectado:')).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Conexão' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: 'Visão geral' })).toBeVisible()
+    await page.getByRole('button', { name: 'Gerenciar conexão' }).click()
+    await expect(page.getByText('Escolher a conta de anúncios')).toBeVisible()
+    await expect(page.getByText('Usuário Meta: Jubenito Garcia')).toBeVisible()
 
     await page.getByRole('tab', { name: 'Inventário' }).click()
     await expect(page.locator('body')).toContainText('Criativo 1')
