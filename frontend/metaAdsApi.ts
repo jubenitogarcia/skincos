@@ -1,4 +1,16 @@
 import { getCsrfToken } from '@/csrf'
+import {
+  connectMetaAdsManualLocal,
+  disconnectMetaAdsLocal,
+  getMetaAdsLocalInventory,
+  getMetaAdsLocalStatus,
+  getMetaAdsLocalSummary,
+  getMetaAdsLocalTrend,
+  isMetaAdsLocalMockEnabled,
+  listMetaAdsLocalAccounts,
+  selectMetaAdsLocalAccount,
+  simulateMetaAdsOAuthConnect,
+} from '@/metaAdsLocalMock'
 import { normalizeMetaAdsApiError } from '@/metaAdsState'
 import type {
   MetaAdAccount,
@@ -44,26 +56,39 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const metaAdsApi = {
-  status: () => request<MetaAdsStatusResponse>('/status'),
+  isLocalMockMode: () => isMetaAdsLocalMockEnabled(),
+  simulateOAuthConnect: () => simulateMetaAdsOAuthConnect(),
+  status: () => (isMetaAdsLocalMockEnabled() ? getMetaAdsLocalStatus() : request<MetaAdsStatusResponse>('/status')),
   oauthStartUrl: () => `${META_ADS_API_URL}/oauth/start`,
   connectManual: (payload: { accessToken: string }) =>
-    request('/connect/manual', { method: 'POST', body: JSON.stringify(payload) }),
-  disconnect: () => request('/disconnect', { method: 'POST' }),
-  listAdAccounts: () => request<{
-    ok: boolean
-    connected: boolean
-    selectedAdAccountId: string | null
-    accounts: MetaAdAccount[]
-  }>('/ad-accounts'),
+    isMetaAdsLocalMockEnabled()
+      ? connectMetaAdsManualLocal()
+      : request('/connect/manual', { method: 'POST', body: JSON.stringify(payload) }),
+  disconnect: () => (isMetaAdsLocalMockEnabled() ? disconnectMetaAdsLocal() : request('/disconnect', { method: 'POST' })),
+  listAdAccounts: () =>
+    isMetaAdsLocalMockEnabled()
+      ? listMetaAdsLocalAccounts()
+      : request<{
+          ok: boolean
+          connected: boolean
+          selectedAdAccountId: string | null
+          accounts: MetaAdAccount[]
+        }>('/ad-accounts'),
   selectAdAccount: (payload: { adAccountId: string }) =>
-    request('/ad-accounts/select', { method: 'POST', body: JSON.stringify(payload) }),
+    isMetaAdsLocalMockEnabled()
+      ? selectMetaAdsLocalAccount(payload.adAccountId)
+      : request('/ad-accounts/select', { method: 'POST', body: JSON.stringify(payload) }),
   summary: (params?: { since?: string; until?: string }) => {
     const search = new URLSearchParams(params as any).toString()
-    return request<MetaAdsSummaryResponse>(`/summary${search ? `?${search}` : ''}`)
+    return isMetaAdsLocalMockEnabled()
+      ? getMetaAdsLocalSummary()
+      : request<MetaAdsSummaryResponse>(`/summary${search ? `?${search}` : ''}`)
   },
   trend: (params?: { since?: string; until?: string }) => {
     const search = new URLSearchParams(params as any).toString()
-    return request<MetaAdsTrendPoint[]>(`/trend${search ? `?${search}` : ''}`)
+    return isMetaAdsLocalMockEnabled()
+      ? getMetaAdsLocalTrend()
+      : request<MetaAdsTrendPoint[]>(`/trend${search ? `?${search}` : ''}`)
   },
-  inventory: () => request<MetaInventoryResponse>('/inventory'),
+  inventory: () => (isMetaAdsLocalMockEnabled() ? getMetaAdsLocalInventory() : request<MetaInventoryResponse>('/inventory')),
 }

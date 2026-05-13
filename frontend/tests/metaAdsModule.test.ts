@@ -149,7 +149,6 @@ describe('Meta Ads state helpers', () => {
     expect(health).toMatchObject({
       mode: 'connected-no-account',
       tone: 'warning',
-      ctaTab: 'connect',
     })
     expect(health.description).toContain('Selecione a conta de anúncios')
   })

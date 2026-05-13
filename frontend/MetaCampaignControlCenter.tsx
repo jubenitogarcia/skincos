@@ -8,13 +8,12 @@ import { metaAdsApi } from '@/metaAdsApi'
 import {
   MetaAdsAccountsPanel,
   MetaAdsConnectionPanel,
+  MetaAdsConnectionProgress,
   MetaAdsEmptyState,
   MetaAdsHealthBanner,
   MetaAdsInventoryPanel,
-  MetaAdsManualTokenPanel,
   MetaAdsOverviewPanel,
   MetaAdsPersistentError,
-  MetaAdsSessionFacts,
   MetaAdsStatusHero,
   MetaAdsWorkspaceTabs,
 } from '@/metaAdsPanels'
@@ -171,12 +170,18 @@ export function MetaCampaignControlCenter() {
   }, [])
 
   useEffect(() => {
-    if ((connectionMode === 'disconnected' || connectionMode === 'unauthorized' || connectionMode === 'connected-no-account' || connectionMode === 'forbidden' || connectionMode === 'misconfigured')
-      && (activeTab === 'overview' || activeTab === 'inventory')) {
+    if (
+      (connectionMode === 'disconnected' ||
+        connectionMode === 'unauthorized' ||
+        connectionMode === 'connected-no-account' ||
+        connectionMode === 'forbidden' ||
+        connectionMode === 'misconfigured') &&
+      activeTab !== 'connect'
+    ) {
       setActiveTab('connect')
       return
     }
-    if (connectionMode !== 'connected-ready') {
+    if (connectionMode !== 'connected-ready' && connectionMode !== 'degraded') {
       setDidAutofocusReadyFlow(false)
       return
     }
@@ -220,6 +225,22 @@ export function MetaCampaignControlCenter() {
   }
 
   const handleOpenOAuth = () => {
+    if (metaAdsApi.isLocalMockMode()) {
+      setRefreshing(true)
+      metaAdsApi
+        .simulateOAuthConnect()
+        .then(() => refreshConnectedState())
+        .then(() => {
+          setActiveTab('connect')
+          toast.success('Conexão Meta Ads simulada no ambiente local')
+        })
+        .catch((error: any) => {
+          setStatusError(error)
+          toast.error(error?.message || 'Falha ao iniciar a simulação local do Meta Ads')
+        })
+        .finally(() => setRefreshing(false))
+      return
+    }
     const oauthUrl = metaAdsApi.oauthStartUrl()
     const width = 620
     const height = 760
@@ -300,9 +321,11 @@ export function MetaCampaignControlCenter() {
     connectionMode === 'misconfigured'
   const scopesLabel = status?.connection.scopes?.join(', ') || 'ads_read, ads_management, business_management'
   const connectedUser = status?.connection.metaUserName || status?.connection.metaUserId || null
+  const showWorkspaceTabs = connectionMode === 'connected-ready' || connectionMode === 'degraded'
+  const showAccountSelection = Boolean(status?.connection.connected)
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="meta-ads-surface space-y-6 animate-fade-in">
       <MetaAdsStatusHero
         connected={Boolean(status?.connection.connected)}
         refreshing={loading || refreshing}
@@ -310,104 +333,137 @@ export function MetaCampaignControlCenter() {
         onDisconnect={handleDisconnect}
       />
 
-      <MetaAdsHealthBanner
-        health={healthState}
-        statusUpdatedAt={status?.connection.updatedAt}
-        selectedAccount={selectedAccount}
-        onNavigate={handleNavigateTab}
-      />
-
       <MetaAdsPersistentError error={statusError} onRetry={handleRefresh} />
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as MetaAdsTab)} className="space-y-6">
-        <MetaAdsWorkspaceTabs />
+      {!showWorkspaceTabs ? (
+        <div className="space-y-6">
+          <MetaAdsConnectionProgress
+            connected={Boolean(status?.connection.connected)}
+            hasSelectedAccount={Boolean(selectedAccount)}
+          />
+          <MetaAdsConnectionPanel
+            scopesLabel={scopesLabel}
+            connectedUser={connectedUser}
+            connectDisabled={connectActionsDisabled}
+            onOAuth={handleOpenOAuth}
+            manualToken={manualToken}
+            setManualToken={setManualToken}
+            onManualConnect={handleManualConnect}
+            manualDisabled={refreshing || !manualToken.trim()}
+          />
+          {showAccountSelection ? (
+            <MetaAdsHealthBanner
+              health={healthState}
+              statusUpdatedAt={status?.connection.updatedAt}
+              selectedAccount={selectedAccount}
+              onNavigate={handleNavigateTab}
+            />
+          ) : null}
+          {showAccountSelection ? (
+            <MetaAdsAccountsPanel
+              connected={Boolean(status?.connection.connected)}
+              accounts={accounts}
+              refreshing={refreshing}
+              accountsError={accountsError}
+              onRetry={handleRefresh}
+              onSelectAccount={handleSelectAccount}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as MetaAdsTab)} className="space-y-6">
+          <MetaAdsHealthBanner
+            health={healthState}
+            statusUpdatedAt={status?.connection.updatedAt}
+            selectedAccount={selectedAccount}
+            onNavigate={handleNavigateTab}
+          />
+          <MetaAdsWorkspaceTabs />
 
-        <TabsContent value="connect" className="space-y-6">
-          <MetaAdsSessionFacts status={status} selectedAccount={selectedAccount} />
-
-          <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <TabsContent value="connect" className="space-y-6">
+            <MetaAdsConnectionProgress
+              connected={Boolean(status?.connection.connected)}
+              hasSelectedAccount={Boolean(selectedAccount)}
+            />
             <MetaAdsConnectionPanel
               scopesLabel={scopesLabel}
               connectedUser={connectedUser}
               connectDisabled={connectActionsDisabled}
               onOAuth={handleOpenOAuth}
-            />
-            <MetaAdsManualTokenPanel
               manualToken={manualToken}
               setManualToken={setManualToken}
-              onConnect={handleManualConnect}
-              disabled={refreshing || !manualToken.trim()}
+              onManualConnect={handleManualConnect}
+              manualDisabled={refreshing || !manualToken.trim()}
             />
-          </div>
-
-          <MetaAdsAccountsPanel
-            connected={Boolean(status?.connection.connected)}
-            accounts={accounts}
-            refreshing={refreshing}
-            accountsError={accountsError}
-            onRetry={handleRefresh}
-            onSelectAccount={handleSelectAccount}
-          />
-        </TabsContent>
-
-        <TabsContent value="overview" className="space-y-6">
-          {!status?.connection.connected ? (
-            <MetaAdsEmptyState
-              message="Conecte uma conta Meta Ads para carregar spend, tendência e inventário."
-              actionLabel="Ir para conexão"
-              onAction={() => setActiveTab('connect')}
-            />
-          ) : !selectedAccount ? (
-            <MetaAdsEmptyState
-              message="Escolha uma conta de anúncios na aba Conexão para liberar a visão geral."
-              actionLabel="Selecionar conta"
-              onAction={() => setActiveTab('connect')}
-            />
-          ) : (
-            <MetaAdsOverviewPanel
-              selectedAccount={selectedAccount}
-              summary={summary}
-              trend={trend}
-              inventory={inventory}
-              overviewError={overviewError}
+            <MetaAdsAccountsPanel
+              connected={Boolean(status?.connection.connected)}
+              accounts={accounts}
+              refreshing={refreshing}
+              accountsError={accountsError}
               onRetry={handleRefresh}
+              onSelectAccount={handleSelectAccount}
             />
-          )}
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="inventory" className="space-y-6">
-          {!status?.connection.connected ? (
-            <MetaAdsEmptyState
-              message="Conecte uma conta Meta Ads para liberar o inventário."
-              actionLabel="Ir para conexão"
-              onAction={() => setActiveTab('connect')}
-            />
-          ) : !selectedAccount ? (
-            <MetaAdsEmptyState
-              message="Selecione uma conta de anúncios para carregar campanhas, conjuntos, anúncios e criativos."
-              actionLabel="Selecionar conta"
-              onAction={() => setActiveTab('connect')}
-            />
-          ) : !inventory ? (
-            <MetaAdsEmptyState
-              message="Ainda não foi possível carregar o inventário desta conta."
-              actionLabel="Atualizar agora"
-              onAction={handleRefresh}
-            />
-          ) : (
-            <MetaAdsInventoryPanel inventory={inventory} inventoryError={inventoryError} onRetry={handleRefresh} />
-          )}
-        </TabsContent>
+          <TabsContent value="overview" className="space-y-6">
+            {!status?.connection.connected ? (
+              <MetaAdsEmptyState
+                message="Conecte uma conta Meta Ads para carregar spend, tendência e inventário."
+                actionLabel="Ir para conexão"
+                onAction={() => setActiveTab('connect')}
+              />
+            ) : !selectedAccount ? (
+              <MetaAdsEmptyState
+                message="Escolha uma conta de anúncios para liberar a visão geral."
+                actionLabel="Selecionar conta"
+                onAction={() => setActiveTab('connect')}
+              />
+            ) : (
+              <MetaAdsOverviewPanel
+                selectedAccount={selectedAccount}
+                summary={summary}
+                trend={trend}
+                inventory={inventory}
+                overviewError={overviewError}
+                onRetry={handleRefresh}
+              />
+            )}
+          </TabsContent>
 
-        <TabsContent value="tracking" className="space-y-6">
-          <Card className="glass-card border-white/10">
-            <CardContent className="pt-6 text-sm text-blue-100/75">
-              Tracking do site e inventário da conta Meta convivem nesta aba, mas são superfícies diferentes: aqui você acompanha os sinais e eventos do site; em Conexão/Inventário você administra a estrutura da conta Meta.
-            </CardContent>
-          </Card>
-          <MetaTrackingDashboard />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="inventory" className="space-y-6">
+            {!status?.connection.connected ? (
+              <MetaAdsEmptyState
+                message="Conecte uma conta Meta Ads para liberar o inventário."
+                actionLabel="Ir para conexão"
+                onAction={() => setActiveTab('connect')}
+              />
+            ) : !selectedAccount ? (
+              <MetaAdsEmptyState
+                message="Selecione uma conta de anúncios para carregar campanhas, conjuntos, anúncios e criativos."
+                actionLabel="Selecionar conta"
+                onAction={() => setActiveTab('connect')}
+              />
+            ) : !inventory ? (
+              <MetaAdsEmptyState
+                message="Ainda não foi possível carregar o inventário desta conta."
+                actionLabel="Atualizar agora"
+                onAction={handleRefresh}
+              />
+            ) : (
+              <MetaAdsInventoryPanel inventory={inventory} inventoryError={inventoryError} onRetry={handleRefresh} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="tracking" className="space-y-6">
+            <Card className="border-slate-800/80 bg-slate-950/55 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl">
+              <CardContent className="pt-6 text-sm leading-6 text-slate-300">
+                Tracking do site e inventário da conta Meta convivem nesta aba, mas são superfícies diferentes: aqui você acompanha os sinais e eventos do site; nas etapas anteriores você conecta a conta e escolhe qual estrutura da Meta deve alimentar o CRM.
+              </CardContent>
+            </Card>
+            <MetaTrackingDashboard />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   )
 }

@@ -8,6 +8,9 @@ import { useWebSocket } from '@/useWebSocket'
 import { useKV } from '@/spark-mock'
 import { csrfHeader } from '@/csrf'
 
+const LOCAL_CRM_FOCUS_MODULE = (import.meta as any).env?.VITE_LOCAL_CRM_FOCUS_MODULE || ''
+const SKIP_INSTAGRAM_PREFLIGHT = LOCAL_CRM_FOCUS_MODULE === 'meta-ads'
+
 // =========================
 // Auth
 // =========================
@@ -402,6 +405,10 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isAuthenticated) {
+      setInstagram({ connected: false })
+      return
+    }
+    if (SKIP_INSTAGRAM_PREFLIGHT) {
       setInstagram({ connected: false })
       return
     }

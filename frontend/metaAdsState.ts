@@ -138,8 +138,8 @@ export function buildMetaAdsHealthState({
         ? `Conta selecionada: ${selectedAccount.name || selectedAccount.id}. Use Visão geral, Inventário e Tracking para operar.`
         : 'A integração está conectada e pronta para uso.',
       tone: 'success',
-      ctaLabel: 'Ver visão geral',
-      ctaTab: 'overview',
+      ctaLabel: 'Gerenciar conexão',
+      ctaTab: 'connect',
     }
   }
 
@@ -149,17 +149,13 @@ export function buildMetaAdsHealthState({
       title: 'Conexão ativa, mas falta escolher a conta',
       description: 'O login Meta já está válido. Selecione a conta de anúncios que deve alimentar o CRM.',
       tone: 'warning',
-      ctaLabel: 'Selecionar conta',
-      ctaTab: 'connect',
     }
   }
 
   return {
     mode,
     title: 'Conecte a conta Meta para liberar o módulo',
-    description: 'Comece pela aba Conexão, autorize o Facebook e depois selecione a conta de anúncios.',
+    description: 'Autorize o Facebook, depois escolha a conta de anúncios que deve alimentar o CRM.',
     tone: 'neutral',
-    ctaLabel: 'Conectar agora',
-    ctaTab: 'connect',
   }
 }
