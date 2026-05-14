@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { format, subDays } from 'date-fns'
 import { toast } from 'sonner'
 import { Card, CardContent } from '@/card'
@@ -8,10 +8,10 @@ import { metaAdsApi } from '@/metaAdsApi'
 import {
   MetaAdsAccountsPanel,
   MetaAdsConnectionPanel,
-  MetaAdsConnectionProgress,
   MetaAdsEmptyState,
   MetaAdsHealthBanner,
   MetaAdsInventoryPanel,
+  MetaAdsOAuthDialog,
   MetaAdsOverviewPanel,
   MetaAdsPersistentError,
   MetaAdsStatusHero,
@@ -49,6 +49,11 @@ export function MetaCampaignControlCenter() {
   const [manualToken, setManualToken] = useState('')
   const [activeTab, setActiveTab] = useState<MetaAdsTab>('connect')
   const [didAutofocusReadyFlow, setDidAutofocusReadyFlow] = useState(false)
+  const [oauthDialogOpen, setOauthDialogOpen] = useState(false)
+  const [oauthDialogState, setOauthDialogState] = useState<'opening' | 'opened' | 'blocked' | 'closed' | 'error'>('opening')
+  const [oauthDialogError, setOauthDialogError] = useState<MetaAdsApiError | null>(null)
+  const oauthPopupRef = useRef<Window | null>(null)
+  const oauthPollRef = useRef<number | null>(null)
 
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.isSelected) || null,
@@ -73,6 +78,32 @@ export function MetaCampaignControlCenter() {
     setOverviewError(null)
     setInventory(null)
     setInventoryError(null)
+  }
+
+  const clearOAuthWatcher = () => {
+    if (oauthPollRef.current) {
+      window.clearInterval(oauthPollRef.current)
+      oauthPollRef.current = null
+    }
+  }
+
+  const finalizeOAuthSuccess = () => {
+    cleanupOAuthPopup(true)
+    setOauthDialogError(null)
+    setOauthDialogOpen(false)
+    setOauthDialogState('opening')
+  }
+
+  const cleanupOAuthPopup = (closeWindow = false) => {
+    clearOAuthWatcher()
+    if (closeWindow) {
+      try {
+        oauthPopupRef.current?.close()
+      } catch {
+        // no-op
+      }
+    }
+    oauthPopupRef.current = null
   }
 
   const loadStatus = async () => {
@@ -194,7 +225,29 @@ export function MetaCampaignControlCenter() {
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return
-      if (event.data?.type !== 'meta-ads:connected' || !event.data?.ok) return
+      if (event.data?.type !== 'meta-ads:connected') return
+      if (!event.data?.ok) {
+        const error = event.data?.error && typeof event.data.error === 'object'
+          ? {
+              code: String(event.data.error.code || 'META_OAUTH_CONNECT_FAILED'),
+              message: String(event.data.error.message || 'Falha ao concluir o login da Meta.'),
+              hint: event.data.error.hint ? String(event.data.error.hint) : undefined,
+              retryable: false,
+            }
+          : {
+              code: 'META_OAUTH_CONNECT_FAILED',
+              message: 'Falha ao concluir o login da Meta.',
+              retryable: false,
+            }
+        cleanupOAuthPopup(true)
+        setOauthDialogError(error)
+        setOauthDialogState('error')
+        setOauthDialogOpen(true)
+        setStatusError(error)
+        toast.error(error.message)
+        return
+      }
+      finalizeOAuthSuccess()
       setRefreshing(true)
       refreshConnectedState()
         .then(() => {
@@ -211,6 +264,10 @@ export function MetaCampaignControlCenter() {
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
+  useEffect(() => {
+    return () => cleanupOAuthPopup(true)
+  }, [])
+
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
@@ -222,6 +279,62 @@ export function MetaCampaignControlCenter() {
     } finally {
       setRefreshing(false)
     }
+  }
+
+  const openOAuthPopup = () => {
+    const oauthUrl = metaAdsApi.oauthStartUrl()
+    const width = 620
+    const height = 760
+    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2))
+    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2))
+    const popup = window.open(
+      oauthUrl,
+      'meta-ads-oauth',
+      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
+    )
+    if (!popup) {
+      setOauthDialogError(null)
+      setOauthDialogState('blocked')
+      return false
+    }
+    popup.focus?.()
+    oauthPopupRef.current = popup
+    setOauthDialogError(null)
+    setOauthDialogState('opened')
+    clearOAuthWatcher()
+    oauthPollRef.current = window.setInterval(() => {
+      const currentPopup = oauthPopupRef.current
+      if (!currentPopup) {
+        clearOAuthWatcher()
+        return
+      }
+      if (currentPopup.closed) {
+        cleanupOAuthPopup()
+        setRefreshing(true)
+        refreshConnectedState()
+          .then((nextStatus) => {
+            if (nextStatus.connection.connected) {
+              finalizeOAuthSuccess()
+              setActiveTab('connect')
+              toast.success('Conta Meta Ads conectada')
+              return
+            }
+            setOauthDialogState('closed')
+          })
+          .catch(() => {
+            setOauthDialogState('closed')
+          })
+          .finally(() => setRefreshing(false))
+      }
+    }, 500)
+    return true
+  }
+
+  const handleRetryOAuth = () => {
+    setOauthDialogError(null)
+    setOauthDialogState('opening')
+    setOauthDialogOpen(true)
+    openOAuthPopup()
   }
 
   const handleOpenOAuth = () => {
@@ -241,22 +354,10 @@ export function MetaCampaignControlCenter() {
         .finally(() => setRefreshing(false))
       return
     }
-    const oauthUrl = metaAdsApi.oauthStartUrl()
-    const width = 620
-    const height = 760
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2))
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2))
-    const popup = window.open(
-      oauthUrl,
-      'meta-ads-oauth',
-      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
-    )
-    if (popup) {
-      popup.focus?.()
-      return
-    }
-    toast.info('O navegador bloqueou a janela pop-up. A autenticação será aberta nesta mesma aba.')
-    window.location.assign(oauthUrl)
+    setOauthDialogOpen(true)
+    setOauthDialogError(null)
+    setOauthDialogState('opening')
+    openOAuthPopup()
   }
 
   const handleManualConnect = async () => {
@@ -319,35 +420,29 @@ export function MetaCampaignControlCenter() {
     connectionMode === 'unauthorized' ||
     connectionMode === 'forbidden' ||
     connectionMode === 'misconfigured'
-  const scopesLabel = status?.connection.scopes?.join(', ') || 'ads_read, ads_management, business_management'
-  const oauthMode = status?.oauthMode || 'scopes'
-  const businessLoginConfigId = status?.businessLoginConfigId || null
-  const connectedUser = status?.connection.metaUserName || status?.connection.metaUserId || null
   const showWorkspaceTabs = connectionMode === 'connected-ready' || connectionMode === 'degraded'
   const showAccountSelection = Boolean(status?.connection.connected)
 
   return (
     <div className="meta-ads-surface space-y-6 animate-fade-in">
-      <MetaAdsStatusHero
-        connected={Boolean(status?.connection.connected)}
-        refreshing={loading || refreshing}
-        onRefresh={handleRefresh}
-        onDisconnect={handleDisconnect}
-      />
+      {showWorkspaceTabs ? (
+        <MetaAdsStatusHero
+          connected={Boolean(status?.connection.connected)}
+          refreshing={loading || refreshing}
+          onRefresh={handleRefresh}
+          onDisconnect={handleDisconnect}
+        />
+      ) : null}
 
       <MetaAdsPersistentError error={statusError} onRetry={handleRefresh} />
 
       {!showWorkspaceTabs ? (
         <div className="space-y-6">
-          <MetaAdsConnectionProgress
-            connected={Boolean(status?.connection.connected)}
-            hasSelectedAccount={Boolean(selectedAccount)}
-          />
           <MetaAdsConnectionPanel
-            scopesLabel={scopesLabel}
-            oauthMode={oauthMode}
-            businessLoginConfigId={businessLoginConfigId}
-            connectedUser={connectedUser}
+            connected={Boolean(status?.connection.connected)}
+            refreshing={loading || refreshing}
+            onRefresh={handleRefresh}
+            onDisconnect={status?.connection.connected ? handleDisconnect : undefined}
             connectDisabled={connectActionsDisabled}
             onOAuth={handleOpenOAuth}
             manualToken={manualToken}
@@ -385,15 +480,11 @@ export function MetaCampaignControlCenter() {
           <MetaAdsWorkspaceTabs />
 
           <TabsContent value="connect" className="space-y-6">
-            <MetaAdsConnectionProgress
-              connected={Boolean(status?.connection.connected)}
-              hasSelectedAccount={Boolean(selectedAccount)}
-            />
             <MetaAdsConnectionPanel
-              scopesLabel={scopesLabel}
-              oauthMode={oauthMode}
-              businessLoginConfigId={businessLoginConfigId}
-              connectedUser={connectedUser}
+              connected={Boolean(status?.connection.connected)}
+              refreshing={loading || refreshing}
+              onRefresh={handleRefresh}
+              onDisconnect={status?.connection.connected ? handleDisconnect : undefined}
               connectDisabled={connectActionsDisabled}
               onOAuth={handleOpenOAuth}
               manualToken={manualToken}
@@ -470,6 +561,20 @@ export function MetaCampaignControlCenter() {
           </TabsContent>
         </Tabs>
       )}
+      <MetaAdsOAuthDialog
+        open={oauthDialogOpen}
+        state={oauthDialogState}
+        error={oauthDialogError}
+        onOpenChange={(open) => {
+          setOauthDialogOpen(open)
+          if (!open) {
+            cleanupOAuthPopup(true)
+            setOauthDialogError(null)
+            setOauthDialogState('opening')
+          }
+        }}
+        onRetry={handleRetryOAuth}
+      />
     </div>
   )
 }
