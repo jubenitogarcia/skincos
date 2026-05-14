@@ -12,6 +12,8 @@ const baseStatus = (overrides: Partial<MetaAdsStatusResponse> = {}): MetaAdsStat
   ok: true,
   oauthConfigured: true,
   missingConfig: [],
+  oauthMode: 'scopes',
+  businessLoginConfigId: null,
   connection: {
     connected: false,
     tokenType: null,

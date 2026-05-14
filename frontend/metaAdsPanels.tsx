@@ -222,6 +222,8 @@ export function MetaAdsWorkspaceTabs({
 
 export function MetaAdsConnectionPanel({
   scopesLabel,
+  oauthMode,
+  businessLoginConfigId,
   connectedUser,
   connectDisabled,
   onOAuth,
@@ -231,6 +233,8 @@ export function MetaAdsConnectionPanel({
   manualDisabled,
 }: {
   scopesLabel: string
+  oauthMode: 'scopes' | 'business-config'
+  businessLoginConfigId?: string | null
   connectedUser?: string | null
   connectDisabled: boolean
   onOAuth: () => void
@@ -239,12 +243,15 @@ export function MetaAdsConnectionPanel({
   onManualConnect: () => void
   manualDisabled: boolean
 }) {
+  const isBusinessLogin = oauthMode === 'business-config'
   return (
     <Card className={panelClass}>
       <CardHeader>
         <CardTitle>Conectar a conta Meta</CardTitle>
         <CardDescription className="text-slate-300">
-          Comece pelo Facebook OAuth. Se preferir, use um token manual como rota secundária no mesmo painel.
+          {isBusinessLogin
+            ? 'Use o Facebook Login for Business já configurado no app da Meta. O token manual fica como contingência administrativa.'
+            : 'Comece pelo Facebook OAuth. Se preferir, use um token manual como rota secundária no mesmo painel.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -253,7 +260,9 @@ export function MetaAdsConnectionPanel({
             <div className="space-y-2">
               <div className="text-sm font-medium text-white">Fluxo recomendado</div>
               <div className="text-sm leading-6 text-slate-300">
-                Autorize a Meta dentro do CRM e, se o navegador bloquear pop-up, o processo continua automaticamente nesta mesma aba.
+                {isBusinessLogin
+                  ? 'Autorize a Meta com a configuração empresarial do app. Se o navegador bloquear pop-up, o processo continua automaticamente nesta mesma aba.'
+                  : 'Autorize a Meta dentro do CRM e, se o navegador bloquear pop-up, o processo continua automaticamente nesta mesma aba.'}
               </div>
             </div>
             <Button className="bg-sky-500 text-slate-950 hover:bg-sky-400" onClick={onOAuth} disabled={connectDisabled}>
@@ -262,6 +271,14 @@ export function MetaAdsConnectionPanel({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Badge className="border border-sky-500/30 bg-sky-500/10 text-sky-100">
+            OAuth: {isBusinessLogin ? 'Facebook Login for Business' : 'Facebook Login clássico'}
+          </Badge>
+          {businessLoginConfigId ? (
+            <Badge className="border border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-100">
+              Config ID: {businessLoginConfigId}
+            </Badge>
+          ) : null}
           <Badge className="border border-slate-700 bg-slate-900/60 text-slate-200">
             Escopos: {scopesLabel}
           </Badge>

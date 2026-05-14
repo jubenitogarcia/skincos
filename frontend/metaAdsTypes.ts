@@ -23,6 +23,8 @@ export type MetaAdsStatusResponse = {
   ok: boolean
   oauthConfigured: boolean
   missingConfig: string[]
+  oauthMode: 'scopes' | 'business-config'
+  businessLoginConfigId: string | null
   connection: {
     connected: boolean
     tokenType: 'manual' | 'oauth' | null

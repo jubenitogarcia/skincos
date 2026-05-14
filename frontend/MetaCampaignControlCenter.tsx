@@ -320,6 +320,8 @@ export function MetaCampaignControlCenter() {
     connectionMode === 'forbidden' ||
     connectionMode === 'misconfigured'
   const scopesLabel = status?.connection.scopes?.join(', ') || 'ads_read, ads_management, business_management'
+  const oauthMode = status?.oauthMode || 'scopes'
+  const businessLoginConfigId = status?.businessLoginConfigId || null
   const connectedUser = status?.connection.metaUserName || status?.connection.metaUserId || null
   const showWorkspaceTabs = connectionMode === 'connected-ready' || connectionMode === 'degraded'
   const showAccountSelection = Boolean(status?.connection.connected)
@@ -343,6 +345,8 @@ export function MetaCampaignControlCenter() {
           />
           <MetaAdsConnectionPanel
             scopesLabel={scopesLabel}
+            oauthMode={oauthMode}
+            businessLoginConfigId={businessLoginConfigId}
             connectedUser={connectedUser}
             connectDisabled={connectActionsDisabled}
             onOAuth={handleOpenOAuth}
@@ -387,6 +391,8 @@ export function MetaCampaignControlCenter() {
             />
             <MetaAdsConnectionPanel
               scopesLabel={scopesLabel}
+              oauthMode={oauthMode}
+              businessLoginConfigId={businessLoginConfigId}
               connectedUser={connectedUser}
               connectDisabled={connectActionsDisabled}
               onOAuth={handleOpenOAuth}

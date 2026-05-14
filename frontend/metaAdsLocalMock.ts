@@ -145,6 +145,8 @@ function buildStatus(state: MetaAdsLocalState): MetaAdsStatusResponse {
     ok: true,
     oauthConfigured: true,
     missingConfig: [],
+    oauthMode: 'scopes',
+    businessLoginConfigId: null,
     connection: {
       connected,
       tokenType: connected ? state.tokenType : null,
