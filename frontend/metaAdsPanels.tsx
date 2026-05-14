@@ -4,6 +4,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { TabsList, TabsTrigger } from '@/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
@@ -30,7 +31,6 @@ import {
 } from '@phosphor-icons/react'
 
 const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl'
-const subtlePanelClass = 'border-slate-800/70 bg-slate-950/45 backdrop-blur-xl'
 
 function formatCurrency(value: number, currency = 'USD') {
   try {
@@ -221,10 +221,10 @@ export function MetaAdsWorkspaceTabs({
 }
 
 export function MetaAdsConnectionPanel({
-  scopesLabel,
-  oauthMode,
-  businessLoginConfigId,
-  connectedUser,
+  connected,
+  refreshing,
+  onRefresh,
+  onDisconnect,
   connectDisabled,
   onOAuth,
   manualToken,
@@ -232,10 +232,10 @@ export function MetaAdsConnectionPanel({
   onManualConnect,
   manualDisabled,
 }: {
-  scopesLabel: string
-  oauthMode: 'scopes' | 'business-config'
-  businessLoginConfigId?: string | null
-  connectedUser?: string | null
+  connected: boolean
+  refreshing: boolean
+  onRefresh: () => void
+  onDisconnect?: () => void
   connectDisabled: boolean
   onOAuth: () => void
   manualToken: string
@@ -243,50 +243,66 @@ export function MetaAdsConnectionPanel({
   onManualConnect: () => void
   manualDisabled: boolean
 }) {
-  const isBusinessLogin = oauthMode === 'business-config'
   return (
-    <Card className={panelClass}>
-      <CardHeader>
-        <CardTitle>Conectar a conta Meta</CardTitle>
-        <CardDescription className="text-slate-300">
-          {isBusinessLogin
-            ? 'Use o Facebook Login for Business já configurado no app da Meta. O token manual fica como contingência administrativa.'
-            : 'Comece pelo Facebook OAuth. Se preferir, use um token manual como rota secundária no mesmo painel.'}
-        </CardDescription>
+    <Card className={`overflow-hidden ${panelClass}`}>
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_36%),radial-gradient(circle_at_top_right,rgba(236,72,153,0.14),transparent_28%)]" />
+      <CardHeader className="relative gap-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-3 text-white">
+              <div className="flex items-center gap-2">
+                <FacebookLogo className="h-6 w-6 text-sky-400" />
+                <Target className="h-6 w-6 text-pink-400" />
+              </div>
+              Meta Ads
+            </CardTitle>
+            <CardDescription className="max-w-3xl text-slate-300">
+              Conecte o Gerenciador de Anúncios da Meta ao CRM, escolha a conta certa e acompanhe inventário e tracking sem sair do módulo.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {connected ? (
+              <Badge className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-100">
+                <CheckCircle className="mr-1 h-4 w-4" />
+                Conectado
+              </Badge>
+            ) : (
+              <Badge className="border border-amber-500/30 bg-amber-500/15 text-amber-100">
+                <Link className="mr-1 h-4 w-4" />
+                Não conectado
+              </Badge>
+            )}
+            <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onRefresh} disabled={refreshing}>
+              {refreshing ? <Spinner className="mr-2 h-4 w-4 animate-spin" /> : <ArrowClockwise className="mr-2 h-4 w-4" />}
+              Atualizar
+            </Button>
+            {connected && onDisconnect ? (
+              <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onDisconnect} disabled={refreshing}>
+                Desconectar
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <div className="space-y-2 border-t border-slate-800/80 pt-6">
+          <CardTitle>Conectar a conta Meta</CardTitle>
+          <CardDescription className="text-slate-300">
+            Autorize com Facebook no fluxo principal. O token manual permanece apenas como contingência administrativa.
+          </CardDescription>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="relative space-y-6">
         <div className="rounded-3xl border border-slate-800/80 bg-slate-900/65 p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-4">
             <div className="space-y-2">
               <div className="text-sm font-medium text-white">Fluxo recomendado</div>
               <div className="text-sm leading-6 text-slate-300">
-                {isBusinessLogin
-                  ? 'Autorize a Meta com a configuração empresarial do app. Se o navegador bloquear pop-up, o processo continua automaticamente nesta mesma aba.'
-                  : 'Autorize a Meta dentro do CRM e, se o navegador bloquear pop-up, o processo continua automaticamente nesta mesma aba.'}
+                O login do Facebook abre em uma janela segura sobre o CRM. Depois da autorização, basta escolher a conta de anúncios correta para liberar as demais áreas.
               </div>
             </div>
             <Button className="bg-sky-500 text-slate-950 hover:bg-sky-400" onClick={onOAuth} disabled={connectDisabled}>
               Conectar com Facebook
             </Button>
           </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge className="border border-sky-500/30 bg-sky-500/10 text-sky-100">
-            OAuth: {isBusinessLogin ? 'Facebook Login for Business' : 'Facebook Login clássico'}
-          </Badge>
-          {businessLoginConfigId ? (
-            <Badge className="border border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-100">
-              Config ID: {businessLoginConfigId}
-            </Badge>
-          ) : null}
-          <Badge className="border border-slate-700 bg-slate-900/60 text-slate-200">
-            Escopos: {scopesLabel}
-          </Badge>
-          {connectedUser ? (
-            <Badge className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-100">
-              Usuário Meta: {connectedUser}
-            </Badge>
-          ) : null}
         </div>
         <div className="rounded-3xl border border-slate-800/80 bg-slate-900/45 p-5">
           <div className="mb-3 text-sm font-medium text-white">Ou conecte por token manual</div>
@@ -310,35 +326,78 @@ export function MetaAdsConnectionPanel({
   )
 }
 
-export function MetaAdsConnectionProgress({
-  connected,
-  hasSelectedAccount,
+export function MetaAdsOAuthDialog({
+  open,
+  state,
+  error,
+  onOpenChange,
+  onRetry,
 }: {
-  connected: boolean
-  hasSelectedAccount: boolean
+  open: boolean
+  state: 'opening' | 'opened' | 'blocked' | 'closed' | 'error'
+  error?: MetaAdsApiError | null
+  onOpenChange: (open: boolean) => void
+  onRetry: () => void
 }) {
+  const title =
+    state === 'blocked'
+      ? 'Permita a janela do Facebook'
+      : state === 'closed'
+        ? 'Continue a conexão com Facebook'
+        : state === 'error'
+          ? 'Falha ao concluir o login da Meta'
+        : 'Conectar com Facebook'
+
+  const description =
+    state === 'blocked'
+      ? 'O navegador bloqueou a janela de autenticação. Libere pop-ups para o CRM e tente abrir novamente.'
+      : state === 'closed'
+        ? 'A janela foi fechada antes de concluir a autorização. Reabra o login do Facebook para continuar.'
+        : state === 'error'
+          ? error?.hint || error?.message || 'O Facebook retornou um erro antes de concluir a conexão no CRM.'
+        : 'O Facebook foi aberto em uma janela segura para concluir a autenticação da conta Meta sem sair desta página.'
+
   return (
-    <Card className={subtlePanelClass}>
-      <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-1">
-          <div className="text-sm font-medium text-white">
-            {connected ? 'Conta Meta conectada.' : 'Comece conectando a Meta ao CRM.'}
-          </div>
-          <div className="text-sm text-slate-300">
-            {connected
-              ? hasSelectedAccount
-                ? 'Conexão concluída. Agora o módulo libera visão geral, inventário e tracking.'
-                : 'Próximo passo: selecione qual conta de anúncios deve alimentar o CRM.'
-              : 'Depois da autorização, escolha a conta de anúncios correta para liberar as demais áreas.'}
-          </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg border-slate-800/80 bg-slate-950 text-slate-100">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="text-slate-300">{description}</DialogDescription>
+        </DialogHeader>
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 text-sm text-slate-300">
+          {state === 'blocked' ? (
+            <div>
+              Se o pop-up não aparecer, permita janelas para <span className="font-medium text-white">crm.skincos.com.br</span> e clique em <span className="font-medium text-white">Abrir login novamente</span>.
+            </div>
+          ) : state === 'closed' ? (
+            <div>
+              A autenticação precisa ser concluída na janela do Facebook. Se você finalizou o login e nada mudou, reabra a janela para tentar novamente.
+            </div>
+          ) : state === 'error' ? (
+            <div className="space-y-2">
+              <div className="font-medium text-white">{error?.message || 'O login da Meta falhou.'}</div>
+              {error?.hint ? <div>{error.hint}</div> : null}
+              {error?.code ? <div className="font-mono text-xs text-slate-400">{error.code}</div> : null}
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <Spinner className="h-4 w-4 animate-spin text-sky-300" />
+              <span>Aguardando autorização do Facebook...</span>
+            </div>
+          )}
         </div>
-        <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
-          <span className={connected ? 'text-emerald-300' : ''}>1. Conectar</span>
-          <span className={hasSelectedAccount ? 'text-emerald-300' : ''}>2. Escolher conta</span>
-          <span className={hasSelectedAccount ? 'text-emerald-300' : ''}>3. Operar</span>
-        </div>
-      </CardContent>
-    </Card>
+        <DialogFooter>
+          <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={() => onOpenChange(false)}>
+            Fechar
+          </Button>
+          {(state === 'blocked' || state === 'closed' || state === 'error') ? (
+            <Button className="bg-sky-500 text-slate-950 hover:bg-sky-400" onClick={onRetry}>
+              Abrir login novamente
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

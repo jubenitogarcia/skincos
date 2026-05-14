@@ -172,13 +172,51 @@ test.describe('meta ads', () => {
     await expect(page.getByRole('tab', { name: 'Conexão' })).toHaveCount(0)
     await expect(page.getByRole('tab', { name: 'Visão geral' })).toBeVisible()
     await page.getByRole('button', { name: 'Gerenciar conexão' }).click()
-    await expect(page.getByText('Escolher a conta de anúncios')).toBeVisible()
-    await expect(page.getByText('Usuário Meta: Jubenito Garcia')).toBeVisible()
+    await expect(page.getByText('Conectar a conta Meta')).toBeVisible()
+    await expect(page.getByText('Escolher a conta de anúncios', { exact: true })).toBeVisible()
+    await expect(page.getByText('Comece conectando a Meta ao CRM.')).toHaveCount(0)
+    await expect(page.getByText('OAuth:')).toHaveCount(0)
 
     await page.getByRole('tab', { name: 'Inventário' }).click()
     await expect(page.locator('body')).toContainText('Criativo 1')
 
     await page.getByRole('tab', { name: 'Tracking' }).click()
     await expect(page.getByText('Tracking do site e inventário da conta Meta convivem nesta aba')).toBeVisible()
+  })
+
+  test('keeps the oauth flow inside CRM with a modal when the popup is blocked', async ({ page }) => {
+    await mockCrmUser(page)
+
+    await page.route('**/api/meta-ads/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          oauthConfigured: true,
+          missingConfig: [],
+          connection: {
+            connected: false,
+            tokenType: null,
+            metaUserId: null,
+            metaUserName: null,
+            selectedAdAccountId: null,
+            scopes: [],
+            updatedAt: null,
+            expiresAt: null,
+          },
+        }),
+      })
+    })
+
+    await openMetaAds(page)
+
+    await page.evaluate(() => {
+      window.open = () => null
+    })
+
+    await page.getByRole('button', { name: 'Conectar com Facebook' }).click()
+    await expect(page.getByRole('dialog')).toContainText('Permita a janela do Facebook')
+    await expect(page.locator('body')).not.toContainText('A autenticação será aberta nesta mesma aba.')
   })
 })

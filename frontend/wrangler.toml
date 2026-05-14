@@ -13,6 +13,7 @@ ESCALA_API_TARGET = "https://escala-api.skincos.com.br"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
 R2_KEY_PREFIX = ""
 R2_PRODUCTION_BRANCH = "main"
+META_ADS_CONFIG_ID = "1608208000506752"
 
 [[env.preview.r2_buckets]]
 binding = "SHARE_BUCKET"
@@ -24,3 +25,4 @@ ESCALA_API_TARGET = "https://escala-api-staging.skincos.com.br"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "false"
 R2_KEY_PREFIX = "preview/"
 R2_PRODUCTION_BRANCH = "main"
+META_ADS_CONFIG_ID = "1608208000506752"

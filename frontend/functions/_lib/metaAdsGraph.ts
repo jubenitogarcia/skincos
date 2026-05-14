@@ -85,11 +85,26 @@ function normalizeAccountId(adAccountId: string) {
   return raw.startsWith('act_') ? raw : `act_${raw}`
 }
 
+async function buildAppSecretProof(accessToken: string, appSecret?: string) {
+  const secret = esc(appSecret)
+  if (!secret) return ''
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(accessToken))
+  return Array.from(new Uint8Array(sig)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 async function graphFetch<T = any>(
   path: string,
   params: Record<string, string | number | undefined>,
   accessToken: string,
   version?: string,
+  appSecret?: string,
 ): Promise<T> {
   const qs = new URLSearchParams()
   for (const [key, value] of Object.entries(params || {})) {
@@ -97,6 +112,8 @@ async function graphFetch<T = any>(
     qs.set(key, String(value))
   }
   qs.set('access_token', accessToken)
+  const appSecretProof = await buildAppSecretProof(accessToken, appSecret)
+  if (appSecretProof) qs.set('appsecret_proof', appSecretProof)
 
   const url = `${parseGraphBaseUrl(version)}${path.startsWith('/') ? '' : '/'}${path}?${qs.toString()}`
   const res = await fetch(url, { headers: { accept: 'application/json' } })
@@ -112,6 +129,7 @@ async function collectPaged<T = any>(
   params: Record<string, string | number | undefined>,
   accessToken: string,
   version?: string,
+  appSecret?: string,
 ): Promise<T[]> {
   const out: T[] = []
   let nextUrl: string | null = null
@@ -120,10 +138,15 @@ async function collectPaged<T = any>(
   while (first || nextUrl) {
     let data: any
     if (first) {
-      data = await graphFetch<any>(path, params, accessToken, version)
+      data = await graphFetch<any>(path, params, accessToken, version, appSecret)
       first = false
     } else {
-      const res = await fetch(String(nextUrl), { headers: { accept: 'application/json' } })
+      const next = new URL(String(nextUrl))
+      const appSecretProof = await buildAppSecretProof(accessToken, appSecret)
+      if (appSecretProof && !next.searchParams.has('appsecret_proof')) {
+        next.searchParams.set('appsecret_proof', appSecretProof)
+      }
+      const res = await fetch(String(next), { headers: { accept: 'application/json' } })
       data = await res.json().catch(() => null)
       if (!res.ok || data?.error) {
         throw new Error(data?.error?.message || data?.error_description || `Meta Graph HTTP ${res.status}`)
@@ -137,16 +160,17 @@ async function collectPaged<T = any>(
   return out
 }
 
-export async function getMetaProfile(accessToken: string, version?: string) {
+export async function getMetaProfile(accessToken: string, version?: string, appSecret?: string) {
   return graphFetch<{ id: string; name?: string }>(
     '/me',
     { fields: 'id,name' },
     accessToken,
     version,
+    appSecret,
   )
 }
 
-export async function listMetaAdAccounts(accessToken: string, version?: string): Promise<MetaAdAccount[]> {
+export async function listMetaAdAccounts(accessToken: string, version?: string, appSecret?: string): Promise<MetaAdAccount[]> {
   const rows = await collectPaged<any>(
     '/me/adaccounts',
     {
@@ -155,6 +179,7 @@ export async function listMetaAdAccounts(accessToken: string, version?: string):
     },
     accessToken,
     version,
+    appSecret,
   )
   return rows.map((row) => ({
     id: esc(row?.id),
@@ -166,7 +191,7 @@ export async function listMetaAdAccounts(accessToken: string, version?: string):
   })).filter((row) => row.id)
 }
 
-export async function listMetaCampaigns(accessToken: string, adAccountId: string, version?: string): Promise<MetaCampaign[]> {
+export async function listMetaCampaigns(accessToken: string, adAccountId: string, version?: string, appSecret?: string): Promise<MetaCampaign[]> {
   const rows = await collectPaged<any>(
     `/${normalizeAccountId(adAccountId)}/campaigns`,
     {
@@ -175,6 +200,7 @@ export async function listMetaCampaigns(accessToken: string, adAccountId: string
     },
     accessToken,
     version,
+    appSecret,
   )
   return rows.map((row) => ({
     id: esc(row?.id),
@@ -189,7 +215,7 @@ export async function listMetaCampaigns(accessToken: string, adAccountId: string
   })).filter((row) => row.id)
 }
 
-export async function listMetaAdSets(accessToken: string, adAccountId: string, version?: string): Promise<MetaAdSet[]> {
+export async function listMetaAdSets(accessToken: string, adAccountId: string, version?: string, appSecret?: string): Promise<MetaAdSet[]> {
   const rows = await collectPaged<any>(
     `/${normalizeAccountId(adAccountId)}/adsets`,
     {
@@ -198,6 +224,7 @@ export async function listMetaAdSets(accessToken: string, adAccountId: string, v
     },
     accessToken,
     version,
+    appSecret,
   )
   return rows.map((row) => ({
     id: esc(row?.id),
@@ -214,7 +241,7 @@ export async function listMetaAdSets(accessToken: string, adAccountId: string, v
   })).filter((row) => row.id)
 }
 
-export async function listMetaAds(accessToken: string, adAccountId: string, version?: string): Promise<MetaAd[]> {
+export async function listMetaAds(accessToken: string, adAccountId: string, version?: string, appSecret?: string): Promise<MetaAd[]> {
   const rows = await collectPaged<any>(
     `/${normalizeAccountId(adAccountId)}/ads`,
     {
@@ -223,6 +250,7 @@ export async function listMetaAds(accessToken: string, adAccountId: string, vers
     },
     accessToken,
     version,
+    appSecret,
   )
   return rows.map((row) => ({
     id: esc(row?.id),
@@ -249,6 +277,7 @@ export async function getMetaAdsSummary(
   adAccountId: string,
   range: { since: string; until: string },
   version?: string,
+  appSecret?: string,
 ): Promise<MetaSummary> {
   const data = await graphFetch<any>(
     `/${normalizeAccountId(adAccountId)}/insights`,
@@ -260,6 +289,7 @@ export async function getMetaAdsSummary(
     },
     accessToken,
     version,
+    appSecret,
   )
   const row = Array.isArray(data?.data) ? data.data[0] || {} : {}
   return {
@@ -276,6 +306,7 @@ export async function getMetaAdsTrend(
   adAccountId: string,
   range: { since: string; until: string },
   version?: string,
+  appSecret?: string,
 ) {
   const data = await graphFetch<any>(
     `/${normalizeAccountId(adAccountId)}/insights`,
@@ -288,10 +319,29 @@ export async function getMetaAdsTrend(
     },
     accessToken,
     version,
+    appSecret,
   )
   const rows = Array.isArray(data?.data) ? data.data : []
   return rows.map((row: any) => ({
     day: esc(row?.date_start),
     spend: asNumber(row?.spend),
   }))
+}
+
+export async function debugMetaAccessToken(
+  inputToken: string,
+  appId: string,
+  appSecret: string,
+  version?: string,
+) {
+  const appAccessToken = `${esc(appId)}|${esc(appSecret)}`
+  return graphFetch<any>(
+    '/debug_token',
+    {
+      input_token: inputToken,
+    },
+    appAccessToken,
+    version,
+    appSecret,
+  )
 }
