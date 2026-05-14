@@ -78,6 +78,7 @@ function runtimeConfig(context: any) {
     appSecret: String(env.META_APP_SECRET || '').trim(),
     stateSecret: String(env.META_OAUTH_STATE_SECRET || env.META_APP_SECRET || '').trim(),
     graphVersion: String(env.META_GRAPH_VERSION || 'v20.0').trim() || 'v20.0',
+    configId: String(env.META_ADS_CONFIG_ID || '').trim(),
     scopes:
       String(env.META_ADS_OAUTH_SCOPES || '').trim() ||
       ['ads_read', 'ads_management', 'business_management'].join(','),
@@ -119,6 +120,14 @@ function resolveMissingConfig(context: any) {
     missing.push('INTEGRATIONS_ENCRYPTION_SECRET')
   }
   if (!getShareBucket(context)) missing.push('SHARE_BUCKET')
+  return missing
+}
+
+function resolveOauthStartMissingConfig(context: any) {
+  const cfg = runtimeConfig(context)
+  const missing: string[] = []
+  if (!cfg.appId) missing.push('META_APP_ID')
+  if (!cfg.stateSecret) missing.push('META_OAUTH_STATE_SECRET')
   return missing
 }
 
@@ -208,6 +217,8 @@ async function fetchLiveAccounts(context: any, userId: string) {
 async function handleStatus(context: any) {
   const userOrRes = await requireSocialAdmin(context)
   if (userOrRes instanceof Response) return userOrRes
+  const cfg = runtimeConfig(context)
+  const missingConfig = resolveMissingConfig(context)
 
   let connection: MetaAdsConnection | null = null
   try {
@@ -218,8 +229,10 @@ async function handleStatus(context: any) {
 
   return json(200, {
     ok: true,
-    oauthConfigured: resolveMissingConfig(context).length === 0,
-    missingConfig: resolveMissingConfig(context),
+    oauthConfigured: missingConfig.length === 0,
+    missingConfig,
+    oauthMode: cfg.configId ? 'business-config' : 'scopes',
+    businessLoginConfigId: cfg.configId || null,
     connection: connectionSummary(connection),
   })
 }
@@ -228,7 +241,7 @@ async function handleOauthStart(context: any) {
   const userOrRes = await requireSocialAdmin(context)
   if (userOrRes instanceof Response) return userOrRes
   const cfg = runtimeConfig(context)
-  const missing = resolveMissingConfig(context)
+  const missing = resolveOauthStartMissingConfig(context)
   if (missing.length) {
     return apiError(503, 'META_ADS_OAUTH_NOT_CONFIGURED', {
       message: 'A integração Meta Ads ainda não está configurada neste runtime.',
@@ -245,9 +258,14 @@ async function handleOauthStart(context: any) {
     client_id: cfg.appId,
     redirect_uri: redirectUri,
     state,
-    scope: cfg.scopes,
     response_type: 'code',
   })
+  if (cfg.configId) {
+    qs.set('config_id', cfg.configId)
+    qs.set('override_default_response_type', 'true')
+  } else {
+    qs.set('scope', cfg.scopes)
+  }
   return Response.redirect(`https://www.facebook.com/${cfg.graphVersion}/dialog/oauth?${qs.toString()}`, 302)
 }
 
