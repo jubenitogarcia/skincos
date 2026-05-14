@@ -1191,6 +1191,13 @@ function normalizeReportDate(value) {
     return input;
   }
 
+  if (input) {
+    const parsed = new Date(input);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+
   const now = new Date();
   now.setUTCDate(now.getUTCDate() - 1);
   return now.toISOString().slice(0, 10);
