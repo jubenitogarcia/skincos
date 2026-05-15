@@ -19,6 +19,12 @@ import {
   listMetaAdSets,
   listMetaCampaigns,
 } from '../../_lib/metaAdsGraph'
+import {
+  aggregateMetaAdsWorkflowSummary,
+  buildMetaAdsWorkflowReport,
+  normalizeMetaAdsWorkflowAccountId,
+  type MetaAdsWorkflowWindow,
+} from '../../../metaAdsWorkflowReport'
 
 type OAuthState = { userId: string; nonce: string; iat: number }
 type OAuthPopupMessage = {
@@ -115,6 +121,10 @@ function runtimeConfig(context: any) {
     stateSecret: String(env.META_OAUTH_STATE_SECRET || env.META_APP_SECRET || '').trim(),
     graphVersion: String(env.META_GRAPH_VERSION || 'v20.0').trim() || 'v20.0',
     configId: String(env.META_ADS_CONFIG_ID || '').trim(),
+    reportWorkerBaseUrl: String(env.META_ADS_REPORT_WORKER_BASE_URL || '').trim(),
+    reportWorkerApiToken: String(env.META_ADS_REPORT_WORKER_API_TOKEN || '').trim(),
+    reportWorkerAuthHeader: String(env.META_ADS_REPORT_WORKER_AUTH_HEADER || 'Authorization').trim() || 'Authorization',
+    reportWorkerAuthScheme: String(env.META_ADS_REPORT_WORKER_AUTH_SCHEME || 'Bearer').trim() || 'Bearer',
     scopes:
       String(env.META_ADS_OAUTH_SCOPES || '').trim() ||
       ['ads_read', 'ads_management', 'business_management'].join(','),
@@ -172,6 +182,108 @@ function normalizeUnhandledMetaError(error: any) {
     })
   }
   return null
+}
+
+function normalizeWorkerBaseUrl(value: string) {
+  return String(value || '').trim().replace(/\/+$/, '')
+}
+
+function resolveWorkflowSummaryWindow(range: { since: string; until: string }): MetaAdsWorkflowWindow {
+  const since = Date.parse(`${String(range.since || '').trim()}T00:00:00Z`)
+  const until = Date.parse(`${String(range.until || '').trim()}T00:00:00Z`)
+  if (!Number.isFinite(since) || !Number.isFinite(until) || until < since) return 'last_7d'
+  const diffDays = Math.max(1, Math.floor((until - since) / 86400000) + 1)
+  if (diffDays <= 1) return 'last_24h'
+  if (diffDays <= 7) return 'last_7d'
+  return 'last_30d'
+}
+
+async function fetchWorkflowSummary(
+  adAccountId: string,
+  range: { since: string; until: string },
+  cfg: ReturnType<typeof runtimeConfig>,
+) {
+  const baseUrl = normalizeWorkerBaseUrl(cfg.reportWorkerBaseUrl)
+  const token = String(cfg.reportWorkerApiToken || '').trim()
+  if (!baseUrl || !token) return null
+
+  const window = resolveWorkflowSummaryWindow(range)
+  const reportDate = String(range.until || '').trim()
+  const url = new URL(`${baseUrl}/report/meta-ads-performance-report`)
+  url.searchParams.set('account_id', normalizeMetaAdsWorkflowAccountId(adAccountId))
+  url.searchParams.set('report_date', reportDate)
+  url.searchParams.set('windows', window)
+  url.searchParams.set('include', 'summary')
+  url.searchParams.set('limit', '500')
+
+  const headerName = cfg.reportWorkerAuthHeader || 'Authorization'
+  const authValue = cfg.reportWorkerAuthScheme
+    ? `${cfg.reportWorkerAuthScheme} ${token}`
+    : token
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      accept: 'application/json',
+      [headerName]: authValue,
+    },
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.ok || !Array.isArray(payload?.summary_rows)) {
+    throw new Error(
+      payload?.message ||
+        payload?.error ||
+        `workflow report request failed with status ${response.status}`,
+    )
+  }
+
+  return aggregateMetaAdsWorkflowSummary(payload.summary_rows, window)
+}
+
+async function fetchWorkflowReport(
+  adAccountId: string,
+  range: { since: string; until: string },
+  cfg: ReturnType<typeof runtimeConfig>,
+) {
+  const baseUrl = normalizeWorkerBaseUrl(cfg.reportWorkerBaseUrl)
+  const token = String(cfg.reportWorkerApiToken || '').trim()
+  if (!baseUrl || !token) return null
+
+  const window = resolveWorkflowSummaryWindow(range)
+  const reportDate = String(range.until || '').trim()
+  const url = new URL(`${baseUrl}/report/meta-ads-performance-report`)
+  url.searchParams.set('account_id', normalizeMetaAdsWorkflowAccountId(adAccountId))
+  url.searchParams.set('report_date', reportDate)
+  url.searchParams.set('windows', window)
+  url.searchParams.set('include', 'summary')
+  url.searchParams.set('limit', '500')
+
+  const headerName = cfg.reportWorkerAuthHeader || 'Authorization'
+  const authValue = cfg.reportWorkerAuthScheme
+    ? `${cfg.reportWorkerAuthScheme} ${token}`
+    : token
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      accept: 'application/json',
+      [headerName]: authValue,
+    },
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.ok || !Array.isArray(payload?.summary_rows)) {
+    throw new Error(
+      payload?.message ||
+        payload?.error ||
+        `workflow report request failed with status ${response.status}`,
+    )
+  }
+
+  return buildMetaAdsWorkflowReport(payload.summary_rows, window, {
+    reportDate: String(payload?.metadata?.report_date || reportDate).trim(),
+    runsCount: Number(payload?.metadata?.runs_count || 0),
+    source: String(payload?.metadata?.source || 'd1').trim() || 'd1',
+  })
 }
 
 async function validateMetaAccessToken(
@@ -776,6 +888,15 @@ async function handleSummary(context: any) {
 
   const cfg = runtimeConfig(context)
   const range = parseRange(new URL(context.request.url))
+  try {
+    const workflowSummary = await fetchWorkflowSummary(selected.adAccountId, range, cfg)
+    if (workflowSummary) {
+      return json(200, workflowSummary)
+    }
+  } catch {
+    // Fallback seguro para Graph quando o worker consolidado não está disponível.
+  }
+
   const [summary, campaigns] = await Promise.all([
     getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
     listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
@@ -783,6 +904,7 @@ async function handleSummary(context: any) {
 
   return json(200, {
     ...summary,
+    source: 'graph',
     activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
   })
 }
@@ -803,6 +925,59 @@ async function handleTrend(context: any) {
     cfg.appSecret,
   )
   return json(200, trend)
+}
+
+async function handleReport(context: any) {
+  const userOrRes = await requireSocialAdmin(context)
+  if (userOrRes instanceof Response) return userOrRes
+  const selected = await withSelectedAccount(context, userOrRes.id)
+  if ('error' in selected) return selected.error
+
+  const cfg = runtimeConfig(context)
+  const range = parseRange(new URL(context.request.url))
+
+  try {
+    const report = await fetchWorkflowReport(selected.adAccountId, range, cfg)
+    if (report) {
+      return json(200, report)
+    }
+  } catch {
+    // fallback seguro abaixo
+  }
+
+  const [summary, campaigns] = await Promise.all([
+    getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
+    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+  ])
+
+  return json(200, {
+    ok: true,
+    source: 'graph-fallback',
+    window: resolveWorkflowSummaryWindow(range),
+    summary: {
+      ...summary,
+      source: 'graph',
+      activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
+    },
+    metadata: {
+      reportDate: String(range.until || '').trim(),
+      runsCount: 0,
+      source: 'graph',
+    },
+    campaigns: campaigns.map((campaign) => ({
+      campaignId: campaign.id,
+      campaignName: campaign.name || campaign.id,
+      status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversations: 0,
+      ctr: 0,
+      cpc: 0,
+      cpm: 0,
+    })),
+    warnings: ['graph_fallback'],
+  })
 }
 
 async function handleInventory(context: any) {
@@ -842,6 +1017,7 @@ export async function onRequest(context: any): Promise<Response> {
     if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return handleSelectAccount(context)
     if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return handleSummary(context)
     if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return handleTrend(context)
+    if (method === 'GET' && (rest === '/report' || rest === '/report/')) return handleReport(context)
     if (method === 'GET' && (rest === '/inventory' || rest === '/inventory/')) return handleInventory(context)
 
     return apiError(404, 'NOT_FOUND', {

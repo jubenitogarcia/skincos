@@ -1,11 +1,13 @@
 import type {
   MetaAdAccount,
+  MetaAdsReportResponse,
   MetaAdsApiError,
   MetaAdsStatusResponse,
   MetaAdsSummaryResponse,
   MetaAdsTrendPoint,
   MetaInventoryResponse,
 } from '@/metaAdsTypes'
+import { buildMetaAdsWorkflowReport } from '@/metaAdsWorkflowReport'
 
 export type MetaAdsLocalScenario =
   | 'live'
@@ -30,6 +32,8 @@ const ACCOUNT_FIXTURES: MetaAdAccount[] = [
   {
     id: 'act_123',
     name: 'Conta Principal',
+    account_status: '1',
+    disable_reason: '0',
     currency: 'BRL',
     timezone_name: 'America/Sao_Paulo',
     business_name: 'Skincos',
@@ -37,6 +41,8 @@ const ACCOUNT_FIXTURES: MetaAdAccount[] = [
   {
     id: 'act_456',
     name: 'Conta Captação',
+    account_status: '8',
+    disable_reason: '3',
     currency: 'BRL',
     timezone_name: 'America/Sao_Paulo',
     business_name: 'Skincos',
@@ -416,4 +422,54 @@ export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse>
       ],
     },
   }
+}
+
+export async function getMetaAdsLocalReport(): Promise<MetaAdsReportResponse> {
+  const state = requireSelectedAccount()
+  const reportDate = '2026-05-14'
+  const rows =
+    state.selectedAdAccountId === 'act_456'
+      ? [
+          {
+            campaign_id: 'cmp_ret_1',
+            campaign_name: 'Campanha Remarketing Face',
+            campaign_effective_status: 'ACTIVE',
+            ad_id: 'ad_ret_1',
+            ad_name: 'Anúncio Remarketing 1',
+            ad_last_30d_scalar_spend: 864.12,
+            ad_last_30d_scalar_impressions: 7120,
+            ad_last_30d_scalar_clicks: 214,
+            ad_last_30d_conversation_started: 19,
+          },
+        ]
+      : [
+          {
+            campaign_id: 'cmp_1',
+            campaign_name: 'Campanha Primavera',
+            campaign_effective_status: 'ACTIVE',
+            ad_id: 'ad_1',
+            ad_name: 'Anúncio Primavera 1',
+            ad_last_30d_scalar_spend: 834.56,
+            ad_last_30d_scalar_impressions: 6120,
+            ad_last_30d_scalar_clicks: 201,
+            ad_last_30d_conversation_started: 14,
+          },
+          {
+            campaign_id: 'cmp_2',
+            campaign_name: 'Campanha WhatsApp Facial',
+            campaign_effective_status: 'PAUSED',
+            ad_id: 'ad_2',
+            ad_name: 'Anúncio WhatsApp 1',
+            ad_last_30d_scalar_spend: 400,
+            ad_last_30d_scalar_impressions: 3879,
+            ad_last_30d_scalar_clicks: 120,
+            ad_last_30d_conversation_started: 9,
+          },
+        ]
+
+  return buildMetaAdsWorkflowReport(rows, 'last_30d', {
+    reportDate,
+    runsCount: rows.length,
+    source: 'local-preview',
+  })
 }

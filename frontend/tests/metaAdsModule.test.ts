@@ -6,6 +6,11 @@ import {
   getDefaultMetaAdsTab,
   normalizeMetaAdsApiError,
 } from '../metaAdsState'
+import {
+  aggregateMetaAdsWorkflowSummary,
+  buildMetaAdsWorkflowReport,
+  normalizeMetaAdsWorkflowAccountId,
+} from '../metaAdsWorkflowReport'
 import type { MetaAdsStatusResponse } from '../metaAdsTypes'
 
 const baseStatus = (overrides: Partial<MetaAdsStatusResponse> = {}): MetaAdsStatusResponse => ({
@@ -174,5 +179,102 @@ describe('Meta Ads state helpers', () => {
       ctaTab: 'connect',
     })
     expect(health.title).toContain('Faça login')
+  })
+
+  it('aggregates workflow report rows into the CRM summary shape', () => {
+    const summary = aggregateMetaAdsWorkflowSummary(
+      [
+        {
+          campaign_id: 'cmp_1',
+          ad_status: 'ACTIVE',
+          ad_last_7d_scalar_spend: 150.5,
+          ad_last_7d_scalar_impressions: 2000,
+          ad_last_7d_scalar_clicks: 40,
+          ad_last_7d_conversation_started: 5,
+        },
+        {
+          campaign_id: 'cmp_2',
+          ad_effective_status: 'ACTIVE',
+          ad_last_7d_spend: 99.5,
+          ad_last_7d_impressions: 800,
+          ad_last_7d_clicks: 18,
+          ad_last_7d_whatsapp_conversations_started: 3,
+        },
+        {
+          campaign_id: 'cmp_2',
+          ad_effective_status: 'PAUSED',
+          ad_last_7d_spend: 20,
+          ad_last_7d_impressions: 100,
+          ad_last_7d_clicks: 2,
+          ad_last_7d_conversation_started: 0,
+        },
+      ],
+      'last_7d',
+    )
+
+    expect(summary).toMatchObject({
+      spend: 270,
+      impressions: 2900,
+      clicks: 60,
+      conversations: 8,
+      activeCampaigns: 2,
+      source: 'workflow-report',
+      window: 'last_7d',
+    })
+    expect(summary.avgCostConversation).toBeCloseTo(33.75, 2)
+  })
+
+  it('normalizes ad account ids for workflow report lookups', () => {
+    expect(normalizeMetaAdsWorkflowAccountId('act_3271664739829465')).toBe('3271664739829465')
+    expect(normalizeMetaAdsWorkflowAccountId('3271664739829465')).toBe('3271664739829465')
+  })
+
+  it('builds a report payload with campaign ranking from workflow rows', () => {
+    const report = buildMetaAdsWorkflowReport(
+      [
+        {
+          campaign_id: 'cmp_1',
+          campaign_name: 'Campanha 1',
+          campaign_effective_status: 'ACTIVE',
+          ad_last_30d_scalar_spend: 150,
+          ad_last_30d_scalar_impressions: 1000,
+          ad_last_30d_scalar_clicks: 50,
+          ad_last_30d_conversation_started: 8,
+        },
+        {
+          campaign_id: 'cmp_2',
+          campaign_name: 'Campanha 2',
+          campaign_effective_status: 'PAUSED',
+          ad_last_30d_scalar_spend: 90,
+          ad_last_30d_scalar_impressions: 500,
+          ad_last_30d_scalar_clicks: 25,
+          ad_last_30d_conversation_started: 3,
+        },
+      ],
+      'last_30d',
+      {
+        reportDate: '2026-05-14',
+        runsCount: 2,
+        source: 'd1',
+      },
+    )
+
+    expect(report).toMatchObject({
+      ok: true,
+      source: 'workflow-report',
+      window: 'last_30d',
+      metadata: {
+        reportDate: '2026-05-14',
+        runsCount: 2,
+      },
+    })
+    expect(report.campaigns[0]).toMatchObject({
+      campaignId: 'cmp_1',
+      status: 'ACTIVE',
+      spend: 150,
+      clicks: 50,
+      conversations: 8,
+    })
+    expect(report.campaigns[0].ctr).toBe(5)
   })
 })
