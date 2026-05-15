@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
@@ -5,6 +6,7 @@ import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { TabsList, TabsTrigger } from '@/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
@@ -25,6 +27,7 @@ import {
   Link,
   Lock,
   PresentationChart,
+  ShieldCheck,
   Spinner,
   Target,
   WarningCircle,
@@ -56,6 +59,52 @@ function statusTone(status?: string) {
   return 'border-slate-700 bg-slate-900/70 text-slate-200'
 }
 
+function describeAdAccountStatus(account: MetaAdAccount) {
+  const statusCode = String(account.account_status || '').trim()
+  const disableReason = Number(account.disable_reason || 0)
+
+  if (statusCode === '1' && disableReason === 0) {
+    return {
+      label: 'Ativa',
+      detail: 'Conta liberada para operar normalmente.',
+      tone: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-100',
+    }
+  }
+  if (statusCode === '2') {
+    return {
+      label: 'Desativada',
+      detail: 'A conta está desativada na Meta.',
+      tone: 'border-rose-500/30 bg-rose-500/15 text-rose-100',
+    }
+  }
+  if (statusCode === '7' || statusCode === '100') {
+    return {
+      label: 'Em análise',
+      detail: 'A Meta sinaliza revisão ou risco na conta.',
+      tone: 'border-amber-500/30 bg-amber-500/15 text-amber-100',
+    }
+  }
+  if (statusCode === '8' || statusCode === '101' || disableReason > 0) {
+    return {
+      label: 'Limitada',
+      detail: disableReason > 0 ? `Há uma restrição registrada pela Meta (disable_reason ${disableReason}).` : 'A conta está com operação limitada.',
+      tone: 'border-amber-500/30 bg-amber-500/15 text-amber-100',
+    }
+  }
+  if (statusCode === '9') {
+    return {
+      label: 'Encerrada',
+      detail: 'A conta foi encerrada ou está em fechamento.',
+      tone: 'border-slate-500/30 bg-slate-500/15 text-slate-200',
+    }
+  }
+  return {
+    label: statusCode ? `Status ${statusCode}` : 'Sem status',
+    detail: statusCode ? `Código retornado pela Meta: ${statusCode}.` : 'A Meta não retornou status legível para esta conta.',
+    tone: 'border-slate-700 bg-slate-900/70 text-slate-200',
+  }
+}
+
 export function MetaAdsEmptyState({ message, actionLabel, onAction }: { message: string; actionLabel?: string; onAction?: () => void }) {
   return (
     <Card className={panelClass}>
@@ -70,14 +119,24 @@ export function MetaAdsEmptyState({ message, actionLabel, onAction }: { message:
 export function MetaAdsStatusHero({
   connected,
   refreshing,
+  selectedAccount,
+  accounts,
+  onSelectAccount,
+  onManageConnections,
   onRefresh,
   onDisconnect,
 }: {
   connected: boolean
   refreshing: boolean
+  selectedAccount: MetaAdAccount | null
+  accounts: MetaAdAccount[]
+  onSelectAccount: (adAccountId: string) => void
+  onManageConnections: () => void
   onRefresh: () => void
   onDisconnect: () => void
 }) {
+  const selectedAccountStatus = selectedAccount ? describeAdAccountStatus(selectedAccount) : null
+
   return (
     <Card className={`overflow-hidden ${panelClass}`}>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_36%),radial-gradient(circle_at_top_right,rgba(236,72,153,0.14),transparent_28%)]" />
@@ -110,6 +169,9 @@ export function MetaAdsStatusHero({
             {refreshing ? <Spinner className="mr-2 h-4 w-4 animate-spin" /> : <ArrowClockwise className="mr-2 h-4 w-4" />}
             Atualizar
           </Button>
+          <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onManageConnections}>
+            Gerenciar conexão
+          </Button>
           {connected ? (
             <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onDisconnect} disabled={refreshing}>
               Desconectar
@@ -117,6 +179,44 @@ export function MetaAdsStatusHero({
           ) : null}
         </div>
       </CardHeader>
+      {connected ? (
+        <CardContent className="relative flex flex-col gap-4 border-t border-slate-800/80 pt-0 md:flex-row md:items-center md:justify-between">
+          <div className="grid gap-2 md:min-w-[20rem] md:max-w-md">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400/80">Conta de anúncios ativa</div>
+            <Select value={selectedAccount?.id || undefined} onValueChange={onSelectAccount} disabled={!accounts.length || refreshing}>
+              <SelectTrigger className="border-slate-700 bg-slate-900/70 text-slate-100">
+                <SelectValue placeholder="Escolha a conta da Meta" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.name || account.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedAccount ? (
+              <>
+                <Badge className="border border-slate-700 bg-slate-900/70 text-slate-100">
+                  {selectedAccount.currency || '—'} · {selectedAccount.timezone_name || 'sem timezone'}
+                </Badge>
+                {selectedAccountStatus ? (
+                  <Badge className={selectedAccountStatus.tone} title={selectedAccountStatus.detail}>
+                    <ShieldCheck className="mr-1 h-4 w-4" />
+                    {selectedAccountStatus.label}
+                  </Badge>
+                ) : null}
+              </>
+            ) : (
+              <Badge className="border border-amber-500/30 bg-amber-500/15 text-amber-100">
+                Escolha uma conta para liberar o módulo
+              </Badge>
+            )}
+          </div>
+        </CardContent>
+      ) : null}
     </Card>
   )
 }
@@ -243,6 +343,12 @@ export function MetaAdsConnectionPanel({
   onManualConnect: () => void
   manualDisabled: boolean
 }) {
+  const [showManualAccess, setShowManualAccess] = useState(false)
+  const manualAccessLabel = useMemo(
+    () => (showManualAccess ? 'Ocultar acessos alternativos' : 'Outros tipos de acesso'),
+    [showManualAccess],
+  )
+
   return (
     <Card className={`overflow-hidden ${panelClass}`}>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_36%),radial-gradient(circle_at_top_right,rgba(236,72,153,0.14),transparent_28%)]" />
@@ -302,25 +408,36 @@ export function MetaAdsConnectionPanel({
             <Button className="bg-sky-500 text-slate-950 hover:bg-sky-400" onClick={onOAuth} disabled={connectDisabled}>
               Conectar com Facebook
             </Button>
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowManualAccess((current) => !current)}
+                className="text-sm font-medium text-slate-300 transition hover:text-white"
+              >
+                {manualAccessLabel}
+              </button>
+            </div>
           </div>
         </div>
-        <div className="rounded-3xl border border-slate-800/80 bg-slate-900/45 p-5">
-          <div className="mb-3 text-sm font-medium text-white">Ou conecte por token manual</div>
-          <div className="mb-4 text-sm text-slate-300">
-            Use esta rota apenas para tokens de longa duração ou integrações administrativas.
+        {showManualAccess ? (
+          <div className="rounded-3xl border border-slate-800/80 bg-slate-900/45 p-5">
+            <div className="mb-3 text-sm font-medium text-white">Acesso por token manual</div>
+            <div className="mb-4 text-sm text-slate-300">
+              Use esta rota apenas para tokens de longa duração ou integrações administrativas.
+            </div>
+            <Textarea
+              value={manualToken}
+              onChange={(e) => setManualToken(e.target.value)}
+              placeholder="Cole aqui o access token da Meta"
+              className="min-h-28 border-slate-700 bg-slate-950/70 text-slate-100 placeholder:text-slate-500"
+            />
+            <div className="mt-4 flex justify-end">
+              <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onManualConnect} disabled={manualDisabled}>
+                Validar e conectar token
+              </Button>
+            </div>
           </div>
-          <Textarea
-            value={manualToken}
-            onChange={(e) => setManualToken(e.target.value)}
-            placeholder="Cole aqui o access token da Meta"
-            className="min-h-28 border-slate-700 bg-slate-950/70 text-slate-100 placeholder:text-slate-500"
-          />
-          <div className="mt-4 flex justify-end">
-            <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onManualConnect} disabled={manualDisabled}>
-              Validar e conectar token
-            </Button>
-          </div>
-        </div>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -436,29 +553,43 @@ export function MetaAdsAccountsPanel({
               <TableRow className="border-slate-800">
                 <TableHead>Conta</TableHead>
                 <TableHead>Nome</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead>Moeda</TableHead>
                 <TableHead>Timezone</TableHead>
                 <TableHead className="text-right">Ação</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {accounts.map((account) => (
-                <TableRow key={account.id} className="border-slate-800/80">
-                  <TableCell className="font-mono text-slate-200">{account.id}</TableCell>
-                  <TableCell className="text-slate-100">{account.name || '—'}</TableCell>
-                  <TableCell className="text-slate-300">{account.currency || '—'}</TableCell>
-                  <TableCell className="text-slate-300">{account.timezone_name || '—'}</TableCell>
-                  <TableCell className="text-right">
-                    {account.isSelected ? (
-                      <Badge className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-100">Selecionada</Badge>
-                    ) : (
-                      <Button size="sm" variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={() => onSelectAccount(account.id)} disabled={refreshing}>
-                        Selecionar
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {accounts.map((account) => {
+                const accountStatus = describeAdAccountStatus(account)
+                return (
+                  <TableRow key={account.id} className="border-slate-800/80">
+                    <TableCell className="font-mono text-slate-200">{account.id}</TableCell>
+                    <TableCell className="text-slate-100">
+                      <div className="space-y-1">
+                        <div>{account.name || '—'}</div>
+                        {account.business_name ? <div className="text-xs text-slate-400">{account.business_name}</div> : null}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={accountStatus.tone} title={accountStatus.detail}>
+                        {accountStatus.label}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-slate-300">{account.currency || '—'}</TableCell>
+                    <TableCell className="text-slate-300">{account.timezone_name || '—'}</TableCell>
+                    <TableCell className="text-right">
+                      {account.isSelected ? (
+                        <Badge className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-100">Selecionada</Badge>
+                      ) : (
+                        <Button size="sm" variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={() => onSelectAccount(account.id)} disabled={refreshing}>
+                          Selecionar
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         )}

@@ -41,6 +41,7 @@ export type MetaAdAccount = {
   id: string
   name: string
   account_status?: string
+  disable_reason?: string
   currency?: string
   timezone_name?: string
   business_name?: string
@@ -74,7 +75,38 @@ export type MetaAdsSummaryResponse = {
   spend?: number
   impressions?: number
   clicks?: number
+  conversations?: number
+  avgCostConversation?: number
   activeCampaigns?: number
+  source?: 'graph' | 'workflow-report'
+  window?: 'last_24h' | 'last_7d' | 'last_30d'
+}
+
+export type MetaAdsReportCampaign = {
+  campaignId: string
+  campaignName: string
+  status: string
+  spend: number
+  impressions: number
+  clicks: number
+  conversations: number
+  ctr: number
+  cpc: number
+  cpm: number
+}
+
+export type MetaAdsReportResponse = {
+  ok: boolean
+  source: 'workflow-report' | 'graph-fallback'
+  window: 'last_24h' | 'last_7d' | 'last_30d'
+  summary: MetaAdsSummaryResponse
+  metadata: {
+    reportDate: string
+    runsCount: number
+    source: string
+  }
+  campaigns: MetaAdsReportCampaign[]
+  warnings: string[]
 }
 
 export type MetaAdsTrendPoint = {

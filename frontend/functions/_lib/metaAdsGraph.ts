@@ -6,6 +6,7 @@ export type MetaAdAccount = {
   id: string
   name: string
   account_status?: string
+  disable_reason?: string
   currency?: string
   timezone_name?: string
   business_name?: string
@@ -174,7 +175,7 @@ export async function listMetaAdAccounts(accessToken: string, version?: string, 
   const rows = await collectPaged<any>(
     '/me/adaccounts',
     {
-      fields: 'id,name,account_status,currency,timezone_name,business_name',
+      fields: 'id,name,account_status,disable_reason,currency,timezone_name,business_name',
       limit: 100,
     },
     accessToken,
@@ -185,6 +186,7 @@ export async function listMetaAdAccounts(accessToken: string, version?: string, 
     id: esc(row?.id),
     name: esc(row?.name),
     account_status: esc(row?.account_status),
+    disable_reason: esc(row?.disable_reason),
     currency: esc(row?.currency),
     timezone_name: esc(row?.timezone_name),
     business_name: esc(row?.business_name),

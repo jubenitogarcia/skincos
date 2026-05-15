@@ -3,6 +3,7 @@ import {
   connectMetaAdsManualLocal,
   disconnectMetaAdsLocal,
   getMetaAdsLocalInventory,
+  getMetaAdsLocalReport,
   getMetaAdsLocalStatus,
   getMetaAdsLocalSummary,
   getMetaAdsLocalTrend,
@@ -15,6 +16,7 @@ import { normalizeMetaAdsApiError } from '@/metaAdsState'
 import type {
   MetaAdAccount,
   MetaAdsStatusResponse,
+  MetaAdsReportResponse,
   MetaAdsSummaryResponse,
   MetaAdsTrendPoint,
   MetaInventoryResponse,
@@ -89,6 +91,12 @@ export const metaAdsApi = {
     return isMetaAdsLocalMockEnabled()
       ? getMetaAdsLocalTrend()
       : request<MetaAdsTrendPoint[]>(`/trend${search ? `?${search}` : ''}`)
+  },
+  report: (params?: { since?: string; until?: string }) => {
+    const search = new URLSearchParams(params as any).toString()
+    return isMetaAdsLocalMockEnabled()
+      ? getMetaAdsLocalReport()
+      : request<MetaAdsReportResponse>(`/report${search ? `?${search}` : ''}`)
   },
   inventory: () => (isMetaAdsLocalMockEnabled() ? getMetaAdsLocalInventory() : request<MetaInventoryResponse>('/inventory')),
 }

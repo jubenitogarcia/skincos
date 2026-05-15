@@ -85,6 +85,7 @@ test.describe('meta ads', () => {
             {
               id: 'act_123',
               name: 'Conta Principal',
+              account_status: '1',
               currency: 'BRL',
               timezone_name: 'America/Sao_Paulo',
               isSelected: true,
@@ -155,11 +156,44 @@ test.describe('meta ads', () => {
       })
     })
 
-    await page.route('**/api/tracking/**', async (route) => {
+    await page.route('**/api/meta-ads/report**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, totals: {}, events: [], journeys: [], captains: [], errors: [] }),
+        body: JSON.stringify({
+          ok: true,
+          source: 'workflow-report',
+          window: 'last_30d',
+          summary: {
+            spend: 1234.56,
+            impressions: 9999,
+            clicks: 321,
+            conversations: 18,
+            avgCostConversation: 68.59,
+            activeCampaigns: 2,
+            source: 'workflow-report',
+          },
+          metadata: {
+            reportDate: '2026-05-14',
+            runsCount: 4,
+            source: 'd1',
+          },
+          campaigns: [
+            {
+              campaignId: 'cmp_1',
+              campaignName: 'Campanha Primavera',
+              status: 'ACTIVE',
+              spend: 900,
+              impressions: 7000,
+              clicks: 250,
+              conversations: 12,
+              ctr: 3.57,
+              cpc: 3.6,
+              cpm: 128.57,
+            },
+          ],
+          warnings: [],
+        }),
       })
     })
 
@@ -168,20 +202,24 @@ test.describe('meta ads', () => {
     await expect(page.getByText('Conta Meta pronta para operar')).toBeVisible({ timeout: 30000 })
     await expect(page.getByText('Conta ativa: Conta Principal')).toBeVisible()
     await expect(page.getByText('Tendência de gasto')).toBeVisible()
+    await expect(page.getByTitle('Conta liberada para operar normalmente.')).toContainText('Ativa')
 
     await expect(page.getByRole('tab', { name: 'Conexão' })).toHaveCount(0)
     await expect(page.getByRole('tab', { name: 'Visão geral' })).toBeVisible()
-    await page.getByRole('button', { name: 'Gerenciar conexão' }).click()
+    await page.getByRole('button', { name: 'Gerenciar conexão' }).first().click()
     await expect(page.getByText('Conectar a conta Meta')).toBeVisible()
     await expect(page.getByText('Escolher a conta de anúncios', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Outros tipos de acesso' })).toBeVisible()
     await expect(page.getByText('Comece conectando a Meta ao CRM.')).toHaveCount(0)
     await expect(page.getByText('OAuth:')).toHaveCount(0)
+    await page.keyboard.press('Escape')
 
     await page.getByRole('tab', { name: 'Inventário' }).click()
     await expect(page.locator('body')).toContainText('Criativo 1')
 
     await page.getByRole('tab', { name: 'Tracking' }).click()
-    await expect(page.getByText('Tracking do site e inventário da conta Meta convivem nesta aba')).toBeVisible()
+    await expect(page.getByText('As métricas desta aba estão vindo do consolidado diário persistido pelo workflow Meta Ads – Report.')).toBeVisible()
+    await expect(page.getByText('Campanha Primavera')).toBeVisible()
   })
 
   test('keeps the oauth flow inside CRM with a modal when the popup is blocked', async ({ page }) => {
