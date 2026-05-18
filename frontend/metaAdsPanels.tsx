@@ -6,19 +6,27 @@ import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
+import { OpenEntityButton } from '@/OpenEntityButton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { TabsList, TabsTrigger } from '@/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
 import type {
   MetaAdAccount,
+  MetaAd,
+  MetaAdSet,
   MetaAdsApiError,
   MetaAdsHealthState,
   MetaAdsInventory,
+  MetaAdsInventoryLevel,
   MetaAdsSummaryResponse,
   MetaAdsTab,
   MetaAdsTrendPoint,
+  MetaCampaignRow,
+  MetaCreativeInventoryItem,
 } from '@/metaAdsTypes'
+import { describeMetaAdAccountStatus } from '@/metaAdsState'
 import {
   ArrowClockwise,
   CheckCircle,
@@ -34,6 +42,12 @@ import {
 } from '@phosphor-icons/react'
 
 const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl'
+
+type MetaAdsEntityDetail =
+  | { kind: 'campaign'; title: string; payload: MetaCampaignRow }
+  | { kind: 'adset'; title: string; payload: MetaAdSet }
+  | { kind: 'ad'; title: string; payload: MetaAd }
+  | { kind: 'creative'; title: string; payload: MetaCreativeInventoryItem }
 
 function formatCurrency(value: number, currency = 'USD') {
   try {
@@ -60,48 +74,17 @@ function statusTone(status?: string) {
 }
 
 function describeAdAccountStatus(account: MetaAdAccount) {
-  const statusCode = String(account.account_status || '').trim()
-  const disableReason = Number(account.disable_reason || 0)
-
-  if (statusCode === '1' && disableReason === 0) {
-    return {
-      label: 'Ativa',
-      detail: 'Conta liberada para operar normalmente.',
-      tone: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-100',
-    }
-  }
-  if (statusCode === '2') {
-    return {
-      label: 'Desativada',
-      detail: 'A conta está desativada na Meta.',
-      tone: 'border-rose-500/30 bg-rose-500/15 text-rose-100',
-    }
-  }
-  if (statusCode === '7' || statusCode === '100') {
-    return {
-      label: 'Em análise',
-      detail: 'A Meta sinaliza revisão ou risco na conta.',
-      tone: 'border-amber-500/30 bg-amber-500/15 text-amber-100',
-    }
-  }
-  if (statusCode === '8' || statusCode === '101' || disableReason > 0) {
-    return {
-      label: 'Limitada',
-      detail: disableReason > 0 ? `Há uma restrição registrada pela Meta (disable_reason ${disableReason}).` : 'A conta está com operação limitada.',
-      tone: 'border-amber-500/30 bg-amber-500/15 text-amber-100',
-    }
-  }
-  if (statusCode === '9') {
-    return {
-      label: 'Encerrada',
-      detail: 'A conta foi encerrada ou está em fechamento.',
-      tone: 'border-slate-500/30 bg-slate-500/15 text-slate-200',
-    }
-  }
+  const status = describeMetaAdAccountStatus(account)
   return {
-    label: statusCode ? `Status ${statusCode}` : 'Sem status',
-    detail: statusCode ? `Código retornado pela Meta: ${statusCode}.` : 'A Meta não retornou status legível para esta conta.',
-    tone: 'border-slate-700 bg-slate-900/70 text-slate-200',
+    ...status,
+    tone:
+      status.tone === 'success'
+        ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-100'
+        : status.tone === 'warning'
+          ? 'border-amber-500/30 bg-amber-500/15 text-amber-100'
+          : status.tone === 'danger'
+            ? 'border-rose-500/30 bg-rose-500/15 text-rose-100'
+            : 'border-slate-700 bg-slate-900/70 text-slate-200',
   }
 }
 
@@ -304,27 +287,126 @@ export function MetaAdsPersistentError({
   )
 }
 
-export function MetaAdsWorkspaceTabs({
-  trackingDisabled,
+function MetaAdsEntityDetailDialog({
+  detail,
+  open,
+  onOpenChange,
 }: {
-  trackingDisabled?: boolean
+  detail: MetaAdsEntityDetail | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }) {
+  if (!detail) return null
+
+  const payload = detail.payload
+  const previewUrl = detail.kind === 'creative' ? detail.payload.thumbnailUrl : undefined
+  const sections: EntityDetailSection[] = [
+    {
+      title: 'Identificação',
+      fields: [
+        { label: 'Nome', value: payload.name },
+        { label: 'ID', value: payload.id },
+        {
+          label: 'Status',
+          value:
+            ('effective_status' in payload && payload.effective_status) ||
+            ('status' in payload && payload.status),
+        },
+      ],
+    },
+    {
+      title: 'Relacionamentos',
+      fields: [
+        {
+          label: 'Campanha',
+          value:
+            ('campaign_name' in payload && payload.campaign_name) ||
+            ('campaignName' in payload && payload.campaignName) ||
+            ('campaign_id' in payload && payload.campaign_id) ||
+            ('campaignId' in payload && payload.campaignId),
+        },
+        {
+          label: 'Conjunto de anúncios',
+          value:
+            ('adset_name' in payload && payload.adset_name) ||
+            ('adSetName' in payload && payload.adSetName) ||
+            ('adset_id' in payload && payload.adset_id) ||
+            ('adSetId' in payload && payload.adSetId),
+        },
+        {
+          label: 'Anúncio',
+          value:
+            ('adName' in payload && payload.adName) ||
+            ('adId' in payload && payload.adId),
+        },
+        {
+          label: 'Criativo',
+          value:
+            ('creative' in payload && payload.creative?.name) ||
+            ('creative' in payload && payload.creative?.id) ||
+            ('effectiveObjectStoryId' in payload && payload.id),
+        },
+        { label: 'Objetivo', value: 'objective' in payload ? payload.objective : undefined },
+        {
+          label: 'Anúncios associados',
+          value:
+            ('ads_count' in payload && payload.ads_count) ||
+            ('ads' in payload && Array.isArray(payload.ads) ? payload.ads.length : undefined),
+        },
+      ],
+    },
+    {
+      title: 'Orçamento e otimização',
+      fields: [
+        { label: 'Orçamento diário', value: 'daily_budget' in payload ? payload.daily_budget : undefined },
+        { label: 'Orçamento vitalício', value: 'lifetime_budget' in payload ? payload.lifetime_budget : undefined },
+        { label: 'Estratégia de lance', value: 'bid_strategy' in payload ? payload.bid_strategy : undefined },
+        { label: 'Meta de otimização', value: 'optimization_goal' in payload ? payload.optimization_goal : undefined },
+      ],
+    },
+    {
+      title: 'Janela operacional',
+      fields: [
+        { label: 'Início', value: 'start_time' in payload ? payload.start_time : undefined },
+        {
+          label: 'Fim',
+          value:
+            ('stop_time' in payload && payload.stop_time) ||
+            ('end_time' in payload && payload.end_time),
+        },
+        {
+          label: 'Story ID efetivo',
+          value:
+            ('effectiveObjectStoryId' in payload && payload.effectiveObjectStoryId) ||
+            ('creative' in payload && payload.creative?.effective_object_story_id),
+        },
+      ],
+    },
+  ]
+
   return (
-    <TabsList className="grid w-full max-w-4xl grid-cols-3 rounded-3xl border border-slate-800/80 bg-slate-950/65 p-2 backdrop-blur-xl">
+    <EntityDetailModal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={detail.title}
+      description="Configuração consolidada do item selecionado dentro do inventário da conta Meta."
+      previewUrl={previewUrl}
+      sections={sections}
+      rawPayload={payload}
+    />
+  )
+}
+
+export function MetaAdsWorkspaceTabs() {
+  return (
+    <TabsList className="grid w-full max-w-3xl grid-cols-2 rounded-3xl border border-slate-800/80 bg-slate-950/65 p-2 backdrop-blur-xl">
       <TabsTrigger value="overview">Visão geral</TabsTrigger>
       <TabsTrigger value="inventory">Inventário</TabsTrigger>
-      <TabsTrigger value="tracking" disabled={trackingDisabled}>
-        Tracking
-      </TabsTrigger>
     </TabsList>
   )
 }
 
 export function MetaAdsConnectionPanel({
-  connected,
-  refreshing,
-  onRefresh,
-  onDisconnect,
   connectDisabled,
   onOAuth,
   manualToken,
@@ -332,10 +414,6 @@ export function MetaAdsConnectionPanel({
   onManualConnect,
   manualDisabled,
 }: {
-  connected: boolean
-  refreshing: boolean
-  onRefresh: () => void
-  onDisconnect?: () => void
   connectDisabled: boolean
   onOAuth: () => void
   manualToken: string
@@ -353,43 +431,7 @@ export function MetaAdsConnectionPanel({
     <Card className={`overflow-hidden ${panelClass}`}>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_36%),radial-gradient(circle_at_top_right,rgba(236,72,153,0.14),transparent_28%)]" />
       <CardHeader className="relative gap-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-3 text-white">
-              <div className="flex items-center gap-2">
-                <FacebookLogo className="h-6 w-6 text-sky-400" />
-                <Target className="h-6 w-6 text-pink-400" />
-              </div>
-              Meta Ads
-            </CardTitle>
-            <CardDescription className="max-w-3xl text-slate-300">
-              Conecte o Gerenciador de Anúncios da Meta ao CRM, escolha a conta certa e acompanhe inventário e tracking sem sair do módulo.
-            </CardDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {connected ? (
-              <Badge className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-100">
-                <CheckCircle className="mr-1 h-4 w-4" />
-                Conectado
-              </Badge>
-            ) : (
-              <Badge className="border border-amber-500/30 bg-amber-500/15 text-amber-100">
-                <Link className="mr-1 h-4 w-4" />
-                Não conectado
-              </Badge>
-            )}
-            <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onRefresh} disabled={refreshing}>
-              {refreshing ? <Spinner className="mr-2 h-4 w-4 animate-spin" /> : <ArrowClockwise className="mr-2 h-4 w-4" />}
-              Atualizar
-            </Button>
-            {connected && onDisconnect ? (
-              <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={onDisconnect} disabled={refreshing}>
-                Desconectar
-              </Button>
-            ) : null}
-          </div>
-        </div>
-        <div className="space-y-2 border-t border-slate-800/80 pt-6">
+        <div className="space-y-2">
           <CardTitle>Conectar a conta Meta</CardTitle>
           <CardDescription className="text-slate-300">
             Autorize com Facebook no fluxo principal. O token manual permanece apenas como contingência administrativa.
@@ -707,17 +749,221 @@ export function MetaAdsInventoryPanel({
   inventoryError: MetaAdsApiError | null
   onRetry?: () => void
 }) {
+  const [selection, setSelection] = useState<Partial<Record<MetaAdsInventoryLevel, string>>>({})
+  const [selectedCreativeId, setSelectedCreativeId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<MetaAdsEntityDetail | null>(null)
+
+  const selectedCampaignId = selection.campaign || null
+  const selectedAdSetId = selection.adset || null
+  const selectedAdId = selection.ad || null
+
+  const campaignsById = useMemo(
+    () => new Map(inventory.campaigns.map((campaign) => [campaign.id, campaign])),
+    [inventory.campaigns],
+  )
+  const adSetsById = useMemo(
+    () => new Map(inventory.adSets.map((adSet) => [adSet.id, adSet])),
+    [inventory.adSets],
+  )
+  const adsById = useMemo(
+    () => new Map(inventory.ads.map((ad) => [ad.id, ad])),
+    [inventory.ads],
+  )
+
+  const selectedCampaign = selectedCampaignId
+    ? campaignsById.get(selectedCampaignId) || null
+    : null
+  const selectedAdSet = selectedAdSetId
+    ? adSetsById.get(selectedAdSetId) || null
+    : null
+  const selectedAd = selectedAdId
+    ? adsById.get(selectedAdId) || null
+    : null
+  const selectedCreative = selectedCreativeId
+    ? inventory.creatives.find((creative) => creative.id === selectedCreativeId) || null
+    : null
+
+  const filteredCampaigns = useMemo(() => {
+    if (!selectedCampaignId) return inventory.campaigns
+    return inventory.campaigns.filter((campaign) => campaign.id === selectedCampaignId)
+  }, [inventory.campaigns, selectedCampaignId])
+
+  const filteredAdSets = useMemo(() => {
+    return inventory.adSets.filter((adSet) => {
+      if (selectedCampaignId && adSet.campaign_id !== selectedCampaignId) return false
+      return !selectedAdSetId || adSet.id === selectedAdSetId
+    })
+  }, [inventory.adSets, selectedCampaignId, selectedAdSetId])
+
+  const filteredAds = useMemo(() => {
+    return inventory.ads.filter((ad) => {
+      if (selectedCampaignId && ad.campaign_id !== selectedCampaignId) return false
+      if (selectedAdSetId && ad.adset_id !== selectedAdSetId) return false
+      return !selectedAdId || ad.id === selectedAdId
+    })
+  }, [inventory.ads, selectedCampaignId, selectedAdSetId, selectedAdId])
+
+  const filteredCreatives = useMemo(() => {
+    return inventory.creatives.filter((creative) => {
+      if (selectedCampaignId && creative.campaignId !== selectedCampaignId) return false
+      if (selectedAdSetId && creative.adSetId !== selectedAdSetId) return false
+      if (selectedAdId && creative.adId !== selectedAdId) return false
+      return !selectedCreativeId || creative.id === selectedCreativeId
+    })
+  }, [inventory.creatives, selectedCampaignId, selectedAdSetId, selectedAdId, selectedCreativeId])
+
+  const clearSelection = () => {
+    setSelection({})
+    setSelectedCreativeId(null)
+  }
+
+  const handleCampaignSelect = (campaignId: string) => {
+    if (selectedCampaignId === campaignId && !selectedAdSetId && !selectedAdId && !selectedCreativeId) {
+      clearSelection()
+      return
+    }
+    setSelection({ campaign: campaignId })
+    setSelectedCreativeId(null)
+  }
+
+  const handleAdSetSelect = (adSet: MetaAdSet) => {
+    const parentCampaignId = adSet.campaign_id || null
+    if (selectedAdSetId === adSet.id && !selectedAdId && !selectedCreativeId) {
+      setSelection(parentCampaignId ? { campaign: parentCampaignId } : {})
+      setSelectedCreativeId(null)
+      return
+    }
+    setSelection({
+      campaign: parentCampaignId || undefined,
+      adset: adSet.id,
+    })
+    setSelectedCreativeId(null)
+  }
+
+  const handleAdSelect = (ad: MetaAd) => {
+    const parentCampaignId = ad.campaign_id || null
+    const parentAdSetId = ad.adset_id || null
+    if (selectedAdId === ad.id && !selectedCreativeId) {
+      setSelection({
+        campaign: parentCampaignId || undefined,
+        adset: parentAdSetId || undefined,
+      })
+      setSelectedCreativeId(null)
+      return
+    }
+    setSelection({
+      campaign: parentCampaignId || undefined,
+      adset: parentAdSetId || undefined,
+      ad: ad.id,
+    })
+    setSelectedCreativeId(null)
+  }
+
+  const handleCreativeSelect = (creative: MetaCreativeInventoryItem) => {
+    if (selectedCreativeId === creative.id) {
+      setSelectedCreativeId(null)
+      setSelection({
+        campaign: creative.campaignId || undefined,
+        adset: creative.adSetId || undefined,
+        ad: creative.adId || undefined,
+      })
+      return
+    }
+    setSelection({
+      campaign: creative.campaignId || undefined,
+      adset: creative.adSetId || undefined,
+      ad: creative.adId || undefined,
+    })
+    setSelectedCreativeId(creative.id)
+  }
+
+  const clearSelectionFromLevel = (level: MetaAdsInventoryLevel) => {
+    if (level === 'campaign') {
+      clearSelection()
+      return
+    }
+    if (level === 'adset') {
+      setSelection((current) => ({ campaign: current.campaign }))
+      setSelectedCreativeId(null)
+      return
+    }
+    if (level === 'ad') {
+      setSelection((current) => ({
+        campaign: current.campaign,
+        adset: current.adset,
+      }))
+      setSelectedCreativeId(null)
+      return
+    }
+    setSelectedCreativeId(null)
+  }
+
+  const rowClass = (isSelected: boolean) =>
+    `border-slate-800/80 transition ${isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900/45'}`
+
+  const itemButtonClass = (isSelected: boolean) =>
+    `text-left transition ${isSelected ? 'text-sky-200' : 'text-white hover:text-sky-200'}`
+
   return (
     <>
       <MetaAdsPersistentError error={inventoryError} onRetry={onRetry} />
+      <MetaAdsEntityDetailDialog detail={detail} open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)} />
+      {(selectedCampaign || selectedAdSet || selectedAd || selectedCreative) ? (
+        <Card className={panelClass}>
+          <CardContent className="flex flex-col gap-3 pt-6 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-200">
+              <span className="text-slate-400">Filtro ativo:</span>
+              {selectedCampaign ? (
+                <button
+                  type="button"
+                  onClick={() => clearSelectionFromLevel('campaign')}
+                  className="inline-flex h-8 items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-3 text-sky-100 transition hover:bg-sky-500/20"
+                >
+                  Campanha: {selectedCampaign.name || selectedCampaign.id}
+                </button>
+              ) : null}
+              {selectedAdSet ? (
+                <button
+                  type="button"
+                  onClick={() => clearSelectionFromLevel('adset')}
+                  className="inline-flex h-8 items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-3 text-sky-100 transition hover:bg-sky-500/20"
+                >
+                  Conjunto: {selectedAdSet.name || selectedAdSet.id}
+                </button>
+              ) : null}
+              {selectedAd ? (
+                <button
+                  type="button"
+                  onClick={() => clearSelectionFromLevel('ad')}
+                  className="inline-flex h-8 items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-3 text-sky-100 transition hover:bg-sky-500/20"
+                >
+                  Anúncio: {selectedAd.name || selectedAd.id}
+                </button>
+              ) : null}
+              {selectedCreative ? (
+                <button
+                  type="button"
+                  onClick={() => clearSelectionFromLevel('creative')}
+                  className="inline-flex h-8 items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-3 text-sky-100 transition hover:bg-sky-500/20"
+                >
+                  Criativo: {selectedCreative.name || selectedCreative.id}
+                </button>
+              ) : null}
+            </div>
+            <Button variant="outline" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80" onClick={clearSelection}>
+              Limpar filtro
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
       <Card className={panelClass}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FadersHorizontal className="h-5 w-5 text-sky-300" />
-            Campanhas
+            Campanha
           </CardTitle>
           <CardDescription className="text-slate-300">
-            Relação da conta selecionada com total de conjuntos e anúncios por campanha.
+            Relação das campanhas da conta selecionada com objetivo, status e volume de entrega associado.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -732,11 +978,16 @@ export function MetaAdsInventoryPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {inventory.campaigns.map((campaign) => (
-                <TableRow key={campaign.id} className="border-slate-800/80">
+              {filteredCampaigns.map((campaign) => (
+                <TableRow key={campaign.id} className={rowClass(selectedCampaignId === campaign.id)}>
                   <TableCell>
                     <div className="space-y-1">
-                      <div className="font-medium text-white">{campaign.name || campaign.id}</div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" className={itemButtonClass(selectedCampaignId === campaign.id)} onClick={() => handleCampaignSelect(campaign.id)}>
+                          {campaign.name || campaign.id}
+                        </button>
+                        <OpenEntityButton onClick={() => setDetail({ kind: 'campaign', title: campaign.name || campaign.id, payload: campaign })} />
+                      </div>
                       <div className="font-mono text-xs text-blue-100/60">{campaign.id}</div>
                     </div>
                   </TableCell>
@@ -757,7 +1008,52 @@ export function MetaAdsInventoryPanel({
 
       <Card className={panelClass}>
         <CardHeader>
-          <CardTitle>Anúncios</CardTitle>
+          <CardTitle>Conjunto de Anúncios</CardTitle>
+          <CardDescription className="text-slate-300">
+            Organização intermediária entre campanha e anúncio, com o status operacional de cada conjunto.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow className="border-slate-800">
+                <TableHead>Conjunto de anúncios</TableHead>
+                <TableHead>Campanha</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Anúncios</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredAdSets.map((adSet) => (
+                <TableRow key={adSet.id} className={rowClass(selectedAdSetId === adSet.id)}>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <button type="button" className={itemButtonClass(selectedAdSetId === adSet.id)} onClick={() => handleAdSetSelect(adSet)}>
+                          {adSet.name || adSet.id}
+                        </button>
+                        <OpenEntityButton onClick={() => setDetail({ kind: 'adset', title: adSet.name || adSet.id, payload: adSet })} />
+                      </div>
+                      <div className="font-mono text-xs text-blue-100/60">{adSet.id}</div>
+                    </div>
+                  </TableCell>
+                  <TableCell>{adSet.campaign_name || adSet.campaign_id || '—'}</TableCell>
+                  <TableCell>
+                    <Badge className={statusTone(adSet.effective_status || adSet.status)}>
+                      {adSet.effective_status || adSet.status || '—'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{adSet.ads_count ?? adSet.ads?.length ?? '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card className={panelClass}>
+        <CardHeader>
+          <CardTitle>Anúncio</CardTitle>
           <CardDescription className="text-slate-300">
             Mapa direto de anúncios com campanha, conjunto e criativo associados.
           </CardDescription>
@@ -774,11 +1070,16 @@ export function MetaAdsInventoryPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {inventory.ads.map((ad: any) => (
-                <TableRow key={ad.id} className="border-slate-800/80">
+              {filteredAds.map((ad) => (
+                <TableRow key={ad.id} className={rowClass(selectedAdId === ad.id)}>
                   <TableCell>
                     <div className="space-y-1">
-                      <div className="font-medium text-white">{ad.name || ad.id}</div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" className={itemButtonClass(selectedAdId === ad.id)} onClick={() => handleAdSelect(ad)}>
+                          {ad.name || ad.id}
+                        </button>
+                        <OpenEntityButton onClick={() => setDetail({ kind: 'ad', title: ad.name || ad.id, payload: ad })} />
+                      </div>
                       <div className="font-mono text-xs text-blue-100/60">{ad.id}</div>
                     </div>
                   </TableCell>
@@ -799,17 +1100,26 @@ export function MetaAdsInventoryPanel({
 
       <Card className={panelClass}>
         <CardHeader>
-          <CardTitle>Criativos</CardTitle>
+          <CardTitle>Criativo</CardTitle>
           <CardDescription className="text-slate-300">
             Criativos deduplicados a partir dos anúncios retornados pela Meta para a conta selecionada.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {inventory.creatives.length === 0 ? (
+          {filteredCreatives.length === 0 ? (
             <div className="text-sm text-slate-300">Nenhum criativo encontrado.</div>
           ) : (
-            inventory.creatives.map((creative: any) => (
-              <div key={creative.id} className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
+            filteredCreatives.map((creative) => (
+              <button
+                key={creative.id}
+                type="button"
+                onClick={() => handleCreativeSelect(creative)}
+                className={`rounded-2xl border p-4 text-left transition ${
+                  selectedCreativeId === creative.id
+                    ? 'border-sky-500/40 bg-sky-500/10'
+                    : 'border-slate-800/80 bg-slate-900/55 hover:bg-slate-900/75'
+                }`}
+              >
                 {creative.thumbnailUrl ? (
                   <img
                     src={creative.thumbnailUrl}
@@ -818,12 +1128,16 @@ export function MetaAdsInventoryPanel({
                   />
                 ) : null}
                 <div className="space-y-1">
-                  <div className="font-medium text-white">{creative.name || creative.id}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-medium text-white">{creative.name || creative.id}</div>
+                    <OpenEntityButton onClick={() => setDetail({ kind: 'creative', title: creative.name || creative.id, payload: creative })} />
+                  </div>
                   <div className="font-mono text-xs text-slate-400">{creative.id}</div>
-                  <div className="text-xs text-slate-300">Campanha: {creative.campaignId || '—'}</div>
+                  <div className="text-xs text-slate-300">Campanha: {creative.campaignName || creative.campaignId || '—'}</div>
+                  <div className="text-xs text-slate-300">Conjunto: {creative.adSetName || creative.adSetId || '—'}</div>
                   <div className="text-xs text-slate-300">Anúncio: {creative.adName || creative.adId || '—'}</div>
                 </div>
-              </div>
+              </button>
             ))
           )}
         </CardContent>

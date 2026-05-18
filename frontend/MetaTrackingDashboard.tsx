@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { format, subDays } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Badge } from '@/badge'
-import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { metaAdsApi } from '@/metaAdsApi'
 import type { MetaAdsReportCampaign, MetaAdsReportResponse } from '@/metaAdsTypes'
-import { ChartBar, CheckCircle, CirclesThreePlus, LinkBreak, Spinner, Target, WarningCircle } from '@phosphor-icons/react'
+import { ChartBar, CheckCircle, LinkBreak, Target, WarningCircle } from '@phosphor-icons/react'
 
 const WINDOW_OPTIONS = [7, 30, 60]
 const trackingPanelClass = 'glass-card border-slate-800/80 bg-slate-950/65 shadow-[0_20px_80px_rgba(2,6,23,0.35)]'
@@ -48,6 +47,33 @@ function formatDateTime(value: string | null | undefined): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
   return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+}
+
+function describeFallbackReason(report: MetaAdsReportResponse | null) {
+  const reason = report?.fallbackReason
+  if (reason === 'worker_unconfigured') {
+    return 'O consolidado do workflow ainda não está configurado neste runtime do CRM. O módulo caiu para o Graph para não ficar vazio.'
+  }
+  if (reason === 'worker_unauthorized') {
+    return 'O CRM não conseguiu autenticar a leitura do worker consolidado. O módulo caiu para o Graph enquanto a credencial do worker não é corrigida.'
+  }
+  if (reason === 'worker_unavailable') {
+    return 'O worker consolidado ficou indisponível nesta leitura. O CRM caiu para o Graph até o consolidado voltar a responder.'
+  }
+  if (reason === 'worker_invalid_response') {
+    return 'O worker consolidado respondeu em formato inválido para esta tela. O CRM caiu para o Graph para preservar a operação.'
+  }
+  return 'O consolidado do workflow não respondeu neste momento. O CRM caiu para o Graph da Meta para não deixar o módulo vazio.'
+}
+
+function describeWarning(warning: string) {
+  if (warning === 'empty_report') return 'Sem consolidado diário para a janela consultada'
+  if (warning === 'graph_fallback') return 'Leitura degradada via Graph'
+  if (warning === 'worker_unconfigured') return 'Worker não configurado'
+  if (warning === 'worker_unauthorized') return 'Worker sem autorização'
+  if (warning === 'worker_unavailable') return 'Worker indisponível'
+  if (warning === 'worker_invalid_response') return 'Worker retornou payload inválido'
+  return warning
 }
 
 function campaignStatusTone(status?: string) {
@@ -124,10 +150,15 @@ function CampaignRow({ campaign }: { campaign: MetaAdsReportCampaign }) {
   )
 }
 
-export function MetaTrackingDashboard() {
+export function MetaTrackingDashboard({
+  accountId,
+  externalRefreshKey = 0,
+}: {
+  accountId?: string
+  externalRefreshKey?: number
+}) {
   const [days, setDays] = useState(30)
   const [loading, setLoading] = useState(true)
-  const [refreshTick, setRefreshTick] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<MetaAdsReportResponse | null>(null)
 
@@ -154,7 +185,7 @@ export function MetaTrackingDashboard() {
     return () => {
       cancelled = true
     }
-  }, [days, refreshTick])
+  }, [accountId, days, externalRefreshKey])
 
   const summary = data?.summary || {}
   const campaigns = data?.campaigns || []
@@ -207,14 +238,6 @@ export function MetaTrackingDashboard() {
                   </button>
                 ))}
               </div>
-              <Button
-                variant="outline"
-                className="border-slate-700 bg-slate-900/70 text-slate-100 hover:bg-slate-800"
-                onClick={() => setRefreshTick((value) => value + 1)}
-              >
-                {loading ? <Spinner className="mr-2 h-4 w-4 animate-spin" /> : <CirclesThreePlus className="mr-2 h-4 w-4" />}
-                Atualizar
-              </Button>
             </div>
           </div>
         </CardHeader>
@@ -256,8 +279,8 @@ export function MetaTrackingDashboard() {
               </div>
               <p className="mt-2 text-sm opacity-90">
                 {data.source === 'graph-fallback'
-                  ? 'O consolidado do workflow não respondeu neste momento. O CRM caiu para o Graph da Meta para não deixar o módulo vazio.'
-                  : 'As métricas desta aba estão vindo do consolidado diário persistido pelo workflow Meta Ads – Report.'}
+                  ? describeFallbackReason(data)
+                  : 'As métricas deste painel estão vindo do consolidado diário persistido pelo workflow Meta Ads – Report.'}
               </p>
             </div>
           ) : null}
@@ -271,7 +294,7 @@ export function MetaTrackingDashboard() {
               <div className="mt-3 flex flex-wrap gap-2">
                 {warnings.map((warning) => (
                   <Badge key={warning} variant="outline" className="border-amber-300/30 text-amber-100">
-                    {warning}
+                    {describeWarning(warning)}
                   </Badge>
                 ))}
               </div>

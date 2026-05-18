@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { format, subDays } from 'date-fns'
 import { toast } from 'sonner'
-import { Card, CardContent } from '@/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/dialog'
 import { Tabs, TabsContent } from '@/tabs'
 import { MetaTrackingDashboard } from '@/MetaTrackingDashboard'
 import { metaAdsApi } from '@/metaAdsApi'
+import { emitMetaAdsHeaderState, subscribeMetaAdsHeaderAction } from '@/metaAdsHeaderBridge'
 import {
   MetaAdsAccountsPanel,
   MetaAdsConnectionPanel,
@@ -15,13 +15,13 @@ import {
   MetaAdsOAuthDialog,
   MetaAdsOverviewPanel,
   MetaAdsPersistentError,
-  MetaAdsStatusHero,
   MetaAdsWorkspaceTabs,
 } from '@/metaAdsPanels'
-import { buildMetaAdsHealthState, deriveMetaAdsConnectionMode, getDefaultMetaAdsTab } from '@/metaAdsState'
+import { buildMetaAdsHealthState, deriveMetaAdsConnectionMode, describeMetaAdAccountStatus, getDefaultMetaAdsTab } from '@/metaAdsState'
 import type {
   MetaAdAccount,
   MetaAdsApiError,
+  MetaAdsHeaderState,
   MetaAdsStatusResponse,
   MetaAdsSummaryResponse,
   MetaAdsTab,
@@ -54,6 +54,7 @@ export function MetaCampaignControlCenter() {
   const [oauthDialogState, setOauthDialogState] = useState<'opening' | 'opened' | 'blocked' | 'closed' | 'error'>('opening')
   const [oauthDialogError, setOauthDialogError] = useState<MetaAdsApiError | null>(null)
   const [manageConnectionsOpen, setManageConnectionsOpen] = useState(false)
+  const [trackingRefreshKey, setTrackingRefreshKey] = useState(0)
   const oauthPopupRef = useRef<Window | null>(null)
   const oauthPollRef = useRef<number | null>(null)
 
@@ -70,6 +71,28 @@ export function MetaCampaignControlCenter() {
   const healthState = useMemo(
     () => buildMetaAdsHealthState({ mode: connectionMode, selectedAccount, status, statusError }),
     [connectionMode, selectedAccount, status, statusError],
+  )
+  const metaAdsHeaderState = useMemo<MetaAdsHeaderState>(
+    () => {
+      const accountStatus = selectedAccount ? describeMetaAdAccountStatus(selectedAccount) : null
+      return {
+        connected: Boolean(status?.connection.connected),
+        refreshing: loading || refreshing,
+        accounts: accounts.map((account) => ({
+          id: account.id,
+          name: account.name || account.id,
+        })),
+        selectedAccountId: selectedAccount?.id || '',
+        selectedAccountName: selectedAccount?.name || selectedAccount?.id || undefined,
+        selectedAccountCurrency: selectedAccount?.currency || undefined,
+        selectedAccountTimezone: selectedAccount?.timezone_name || undefined,
+        selectedAccountStatusLabel: accountStatus?.label,
+        selectedAccountStatusDetail: accountStatus?.detail,
+        selectedAccountStatusTone: accountStatus?.tone,
+        sessionUpdatedAt: status?.connection.updatedAt || undefined,
+      }
+    },
+    [accounts, loading, refreshing, selectedAccount, status?.connection.connected, status?.connection.updatedAt],
   )
 
   const resetConnectedData = () => {
@@ -271,10 +294,17 @@ export function MetaCampaignControlCenter() {
     return () => cleanupOAuthPopup(true)
   }, [])
 
+  useEffect(() => {
+    emitMetaAdsHeaderState(metaAdsHeaderState)
+  }, [metaAdsHeaderState])
+
+  useEffect(() => () => emitMetaAdsHeaderState(null), [])
+
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
       await refreshConnectedState()
+      setTrackingRefreshKey((value) => value + 1)
       toast.success('Meta Ads atualizado')
     } catch (error: any) {
       setStatusError(error)
@@ -415,7 +445,26 @@ export function MetaCampaignControlCenter() {
   }
 
   const handleNavigateTab = (tab: MetaAdsTab) => setActiveTab(tab)
-  const handleManageConnections = () => setManageConnectionsOpen(true)
+
+  useEffect(() => {
+    return subscribeMetaAdsHeaderAction((action) => {
+      if (action.type === 'refresh') {
+        handleRefresh()
+        return
+      }
+      if (action.type === 'manage-connections') {
+        setManageConnectionsOpen(true)
+        return
+      }
+      if (action.type === 'disconnect') {
+        if (status?.connection.connected) handleDisconnect()
+        return
+      }
+      if (action.type === 'set-account' && action.value) {
+        handleSelectAccount(action.value)
+      }
+    })
+  }, [handleDisconnect, handleRefresh, handleSelectAccount, status?.connection.connected])
 
   const missingConfig = status?.missingConfig || []
   const connectActionsDisabled =
@@ -430,28 +479,11 @@ export function MetaCampaignControlCenter() {
 
   return (
     <div className="meta-ads-surface space-y-6 animate-fade-in">
-      {showWorkspaceTabs ? (
-        <MetaAdsStatusHero
-          connected={Boolean(status?.connection.connected)}
-          refreshing={loading || refreshing}
-          selectedAccount={selectedAccount}
-          accounts={accounts}
-          onSelectAccount={handleSelectAccount}
-          onManageConnections={handleManageConnections}
-          onRefresh={handleRefresh}
-          onDisconnect={handleDisconnect}
-        />
-      ) : null}
-
       <MetaAdsPersistentError error={statusError} onRetry={handleRefresh} />
 
       {!showWorkspaceTabs ? (
         <div className="space-y-6">
           <MetaAdsConnectionPanel
-            connected={Boolean(status?.connection.connected)}
-            refreshing={loading || refreshing}
-            onRefresh={handleRefresh}
-            onDisconnect={status?.connection.connected ? handleDisconnect : undefined}
             connectDisabled={connectActionsDisabled}
             onOAuth={handleOpenOAuth}
             manualToken={manualToken}
@@ -480,18 +512,6 @@ export function MetaCampaignControlCenter() {
         </div>
       ) : (
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as MetaAdsTab)} className="space-y-6">
-          <MetaAdsHealthBanner
-            health={healthState}
-            statusUpdatedAt={status?.connection.updatedAt}
-            selectedAccount={selectedAccount}
-            onNavigate={(tab) => {
-              if (tab === 'connect') {
-                setManageConnectionsOpen(true)
-                return
-              }
-              handleNavigateTab(tab)
-            }}
-          />
           <MetaAdsWorkspaceTabs />
 
           <TabsContent value="overview" className="space-y-6">
@@ -508,14 +528,20 @@ export function MetaCampaignControlCenter() {
                 onAction={() => setActiveTab('connect')}
               />
             ) : (
-              <MetaAdsOverviewPanel
-                selectedAccount={selectedAccount}
-                summary={summary}
-                trend={trend}
-                inventory={inventory}
-                overviewError={overviewError}
-                onRetry={handleRefresh}
-              />
+              <>
+                <MetaAdsOverviewPanel
+                  selectedAccount={selectedAccount}
+                  summary={summary}
+                  trend={trend}
+                  inventory={inventory}
+                  overviewError={overviewError}
+                  onRetry={handleRefresh}
+                />
+                <MetaTrackingDashboard
+                  accountId={selectedAccount.id}
+                  externalRefreshKey={trackingRefreshKey}
+                />
+              </>
             )}
           </TabsContent>
 
@@ -543,14 +569,6 @@ export function MetaCampaignControlCenter() {
             )}
           </TabsContent>
 
-          <TabsContent value="tracking" className="space-y-6">
-            <Card className="border-slate-800/80 bg-slate-950/55 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl">
-              <CardContent className="pt-6 text-sm leading-6 text-slate-300">
-                Tracking do site e inventário da conta Meta convivem nesta aba, mas são superfícies diferentes: aqui você acompanha os sinais e eventos do site; nas etapas anteriores você conecta a conta e escolhe qual estrutura da Meta deve alimentar o CRM.
-              </CardContent>
-            </Card>
-            <MetaTrackingDashboard />
-          </TabsContent>
         </Tabs>
       )}
       <MetaAdsOAuthDialog
@@ -574,10 +592,6 @@ export function MetaCampaignControlCenter() {
           </DialogHeader>
           <div className="space-y-6">
             <MetaAdsConnectionPanel
-              connected={Boolean(status?.connection.connected)}
-              refreshing={loading || refreshing}
-              onRefresh={handleRefresh}
-              onDisconnect={status?.connection.connected ? handleDisconnect : undefined}
               connectDisabled={connectActionsDisabled}
               onOAuth={handleOpenOAuth}
               manualToken={manualToken}
