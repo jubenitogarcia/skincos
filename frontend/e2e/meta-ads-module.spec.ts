@@ -11,14 +11,12 @@ async function mockCrmUser(page: Page) {
 }
 
 async function openMetaAds(page: Page) {
-  await page.goto('/')
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     localStorage.setItem('app.activeModule', 'meta-ads')
   })
+  await page.goto('/')
   await page.reload()
-  const metaAdsNav = page.getByRole('button', { name: 'Meta Ads' })
-  await metaAdsNav.waitFor({ state: 'visible', timeout: 30000 })
-  await metaAdsNav.click()
+  await expect(page.getByRole('heading', { name: 'Meta Ads' })).toBeVisible({ timeout: 30000 })
 }
 
 test.describe('meta ads', () => {
@@ -129,18 +127,57 @@ test.describe('meta ads', () => {
                 status: 'ACTIVE',
                 effective_status: 'ACTIVE',
                 objective: 'LEADS',
+                daily_budget: '12000',
+                totals: { adSets: 1, ads: 1 },
+              },
+              {
+                id: 'cmp_2',
+                name: 'Campanha WhatsApp Facial',
+                status: 'PAUSED',
+                effective_status: 'PAUSED',
+                objective: 'MESSAGES',
                 totals: { adSets: 1, ads: 1 },
               },
             ],
-            adSets: [{ id: 'set_1' }],
+            adSets: [
+              {
+                id: 'set_1',
+                name: 'Conjunto 1',
+                campaign_id: 'cmp_1',
+                campaign_name: 'Campanha Primavera',
+                effective_status: 'ACTIVE',
+                ads_count: 1,
+                optimization_goal: 'LEAD_GENERATION',
+              },
+              {
+                id: 'set_2',
+                name: 'Conjunto 2',
+                campaign_id: 'cmp_2',
+                campaign_name: 'Campanha WhatsApp Facial',
+                effective_status: 'PAUSED',
+                ads_count: 1,
+              },
+            ],
             ads: [
               {
                 id: 'ad_1',
                 name: 'Anúncio 1',
+                campaign_id: 'cmp_1',
                 campaign_name: 'Campanha Primavera',
+                adset_id: 'set_1',
                 adset_name: 'Conjunto 1',
-                creative: { id: 'cr_1', name: 'Criativo 1' },
+                creative: { id: 'cr_1', name: 'Criativo 1', effective_object_story_id: 'story_1' },
                 effective_status: 'ACTIVE',
+              },
+              {
+                id: 'ad_2',
+                name: 'Anúncio WhatsApp 1',
+                campaign_id: 'cmp_2',
+                campaign_name: 'Campanha WhatsApp Facial',
+                adset_id: 'set_2',
+                adset_name: 'Conjunto 2',
+                creative: { id: 'cr_2', name: 'Criativo WhatsApp 1' },
+                effective_status: 'PAUSED',
               },
             ],
             creatives: [
@@ -148,7 +185,18 @@ test.describe('meta ads', () => {
                 id: 'cr_1',
                 name: 'Criativo 1',
                 campaignId: 'cmp_1',
+                adSetId: 'set_1',
+                adId: 'ad_1',
                 adName: 'Anúncio 1',
+                effectiveObjectStoryId: 'story_1',
+              },
+              {
+                id: 'cr_2',
+                name: 'Criativo WhatsApp 1',
+                campaignId: 'cmp_2',
+                adSetId: 'set_2',
+                adId: 'ad_2',
+                adName: 'Anúncio WhatsApp 1',
               },
             ],
           },
@@ -199,27 +247,44 @@ test.describe('meta ads', () => {
 
     await openMetaAds(page)
 
-    await expect(page.getByText('Conta Meta pronta para operar')).toBeVisible({ timeout: 30000 })
-    await expect(page.getByText('Conta ativa: Conta Principal')).toBeVisible()
+    await expect(page.getByText('Conta Meta pronta para operar')).toHaveCount(0)
+    await expect(page.getByText('Conta ativa: Conta Principal')).toHaveCount(0)
+    await expect(page.getByRole('combobox')).toContainText('Conta Principal')
+    await expect(page.getByText('Conectado')).toBeVisible({ timeout: 30000 })
     await expect(page.getByText('Tendência de gasto')).toBeVisible()
     await expect(page.getByTitle('Conta liberada para operar normalmente.')).toContainText('Ativa')
+    await expect(page.getByText('As métricas deste painel estão vindo do consolidado diário persistido pelo workflow Meta Ads – Report.')).toBeVisible()
+    await expect(page.getByText('Campanha Primavera')).toBeVisible()
 
     await expect(page.getByRole('tab', { name: 'Conexão' })).toHaveCount(0)
     await expect(page.getByRole('tab', { name: 'Visão geral' })).toBeVisible()
-    await page.getByRole('button', { name: 'Gerenciar conexão' }).first().click()
-    await expect(page.getByText('Conectar a conta Meta')).toBeVisible()
-    await expect(page.getByText('Escolher a conta de anúncios', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Outros tipos de acesso' })).toBeVisible()
     await expect(page.getByText('Comece conectando a Meta ao CRM.')).toHaveCount(0)
     await expect(page.getByText('OAuth:')).toHaveCount(0)
-    await page.keyboard.press('Escape')
 
     await page.getByRole('tab', { name: 'Inventário' }).click()
+    await expect(page.locator('body')).toContainText('Campanha')
+    await expect(page.locator('body')).toContainText('Conjunto de Anúncios')
+    await expect(page.locator('body')).toContainText('Anúncio')
+    await expect(page.locator('body')).toContainText('Criativo')
+    await expect(page.locator('body')).toContainText('Conjunto 1')
     await expect(page.locator('body')).toContainText('Criativo 1')
-
-    await page.getByRole('tab', { name: 'Tracking' }).click()
-    await expect(page.getByText('As métricas desta aba estão vindo do consolidado diário persistido pelo workflow Meta Ads – Report.')).toBeVisible()
-    await expect(page.getByText('Campanha Primavera')).toBeVisible()
+    await expect(page.locator('body')).toContainText('Campanha WhatsApp Facial')
+    await page.getByRole('button', { name: 'Campanha Primavera' }).click()
+    await expect(page.locator('body')).toContainText('Conjunto 1')
+    await expect(page.locator('body')).toContainText('Anúncio 1')
+    await expect(page.locator('body')).toContainText('Criativo 1')
+    await expect(page.locator('body')).not.toContainText('Conjunto 2')
+    await expect(page.locator('body')).not.toContainText('Anúncio WhatsApp 1')
+    await expect(page.locator('body')).not.toContainText('Criativo WhatsApp 1')
+    await page.getByRole('button', { name: 'Abrir' }).first().click()
+    await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
+    await expect(page.getByRole('dialog')).toContainText('Orçamento diário')
+    await expect(page.getByRole('dialog')).toContainText('12000')
+    await page.getByRole('button', { name: 'Fechar' }).click()
+    await page.getByRole('button', { name: 'Conjunto 1' }).click()
+    await expect(page.locator('body')).toContainText('Filtro ativo:')
+    await expect(page.locator('body')).toContainText('Conjunto: Conjunto 1')
+    await expect(page.getByRole('tab', { name: 'Tracking' })).toHaveCount(0)
   })
 
   test('keeps the oauth flow inside CRM with a modal when the popup is blocked', async ({ page }) => {
@@ -253,6 +318,7 @@ test.describe('meta ads', () => {
       window.open = () => null
     })
 
+    await page.getByRole('button', { name: /Gerenciar conex/ }).first().click({ force: true })
     await page.getByRole('button', { name: 'Conectar com Facebook' }).click()
     await expect(page.getByRole('dialog')).toContainText('Permita a janela do Facebook')
     await expect(page.locator('body')).not.toContainText('A autenticação será aberta nesta mesma aba.')

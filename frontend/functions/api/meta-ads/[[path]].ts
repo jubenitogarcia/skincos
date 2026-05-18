@@ -14,10 +14,13 @@ import {
   getMetaAdsSummary,
   getMetaAdsTrend,
   getMetaProfile,
+  type MetaAd as GraphMetaAd,
   listMetaAdAccounts,
   listMetaAds,
   listMetaAdSets,
   listMetaCampaigns,
+  type MetaAdSet as GraphMetaAdSet,
+  type MetaCampaign as GraphMetaCampaign,
 } from '../../_lib/metaAdsGraph'
 import {
   aggregateMetaAdsWorkflowSummary,
@@ -25,6 +28,13 @@ import {
   normalizeMetaAdsWorkflowAccountId,
   type MetaAdsWorkflowWindow,
 } from '../../../metaAdsWorkflowReport'
+import type {
+  MetaAd,
+  MetaAdSet,
+  MetaAdsReportFallbackReason,
+  MetaCampaignRow,
+  MetaCreativeInventoryItem,
+} from '../../../metaAdsTypes'
 
 type OAuthState = { userId: string; nonce: string; iat: number }
 type OAuthPopupMessage = {
@@ -406,14 +416,14 @@ function parseRange(url: URL) {
   return { since, until }
 }
 
-function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
-  const adsetsByCampaign = new Map<string, any[]>()
-  const adsByAdset = new Map<string, any[]>()
-  const creativesById = new Map<string, any>()
+function buildInventory(campaigns: GraphMetaCampaign[], adsets: GraphMetaAdSet[], ads: GraphMetaAd[]) {
+  const adsetsByCampaign = new Map<string, MetaAdSet[]>()
+  const adsByAdset = new Map<string, MetaAd[]>()
+  const creativesById = new Map<string, MetaCreativeInventoryItem>()
 
   for (const adset of adsets) {
     const list = adsetsByCampaign.get(adset.campaign_id || '') || []
-    list.push({ ...adset, ads: [] as any[] })
+    list.push({ ...adset, ads: [] })
     adsetsByCampaign.set(adset.campaign_id || '', list)
   }
 
@@ -426,8 +436,10 @@ function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
         effectiveObjectStoryId: ad.creative.effective_object_story_id || null,
         adId: ad.id,
         adName: ad.name,
-        adsetId: ad.adset_id || null,
+        adSetId: ad.adset_id || null,
+        adSetName: ad.adset_name || null,
         campaignId: ad.campaign_id || null,
+        campaignName: ad.campaign_name || null,
       })
     }
     const list = adsByAdset.get(ad.adset_id || '') || []
@@ -435,7 +447,7 @@ function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
     adsByAdset.set(ad.adset_id || '', list)
   }
 
-  const campaignsWithChildren = campaigns.map((campaign) => {
+  const campaignsWithChildren: MetaCampaignRow[] = campaigns.map((campaign) => {
     const campaignAdsets = (adsetsByCampaign.get(campaign.id) || []).map((adset) => ({
       ...adset,
       ads: adsByAdset.get(adset.id) || [],
@@ -456,6 +468,39 @@ function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
     ads,
     creatives: Array.from(creativesById.values()),
   }
+}
+
+function classifyWorkflowFallback(
+  error: unknown,
+  cfg: ReturnType<typeof runtimeConfig>,
+): MetaAdsReportFallbackReason {
+  if (!normalizeWorkerBaseUrl(cfg.reportWorkerBaseUrl) || !String(cfg.reportWorkerApiToken || '').trim()) {
+    return 'worker_unconfigured'
+  }
+  const message = String((error as Error | null)?.message || '').toLowerCase()
+  if (
+    message.includes('401') ||
+    message.includes('403') ||
+    message.includes('unauthorized') ||
+    message.includes('forbidden')
+  ) {
+    return 'worker_unauthorized'
+  }
+  if (
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('timeout') ||
+    message.includes('503') ||
+    message.includes('502') ||
+    message.includes('500')
+  ) {
+    return 'worker_unavailable'
+  }
+  return 'worker_invalid_response'
+}
+
+function buildFallbackWarnings(reason: MetaAdsReportFallbackReason) {
+  return ['graph_fallback', reason]
 }
 
 async function readConnection(context: any, userId: string) {
@@ -935,14 +980,49 @@ async function handleReport(context: any) {
 
   const cfg = runtimeConfig(context)
   const range = parseRange(new URL(context.request.url))
+  const reportWindow = resolveWorkflowSummaryWindow(range)
 
   try {
     const report = await fetchWorkflowReport(selected.adAccountId, range, cfg)
     if (report) {
       return json(200, report)
     }
-  } catch {
-    // fallback seguro abaixo
+  } catch (error) {
+    const fallbackReason = classifyWorkflowFallback(error, cfg)
+    const [summary, campaigns] = await Promise.all([
+      getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
+      listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    ])
+
+    return json(200, {
+      ok: true,
+      source: 'graph-fallback',
+      fallbackReason,
+      window: reportWindow,
+      summary: {
+        ...summary,
+        source: 'graph',
+        activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
+      },
+      metadata: {
+        reportDate: String(range.until || '').trim(),
+        runsCount: 0,
+        source: 'graph',
+      },
+      campaigns: campaigns.map((campaign) => ({
+        campaignId: campaign.id,
+        campaignName: campaign.name || campaign.id,
+        status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        conversations: 0,
+        ctr: 0,
+        cpc: 0,
+        cpm: 0,
+      })),
+      warnings: buildFallbackWarnings(fallbackReason),
+    })
   }
 
   const [summary, campaigns] = await Promise.all([
@@ -953,7 +1033,8 @@ async function handleReport(context: any) {
   return json(200, {
     ok: true,
     source: 'graph-fallback',
-    window: resolveWorkflowSummaryWindow(range),
+    fallbackReason: 'worker_unconfigured',
+    window: reportWindow,
     summary: {
       ...summary,
       source: 'graph',
@@ -973,10 +1054,10 @@ async function handleReport(context: any) {
       clicks: 0,
       conversations: 0,
       ctr: 0,
-      cpc: 0,
-      cpm: 0,
-    })),
-    warnings: ['graph_fallback'],
+        cpc: 0,
+        cpm: 0,
+      })),
+    warnings: buildFallbackWarnings('worker_unconfigured'),
   })
 }
 

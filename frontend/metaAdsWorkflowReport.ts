@@ -146,6 +146,7 @@ export function buildMetaAdsWorkflowReport(
     ok: true,
     source: 'workflow-report',
     window,
+    fallbackReason: rows.length ? undefined : 'empty_report',
     summary,
     metadata: {
       reportDate: String(metadata?.reportDate || '').trim(),
@@ -153,6 +154,6 @@ export function buildMetaAdsWorkflowReport(
       source: String(metadata?.source || 'd1').trim() || 'd1',
     },
     campaigns: campaignRows,
-    warnings: [],
+    warnings: rows.length ? [] : ['empty_report'],
   }
 }
