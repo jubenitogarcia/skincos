@@ -22,7 +22,7 @@ import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insu
 import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
-import { CalendarX2, CheckCircle2, Download, Link2, Pencil, RefreshCw, Shield, Sparkles } from 'lucide-react'
+import { CalendarX2, CheckCircle2, Circle, CircleDot, Clock3, Download, Pencil, RefreshCw, Settings2, Shield, Sparkles } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -484,14 +484,6 @@ export default function AppFunctionalNeatlab() {
                           : estoqueBadgeTone === 'critical'
                             ? 'bg-rose-500/30 text-rose-100 border-rose-400/40'
                             : 'bg-white/10 text-blue-100/70 border-white/15'
-
-                const metaAdsHeaderStatusBadgeClass = React.useMemo(() => {
-                    const tone = metaAdsHeaderState?.selectedAccountStatusTone
-                    if (tone === 'success') return 'border-emerald-400/40 bg-emerald-500/25 text-emerald-100'
-                    if (tone === 'warning') return 'border-amber-400/40 bg-amber-500/30 text-amber-100'
-                    if (tone === 'danger') return 'border-rose-400/40 bg-rose-500/30 text-rose-100'
-                    return 'border-white/15 bg-white/[0.06] text-blue-50'
-                }, [metaAdsHeaderState?.selectedAccountStatusTone])
 
 			    const insumosMounted = useMemo(() => mountedModuleKeys.includes('insumos'), [mountedModuleKeys])
 			    const lastInsumosUnitRef = React.useRef<string | null>(null)
@@ -1248,17 +1240,34 @@ export default function AppFunctionalNeatlab() {
                                                                     onValueChange={(value) => {
                                                                         dispatchMetaAdsHeaderAction({ type: 'set-account', value })
                                                                     }}
-                                                                    disabled={!metaAdsHeaderState?.connected || metaAdsHeaderState?.refreshing || !(metaAdsHeaderState?.accounts || []).length}
+                                                                    disabled={metaAdsHeaderState?.refreshing || !(metaAdsHeaderState?.accounts || []).length}
                                                                 >
                                                                     <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
-                                                                        <SelectValue placeholder={metaAdsHeaderState?.connected ? 'Conta de anuncios' : 'Conecte a Meta'} />
+                                                                        <SelectValue placeholder="Conta de anúncios" />
                                                                     </SelectTrigger>
                                                                     <SelectContent>
-                                                                        {(metaAdsHeaderState?.accounts || []).map((account) => (
-                                                                            <SelectItem key={account.id} value={account.id}>
-                                                                                {account.name || account.id}
-                                                                            </SelectItem>
-                                                                        ))}
+                                                                        {(metaAdsHeaderState?.accounts || []).map((account) => {
+                                                                            const statusTone =
+                                                                                account.statusTone === 'success'
+                                                                                    ? 'bg-emerald-500/12 text-emerald-100 focus:bg-emerald-500/20 focus:text-emerald-50'
+                                                                                    : account.statusTone === 'warning'
+                                                                                        ? 'bg-amber-500/12 text-amber-100 focus:bg-amber-500/20 focus:text-amber-50'
+                                                                                        : account.statusTone === 'danger'
+                                                                                            ? 'bg-rose-500/12 text-rose-100 focus:bg-rose-500/20 focus:text-rose-50'
+                                                                                            : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
+                                                                            return (
+                                                                                <SelectItem key={account.id} value={account.id} className={statusTone}>
+                                                                                    <div className="flex w-full items-center justify-between gap-3 pr-4">
+                                                                                        <span className="truncate">{account.name || account.id}</span>
+                                                                                        {account.statusTone === 'success' ? (
+                                                                                            <CircleDot className="size-3.5 text-emerald-300" aria-hidden="true" />
+                                                                                        ) : (
+                                                                                            <Circle className={`size-3.5 ${account.statusTone === 'warning' ? 'text-amber-300' : account.statusTone === 'danger' ? 'text-rose-300' : 'text-slate-400'}`} aria-hidden="true" />
+                                                                                        )}
+                                                                                    </div>
+                                                                                </SelectItem>
+                                                                            )
+                                                                        })}
                                                                     </SelectContent>
                                                                 </Select>
                                                             </div>
@@ -1354,53 +1363,90 @@ export default function AppFunctionalNeatlab() {
                                     ) : null}
                                     {active === 'meta-ads' ? (
                                         <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                                            <span className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs ${metaAdsHeaderState?.connected ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100' : 'border-amber-400/40 bg-amber-500/15 text-amber-100'}`}>
-                                                <Link2 className="size-3.5" aria-hidden="true" />
-                                                {metaAdsHeaderState?.connected ? 'Conectado' : 'Nao conectado'}
-                                            </span>
-                                            {metaAdsHeaderState?.selectedAccountCurrency || metaAdsHeaderState?.selectedAccountTimezone ? (
-                                                <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-xs text-blue-50">
-                                                    <span>{metaAdsHeaderState?.selectedAccountCurrency || '---'}</span>
-                                                    <span aria-hidden="true">·</span>
-                                                    <span>{metaAdsHeaderState?.selectedAccountTimezone || 'sem timezone'}</span>
-                                                </span>
-                                            ) : null}
-                                            {metaAdsHeaderState?.selectedAccountStatusLabel ? (
-                                                <span
-                                                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs ${metaAdsHeaderStatusBadgeClass}`}
-                                                    title={metaAdsHeaderState.selectedAccountStatusDetail || metaAdsHeaderState.selectedAccountStatusLabel}
-                                                >
-                                                    <Shield className="size-3.5" aria-hidden="true" />
-                                                    {metaAdsHeaderState.selectedAccountStatusLabel}
-                                                </span>
-                                            ) : null}
+                                            <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
+                                                {[7, 30, 60].map((period) => (
+                                                    <button
+                                                        key={period}
+                                                        type="button"
+                                                        className={`h-6 rounded-full px-2.5 text-xs transition ${
+                                                            !metaAdsHeaderState?.customRangeActive && metaAdsHeaderState?.reportWindowDays === period
+                                                                ? 'bg-white/16 text-white'
+                                                                : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                        }`}
+                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'set-report-window', value: period as 7 | 30 | 60 })}
+                                                    >
+                                                        {period}d
+                                                    </button>
+                                                ))}
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition ${
+                                                                metaAdsHeaderState?.customRangeActive
+                                                                    ? 'bg-white/16 text-white'
+                                                                    : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                            }`}
+                                                            onClick={() => dispatchMetaAdsHeaderAction({ type: 'open-custom-period' })}
+                                                            aria-label="Periodo personalizado"
+                                                        >
+                                                            <CalendarX2 className="size-3.5" aria-hidden="true" />
+                                                        </button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        {metaAdsHeaderState?.customRangeActive && metaAdsHeaderState?.customRangeLabel
+                                                            ? `Período personalizado: ${metaAdsHeaderState.customRangeLabel}`
+                                                            : 'Escolher período personalizado'}
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </div>
                                             {metaAdsHeaderState?.sessionUpdatedAt ? (
-                                                <span
-                                                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-xs text-blue-50"
-                                                    title={`Ultima atualizacao de sessao: ${new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}`}
-                                                >
-                                                    <CheckCircle2 className="size-3.5" aria-hidden="true" />
-                                                    {new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleDateString('pt-BR')}
-                                                </span>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span
+                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-blue-50"
+                                                        >
+                                                            <Clock3 className="size-3.5" aria-hidden="true" />
+                                                        </span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        Ultima atualizacao de sessao: {new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}
+                                                    </TooltipContent>
+                                                </Tooltip>
                                             ) : null}
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="h-8 rounded-full border border-white/15 bg-white/[0.06] px-3 text-xs text-blue-50 hover:bg-white/[0.12]"
-                                                onClick={() => dispatchMetaAdsHeaderAction({ type: 'manage-connections' })}
-                                            >
-                                                Gerenciar conexao
-                                            </Button>
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="h-8 rounded-full border border-white/15 bg-white/[0.06] px-3 text-xs text-blue-50 hover:bg-white/[0.12]"
-                                                onClick={() => dispatchMetaAdsHeaderAction({ type: 'refresh' })}
-                                                disabled={metaAdsHeaderState?.refreshing}
-                                            >
-                                                <RefreshCw className={`mr-1.5 size-3.5 ${metaAdsHeaderState?.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
-                                                Atualizar
-                                            </Button>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'manage-connections' })}
+                                                        aria-label="Gerenciar conexao"
+                                                    >
+                                                        <Settings2 className="size-3.5" aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    Gerenciar conexao
+                                                </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'refresh' })}
+                                                        disabled={metaAdsHeaderState?.refreshing}
+                                                        aria-label="Atualizar"
+                                                    >
+                                                        <RefreshCw className={`size-3.5 ${metaAdsHeaderState?.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    Atualizar
+                                                </TooltipContent>
+                                            </Tooltip>
                                         </div>
                                     ) : null}
                                     {active === 'atendimento' ? (
