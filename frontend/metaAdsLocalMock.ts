@@ -2,6 +2,7 @@ import type {
   MetaAdAccount,
   MetaAdsReportResponse,
   MetaAdsApiError,
+  MetaAdsReportWindowDays,
   MetaAdsStatusResponse,
   MetaAdsSummaryResponse,
   MetaAdsTrendPoint,
@@ -27,6 +28,67 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const STORAGE_KEY = 'metaAds.localState.v1'
 const SCENARIO_QUERY_KEY = 'metaAdsLocalScenario'
 const DEFAULT_ACCOUNT_ID = 'act_123'
+
+function resolveRequestedDays(params?: { since?: string; until?: string }): number {
+  const since = params?.since ? new Date(params.since) : null
+  const until = params?.until ? new Date(params.until) : null
+  if (!since || !until || Number.isNaN(since.getTime()) || Number.isNaN(until.getTime())) return 30
+  const diff = Math.round((until.getTime() - since.getTime()) / 86400000) + 1
+  return Math.max(1, diff)
+}
+
+function resolveWindowDays(params?: { since?: string; until?: string }): MetaAdsReportWindowDays {
+  const diff = resolveRequestedDays(params)
+  if (diff <= 7) return 7
+  if (diff <= 30) return 30
+  return 60
+}
+
+function resolveWindowLabel(days: MetaAdsReportWindowDays) {
+  if (days === 7) return 'last_7d'
+  return 'last_30d'
+}
+
+function interpolateMetric(days: number, anchors: { d7: number; d30: number; d60: number }) {
+  if (days <= 7) return anchors.d7 * (days / 7)
+  if (days <= 30) {
+    const progress = (days - 7) / (30 - 7)
+    return anchors.d7 + (anchors.d30 - anchors.d7) * progress
+  }
+  if (days <= 60) {
+    const progress = (days - 30) / (60 - 30)
+    return anchors.d30 + (anchors.d60 - anchors.d30) * progress
+  }
+  return anchors.d60 * (days / 60)
+}
+
+function roundMetric(value: number, digits = 2) {
+  const factor = 10 ** digits
+  return Math.round(value * factor) / factor
+}
+
+function buildAdaptiveTrend(
+  params: { since?: string; until?: string } | undefined,
+  totalSpend: number,
+  variant: 'default' | 'retargeting',
+): MetaAdsTrendPoint[] {
+  const days = resolveRequestedDays(params)
+  const until = params?.until ? new Date(params.until) : new Date('2026-05-14T12:00:00-03:00')
+  const pattern = variant === 'retargeting'
+    ? [1.24, 0.82, 0.94, 1.08, 1.12, 0.9, 1.06, 1.18, 0.96, 0.88]
+    : [0.92, 1.04, 1.08, 1.02, 1.18, 1.26, 1.11, 0.95, 0.89, 1.07]
+  const weights = Array.from({ length: days }, (_, index) => pattern[index % pattern.length])
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0) || 1
+
+  return weights.map((weight, index) => {
+    const pointDate = new Date(until)
+    pointDate.setDate(until.getDate() - (days - 1 - index))
+    return {
+      day: pointDate.toISOString().slice(0, 10),
+      spend: roundMetric((totalSpend * weight) / weightTotal),
+    }
+  })
+}
 
 const ACCOUNT_FIXTURES: MetaAdAccount[] = [
   {
@@ -300,25 +362,44 @@ export async function listMetaAdsLocalAccounts() {
   }
 }
 
-export async function getMetaAdsLocalSummary(): Promise<MetaAdsSummaryResponse> {
+export async function getMetaAdsLocalSummary(params?: { since?: string; until?: string }): Promise<MetaAdsSummaryResponse> {
   const state = requireSelectedAccount()
+  const days = resolveRequestedDays(params)
+  const window = resolveWindowLabel(resolveWindowDays(params))
   if (state.selectedAdAccountId === 'act_456') {
-    return { spend: 864.12, impressions: 7120, clicks: 214, activeCampaigns: 1 }
+    const spend = roundMetric(interpolateMetric(days, { d7: 214.32, d30: 864.12, d60: 1240.9 }))
+    const impressions = Math.round(interpolateMetric(days, { d7: 1880, d30: 7120, d60: 10240 }))
+    const clicks = Math.round(interpolateMetric(days, { d7: 57, d30: 214, d60: 332 }))
+    const conversations = Math.round(interpolateMetric(days, { d7: 5, d30: 19, d60: 28 }))
+    return {
+      spend,
+      impressions,
+      clicks,
+      conversations,
+      avgCostConversation: conversations > 0 ? roundMetric(spend / conversations) : 0,
+      activeCampaigns: 1,
+      window,
+    }
   }
-  return { spend: 1234.56, impressions: 9999, clicks: 321, activeCampaigns: 2 }
+  const spend = roundMetric(interpolateMetric(days, { d7: 512.48, d30: 1234.56, d60: 1610.98 }))
+  const impressions = Math.round(interpolateMetric(days, { d7: 3840, d30: 9999, d60: 61715 }))
+  const clicks = Math.round(interpolateMetric(days, { d7: 102, d30: 321, d60: 884 }))
+  const conversations = Math.round(interpolateMetric(days, { d7: 10, d30: 23, d60: 29 }))
+  return {
+    spend,
+    impressions,
+    clicks,
+    conversations,
+    avgCostConversation: conversations > 0 ? roundMetric(spend / conversations) : 0,
+    activeCampaigns: 2,
+    window,
+  }
 }
 
-export async function getMetaAdsLocalTrend(): Promise<MetaAdsTrendPoint[]> {
-  requireSelectedAccount()
-  return [
-    { day: '2026-05-07', spend: 82 },
-    { day: '2026-05-08', spend: 96 },
-    { day: '2026-05-09', spend: 101 },
-    { day: '2026-05-10', spend: 100 },
-    { day: '2026-05-11', spend: 120 },
-    { day: '2026-05-12', spend: 148 },
-    { day: '2026-05-13', spend: 132 },
-  ]
+export async function getMetaAdsLocalTrend(params?: { since?: string; until?: string }): Promise<MetaAdsTrendPoint[]> {
+  const state = requireSelectedAccount()
+  const summary = await getMetaAdsLocalSummary(params)
+  return buildAdaptiveTrend(params, Number(summary.spend || 0), state.selectedAdAccountId === 'act_456' ? 'retargeting' : 'default')
 }
 
 export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse> {
@@ -484,9 +565,16 @@ export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse>
   }
 }
 
-export async function getMetaAdsLocalReport(): Promise<MetaAdsReportResponse> {
+export async function getMetaAdsLocalReport(params?: { since?: string; until?: string }): Promise<MetaAdsReportResponse> {
   const state = requireSelectedAccount()
+  const days = resolveRequestedDays(params)
   const reportDate = '2026-05-14'
+  const windowLabel = resolveWindowLabel(resolveWindowDays(params))
+  const spendKey = `ad_${windowLabel}_scalar_spend`
+  const impressionsKey = `ad_${windowLabel}_scalar_impressions`
+  const clicksKey = `ad_${windowLabel}_scalar_clicks`
+  const linkClicksKey = `ad_${windowLabel}_inline_link_clicks`
+  const conversationsKey = `ad_${windowLabel}_conversation_started`
   const rows =
     state.selectedAdAccountId === 'act_456'
       ? [
@@ -494,12 +582,15 @@ export async function getMetaAdsLocalReport(): Promise<MetaAdsReportResponse> {
             campaign_id: 'cmp_ret_1',
             campaign_name: 'Campanha Remarketing Face',
             campaign_effective_status: 'ACTIVE',
+            adset_id: 'set_ret_1',
+            adset_name: 'Visitantes 30d',
             ad_id: 'ad_ret_1',
             ad_name: 'Anúncio Remarketing 1',
-            ad_last_30d_scalar_spend: 864.12,
-            ad_last_30d_scalar_impressions: 7120,
-            ad_last_30d_scalar_clicks: 214,
-            ad_last_30d_conversation_started: 19,
+            [spendKey]: roundMetric(interpolateMetric(days, { d7: 214.32, d30: 864.12, d60: 1240.9 })),
+            [impressionsKey]: Math.round(interpolateMetric(days, { d7: 1880, d30: 7120, d60: 10240 })),
+            [clicksKey]: Math.round(interpolateMetric(days, { d7: 57, d30: 214, d60: 332 })),
+            [linkClicksKey]: Math.round(interpolateMetric(days, { d7: 39, d30: 138, d60: 214 })),
+            [conversationsKey]: Math.round(interpolateMetric(days, { d7: 5, d30: 19, d60: 28 })),
           },
         ]
       : [
@@ -507,27 +598,33 @@ export async function getMetaAdsLocalReport(): Promise<MetaAdsReportResponse> {
             campaign_id: 'cmp_1',
             campaign_name: 'Campanha Primavera',
             campaign_effective_status: 'ACTIVE',
+            adset_id: 'set_1',
+            adset_name: 'Conjunto 1',
             ad_id: 'ad_1',
             ad_name: 'Anúncio Primavera 1',
-            ad_last_30d_scalar_spend: 834.56,
-            ad_last_30d_scalar_impressions: 6120,
-            ad_last_30d_scalar_clicks: 201,
-            ad_last_30d_conversation_started: 14,
+            [spendKey]: roundMetric(interpolateMetric(days, { d7: 342.2, d30: 834.56, d60: 1044.9 })),
+            [impressionsKey]: Math.round(interpolateMetric(days, { d7: 2210, d30: 6120, d60: 8120 })),
+            [clicksKey]: Math.round(interpolateMetric(days, { d7: 79, d30: 201, d60: 281 })),
+            [linkClicksKey]: Math.round(interpolateMetric(days, { d7: 52, d30: 147, d60: 194 })),
+            [conversationsKey]: Math.round(interpolateMetric(days, { d7: 6, d30: 14, d60: 18 })),
           },
           {
             campaign_id: 'cmp_2',
             campaign_name: 'Campanha WhatsApp Facial',
             campaign_effective_status: 'PAUSED',
+            adset_id: 'set_2',
+            adset_name: 'Conjunto 2',
             ad_id: 'ad_2',
             ad_name: 'Anúncio WhatsApp 1',
-            ad_last_30d_scalar_spend: 400,
-            ad_last_30d_scalar_impressions: 3879,
-            ad_last_30d_scalar_clicks: 120,
-            ad_last_30d_conversation_started: 9,
+            [spendKey]: roundMetric(interpolateMetric(days, { d7: 170.28, d30: 400, d60: 566.08 })),
+            [impressionsKey]: Math.round(interpolateMetric(days, { d7: 1630, d30: 3879, d60: 3620 })),
+            [clicksKey]: Math.round(interpolateMetric(days, { d7: 45, d30: 120, d60: 143 })),
+            [linkClicksKey]: Math.round(interpolateMetric(days, { d7: 31, d30: 84, d60: 97 })),
+            [conversationsKey]: Math.round(interpolateMetric(days, { d7: 4, d30: 9, d60: 11 })),
           },
         ]
 
-  return buildMetaAdsWorkflowReport(rows, 'last_30d', {
+  return buildMetaAdsWorkflowReport(rows, windowLabel, {
     reportDate,
     runsCount: rows.length,
     source: 'local-preview',

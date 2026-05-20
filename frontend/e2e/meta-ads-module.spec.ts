@@ -240,6 +240,38 @@ test.describe('meta ads', () => {
               cpm: 128.57,
             },
           ],
+          adSets: [
+            {
+              adSetId: 'set_1',
+              adSetName: 'Conjunto 1',
+              campaignId: 'cmp_1',
+              campaignName: 'Campanha Primavera',
+              spend: 900,
+              impressions: 7000,
+              clicks: 250,
+              conversations: 12,
+              ctr: 3.57,
+              cpc: 3.6,
+              cpm: 128.57,
+            },
+          ],
+          ads: [
+            {
+              adId: 'ad_1',
+              adName: 'Anúncio 1',
+              adSetId: 'set_1',
+              adSetName: 'Conjunto 1',
+              campaignId: 'cmp_1',
+              campaignName: 'Campanha Primavera',
+              spend: 900,
+              impressions: 7000,
+              clicks: 250,
+              conversations: 12,
+              ctr: 3.57,
+              cpc: 3.6,
+              cpm: 128.57,
+            },
+          ],
           warnings: [],
         }),
       })
@@ -250,40 +282,57 @@ test.describe('meta ads', () => {
     await expect(page.getByText('Conta Meta pronta para operar')).toHaveCount(0)
     await expect(page.getByText('Conta ativa: Conta Principal')).toHaveCount(0)
     await expect(page.getByRole('combobox')).toContainText('Conta Principal')
-    await expect(page.getByText('Conectado')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByLabel('Atualizar')).toBeVisible({ timeout: 30000 })
     await expect(page.getByText('Tendência de gasto')).toBeVisible()
-    await expect(page.getByTitle('Conta liberada para operar normalmente.')).toContainText('Ativa')
-    await expect(page.getByText('As métricas deste painel estão vindo do consolidado diário persistido pelo workflow Meta Ads – Report.')).toBeVisible()
-    await expect(page.getByText('Campanha Primavera')).toBeVisible()
+    await expect(page.getByText('Conversas iniciadas').first()).toBeVisible()
+    await expect(page.getByText('CTR').first()).toBeVisible()
+    await expect(page.getByText('Consolidado do workflow disponível')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Campanha Primavera' })).toBeVisible()
 
     await expect(page.getByRole('tab', { name: 'Conexão' })).toHaveCount(0)
-    await expect(page.getByRole('tab', { name: 'Visão geral' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Visão geral' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: 'Inventário' })).toHaveCount(0)
     await expect(page.getByText('Comece conectando a Meta ao CRM.')).toHaveCount(0)
     await expect(page.getByText('OAuth:')).toHaveCount(0)
 
-    await page.getByRole('tab', { name: 'Inventário' }).click()
-    await expect(page.locator('body')).toContainText('Campanha')
-    await expect(page.locator('body')).toContainText('Conjunto de Anúncios')
-    await expect(page.locator('body')).toContainText('Anúncio')
+    await expect(page.locator('body')).toContainText('Estrutura operacional')
+    await expect(page.getByRole('button', { name: 'Campanha Primavera' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Conjunto 1' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Anúncio 1', exact: true })).toBeVisible()
     await expect(page.locator('body')).toContainText('Criativo')
     await expect(page.locator('body')).toContainText('Conjunto 1')
     await expect(page.locator('body')).toContainText('Criativo 1')
     await expect(page.locator('body')).toContainText('Campanha WhatsApp Facial')
+
+    const objectiveCell = page.locator('tbody tr').first().locator('td').nth(3).locator('[aria-label]').first()
+    await objectiveCell.hover()
+    await expect(page.getByRole('tooltip')).toContainText('Captação e qualificação de leads.')
+
     await page.getByRole('button', { name: 'Campanha Primavera' }).click()
-    await expect(page.locator('body')).toContainText('Conjunto 1')
-    await expect(page.locator('body')).toContainText('Anúncio 1')
-    await expect(page.locator('body')).toContainText('Criativo 1')
-    await expect(page.locator('body')).not.toContainText('Conjunto 2')
-    await expect(page.locator('body')).not.toContainText('Anúncio WhatsApp 1')
-    await expect(page.locator('body')).not.toContainText('Criativo WhatsApp 1')
-    await page.getByRole('button', { name: 'Abrir' }).first().click()
     await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
     await expect(page.getByRole('dialog')).toContainText('Orçamento diário')
     await expect(page.getByRole('dialog')).toContainText('12000')
     await page.getByRole('button', { name: 'Fechar' }).click()
+
     await page.getByRole('button', { name: 'Conjunto 1' }).click()
-    await expect(page.locator('body')).toContainText('Filtro ativo:')
-    await expect(page.locator('body')).toContainText('Conjunto: Conjunto 1')
+    await expect(page.getByRole('dialog')).toContainText('Conjunto 1')
+    await expect(page.getByRole('dialog')).toContainText('Anúncios associados')
+    await expect(page.getByRole('dialog')).toContainText('LEAD_GENERATION')
+    await page.getByRole('button', { name: 'Fechar' }).click()
+
+    await page.getByRole('button', { name: 'Anúncio 1', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText('Anúncio 1')
+    await expect(page.getByRole('dialog')).toContainText('Story ID efetivo')
+    await expect(page.getByRole('dialog')).toContainText('story_1')
+    await page.getByRole('button', { name: 'Fechar' }).click()
+
+    const firstRow = page.locator('tbody tr').first()
+    await expect(firstRow).toContainText('Campanha Primavera')
+    await page.getByRole('button', { name: 'Ordenar Invest.' }).click()
+    await expect(page.locator('tbody tr').first()).toBeVisible()
+    await page.getByRole('button', { name: 'Ordenar Invest.' }).click()
+    await expect(page.locator('tbody tr').first()).toBeVisible()
+
     await expect(page.getByRole('tab', { name: 'Tracking' })).toHaveCount(0)
   })
 
@@ -318,7 +367,7 @@ test.describe('meta ads', () => {
       window.open = () => null
     })
 
-    await page.getByRole('button', { name: /Gerenciar conex/ }).first().click({ force: true })
+    await page.getByLabel('Gerenciar conexao').first().click({ force: true })
     await page.getByRole('button', { name: 'Conectar com Facebook' }).click()
     await expect(page.getByRole('dialog')).toContainText('Permita a janela do Facebook')
     await expect(page.locator('body')).not.toContainText('A autenticação será aberta nesta mesma aba.')

@@ -140,12 +140,60 @@ export type MetaAdsReportCampaign = {
   campaignName: string
   status: string
   spend: number
+  reach?: number
   impressions: number
   clicks: number
+  linkClicks?: number
   conversations: number
   ctr: number
+  linkCtr?: number
   cpc: number
+  linkCpc?: number
   cpm: number
+  cpp?: number
+  frequency?: number
+}
+
+export type MetaAdsReportAdSet = {
+  adSetId: string
+  adSetName: string
+  campaignId: string
+  campaignName: string
+  spend: number
+  reach?: number
+  impressions: number
+  clicks: number
+  linkClicks?: number
+  conversations: number
+  ctr: number
+  linkCtr?: number
+  cpc: number
+  linkCpc?: number
+  cpm: number
+  cpp?: number
+  frequency?: number
+}
+
+export type MetaAdsReportAd = {
+  adId: string
+  adName: string
+  adSetId: string
+  adSetName: string
+  campaignId: string
+  campaignName: string
+  spend: number
+  reach?: number
+  impressions: number
+  clicks: number
+  linkClicks?: number
+  conversations: number
+  ctr: number
+  linkCtr?: number
+  cpc: number
+  linkCpc?: number
+  cpm: number
+  cpp?: number
+  frequency?: number
 }
 
 export type MetaAdsReportFallbackReason =
@@ -154,6 +202,12 @@ export type MetaAdsReportFallbackReason =
   | 'worker_unauthorized'
   | 'worker_invalid_response'
   | 'empty_report'
+
+export type MetaAdsReportWindowDays = 7 | 30 | 60
+export type MetaAdsCustomDateRange = {
+  since: string
+  until: string
+}
 
 export type MetaAdsReportResponse = {
   ok: boolean
@@ -167,6 +221,8 @@ export type MetaAdsReportResponse = {
     source: string
   }
   campaigns: MetaAdsReportCampaign[]
+  adSets: MetaAdsReportAdSet[]
+  ads: MetaAdsReportAd[]
   warnings: string[]
 }
 
@@ -191,24 +247,25 @@ export type MetaAdsHeaderBadgeTone = 'neutral' | 'success' | 'warning' | 'danger
 export type MetaAdsHeaderAccountOption = {
   id: string
   name: string
+  statusLabel?: string
+  statusTone?: MetaAdsHeaderBadgeTone
 }
 
 export type MetaAdsHeaderState = {
-  connected: boolean
   refreshing: boolean
   accounts: MetaAdsHeaderAccountOption[]
   selectedAccountId: string
+  reportWindowDays: MetaAdsReportWindowDays
+  customRangeActive?: boolean
+  customRangeLabel?: string
   selectedAccountName?: string
-  selectedAccountCurrency?: string
-  selectedAccountTimezone?: string
-  selectedAccountStatusLabel?: string
-  selectedAccountStatusDetail?: string
-  selectedAccountStatusTone?: MetaAdsHeaderBadgeTone
   sessionUpdatedAt?: string
 }
 
 export type MetaAdsHeaderAction =
   | { type: 'set-account'; value: string }
+  | { type: 'set-report-window'; value: MetaAdsReportWindowDays }
+  | { type: 'open-custom-period' }
   | { type: 'refresh' }
   | { type: 'manage-connections' }
   | { type: 'disconnect' }

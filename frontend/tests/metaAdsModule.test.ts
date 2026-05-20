@@ -236,6 +236,10 @@ describe('Meta Ads state helpers', () => {
           campaign_id: 'cmp_1',
           campaign_name: 'Campanha 1',
           campaign_effective_status: 'ACTIVE',
+          adset_id: 'set_1',
+          adset_name: 'Conjunto 1',
+          ad_id: 'ad_1',
+          ad_name: 'Anúncio 1',
           ad_last_30d_scalar_spend: 150,
           ad_last_30d_scalar_impressions: 1000,
           ad_last_30d_scalar_clicks: 50,
@@ -245,6 +249,10 @@ describe('Meta Ads state helpers', () => {
           campaign_id: 'cmp_2',
           campaign_name: 'Campanha 2',
           campaign_effective_status: 'PAUSED',
+          adset_id: 'set_2',
+          adset_name: 'Conjunto 2',
+          ad_id: 'ad_2',
+          ad_name: 'Anúncio 2',
           ad_last_30d_scalar_spend: 90,
           ad_last_30d_scalar_impressions: 500,
           ad_last_30d_scalar_clicks: 25,
@@ -276,5 +284,17 @@ describe('Meta Ads state helpers', () => {
       conversations: 8,
     })
     expect(report.campaigns[0].ctr).toBe(5)
+    expect(report.adSets[0]).toMatchObject({
+      adSetId: 'set_1',
+      campaignId: 'cmp_1',
+      spend: 150,
+      clicks: 50,
+    })
+    expect(report.ads[0]).toMatchObject({
+      adId: 'ad_1',
+      adSetId: 'set_1',
+      spend: 150,
+      clicks: 50,
+    })
   })
 })

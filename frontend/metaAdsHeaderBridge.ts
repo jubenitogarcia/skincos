@@ -1,4 +1,9 @@
-import type { MetaAdsHeaderAction, MetaAdsHeaderBadgeTone, MetaAdsHeaderState } from '@/metaAdsTypes'
+import type {
+  MetaAdsHeaderAction,
+  MetaAdsHeaderBadgeTone,
+  MetaAdsHeaderState,
+  MetaAdsReportWindowDays,
+} from '@/metaAdsTypes'
 
 const META_ADS_HEADER_EVENT = 'skincos:meta-ads:header'
 const META_ADS_HEADER_ACTION_EVENT = 'skincos:meta-ads:action'
@@ -7,24 +12,27 @@ function isBadgeTone(value: unknown): value is MetaAdsHeaderBadgeTone {
   return value === 'neutral' || value === 'success' || value === 'warning' || value === 'danger'
 }
 
+function isReportWindowDays(value: unknown): value is MetaAdsReportWindowDays {
+  return value === 7 || value === 30 || value === 60
+}
+
 export function normalizeMetaAdsHeaderState(detail: unknown): MetaAdsHeaderState | null {
   if (!detail || typeof detail !== 'object') return null
   const payload = detail as Partial<MetaAdsHeaderState>
   if (!Array.isArray(payload.accounts)) return null
   return {
-    connected: Boolean(payload.connected),
     refreshing: Boolean(payload.refreshing),
     accounts: payload.accounts.map((account) => ({
       id: String(account?.id || ''),
       name: String(account?.name || account?.id || ''),
+      statusLabel: account?.statusLabel ? String(account.statusLabel) : undefined,
+      statusTone: isBadgeTone(account?.statusTone) ? account.statusTone : undefined,
     })).filter((account) => account.id),
     selectedAccountId: String(payload.selectedAccountId || ''),
+    reportWindowDays: isReportWindowDays(payload.reportWindowDays) ? payload.reportWindowDays : 30,
+    customRangeActive: Boolean(payload.customRangeActive),
+    customRangeLabel: payload.customRangeLabel ? String(payload.customRangeLabel) : undefined,
     selectedAccountName: payload.selectedAccountName ? String(payload.selectedAccountName) : undefined,
-    selectedAccountCurrency: payload.selectedAccountCurrency ? String(payload.selectedAccountCurrency) : undefined,
-    selectedAccountTimezone: payload.selectedAccountTimezone ? String(payload.selectedAccountTimezone) : undefined,
-    selectedAccountStatusLabel: payload.selectedAccountStatusLabel ? String(payload.selectedAccountStatusLabel) : undefined,
-    selectedAccountStatusDetail: payload.selectedAccountStatusDetail ? String(payload.selectedAccountStatusDetail) : undefined,
-    selectedAccountStatusTone: isBadgeTone(payload.selectedAccountStatusTone) ? payload.selectedAccountStatusTone : undefined,
     sessionUpdatedAt: payload.sessionUpdatedAt ? String(payload.sessionUpdatedAt) : undefined,
   }
 }
@@ -34,11 +42,16 @@ export function normalizeMetaAdsHeaderAction(detail: unknown): MetaAdsHeaderActi
   const payload = detail as { type?: unknown; value?: unknown; action?: unknown }
   const rawType = String(payload.type || payload.action || '').trim()
   if (!rawType) return null
-  if (rawType === 'refresh' || rawType === 'manage-connections' || rawType === 'disconnect') {
+  if (rawType === 'refresh' || rawType === 'manage-connections' || rawType === 'disconnect' || rawType === 'open-custom-period') {
     return { type: rawType }
   }
   if (rawType === 'set-account') {
     return { type: 'set-account', value: String(payload.value || '') }
+  }
+  if (rawType === 'set-report-window') {
+    const value = Number(payload.value)
+    if (!isReportWindowDays(value)) return null
+    return { type: 'set-report-window', value }
   }
   return null
 }

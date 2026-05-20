@@ -83,19 +83,19 @@ export const metaAdsApi = {
   summary: (params?: { since?: string; until?: string }) => {
     const search = new URLSearchParams(params as any).toString()
     return isMetaAdsLocalMockEnabled()
-      ? getMetaAdsLocalSummary()
+      ? getMetaAdsLocalSummary(params)
       : request<MetaAdsSummaryResponse>(`/summary${search ? `?${search}` : ''}`)
   },
   trend: (params?: { since?: string; until?: string }) => {
     const search = new URLSearchParams(params as any).toString()
     return isMetaAdsLocalMockEnabled()
-      ? getMetaAdsLocalTrend()
+      ? getMetaAdsLocalTrend(params)
       : request<MetaAdsTrendPoint[]>(`/trend${search ? `?${search}` : ''}`)
   },
   report: (params?: { since?: string; until?: string }) => {
     const search = new URLSearchParams(params as any).toString()
     return isMetaAdsLocalMockEnabled()
-      ? getMetaAdsLocalReport()
+      ? getMetaAdsLocalReport(params)
       : request<MetaAdsReportResponse>(`/report${search ? `?${search}` : ''}`)
   },
   inventory: () => (isMetaAdsLocalMockEnabled() ? getMetaAdsLocalInventory() : request<MetaInventoryResponse>('/inventory')),
