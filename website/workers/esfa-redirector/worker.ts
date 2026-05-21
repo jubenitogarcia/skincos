@@ -3,8 +3,8 @@ const PRESERVE_QUERYSTRING = true;
 const REDIRECTS: Record<string, string> = {
   // BarraShoppingSul
   "/bss/comochegar": "https://www.google.com/maps/place/Espaço+Facial/@-30.0846697,-51.2458384,17z/data=!3m1!4b1!4m6!3m5!1s0x9519795c306ed865:0xb5f05aac9b865daa!8m2!3d-30.0846697!4d-51.2458384!16s%2Fg%2F11vywknzbf?entry=ttu&g_ep=EgoyMDI1MDMxMS4wIKXMDSoASAFQAw%3D%3D",
-  "/bss/faleconosco": "https://wa.me/message/MT7UGL6U6KYWA1",
-  "/bss/faleconsco": "https://wa.me/message/MT7UGL6U6KYWA1",
+  "/bss/faleconosco": "https://espacofacial.com/barrashoppingsul/faleconosco",
+  "/bss/faleconsco": "https://espacofacial.com/barrashoppingsul/faleconsco",
   "/bss/fb": "https://www.facebook.com/espacofacial.barrashoppingsul",
   "/bss/giftcard": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero presentear _alguém especial_ com o *Cartão Presente* da _Espaço Facial_ – *autoestima, beleza e bem-estar* em forma de presente! 💝",
   "/bss/ig": "https://www.instagram.com/espacofacial_barrashoppingsul",
@@ -28,7 +28,7 @@ const REDIRECTS: Record<string, string> = {
   "/nh/alopecia": "https://payment-link-v3.stone.com.br/pl_JQ4p9nYxmGaNDO92slTBbZEdL76R1gX8",
   "/nh/clubebotox": "https://payment-link-v3.stone.com.br/pl_2xNX5qopbEQAOw2iGHqbL9wdP8VRGYkB",
   "/nh/clubelavieen": "https://payment-link-v3.stone.com.br/pl_QypjlV90JAxoW7DzTnfY8X46qDe7EO15",
-  "/nh/faleconosco": "https://wa.me/message/5ZD2K6FMTDVSC1",
+  "/nh/faleconosco": "https://espacofacial.com/novohamburgo/faleconosco",
   "/avalienossoespaço/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
   "/avalienossoespaco/nh": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
   "/nh/avalienossoespaço": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x951943d467aca085:0x23f81b926e34d27b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
