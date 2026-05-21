@@ -85,7 +85,7 @@ test_endpoint "Envio de Sticker" "POST" "/send" '{
 # 8. Enviar Contato
 test_endpoint "Envio de Contato" "POST" "/send-contact" '{
     "number": "'$TEST_NUMBER'",
-    "contactPhone": "5551998493563"
+    "contactPhone": "5551995811008"
 }'
 
 # 9. Criar Enquete
