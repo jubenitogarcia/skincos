@@ -1,0 +1,447 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+FRONTEND_DIR="$ROOT_DIR/frontend"
+BACKEND_DIR="$ROOT_DIR/backend"
+INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
+INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
+INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
+
+CRM_HOST="${CRM_HOST:-127.0.0.1}"
+CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
+CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
+CRM_ROUTE="${CRM_ROUTE:-/}"
+CRM_MODULE="${CRM_MODULE:-}"
+CRM_PROFILE="${CRM_PROFILE:-realistic}"
+CRM_OPEN_BROWSER="${CRM_OPEN_BROWSER:-1}"
+CRM_SMOKE="${CRM_SMOKE:-0}"
+CRM_BUILD_BEFORE_START="${CRM_BUILD_BEFORE_START:-1}"
+CRM_META_ADS_SCENARIO="${CRM_META_ADS_SCENARIO:-}"
+CRM_WITH_INSUMOS="${CRM_WITH_INSUMOS:-0}"
+CRM_INSUMOS_PORT="${CRM_INSUMOS_PORT:-8787}"
+CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
+CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
+CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
+PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
+LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
+SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
+
+usage() {
+  cat <<EOF
+SKINCOS • Testar CRM local
+
+Uso:
+  $(basename "$0") [rota] [opções]
+
+Perfis:
+  realistic (default)  Bypass local do shell CRM + Pages Functions local + Meta/Escala reais quando configurados.
+                       Se --with-insumos estiver ativo, usa Worker local de Insumos com snapshot opcional.
+  session              Sem bypass local. Exige login manual no localhost para testar a sessão/permite validar auth real.
+
+Opções:
+  --profile NAME                 realistic | session
+  --module NAME                  Abre o CRM já no módulo informado (ex.: meta-ads)
+  --crm-host HOST                Host do Vite (default: 127.0.0.1)
+  --vite-port PORT               Porta do Vite (default: 5173)
+  --pages-port PORT              Porta do Pages local (default: 8791)
+  --meta-ads-scenario NAME       live | disconnected | connected-no-account | connected-ready | unauthorized
+                                 Ativa um cenário local controlado do Meta Ads em localhost.
+  --skip-build                   Não roda build do frontend antes de subir o Pages local
+  --with-insumos                 Sobe Worker local do Insumos e aponta o CRM para ele
+  --insumos-port PORT            Porta do Worker local de Insumos (default: 8787)
+  --insumos-snapshot FILE        Faz seed local do Insumos com este snapshot JSON
+  --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
+  --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
+  --smoke                        Roda uma smoke local do módulo após subir o CRM
+  --no-browser                   Não abre o navegador automaticamente
+  --stop                         Encerra a instância atual e sai
+  -h, --help                     Mostrar ajuda
+
+Exemplos:
+  ./scripts/run-local-crm.sh
+  ./scripts/run-local-crm.sh --module meta-ads
+  ./scripts/run-local-crm.sh --module meta-ads --meta-ads-scenario live
+  ./scripts/run-local-crm.sh --module meta-ads --smoke
+  ./scripts/run-local-crm.sh /meta-ads --with-insumos --insumos-snapshot ./tmp/insumos.json
+  ./scripts/run-local-crm.sh --profile session
+EOF
+}
+
+case "$CRM_ROUTE" in
+  /*) ;;
+  *) CRM_ROUTE="/$CRM_ROUTE" ;;
+esac
+
+STOP_ONLY=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile) shift; CRM_PROFILE="$1" ;;
+    --module) shift; CRM_MODULE="$1" ;;
+    --crm-host) shift; CRM_HOST="$1" ;;
+    --vite-port) shift; CRM_VITE_PORT="$1" ;;
+    --pages-port) shift; CRM_PAGES_PORT="$1" ;;
+    --meta-ads-scenario) shift; CRM_META_ADS_SCENARIO="$1" ;;
+    --skip-build) CRM_BUILD_BEFORE_START=0 ;;
+    --with-insumos) CRM_WITH_INSUMOS=1 ;;
+    --insumos-port) shift; CRM_INSUMOS_PORT="$1" ;;
+    --insumos-snapshot) shift; CRM_INSUMOS_SNAPSHOT="$1" ;;
+    --refresh-insumos-snapshot) CRM_REFRESH_INSUMOS_SNAPSHOT=1 ;;
+    --insumos-seed-token) shift; CRM_INSUMOS_SEED_TOKEN="$1" ;;
+    --smoke) CRM_SMOKE=1 ;;
+    --no-browser) CRM_OPEN_BROWSER=0 ;;
+    --stop) STOP_ONLY=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      if [[ "$1" == /* && "$CRM_ROUTE" == "/" ]]; then
+        CRM_ROUTE="$1"
+      else
+        echo "Opção desconhecida: $1" >&2
+        usage
+        exit 1
+      fi
+      ;;
+  esac
+  shift || true
+done
+
+append_query_param() {
+  local url="$1"
+  local key="$2"
+  local value="$3"
+  if [[ "$url" == *\?* ]]; then
+    printf '%s&%s=%s' "$url" "$key" "$value"
+  else
+    printf '%s?%s=%s' "$url" "$key" "$value"
+  fi
+}
+
+if [[ -n "$CRM_MODULE" ]]; then
+  CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "module" "$CRM_MODULE")"
+fi
+
+if [[ "$CRM_MODULE" == "meta-ads" && -z "$CRM_META_ADS_SCENARIO" && "$CRM_PROFILE" == "realistic" ]]; then
+  CRM_META_ADS_SCENARIO="connected-ready"
+fi
+
+if [[ "$CRM_MODULE" == "meta-ads" && -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
+  CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "metaAdsLocalScenario" "$CRM_META_ADS_SCENARIO")"
+fi
+
+DEFAULT_URL="http://localhost:${CRM_PAGES_PORT}${CRM_ROUTE}"
+NETWORK_URL="http://${CRM_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
+
+collect_descendants() {
+  local parent_pid="$1"
+  local child_pid
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
+  while IFS= read -r child_pid; do
+    [[ -n "$child_pid" ]] || continue
+    collect_descendants "$child_pid"
+    echo "$child_pid"
+  done < <(pgrep -P "$parent_pid" 2>/dev/null || true)
+}
+
+terminate_pid() {
+  local target_pid="$1"
+  local descendant_pids
+  if ! kill -0 "$target_pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  descendant_pids="$(collect_descendants "$target_pid" | tr '\n' ' ')"
+  if [[ -n "$descendant_pids" ]]; then
+    kill -TERM $descendant_pids >/dev/null 2>&1 || true
+  fi
+  kill -TERM "$target_pid" >/dev/null 2>&1 || true
+  sleep 2
+  if [[ -n "$descendant_pids" ]]; then
+    kill -KILL $descendant_pids >/dev/null 2>&1 || true
+  fi
+  kill -KILL "$target_pid" >/dev/null 2>&1 || true
+}
+
+stop_existing() {
+  local existing_pid
+
+  if [[ -f "$PID_FILE" ]]; then
+    existing_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      echo "Instância anterior do CRM local detectada (PID $existing_pid). Finalizando..."
+      terminate_pid "$existing_pid"
+    fi
+    rm -f "$PID_FILE"
+  fi
+}
+
+assert_port_free() {
+  local port="$1"
+  local label="$2"
+  local line
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  line="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | tail -n +2 | head -n 1 || true)"
+  if [[ -n "$line" ]]; then
+    echo "[crm-local] Porta $port já está em uso por outro processo ($label)." >&2
+    echo "$line" >&2
+    echo "Use --${label}-port para outra porta ou finalize manualmente o processo atual." >&2
+    exit 1
+  fi
+}
+
+wait_for_http() {
+  local url="$1"
+  local retries="${2:-90}"
+  while [[ "$retries" -gt 0 ]]; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    retries=$((retries - 1))
+  done
+  return 1
+}
+
+wait_for_crm_api() {
+  local url="$1"
+  local retries="${2:-90}"
+  local body
+  while [[ "$retries" -gt 0 ]]; do
+    body="$(curl -fsS "$url" 2>/dev/null || true)"
+    if [[ "$body" == *'"ok":true'* || "$body" == *'"error":"UNAUTHORIZED"'* || "$body" == *'"error": "UNAUTHORIZED"'* ]]; then
+      return 0
+    fi
+    sleep 1
+    retries=$((retries - 1))
+  done
+  return 1
+}
+
+open_browser() {
+  if command -v open >/dev/null 2>&1; then
+    open "$DEFAULT_URL"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 || true
+  fi
+}
+
+ensure_frontend_ready() {
+  if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+    echo "Dependências do frontend não encontradas. Instalando..."
+    npm --prefix "$FRONTEND_DIR" install
+  fi
+}
+
+ensure_insumos_seed_config() {
+  local insumos_dev_vars="$ROOT_DIR/backend/apps/insumos/.dev.vars"
+  if [[ ! -f "$insumos_dev_vars" && -f "$ROOT_DIR/backend/apps/insumos/.dev.vars.example" ]]; then
+    cp "$ROOT_DIR/backend/apps/insumos/.dev.vars.example" "$insumos_dev_vars"
+  fi
+  touch "$insumos_dev_vars"
+  if ! grep -qE '^ALLOW_DEV_SEED=' "$insumos_dev_vars"; then
+    printf '\nALLOW_DEV_SEED=true\n' >> "$insumos_dev_vars"
+  fi
+  if ! grep -qE '^INSUMOS_SEED_TOKEN=' "$insumos_dev_vars"; then
+    printf 'INSUMOS_SEED_TOKEN=%s\n' "$CRM_INSUMOS_SEED_TOKEN" >> "$insumos_dev_vars"
+  fi
+}
+
+refresh_insumos_snapshot_if_needed() {
+  if [[ "$CRM_REFRESH_INSUMOS_SNAPSHOT" != "1" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$SNAPSHOT_DEFAULT_PATH")"
+  local out_path="${CRM_INSUMOS_SNAPSHOT:-$SNAPSHOT_DEFAULT_PATH}"
+  echo "[crm-local] Exportando snapshot remoto de Insumos para $out_path"
+  node "$INSUMOS_EXPORTER" "$out_path"
+  CRM_INSUMOS_SNAPSHOT="$out_path"
+}
+
+start_insumos_local() {
+  ensure_insumos_seed_config
+  echo "[crm-local] Iniciando Worker local do Insumos em :$CRM_INSUMOS_PORT"
+  (
+    cd "$ROOT_DIR"
+    PORT="$CRM_INSUMOS_PORT" ./backend/scripts/insumos.sh dev
+  ) >>"$LOG_FILE" 2>&1 &
+  INSUMOS_PID=$!
+
+  if ! wait_for_http "http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos/health" 90; then
+    echo "[crm-local] Worker local do Insumos não respondeu em tempo hábil." >&2
+    exit 1
+  fi
+
+  if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    if [[ ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
+      echo "[crm-local] Snapshot do Insumos não encontrado: $CRM_INSUMOS_SNAPSHOT" >&2
+      exit 1
+    fi
+    echo "[crm-local] Aplicando seed de Insumos com $CRM_INSUMOS_SNAPSHOT"
+    INSUMOS_SEED_TOKEN="$CRM_INSUMOS_SEED_TOKEN" \
+      INSUMOS_API_URL="http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos" \
+      "$INSUMOS_SEEDER" "$CRM_INSUMOS_SNAPSHOT" >>"$LOG_FILE" 2>&1
+  fi
+}
+
+if [[ "$STOP_ONLY" == "1" ]]; then
+  stop_existing
+  echo "CRM local finalizado."
+  exit 0
+fi
+
+if [[ "$CRM_PROFILE" != "realistic" && "$CRM_PROFILE" != "session" ]]; then
+  echo "Perfil inválido: $CRM_PROFILE" >&2
+  usage
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm não encontrado no PATH." >&2
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl não encontrado no PATH." >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "$LOG_FILE")"
+touch "$LOG_FILE"
+
+refresh_insumos_snapshot_if_needed
+
+echo ""
+echo "SKINCOS • Testar CRM local"
+echo "Perfil: $CRM_PROFILE"
+echo "Rota inicial: $CRM_ROUTE"
+if [[ -n "$CRM_MODULE" ]]; then
+  echo "Módulo inicial: $CRM_MODULE"
+fi
+if [[ "$CRM_MODULE" == "meta-ads" && -n "$CRM_META_ADS_SCENARIO" ]]; then
+  echo "Cenário Meta Ads: $CRM_META_ADS_SCENARIO"
+fi
+echo "URLs:"
+echo "  Local  : $DEFAULT_URL"
+echo "  Rede   : $NETWORK_URL"
+if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+  echo "Insumos local: http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos"
+  if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    echo "Snapshot Insumos: $CRM_INSUMOS_SNAPSHOT"
+  fi
+fi
+echo "Log: $LOG_FILE"
+echo ""
+
+stop_existing
+assert_port_free "$CRM_VITE_PORT" "vite"
+assert_port_free "$CRM_PAGES_PORT" "pages"
+ensure_frontend_ready
+
+if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
+  echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
+  npm --prefix "$FRONTEND_DIR" run build
+fi
+
+INSUMOS_PID=""
+if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+  assert_port_free "$CRM_INSUMOS_PORT" "insumos"
+  start_insumos_local
+fi
+
+export VITE_PORT="$CRM_VITE_PORT"
+export PAGES_PORT="$CRM_PAGES_PORT"
+
+if [[ "$CRM_PROFILE" == "realistic" ]]; then
+  export LOCAL_AUTH_BYPASS=true
+  export LOCAL_AUTH_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}"
+  export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
+  export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
+else
+  export LOCAL_AUTH_BYPASS=false
+fi
+
+if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+  export INSUMOS_API_TARGET="http://127.0.0.1:${CRM_INSUMOS_PORT}"
+fi
+
+if [[ -n "$CRM_MODULE" ]]; then
+  export VITE_LOCAL_CRM_FOCUS_MODULE="$CRM_MODULE"
+fi
+
+(
+  cd "$FRONTEND_DIR"
+  npm run dev:pages
+) >>"$LOG_FILE" 2>&1 &
+CRM_PID=$!
+
+echo "$$" > "$PID_FILE"
+
+cleanup() {
+  if [[ -n "${CRM_PID:-}" ]]; then
+    kill "$CRM_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${INSUMOS_PID:-}" ]]; then
+    kill "$INSUMOS_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -f "$PID_FILE" ]]; then
+    local tracked_pid
+    tracked_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ "$tracked_pid" == "$$" ]]; then
+      rm -f "$PID_FILE"
+    fi
+  fi
+}
+
+trap cleanup EXIT INT TERM
+
+if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
+  (
+    if wait_for_crm_api "http://127.0.0.1:${CRM_PAGES_PORT}/api/auth/me" 120 && wait_for_http "$DEFAULT_URL" 60; then
+      open_browser
+    else
+      echo "[crm-local] O CRM não respondeu em $DEFAULT_URL dentro do tempo esperado."
+    fi
+  ) &
+fi
+
+if [[ "$CRM_SMOKE" == "1" ]]; then
+  if ! wait_for_crm_api "http://127.0.0.1:${CRM_PAGES_PORT}/api/auth/me" 120; then
+    echo "[crm-local] O CRM não respondeu para a smoke em tempo hábil." >&2
+    exit 1
+  fi
+  if [[ "$CRM_MODULE" == "meta-ads" ]]; then
+    echo "[crm-local] Rodando smoke local do Meta Ads..."
+    (
+      cd "$FRONTEND_DIR"
+      CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" npm run smoke:meta-ads:local
+    )
+  else
+    echo "[crm-local] Rodando smoke local padrão..."
+    (
+      cd "$FRONTEND_DIR"
+      CRM_URL="$DEFAULT_URL" node ./scripts/crm-local-smoke.cjs
+    )
+  fi
+fi
+
+echo "Notas:"
+  echo "  - O shell do CRM local usa Pages Functions reais."
+if [[ "$CRM_PROFILE" == "realistic" ]]; then
+  echo "  - Auth local bypass está ligado apenas para localhost."
+else
+  echo "  - Auth local bypass está desligado; faça login manual no localhost."
+fi
+if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+  echo "  - Insumos está apontando para o worker local, sem risco de gravar na produção."
+else
+  echo "  - Insumos continua usando o target definido em frontend/.dev.vars ou frontend/wrangler.toml."
+fi
+if [[ "$CRM_MODULE" == "meta-ads" && -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
+  echo "  - Meta Ads está em cenário local controlado; o fluxo de conexão é simulado só em localhost."
+fi
+echo ""
+
+wait "$CRM_PID"
